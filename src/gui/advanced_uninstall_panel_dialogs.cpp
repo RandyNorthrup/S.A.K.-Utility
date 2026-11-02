@@ -722,8 +722,8 @@ void AdvancedUninstallPanel::addSettingsScanLevelGroup(QDialog* dialog,
     moderate_radio = new QRadioButton(
         tr("Moderate -- Extended scanning with pattern matching (recommended)"), dialog);
     advanced_radio =
-        new QRadioButton(tr("Advanced -- Deep scan including services, tasks, firewall, "
-                            "shell extensions"),
+        new QRadioButton(tr("Advanced -- Deep scan including services, tasks, firewall rules, "
+                            "startup entries"),
                          dialog);
 
     switch (m_controller->defaultScanLevel()) {

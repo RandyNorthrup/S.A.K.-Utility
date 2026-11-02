@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <optional>
 
 namespace sak {
 
@@ -160,6 +161,15 @@ public:
     void installFromBundle(const QString& manifest_path,
                            const QString& choco_source_dir,
                            bool packed_only = false);
+
+    /// @brief Where a manifest's packages install from, or why it cannot be installed.
+    ///
+    /// A Full Bundle needs the packages folder beside its manifest; a Thin Bundle holds no packages
+    /// (the target downloads each one), so it needs nothing and its source is empty. The answer
+    /// comes from the manifest's own payload mode, the same value the install itself follows.
+    /// @return the local package source, or nothing with @p refusal saying why.
+    [[nodiscard]] std::optional<QString> bundleLocalSource(const QString& manifest_path,
+                                                           QString* refusal) const;
 
     /// @brief Download .nupkg files directly (no internalization)
     /// @param packages List of (package_id, version) pairs

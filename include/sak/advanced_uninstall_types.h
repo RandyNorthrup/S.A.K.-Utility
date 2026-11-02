@@ -73,7 +73,7 @@ struct ProgramInfo {
 enum class ScanLevel {
     Safe,      ///< Only obvious leftovers in known locations (fast)
     Moderate,  ///< Extended scanning with pattern matching (recommended)
-    Advanced   ///< Deep scan including services, tasks, firewall, shell extensions
+    Advanced   ///< Deep scan including services, tasks, firewall rules, startup entries
 };
 
 // -- LeftoverItem ------------------------------------------------------------

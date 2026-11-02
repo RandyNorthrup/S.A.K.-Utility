@@ -1334,16 +1334,19 @@ void AdvancedUninstallPanel::contextForcedUninstall() {
 }
 
 void AdvancedUninstallPanel::contextAddToQueue() {
-    auto program = selectedProgram();
-    if (!program.displayName.isEmpty()) {
-        if (!m_controller->addToQueue(
-                program, m_controller->defaultScanLevel(), m_controller->autoCleanSafe())) {
-            return;
-        }
-        logMessage(QString("Added to batch queue: %1").arg(program.displayName));
-        Q_EMIT statusMessage(tr("Added %1 to batch queue.").arg(program.displayName),
-                             sak::kTimerStatusMessageMs);
+    // The batch is the ticked rows: pressing Batch builds it from them. So adding a program means
+    // ticking its row, where it can be seen and taken back. A separate hidden queue was emptied by
+    // Batch before it ever ran.
+    const auto program = selectedProgram();
+    auto* check_item = m_program_table->item(m_program_table->currentRow(), kColCheck);
+    if (program.displayName.isEmpty() || check_item == nullptr) {
+        return;
     }
+    check_item->setCheckState(Qt::Checked);
+    logMessage(QString("Added to batch: %1").arg(program.displayName));
+    Q_EMIT statusMessage(
+        tr("Added %1 to the batch. Press Batch to start.").arg(program.displayName),
+        sak::kTimerStatusMessageMs);
 }
 
 void AdvancedUninstallPanel::contextOpenInstallLocation() {

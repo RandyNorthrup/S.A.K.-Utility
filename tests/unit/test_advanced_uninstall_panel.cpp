@@ -13,6 +13,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -41,7 +42,28 @@ class AdvancedUninstallPanelTests : public QObject {
 private Q_SLOTS:
     void installFolderIsMeasuredOnDemandAndCached();
     void remoteInstallFolderOffersNoMeasurement();
+    void addToBatchTicksTheProgramsRow();
 };
+
+// The batch is built from the ticked rows. Add to Batch Queue once wrote to a separate queue, which
+// pressing Batch emptied, so it did nothing at all.
+void AdvancedUninstallPanelTests::addToBatchTicksTheProgramsRow() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo first;
+    first.displayName = QStringLiteral("First App");
+    sak::ProgramInfo second;
+    second.displayName = QStringLiteral("Second App");
+    panel.populateProgramTable({first, second});
+    panel.m_filtered_programs = {first, second};
+    QCOMPARE(panel.selectedPrograms().size(), 0);
+
+    panel.m_program_table->setCurrentCell(1, 0);
+    panel.contextAddToQueue();
+
+    const auto selected = panel.selectedPrograms();
+    QCOMPARE(selected.size(), 1);
+    QCOMPARE(selected.first().displayName, panel.selectedProgram().displayName);
+}
 
 // The program list used to walk every program's install folder during enumeration. It now
 // shows the registry's EstimatedSize, and a folder is measured only when the user asks, for one

@@ -10,8 +10,10 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -22,6 +24,11 @@ class TestOfflineDeploymentWorker : public QObject {
 
 private Q_SLOTS:
     void classifyWorkDir_freshWhenMissingOrEmpty();
+    void bundleLocalSource_aThinBundleNeedsNoPackagesFolder();
+    void bundleLocalSource_aFullBundleRequiresItsPackagesFolder();
+    void bundleLocalSource_anOldManifestIsAFullBundle();
+    void bundleLocalSource_refusesAnUnreadableManifest();
+    void thinBundle_buildsAndNamesTheRealPlaceToInstallIt();
     void classifyWorkDir_reusesOwnedMarkedDir();
     void classifyWorkDir_refusesForeignNonEmptyDir();
     void workDirSafeToDelete_guardsReparseAndOwnership();
@@ -628,6 +635,101 @@ void TestOfflineDeploymentWorker::isSuccessInstallExitCode_acceptsZeroAndRebootC
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1642));
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(3009));
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(3011));
+}
+
+namespace {
+QString writeManifestJson(const QTemporaryDir& dir, const QByteArray& payload_mode_field) {
+    const QString path = dir.filePath(QStringLiteral("manifest.json"));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return {};
+    }
+    file.write("{\"manifest_version\":\"1.0\"," + payload_mode_field +
+               "\"packages\":[{\"package_id\":\"7zip\",\"version\":\"24.0\"}]}");
+    return path;
+}
+}  // namespace
+
+// A Thin Bundle holds no packages, so the install must not demand a folder it never had. Its build
+// never creates one, which made every Thin Bundle impossible to install from the app.
+void TestOfflineDeploymentWorker::bundleLocalSource_aThinBundleNeedsNoPackagesFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString manifest = writeManifestJson(dir, "\"payload_mode\":\"list\",");
+    sak::OfflineDeploymentWorker worker;
+    QString refusal;
+    const auto source = worker.bundleLocalSource(manifest, &refusal);
+    QVERIFY2(source.has_value(), qPrintable(refusal));
+    QVERIFY(source->isEmpty());
+}
+
+void TestOfflineDeploymentWorker::bundleLocalSource_aFullBundleRequiresItsPackagesFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString manifest = writeManifestJson(dir, "\"payload_mode\":\"bundle\",");
+    sak::OfflineDeploymentWorker worker;
+    QString refusal;
+    QVERIFY(!worker.bundleLocalSource(manifest, &refusal).has_value());
+    QVERIFY(refusal.contains(QStringLiteral("packages")));
+
+    QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("packages")));
+    const auto source = worker.bundleLocalSource(manifest, &refusal);
+    QVERIFY(source.has_value());
+    QCOMPARE(*source, dir.filePath(QStringLiteral("packages")));
+}
+
+void TestOfflineDeploymentWorker::bundleLocalSource_anOldManifestIsAFullBundle() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString manifest = writeManifestJson(dir, QByteArray());
+    sak::OfflineDeploymentWorker worker;
+    QString refusal;
+    QVERIFY(!worker.bundleLocalSource(manifest, &refusal).has_value());
+}
+
+void TestOfflineDeploymentWorker::bundleLocalSource_refusesAnUnreadableManifest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("manifest.json"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("not json");
+    file.close();
+    sak::OfflineDeploymentWorker worker;
+    QString refusal;
+    QVERIFY(!worker.bundleLocalSource(path, &refusal).has_value());
+    QVERIFY(!refusal.isEmpty());
+}
+
+// A real Thin Bundle, as built, is what must install. The build writes no packages folder, and its
+// instructions once named a tab that does not exist.
+void TestOfflineDeploymentWorker::thinBundle_buildsAndNamesTheRealPlaceToInstallIt() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    sak::OfflineDeploymentWorker worker;
+    worker.buildDeploymentBundle({{QStringLiteral("7zip"), QStringLiteral("24.0")}},
+                                 dir.path(),
+                                 QStringLiteral("test"),
+                                 sak::PayloadMode::List);
+    QElapsedTimer waited;
+    waited.start();
+    while (worker.isRunning() && waited.elapsed() < 30'000) {
+        QThread::msleep(10);
+    }
+    QVERIFY(!worker.isRunning());
+    QVERIFY(!QDir(dir.filePath(QStringLiteral("packages"))).exists());
+
+    QString refusal;
+    const auto source = worker.bundleLocalSource(dir.filePath(QStringLiteral("manifest.json")),
+                                                 &refusal);
+    QVERIFY2(source.has_value(), qPrintable(refusal));
+    QVERIFY(source->isEmpty());
+
+    QFile readme(dir.filePath(QStringLiteral("README.txt")));
+    QVERIFY(readme.open(QIODevice::ReadOnly));
+    const QByteArray text = readme.readAll();
+    QVERIFY(text.contains("Application Management > App Installation > Offline Deploy"));
+    QVERIFY(!text.contains("App Management > Offline Deploy tab"));
 }
 
 QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)

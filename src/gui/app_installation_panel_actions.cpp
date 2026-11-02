@@ -699,15 +699,13 @@ void AppInstallationPanel::onInstallFromBundle() {
         return;
     }
 
-    // The packages directory is alongside the manifest
-    const QFileInfo manifest_info(manifest_path);
-    const QString packages_dir = manifest_info.dir().absolutePath() + "/packages";
-
-    if (!QDir(packages_dir).exists()) {
-        sak::showWarningLogged(
-            this,
-            tr("Missing Packages"),
-            tr("The 'packages' directory was not found alongside the manifest."));
+    // A Full Bundle installs from the packages folder beside its manifest. A Thin Bundle has none:
+    // the target downloads each package, so the manifest alone decides what is required.
+    QString refusal;
+    const std::optional<QString> packages_dir = m_offline_worker->bundleLocalSource(manifest_path,
+                                                                                    &refusal);
+    if (!packages_dir.has_value()) {
+        sak::showWarningLogged(this, tr("Cannot Install From This Bundle"), refusal);
         return;
     }
 
@@ -742,7 +740,7 @@ void AppInstallationPanel::onInstallFromBundle() {
 
     setOfflineInProgressUi(true);
 
-    m_offline_worker->installFromBundle(manifest_path, packages_dir, m_airGapCheck->isChecked());
+    m_offline_worker->installFromBundle(manifest_path, *packages_dir, m_airGapCheck->isChecked());
 }
 
 void AppInstallationPanel::onDirectDownload() {

@@ -1016,6 +1016,27 @@ BundleInstallContext OfflineDeploymentWorker::installContextForMode(
             /*verify_local=*/.verify_local = true};
 }
 
+std::optional<QString> OfflineDeploymentWorker::bundleLocalSource(const QString& manifest_path,
+                                                                  QString* refusal) const {
+    const DeploymentManifest manifest = readManifest(manifest_path);
+    if (manifest.packages.isEmpty()) {
+        *refusal = tr(
+            "The deployment manifest lists no installable packages or could not be "
+            "read.");
+        return std::nullopt;
+    }
+    if (manifest.payload_mode == PayloadMode::List) {
+        return QString();
+    }
+    const QString packages_dir =
+        QFileInfo(manifest_path).dir().absoluteFilePath(QLatin1String(offline::kPackagesSubdir));
+    if (!QDir(packages_dir).exists()) {
+        *refusal = tr("The 'packages' directory was not found alongside the manifest.");
+        return std::nullopt;
+    }
+    return packages_dir;
+}
+
 void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
                                                 const QString& choco_source_dir,
                                                 bool packed_only) {
@@ -1883,7 +1904,7 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
     stream << "\nInstallation:\n";
     stream << "  1. Copy this folder to the target machine\n";
     stream << "  2. Open S.A.K. Utility on the target machine\n";
-    stream << "  3. Go to App Management > Offline Deploy tab\n";
+    stream << "  3. Go to Application Management > App Installation > Offline Deploy\n";
     stream << "  4. Click 'Install from Bundle' and select manifest.json\n";
     stream << "     (installs via the app's OWN bundled Chocolatey; nothing is installed onto the "
               "machine itself)\n";
