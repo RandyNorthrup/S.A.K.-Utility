@@ -319,7 +319,7 @@ void NetworkDiagnosticPanel::setupUi() {
     m_generateReportBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_generateReportBtn->setToolTip(
         tr("Save the results of the diagnostics run here as an HTML or JSON report"));
-    setAccessible(m_generateReportBtn, tr("Generate network report"));
+    setAccessible(m_generateReportBtn, tr("Generate Report"), tr("Generate network report"));
     connect(m_generateReportBtn,
             &QPushButton::clicked,
             this,
@@ -393,7 +393,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     m_copyConfigBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_copyConfigBtn->setToolTip(tr("Copy selected adapter configuration to clipboard"));
     m_copyConfigBtn->setEnabled(false);
-    setAccessible(m_copyConfigBtn, tr("Copy adapter config"));
+    setAccessible(m_copyConfigBtn, tr("Copy Config"), tr("Copy adapter config"));
     toolbar->addWidget(m_copyConfigBtn);
 
     m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
@@ -402,7 +402,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
         tr("Backup selected adapter IP/DNS settings to a JSON file "
            "for restoration on this or another PC"));
     setAccessible(m_backupEthernetBtn,
-                  tr("Backup adapter settings"),
+                  tr("Backup Settings"),
                   tr("Save selected adapter's IP configuration to a portable JSON file"));
     m_backupEthernetBtn->setEnabled(false);
     toolbar->addWidget(m_backupEthernetBtn);
@@ -413,7 +413,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
         tr("Restore adapter settings from a previously saved "
            "JSON backup file -- works across PCs"));
     setAccessible(m_restoreEthernetBtn,
-                  tr("Restore adapter settings"),
+                  tr("Restore Settings"),
                   tr("Load and apply adapter IP configuration from a backup JSON file"));
     toolbar->addWidget(m_restoreEthernetBtn);
 
@@ -664,7 +664,7 @@ void NetworkDiagnosticPanel::setupTracerouteControls(QWidget* widget, QVBoxLayou
     m_traceStartBtn = new QPushButton(tr("Trace Route"), widget);
     m_traceStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_traceStartBtn->setToolTip(tr("Trace the network path to the target host"));
-    setAccessible(m_traceStartBtn, tr("Start traceroute"));
+    setAccessible(m_traceStartBtn, tr("Trace Route"), tr("Start traceroute"));
     btn_row->addWidget(m_traceStartBtn);
 
     m_traceStopBtn = new QPushButton(tr("Stop"), widget);
@@ -877,19 +877,19 @@ void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layo
     m_dnsReverseBtn = new QPushButton(tr("Reverse Lookup"), widget);
     m_dnsReverseBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dnsReverseBtn->setToolTip(tr("Resolve IP address to hostname"));
-    setAccessible(m_dnsReverseBtn, tr("Reverse DNS lookup"));
+    setAccessible(m_dnsReverseBtn, tr("Reverse Lookup"), tr("Reverse DNS lookup"));
     btn_row->addWidget(m_dnsReverseBtn);
 
     m_dnsCompareBtn = new QPushButton(tr("Compare Servers"), widget);
     m_dnsCompareBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dnsCompareBtn->setToolTip(tr("Query multiple DNS servers and compare results"));
-    setAccessible(m_dnsCompareBtn, tr("Compare DNS servers"));
+    setAccessible(m_dnsCompareBtn, tr("Compare Servers"), tr("Compare DNS servers"));
     btn_row->addWidget(m_dnsCompareBtn);
 
     m_dnsFlushBtn = new QPushButton(tr("Flush Cache"), widget);
     m_dnsFlushBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_dnsFlushBtn->setToolTip(tr("Flush the local DNS resolver cache"));
-    setAccessible(m_dnsFlushBtn, tr("Flush DNS cache"));
+    setAccessible(m_dnsFlushBtn, tr("Flush Cache"), tr("Flush DNS cache"));
     btn_row->addWidget(m_dnsFlushBtn);
 
     btn_row->addStretch();
@@ -1025,7 +1025,7 @@ void NetworkDiagnosticPanel::setupPortScanControls(QWidget* widget, QVBoxLayout*
     m_portStartBtn = new QPushButton(tr("Scan Ports"), widget);
     m_portStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_portStartBtn->setToolTip(tr("Begin scanning the specified ports on the target"));
-    setAccessible(m_portStartBtn, tr("Start port scan"));
+    setAccessible(m_portStartBtn, tr("Scan Ports"), tr("Start port scan"));
     btn_row->addWidget(m_portStartBtn);
 
     m_portStopBtn = new QPushButton(tr("Stop"), widget);
@@ -1166,7 +1166,7 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     m_bwTestBtn = new QPushButton(tr("Run Test"), widget);
     m_bwTestBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_bwTestBtn->setToolTip(tr("Start bandwidth test against the iPerf3 server"));
-    setAccessible(m_bwTestBtn, tr("Run iPerf3 bandwidth test"));
+    setAccessible(m_bwTestBtn, tr("Run Test"), tr("Run iPerf3 bandwidth test"));
     iperf_btn_row->addWidget(m_bwTestBtn);
 
     m_bwStopBtn = new QPushButton(tr("Stop"), widget);
@@ -1181,14 +1181,14 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     m_bwServerStartBtn->setToolTip(
         tr("Start local iPerf3 server for other devices to test "
            "against"));
-    setAccessible(m_bwServerStartBtn, tr("Start iPerf3 server"));
+    setAccessible(m_bwServerStartBtn, tr("Start Server"), tr("Start iPerf3 server"));
     iperf_btn_row->addWidget(m_bwServerStartBtn);
 
     m_bwServerStopBtn = new QPushButton(tr("Stop Server"), widget);
     m_bwServerStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_bwServerStopBtn->setEnabled(false);
     m_bwServerStopBtn->setToolTip(tr("Stop the local iPerf3 server"));
-    setAccessible(m_bwServerStopBtn, tr("Stop iPerf3 server"));
+    setAccessible(m_bwServerStopBtn, tr("Stop Server"), tr("Stop iPerf3 server"));
     iperf_btn_row->addWidget(m_bwServerStopBtn);
 
     iperf_btn_row->addStretch();
@@ -1213,7 +1213,7 @@ void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLay
     m_httpSpeedBtn = new QPushButton(tr("Run Speed Test"), widget);
     m_httpSpeedBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_httpSpeedBtn->setToolTip(tr("Download from public CDN servers to measure internet speed"));
-    setAccessible(m_httpSpeedBtn, tr("HTTP speed test"));
+    setAccessible(m_httpSpeedBtn, tr("Run Speed Test"), tr("HTTP speed test"));
     http_btn_row->addWidget(m_httpSpeedBtn);
 
     m_httpSpeedStopBtn = new QPushButton(tr("Stop"), widget);
@@ -1252,7 +1252,7 @@ void NetworkDiagnosticPanel::setupWifiControls(QWidget* widget, QVBoxLayout* lay
     m_wifiContBtn = new QPushButton(tr("Continuous Scan"), widget);
     m_wifiContBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_wifiContBtn->setToolTip(tr("Start continuous WiFi scanning for real-time monitoring"));
-    setAccessible(m_wifiContBtn, tr("Start continuous WiFi scan"));
+    setAccessible(m_wifiContBtn, tr("Continuous Scan"), tr("Start continuous WiFi scan"));
     btn_row->addWidget(m_wifiContBtn);
     m_wifiStopBtn = new QPushButton(tr("Stop"), widget);
     m_wifiStopBtn->setStyleSheet(ui::kDangerButtonStyle);
@@ -1382,7 +1382,7 @@ void NetworkDiagnosticPanel::setupConnectionsControls(QWidget* widget, QVBoxLayo
     m_connStartBtn = new QPushButton(tr("Start Monitor"), widget);
     m_connStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_connStartBtn->setToolTip(tr("Start monitoring active network connections"));
-    setAccessible(m_connStartBtn, tr("Start connection monitor"));
+    setAccessible(m_connStartBtn, tr("Start Monitor"), tr("Start connection monitor"));
     btn_row->addWidget(m_connStartBtn);
 
     m_connStopBtn = new QPushButton(tr("Stop"), widget);
@@ -1460,7 +1460,7 @@ void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* 
     m_fwAuditBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_fwAuditBtn->setToolTip(
         tr("Enumerate all firewall rules, detect conflicts, and analyze gaps"));
-    setAccessible(m_fwAuditBtn, tr("Run firewall audit"));
+    setAccessible(m_fwAuditBtn, tr("Full Audit"), tr("Run firewall audit"));
     toolbar->addWidget(m_fwAuditBtn);
 
     connect(m_fwAuditBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onAuditFirewall);
@@ -1585,7 +1585,7 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     m_shareDiscoverBtn = new QPushButton(tr("Discover Shares"), widget);
     m_shareDiscoverBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_shareDiscoverBtn->setToolTip(tr("Discover shared folders and resources on the target host"));
-    setAccessible(m_shareDiscoverBtn, tr("Discover network shares"));
+    setAccessible(m_shareDiscoverBtn, tr("Discover Shares"), tr("Discover network shares"));
     config_row->addWidget(m_shareDiscoverBtn);
     layout->addLayout(config_row);
 
@@ -1640,14 +1640,14 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     m_lanServerStartBtn->setToolTip(
         tr("Start a TCP server that receives data from the "
            "remote device to measure transfer speed"));
-    setAccessible(m_lanServerStartBtn, tr("Start LAN transfer server"));
+    setAccessible(m_lanServerStartBtn, tr("Start Server"), tr("Start LAN transfer server"));
     row->addWidget(m_lanServerStartBtn);
 
     m_lanServerStopBtn = new QPushButton(tr("Stop Server"), parent);
     m_lanServerStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_lanServerStopBtn->setEnabled(false);
     m_lanServerStopBtn->setToolTip(tr("Stop the LAN transfer server"));
-    setAccessible(m_lanServerStopBtn, tr("Stop LAN transfer server"));
+    setAccessible(m_lanServerStopBtn, tr("Stop Server"), tr("Stop LAN transfer server"));
     row->addWidget(m_lanServerStopBtn);
 
     row->addStretch();
@@ -1703,7 +1703,7 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
     m_lanTestBtn->setToolTip(
         tr("Send data to the target device and measure "
            "transfer speed"));
-    setAccessible(m_lanTestBtn, tr("Run LAN transfer speed test"));
+    setAccessible(m_lanTestBtn, tr("Run Transfer Test"), tr("Run LAN transfer speed test"));
     btn_row->addWidget(m_lanTestBtn);
     btn_row->addStretch();
     group_layout->addLayout(btn_row);

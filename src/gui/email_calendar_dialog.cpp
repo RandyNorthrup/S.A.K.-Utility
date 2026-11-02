@@ -1169,7 +1169,8 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
 
     m_export_ics_button = new QPushButton(tr("Export ICS"), this);
     m_export_ics_button->setToolTip(tr("Export all events as iCalendar (.ics) files"));
-    m_export_ics_button->setAccessibleName(tr("Export calendar as ICS"));
+    m_export_ics_button->setAccessibleName(tr("Export ICS"));
+    m_export_ics_button->setAccessibleDescription(tr("Export calendar as ICS"));
     m_export_ics_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(
         m_export_ics_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportIcsClicked);
@@ -1177,7 +1178,8 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
 
     m_export_csv_button = new QPushButton(tr("Export CSV"), this);
     m_export_csv_button->setToolTip(tr("Export all events as a CSV spreadsheet"));
-    m_export_csv_button->setAccessibleName(tr("Export calendar as CSV"));
+    m_export_csv_button->setAccessibleName(tr("Export CSV"));
+    m_export_csv_button->setAccessibleDescription(tr("Export calendar as CSV"));
     m_export_csv_button->setStyleSheet(ui::kSecondaryButtonStyle);
     connect(
         m_export_csv_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportCsvClicked);

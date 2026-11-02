@@ -115,6 +115,14 @@ namespace sak {
 
 namespace {
 
+// The box's own words are its name, so a screen reader says what is being agreed to. The short
+// version is kept as the description.
+void nameConfirmationBox(QCheckBox* box, const QString& what) {
+    box->setAccessibleName(box->text());
+    box->setAccessibleDescription(what);
+}
+
+
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 thread_local QJsonObject g_partition_storage_device_fixtures;
 #endif
@@ -3358,8 +3366,8 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
     const QString repair_family = nonNativeRepairFamilyLabel(state.file_system);
     auto* repair_confirm = new QCheckBox(nonNativeRepairConfirmationText(state.file_system),
                                          &dialog);
-    repair_confirm->setAccessibleName(
-        QObject::tr("Confirm %1 filesystem repair").arg(repair_family));
+    nameConfirmationBox(repair_confirm,
+                        QObject::tr("Confirm %1 filesystem repair").arg(repair_family));
     dialog.formLayout()->addRow(QObject::tr("Mode:"), mode);
     dialog.formLayout()->addRow(QObject::tr("Target path:"), target_path);
     dialog.formLayout()->addRow(QString(), repair_confirm);
@@ -3715,7 +3723,7 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     widgets.drive_letter = createDriveLetterSelector(&dialog);
     widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
                                         &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Overwrite all sectors"));
+    nameConfirmationBox(widgets.full_format, QObject::tr("Overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
 
     addCreatePartitionFormRows(dialog, widgets);
@@ -4185,7 +4193,9 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.apfs_additional_volumes->setPlaceholderText(
         QObject::tr("Comma-separated extra volume names (one space manager)"));
     widgets.apfs_encrypt = new QCheckBox(QObject::tr("Encrypt (FileVault)"), &dialog);
-    widgets.apfs_encrypt->setAccessibleName(QObject::tr("Encrypt APFS volume with FileVault"));
+    widgets.apfs_encrypt->setAccessibleName(QObject::tr("Encrypt (FileVault)"));
+    widgets.apfs_encrypt->setAccessibleDescription(
+        QObject::tr("Encrypt APFS volume with FileVault"));
     widgets.apfs_volume_password = new QLineEdit(&dialog);
     widgets.apfs_volume_password->setEchoMode(QLineEdit::Password);
     widgets.apfs_volume_password->setAccessibleName(QObject::tr("APFS volume password"));
@@ -4196,12 +4206,12 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.apfs_recovery_key->setPlaceholderText(QObject::tr("Optional personal recovery key"));
     widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
                                         &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Overwrite all sectors"));
+    nameConfirmationBox(widgets.full_format, QObject::tr("Overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
     widgets.raw_format_confirm = new QCheckBox(
         QObject::tr("I understand this erases the partition and creates a new ext file system."),
         &dialog);
-    widgets.raw_format_confirm->setAccessibleName(QObject::tr("Confirm ext filesystem format"));
+    nameConfirmationBox(widgets.raw_format_confirm, QObject::tr("Confirm ext filesystem format"));
 
     dialog.formLayout()->addRow(QObject::tr("File system:"), widgets.file_system);
     dialog.formLayout()->addRow(QObject::tr("Cluster size:"), widgets.allocation_unit);
@@ -4239,8 +4249,8 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     widgets.swap_page_size->setVisible(swap_selected);
     widgets.swap_page_size->setEnabled(swap_selected);
     widgets.raw_format_confirm->setVisible(raw_selected);
-    widgets.raw_format_confirm->setAccessibleName(rawFormatConfirmationAccessibleName(raw_kind));
     widgets.raw_format_confirm->setText(rawFormatConfirmationText(raw_kind));
+    nameConfirmationBox(widgets.raw_format_confirm, rawFormatConfirmationAccessibleName(raw_kind));
     const bool encrypt_ready = !encrypt_checked || !widgets.apfs_volume_password->text().isEmpty();
     dialog.setAcceptEnabled((!raw_selected || widgets.raw_format_confirm->isChecked()) &&
                             encrypt_ready);
@@ -4364,8 +4374,8 @@ ClusterSizeWidgets addClusterSizeControls(PartitionOperationDialog& dialog,
 
     widgets.confirmation = new QCheckBox(
         QObject::tr("I understand this will reformat the selected volume after backup."), &dialog);
-    widgets.confirmation->setAccessibleName(
-        QObject::tr("Confirm cluster-size reformat backup and restore"));
+    nameConfirmationBox(widgets.confirmation,
+                        QObject::tr("Confirm cluster-size reformat backup and restore"));
 
     dialog.formLayout()->addRow(QObject::tr("File system:"), widgets.file_system);
     dialog.formLayout()->addRow(QObject::tr("Target cluster size:"), widgets.allocation_unit);
@@ -4515,7 +4525,7 @@ BackupRestoreWidgets addBackupRestoreControls(PartitionOperationDialog& dialog,
     backup_layout->addWidget(widgets.backup_directory, 1);
     backup_layout->addWidget(widgets.browse_backup);
     widgets.confirmation = new QCheckBox(confirmation_text, &dialog);
-    widgets.confirmation->setAccessibleName(confirmation_accessible_name);
+    nameConfirmationBox(widgets.confirmation, confirmation_accessible_name);
     widgets.status = new QLabel(&dialog);
     widgets.status->setWordWrap(true);
     widgets.status->setAccessibleName(QObject::tr("Backup restore status"));
@@ -4780,8 +4790,8 @@ AllocateFreeSpaceWidgets addAllocateFreeSpaceControls(PartitionOperationDialog& 
         new QCheckBox(QObject::tr("I understand the donor volume will be backed up, deleted, "
                                   "recreated, restored, and verified."),
                       &dialog);
-    widgets.confirmation->setAccessibleName(
-        QObject::tr("Confirm allocate-free-space backup and restore"));
+    nameConfirmationBox(widgets.confirmation,
+                        QObject::tr("Confirm allocate-free-space backup and restore"));
     widgets.donor_status = new QLabel(&dialog);
     widgets.donor_status->setWordWrap(true);
     widgets.donor_status->setAccessibleName(QObject::tr("Allocate free space donor status"));
@@ -5238,7 +5248,7 @@ QuickPartitionWidgets addQuickPartitionControls(PartitionOperationDialog& dialog
     widgets.label_prefix->setAccessibleName(QObject::tr("Quick partition label prefix"));
     widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
                                         &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Quick partition overwrite all sectors"));
+    nameConfirmationBox(widgets.full_format, QObject::tr("Quick partition overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
 
     addQuickPartitionFormRows(dialog, widgets, preset_row);
@@ -5527,8 +5537,8 @@ void addResizeExtAndStatusControls(PartitionOperationDialog& dialog,
         new QCheckBox(QObject::tr("I understand this will resize the partition and then resize "
                                   "the ext file system to match."),
                       &dialog);
-    widgets->non_native_confirmation->setAccessibleName(
-        QObject::tr("Confirm ext filesystem resize"));
+    nameConfirmationBox(widgets->non_native_confirmation,
+                        QObject::tr("Confirm ext filesystem resize"));
     dialog.formLayout()->addRow(QString(), widgets->non_native_confirmation);
     widgets->mode_status = new QLabel(&dialog);
     widgets->mode_status->setWordWrap(true);
@@ -8047,7 +8057,8 @@ void addDiskOptionsPage(QWizard* wizard,
     widgets->verify_mode->setAccessibleName(QStringLiteral("Verification mode"));
     widgets->align = new QCheckBox(QStringLiteral("Align partitions to 1 MB"), options_page);
     widgets->align->setChecked(true);
-    widgets->align->setAccessibleName(QStringLiteral("Align partitions to one megabyte"));
+    widgets->align->setAccessibleName(QStringLiteral("Align partitions to 1 MB"));
+    widgets->align->setAccessibleDescription(QStringLiteral("Align partitions to one megabyte"));
     widgets->target_gpt = new QCheckBox(QStringLiteral("Prefer GPT target boot layout"),
                                         options_page);
     widgets->target_gpt->setChecked(config.os_migration);
@@ -8073,7 +8084,7 @@ void addDiskReviewPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
     review_layout->addWidget(widgets->review);
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target disk will be overwritten."), review_page);
-    widgets->target_wipe->setAccessibleName(QStringLiteral("Confirm target disk overwrite"));
+    nameConfirmationBox(widgets->target_wipe, QStringLiteral("Confirm target disk overwrite"));
     review_layout->addWidget(widgets->target_wipe);
     review_page->setConfirmationBox(widgets->target_wipe);
     wizard->addPage(review_page);
@@ -8243,8 +8254,8 @@ void addPartitionCopyReviewPage(QWizard* wizard, PartitionCopyWizardWidgets* wid
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target path or region will be overwritten."),
         review_page);
-    widgets->target_wipe->setAccessibleName(
-        QStringLiteral("Confirm partition clone target overwrite"));
+    nameConfirmationBox(widgets->target_wipe,
+                        QStringLiteral("Confirm partition clone target overwrite"));
     review_layout->addWidget(widgets->target_wipe);
     review_page->setConfirmationBox(widgets->target_wipe);
     wizard->addPage(review_page);
@@ -8409,8 +8420,8 @@ void addRecoveryCandidatePage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
         QStringLiteral(
             "I understand the recovered partition candidate will be written to the selected disk."),
         page);
-    widgets->acknowledge->setAccessibleName(
-        QStringLiteral("Acknowledge recovered partition write-back"));
+    nameConfirmationBox(widgets->acknowledge,
+                        QStringLiteral("Acknowledge recovered partition write-back"));
     layout->addRow(QString(), widgets->restore_candidate);
     layout->addRow(QStringLiteral("Offset bytes:"), widgets->offset_bytes);
     layout->addRow(QStringLiteral("Size bytes:"), widgets->size_bytes);
@@ -10764,7 +10775,7 @@ static std::optional<ApfsContainerActionRequest> showApfsContainerActionDialog(
         QObject::tr("I understand this writes the requested change directly to the selected APFS "
                     "container on Apply."),
         &dialog);
-    confirm->setAccessibleName(QObject::tr("Confirm APFS container action"));
+    nameConfirmationBox(confirm, QObject::tr("Confirm APFS container action"));
 
     dialog.formLayout()->addRow(QObject::tr("Action:"), mode);
     dialog.formLayout()->addRow(QObject::tr("Name:"), name);
@@ -12585,7 +12596,7 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
         auto* confirm = new QCheckBox(
             QObject::tr("I understand this erases the entire disk and all of its partitions."),
             &dialog);
-        confirm->setAccessibleName(QObject::tr("Confirm wipe disk"));
+        nameConfirmationBox(confirm, QObject::tr("Confirm wipe disk"));
         dialog.formLayout()->addRow(QString(), confirm);
         dialog.setAcceptEnabled(false);
         QObject::connect(confirm, &QCheckBox::toggled, &dialog, [&dialog](bool on) {
@@ -12610,7 +12621,7 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
     mode->setCurrentIndex(target.drive_letter.isEmpty() ? 1 : 0);
     auto* confirm = new QCheckBox(QObject::tr("I understand the selected data is securely erased."),
                                   &dialog);
-    confirm->setAccessibleName(QObject::tr("Confirm wipe partition"));
+    nameConfirmationBox(confirm, QObject::tr("Confirm wipe partition"));
     dialog.formLayout()->addRow(QObject::tr("Scope:"), mode);
     dialog.formLayout()->addRow(QString(), confirm);
     dialog.setAcceptEnabled(false);

@@ -4,10 +4,12 @@
 /// @file test_network_diagnostic_panel.cpp
 /// @brief The Network panel's start-up adapter scan runs, off-thread, in every run mode.
 
+#include "sak/accessible_name_rule.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/quick_action_controller.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QDialog>
 #include <QFile>
@@ -40,7 +42,7 @@ constexpr int kIperfRefusedTimeoutMs = 30'000;
 QPushButton* reportButton(const QWidget& panel) {
     const auto buttons = panel.findChildren<QPushButton*>();
     for (QPushButton* button : buttons) {
-        if (button->accessibleName() == QStringLiteral("Generate network report")) {
+        if (button->text() == QStringLiteral("Generate Report...")) {
             return button;
         }
     }
@@ -212,6 +214,9 @@ private Q_SLOTS:
     void diagnoseOpensSettingsWhereWindowsHasNoTroubleshooter();
     void flushCacheDoesNotClaimItNeedsAnAdministrator();
     void backupAndRestoreDoNotPromiseEthernetOnly();
+    void accessibleNameHoldsLabel_data();
+    void accessibleNameHoldsLabel();
+    void everyButtonsNameHoldsItsLabel();
 
 private:
     static void runReportFlow(const QString& report_path, QByteArray* written);
@@ -570,6 +575,48 @@ void NetworkDiagnosticPanelTests::backupAndRestoreDoNotPromiseEthernetOnly() {
             QVERIFY2(!text.contains(QStringLiteral("Ethernet"), Qt::CaseInsensitive),
                      qPrintable(text));
         }
+    }
+}
+
+void NetworkDiagnosticPanelTests::accessibleNameHoldsLabel_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<QString>("label");
+    QTest::addColumn<bool>("holds");
+    QTest::newRow("the same") << "Run Test" << "Run Test" << true;
+    QTest::newRow("adds to it") << "Stop HTTP speed test" << "Stop" << true;
+    QTest::newRow("ignores case") << "Start search" << "Search" << true;
+    QTest::newRow("access key") << "Save" << "&Save" << true;
+    QTest::newRow("trailing dots") << "Generate Report" << "Generate Report..." << true;
+    QTest::newRow("leading symbol") << "Add Files" << "+ Add Files" << true;
+    QTest::newRow("symbols only") << "Previous match" << QString::fromUtf8("\xE2\x97\x84") << true;
+    QTest::newRow("no label") << "Settings" << "" << true;
+    QTest::newRow("words changed") << "Add Scan Directory" << "Add Directory" << false;
+    QTest::newRow("words moved") << "HTTP speed test" << "Run Speed Test" << false;
+    QTest::newRow("no name") << "" << "Run Test" << false;
+}
+
+void NetworkDiagnosticPanelTests::accessibleNameHoldsLabel() {
+    QFETCH(QString, name);
+    QFETCH(QString, label);
+    QFETCH(bool, holds);
+    QCOMPARE(sak::accessibleNameHoldsLabel(name, label), holds);
+}
+
+// Found on a VM: buttons whose accessible names used other words than the ones on them. The
+// start-up audit holds this for every panel built with the main window; these two sections are
+// checked here as well because this is where most of them were.
+void NetworkDiagnosticPanelTests::everyButtonsNameHoldsItsLabel() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto buttons = panel.findChildren<QAbstractButton*>();
+    buttons += panel.adapterWidget()->findChildren<QAbstractButton*>();
+    QVERIFY(buttons.size() > 20);
+    for (const QAbstractButton* button : std::as_const(buttons)) {
+        if (button->accessibleName().isEmpty()) {
+            continue;  // a Qt internal, or a helper the audit holds to its own rule
+        }
+        QVERIFY2(sak::accessibleNameHoldsLabel(button->accessibleName(), button->text()),
+                 qPrintable(button->accessibleName() + QStringLiteral(" for ") + button->text()));
     }
 }
 

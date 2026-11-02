@@ -291,7 +291,8 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
 
     m_backButton = new QPushButton("Back", this);
     m_backButton->setEnabled(false);
-    m_backButton->setAccessibleName(QStringLiteral("Previous Step"));
+    m_backButton->setAccessibleName(QStringLiteral("Back"));
+    m_backButton->setAccessibleDescription(QStringLiteral("Previous Step"));
     m_backButton->setToolTip(QStringLiteral("Go back to the previous step"));
     m_backButton->setStyleSheet(ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_backButton);
@@ -458,7 +459,7 @@ void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* card_row) {
                               .description = tr("Download an official Windows ISO directly"
                                                 " from the Microsoft website."),
                               .button_text = tr("Open Microsoft Download"),
-                              .access_name = QStringLiteral("Microsoft ISO Download"),
+                              .access_name = QStringLiteral("Open Microsoft Download"),
                               .tip = QStringLiteral("Open the official Microsoft Windows ISO"
                                                     " download page")},
                              m_microsoftWindowsDownloadButton);
@@ -491,7 +492,7 @@ void ImageFlasherPanel::addUupDownloadCard(QHBoxLayout* card_row) {
                               .description = tr("Build a custom Windows ISO from UUP update"
                                                 " packages with edition selection."),
                               .button_text = tr("Download and Build ISO"),
-                              .access_name = QStringLiteral("Download Windows ISO via UUP"),
+                              .access_name = QStringLiteral("Download and Build ISO"),
                               .tip = QStringLiteral("Download a Windows 11 ISO using UUP dump")},
                              m_downloadWindowsButton));
     connect(m_downloadWindowsButton,
@@ -540,7 +541,8 @@ void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* page_layout) {
     m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
     m_selectImageButton->setMinimumWidth(kSelectImageButtonWidth);
     m_selectImageButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
+    m_selectImageButton->setAccessibleName(QStringLiteral("Select Image File"));
+    m_selectImageButton->setAccessibleDescription(QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));
     connect(
         m_selectImageButton, &QPushButton::clicked, this, &ImageFlasherPanel::onSelectImageClicked);
@@ -580,7 +582,7 @@ void ImageFlasherPanel::createDriveSelectionPage() {
             &ImageFlasherPanel::onDriveSelectionChanged);
 
     m_showAllDrivesCheckBox = new QCheckBox("Show all drives (including system drive)", group_box);
-    m_showAllDrivesCheckBox->setAccessibleName(QStringLiteral("Show All Drives"));
+    m_showAllDrivesCheckBox->setAccessibleName(m_showAllDrivesCheckBox->text());
     m_showAllDrivesCheckBox->setToolTip(
         QStringLiteral("Include non-removable and system drives in "
                        "the list"));

@@ -534,6 +534,7 @@ set(SAK_CORE_SOURCES
     include/sak/error_codes.h
     include/sak/aligned_buffer.h
     include/sak/format_utils.h
+    include/sak/accessible_name_rule.h
     include/sak/widget_helpers.h
     include/sak/config_manager.h
     include/sak/app_scanner.h

@@ -4,6 +4,7 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
+#include "sak/accessible_name_rule.h"
 #include "sak/app_paths.h"
 #include "sak/crash_reporter.h"
 #include "sak/elevation_manager.h"
@@ -286,43 +287,63 @@ QString accessibilityAuditLabel(const QWidget* widget) {
     return objectDebugLabel(widget) + textDebugLabel(widget) + parentDebugLabel(widget);
 }
 
-int runAccessibilityAudit(sak::MainWindow& main_window) {
+struct AccessibilityFindings {
     QStringList missing;
-    auto widgets = main_window.findChildren<QWidget*>();
-    widgets.prepend(&main_window);
+    QStringList mislabeled;
+    [[nodiscard]] bool passed() const { return missing.isEmpty() && mislabeled.isEmpty(); }
+};
+
+AccessibilityFindings collectAccessibilityFindings(const QList<QWidget*>& widgets) {
+    AccessibilityFindings findings;
     for (const QWidget* widget : widgets) {
         if (!requiresExplicitAccessibleName(widget)) {
             continue;
         }
         if (widget->accessibleName().trimmed().isEmpty()) {
-            missing << accessibilityAuditLabel(widget);
+            findings.missing << accessibilityAuditLabel(widget);
+            continue;
+        }
+        const auto* button = qobject_cast<const QAbstractButton*>(widget);
+        if ((button != nullptr) &&
+            !sak::accessibleNameHoldsLabel(button->accessibleName(), button->text())) {
+            findings.mislabeled << accessibilityAuditLabel(widget) +
+                                       QStringLiteral(" name=\"%1\"").arg(button->accessibleName());
         }
     }
+    return findings;
+}
+
+bool writeAccessibilityAuditFile(const QString& output_path,
+                                 const AccessibilityFindings& findings,
+                                 qsizetype checked) {
+    QFile file(output_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+    QTextStream out(&file);
+    out << (findings.passed() ? "SAK_ACCESSIBILITY_AUDIT_OK" : "SAK_ACCESSIBILITY_AUDIT_FAILED")
+        << " missing=" << findings.missing.size() << " mislabeled=" << findings.mislabeled.size()
+        << " checked=" << checked << "\n";
+    for (const auto& entry : findings.missing) {
+        out << entry << "\n";
+    }
+    for (const auto& entry : findings.mislabeled) {
+        out << "mislabeled: " << entry << "\n";
+    }
+    return true;
+}
+
+int runAccessibilityAudit(sak::MainWindow& main_window) {
+    auto widgets = main_window.findChildren<QWidget*>();
+    widgets.prepend(&main_window);
+    const AccessibilityFindings findings = collectAccessibilityFindings(widgets);
 
     const QString output_path = accessibilityAuditOutputPath();
-    bool output_written = output_path.isEmpty();
-    if (!output_path.isEmpty()) {
-        QFile file(output_path);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QTextStream out(&file);
-            out << (missing.isEmpty() ? "SAK_ACCESSIBILITY_AUDIT_OK"
-                                      : "SAK_ACCESSIBILITY_AUDIT_FAILED")
-                << " missing=" << missing.size() << " checked=" << widgets.size() << "\n";
-            for (const auto& entry : missing) {
-                out << entry << "\n";
-            }
-            output_written = true;
-        }
-    }
-
-    if (!output_written) {
+    if (!output_path.isEmpty() &&
+        !writeAccessibilityAuditFile(output_path, findings, widgets.size())) {
         return kAccessibilityOutputWriteFailureExitCode;
     }
-    if (!missing.isEmpty()) {
-        return kAccessibilityMissingNamesExitCode;
-    }
-
-    return 0;
+    return findings.passed() ? 0 : kAccessibilityMissingNamesExitCode;
 }
 
 // Qt's DirectWrite font database walks every installed family on first use. With thousands of

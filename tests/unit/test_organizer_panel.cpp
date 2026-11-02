@@ -101,8 +101,7 @@ void OrganizerPanelTests::previewMovesNothingAndOrganizeMovesEverything() {
     auto* target = findByAccessibleName<QLineEdit>(panel, QStringLiteral("Target Directory Path"));
     auto* preview = findByAccessibleName<QPushButton>(panel,
                                                       QStringLiteral("Preview Organization"));
-    auto* organize = findByAccessibleName<QPushButton>(panel,
-                                                       QStringLiteral("Execute Organization"));
+    auto* organize = findByAccessibleName<QPushButton>(panel, QStringLiteral("Organize Files"));
     QVERIFY(target != nullptr && preview != nullptr && organize != nullptr);
     target->setText(dir.path());
 
@@ -140,8 +139,7 @@ void OrganizerPanelTests::aFileThatWillNotMoveIsListedWithWhatDidMove() {
 
     sak::OrganizerPanel panel;
     auto* target = findByAccessibleName<QLineEdit>(panel, QStringLiteral("Target Directory Path"));
-    auto* organize = findByAccessibleName<QPushButton>(panel,
-                                                       QStringLiteral("Execute Organization"));
+    auto* organize = findByAccessibleName<QPushButton>(panel, QStringLiteral("Organize Files"));
     QVERIFY(target != nullptr && organize != nullptr);
     target->setText(dir.path());
 

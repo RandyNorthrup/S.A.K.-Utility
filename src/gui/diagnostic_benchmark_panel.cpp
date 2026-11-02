@@ -284,7 +284,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
 
     m_hw_copy_button = new QPushButton(tr("Copy to Clipboard"), this);
     m_hw_copy_button->setMinimumWidth(sak::kButtonWidthLarge);
-    m_hw_copy_button->setAccessibleName(QStringLiteral("Copy Hardware Info"));
+    m_hw_copy_button->setAccessibleName(QStringLiteral("Copy to Clipboard"));
+    m_hw_copy_button->setAccessibleDescription(QStringLiteral("Copy Hardware Info"));
     m_hw_copy_button->setToolTip(QStringLiteral("Copy hardware inventory to the clipboard"));
     m_hw_copy_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_hw_copy_button);
@@ -756,7 +757,8 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createSuiteButtonRow() {
     m_suite_skip_button = new QPushButton("Skip Step", this);
     m_suite_skip_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_suite_skip_button->setEnabled(false);
-    m_suite_skip_button->setAccessibleName(QStringLiteral("Skip Suite Step"));
+    m_suite_skip_button->setAccessibleName(QStringLiteral("Skip Step"));
+    m_suite_skip_button->setAccessibleDescription(QStringLiteral("Skip Suite Step"));
     m_suite_skip_button->setToolTip(QStringLiteral("Skip the current step in the suite"));
     m_suite_skip_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_suite_skip_button);
@@ -857,14 +859,16 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
 
     m_report_json_button = new QPushButton("Export JSON", this);
     m_report_json_button->setMinimumWidth(sak::kButtonWidthMedium);
-    m_report_json_button->setAccessibleName(QStringLiteral("Export Scan Report as JSON"));
+    m_report_json_button->setAccessibleName(QStringLiteral("Export JSON"));
+    m_report_json_button->setAccessibleDescription(QStringLiteral("Export Scan Report as JSON"));
     m_report_json_button->setToolTip(QStringLiteral("Save the scan results as a JSON file"));
     m_report_json_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_json_button);
 
     m_report_csv_button = new QPushButton("Export CSV", this);
     m_report_csv_button->setMinimumWidth(sak::kButtonWidthMedium);
-    m_report_csv_button->setAccessibleName(QStringLiteral("Export Scan Report as CSV"));
+    m_report_csv_button->setAccessibleName(QStringLiteral("Export CSV"));
+    m_report_csv_button->setAccessibleDescription(QStringLiteral("Export Scan Report as CSV"));
     m_report_csv_button->setToolTip(QStringLiteral("Save the scan results as a CSV file"));
     m_report_csv_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_csv_button);

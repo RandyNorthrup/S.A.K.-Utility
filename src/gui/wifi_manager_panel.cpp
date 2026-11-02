@@ -345,7 +345,8 @@ void WifiManagerPanel::setupNetworkOptionsFields(QFormLayout* layout) {
     // Hidden network
     m_hidden_checkbox = new QCheckBox("This network is hidden (not broadcasting SSID)",
                                       m_form_group);
-    m_hidden_checkbox->setAccessibleName(QStringLiteral("Hidden Network"));
+    m_hidden_checkbox->setAccessibleName(m_hidden_checkbox->text());
+    m_hidden_checkbox->setAccessibleDescription(QStringLiteral("Hidden Network"));
     layout->addRow("", m_hidden_checkbox);
 }
 
@@ -354,7 +355,7 @@ void WifiManagerPanel::setupFormActionButtons(QFormLayout* layout) {
     m_connect_phone_btn->setToolTip(
         "Show a QR code of the current network for phone/tablet "
         "scanning");
-    m_connect_phone_btn->setAccessibleName(QStringLiteral("Connect with Phone"));
+    m_connect_phone_btn->setAccessibleName(m_connect_phone_btn->text());
     m_connect_phone_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_add_table_btn = new QPushButton("Add to Table", m_form_group);
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");

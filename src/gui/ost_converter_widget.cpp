@@ -162,7 +162,8 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     btn_layout->setSpacing(ui::kSpacingSmall);
 
     m_add_files_button = new QPushButton(tr("+ Add Files"), group);
-    m_add_files_button->setAccessibleName(tr("Add email files"));
+    m_add_files_button->setAccessibleName(tr("+ Add Files"));
+    m_add_files_button->setAccessibleDescription(tr("Add email files"));
     m_add_files_button->setToolTip(tr("Add OST or PST files to the conversion queue"));
     applyCompactOstButton(m_add_files_button, ui::kCompactPrimaryButtonStyle);
     m_remove_button = new QPushButton(tr("Remove"), group);
@@ -170,7 +171,8 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_remove_button->setToolTip(tr("Remove selected file from the queue"));
     applyCompactOstButton(m_remove_button, ui::kCompactSecondaryButtonStyle);
     m_clear_button = new QPushButton(tr("Clear All"), group);
-    m_clear_button->setAccessibleName(tr("Clear conversion queue"));
+    m_clear_button->setAccessibleName(tr("Clear All"));
+    m_clear_button->setAccessibleDescription(tr("Clear conversion queue"));
     m_clear_button->setToolTip(tr("Remove all files from the queue"));
     applyCompactOstButton(m_clear_button, ui::kCompactSecondaryButtonStyle);
 
@@ -280,7 +282,8 @@ QWidget* OstConverterWidget::createFilterSection() {
     applyOstGroupLayout(layout);
 
     m_filters_enabled_check = new QCheckBox(tr("Enable filters"), m_filter_group);
-    m_filters_enabled_check->setAccessibleName(tr("Enable email conversion filters"));
+    m_filters_enabled_check->setAccessibleName(tr("Enable filters"));
+    m_filters_enabled_check->setAccessibleDescription(tr("Enable email conversion filters"));
     m_filters_enabled_check->setToolTip(
         tr("Filter converted messages by date, sender, or recipient"));
     layout->addWidget(m_filters_enabled_check);
@@ -360,12 +363,16 @@ QWidget* OstConverterWidget::createRecoverySection() {
 
     m_recover_deleted_check = new QCheckBox(
         tr("Recover deleted items (scan Recoverable Items folder)"), m_recovery_group);
-    m_recover_deleted_check->setAccessibleName(tr("Recover deleted email items"));
+    m_recover_deleted_check->setAccessibleName(
+        tr("Recover deleted items (scan Recoverable Items folder)"));
+    m_recover_deleted_check->setAccessibleDescription(tr("Recover deleted email items"));
     layout->addWidget(m_recover_deleted_check);
 
     m_deep_recovery_check = new QCheckBox(
         tr("Deep recovery (scan orphaned nodes -- slow, thorough)"), m_recovery_group);
-    m_deep_recovery_check->setAccessibleName(tr("Enable deep email recovery"));
+    m_deep_recovery_check->setAccessibleName(
+        tr("Deep recovery (scan orphaned nodes -- slow, thorough)"));
+    m_deep_recovery_check->setAccessibleDescription(tr("Enable deep email recovery"));
     m_deep_recovery_check->setToolTip(
         tr("Walk all NBT nodes to find hard-deleted messages not in any folder"));
     layout->addWidget(m_deep_recovery_check);
@@ -381,7 +388,8 @@ QWidget* OstConverterWidget::createButtonBar() {
     layout->setSpacing(ui::kSpacingMedium);
 
     m_view_report_button = new QPushButton(tr("View Report"), bar);
-    m_view_report_button->setAccessibleName(tr("View conversion report"));
+    m_view_report_button->setAccessibleName(tr("View Report"));
+    m_view_report_button->setAccessibleDescription(tr("View conversion report"));
     m_view_report_button->setEnabled(false);
     m_view_report_button->setToolTip(tr("Open the batch conversion report in your browser"));
     applyCompactOstButton(m_view_report_button, ui::kCompactSecondaryButtonStyle);

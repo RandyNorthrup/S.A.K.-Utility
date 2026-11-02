@@ -48,7 +48,8 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
 
     m_scan_disks_button = new QPushButton(tr("Scan Disks"), footer);
     m_scan_disks_button->setObjectName(QStringLiteral("fileExplorerScanDisksButton"));
-    m_scan_disks_button->setAccessibleName(tr("Scan disk and partition targets"));
+    m_scan_disks_button->setAccessibleName(tr("Scan Disks"));
+    m_scan_disks_button->setAccessibleDescription(tr("Scan disk and partition targets"));
     m_scan_disks_button->setToolTip(tr("Discover disk and partition targets"));
     m_scan_disks_button->setIcon(
         FileExplorerIconRegistry::iconForKey(QStringLiteral("scan-disks")));
@@ -56,7 +57,8 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
 
     m_add_manual_button = new QPushButton(tr("Add Raw/Image"), footer);
     m_add_manual_button->setObjectName(QStringLiteral("fileExplorerAddRawImageButton"));
-    m_add_manual_button->setAccessibleName(tr("Add manual raw or image target"));
+    m_add_manual_button->setAccessibleName(tr("Add Raw/Image"));
+    m_add_manual_button->setAccessibleDescription(tr("Add manual raw or image target"));
     m_add_manual_button->setToolTip(tr("Add a raw device or image file as a target"));
     m_add_manual_button->setIcon(
         FileExplorerIconRegistry::iconForKey(QStringLiteral("image-file")));

@@ -243,8 +243,10 @@ struct CreateDialogInspection {
 template <typename Widget>
 Widget* findAccessibleWidget(QDialog* dialog, const QString& accessibleName) {
     const auto widgets = dialog->findChildren<Widget*>();
+    // A confirmation box's name is its whole sentence, with the short version as its description.
     const auto it = std::find_if(widgets.cbegin(), widgets.cend(), [&](const Widget* widget) {
-        return widget->accessibleName() == accessibleName;
+        return widget->accessibleName() == accessibleName ||
+               widget->accessibleDescription() == accessibleName;
     });
     return it == widgets.cend() ? nullptr : *it;
 }

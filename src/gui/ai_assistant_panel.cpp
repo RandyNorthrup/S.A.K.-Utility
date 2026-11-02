@@ -4082,7 +4082,9 @@ void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layo
     m_browserExtensionButton->setToolTip(
         tr("Set up (or remove) the Chrome extension the assistant uses to drive the browser. "
            "This changes only your own Chrome policy and needs no administrator rights."));
-    setAccessible(m_browserExtensionButton, tr("Install or remove browser-control extension"));
+    setAccessible(m_browserExtensionButton,
+                  tr("Install extension"),
+                  tr("Install or remove browser-control extension"));
     connect(m_browserExtensionButton,
             &QPushButton::clicked,
             this,
@@ -4132,6 +4134,7 @@ void AiAssistantPanel::refreshBrowserExtensionStatus() {
     }
     m_browserExtensionStatusLabel->setText(status_text);
     m_browserExtensionButton->setText(button_text);
+    m_browserExtensionButton->setAccessibleName(button_text);
 }
 
 void AiAssistantPanel::onBrowserExtensionButtonClicked() {
@@ -4185,7 +4188,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     configureCompactButton(m_newSessionButton, QStringLiteral(":/icons/icons/icons8-new-chat.svg"));
     m_newSessionButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_newSessionButton->setToolTip(tr("Start a new AI chat session"));
-    setAccessible(m_newSessionButton, tr("Start new AI session"));
+    setAccessible(m_newSessionButton, tr("New Chat"), tr("Start new AI session"));
     connect(
         m_newSessionButton, &QPushButton::clicked, this, &AiAssistantPanel::onNewSessionClicked);
 
@@ -4195,7 +4198,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     m_renameSessionButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_renameSessionButton->setToolTip(
         tr("Rename the current chat session and its active artifact folder"));
-    setAccessible(m_renameSessionButton, tr("Rename current AI chat"));
+    setAccessible(m_renameSessionButton, tr("Rename Chat"), tr("Rename current AI chat"));
     connect(m_renameSessionButton,
             &QPushButton::clicked,
             this,
@@ -4212,7 +4215,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     m_resumeGateButton->setToolTip(
         tr("Answer the pending workflow question and continue the same AI run"));
     setAccessible(m_resumeGateButton,
-                  tr("Resume waiting AI run"),
+                  tr("Resume Waiting Run"),
                   tr("Answer pending workflow input and continue"));
     connect(
         m_resumeGateButton, &QPushButton::clicked, this, &AiAssistantPanel::onResumeGateClicked);
@@ -4349,7 +4352,7 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     configureCompactButton(m_workflowDetailsCloseButton,
                            QStringLiteral(":/icons/icons/icons8-close-window.svg"));
     m_workflowDetailsCloseButton->setToolTip(tr("Hide workflow details panel"));
-    setAccessible(m_workflowDetailsCloseButton, tr("Hide workflow details"));
+    setAccessible(m_workflowDetailsCloseButton, tr("Close"), tr("Hide workflow details"));
     connect(m_workflowDetailsCloseButton,
             &QPushButton::clicked,
             this,
@@ -4411,7 +4414,7 @@ void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QW
     m_loadKeyButton = new QPushButton(tr("Load Key"), pane);
     configureCompactButton(m_loadKeyButton);
     m_loadKeyButton->setToolTip(tr("Enter an OpenAI API key without displaying it in the panel"));
-    setAccessible(m_loadKeyButton, tr("Load OpenAI API key"));
+    setAccessible(m_loadKeyButton, tr("Load Key"), tr("Load OpenAI API key"));
     connect(m_loadKeyButton, &QPushButton::clicked, this, &AiAssistantPanel::onLoadApiKeyClicked);
     key_row->addWidget(m_loadKeyButton);
     layout->addLayout(key_row);
@@ -4629,7 +4632,7 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWid
     m_addContextFilesButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_addContextFilesButton->setToolTip(tr(
         "Attach files, screenshots, logs, scripts, or documents as evidence for the next request"));
-    setAccessible(m_addContextFilesButton, tr("Add context files"));
+    setAccessible(m_addContextFilesButton, tr("Attach"), tr("Add context files"));
     connect(m_addContextFilesButton,
             &QPushButton::clicked,
             this,
@@ -4641,7 +4644,7 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWid
                            QStringLiteral(":/icons/icons/icons8-instructions.svg"));
     m_addInstructionButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_addInstructionButton->setToolTip(tr("Add markdown instruction files"));
-    setAccessible(m_addInstructionButton, tr("Add markdown instruction files"));
+    setAccessible(m_addInstructionButton, tr("Instructions"), tr("Add markdown instruction files"));
     connect(m_addInstructionButton,
             &QPushButton::clicked,
             this,
@@ -4852,6 +4855,7 @@ void AiAssistantPanel::updateLoadKeyButton(bool has_key, bool busy) {
                 ? tr("Clear the loaded OpenAI API key from this session and encrypted app storage")
                 : tr("Enter an OpenAI API key without displaying it in the panel"));
         setAccessible(m_loadKeyButton,
+                      m_loadKeyButton->text(),
                       has_key ? tr("Clear OpenAI API key") : tr("Load OpenAI API key"));
     }
 }

@@ -1346,7 +1346,8 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent) {
     auto* feature_btn = new QPushButton(tr("Request a Feature"), parent);
     feature_btn->setMinimumHeight(sak::kButtonHeightTall);
     feature_btn->setStyleSheet(ui::kPrimaryButtonStyle);
-    feature_btn->setAccessibleName(QStringLiteral("Submit feature request on GitHub"));
+    feature_btn->setAccessibleName(QStringLiteral("Request a Feature"));
+    feature_btn->setAccessibleDescription(QStringLiteral("Submit feature request on GitHub"));
     feature_btn->setToolTip(
         QStringLiteral("Opens a GitHub issue form to submit a feature request"));
     connect(feature_btn, &QPushButton::clicked, this, []() {
@@ -1417,7 +1418,8 @@ QFrame* MainWindow::createCommunityCard(QWidget* parent) {
     auto* discord_btn = new QPushButton(tr("Join Discord"), parent);
     discord_btn->setMinimumHeight(sak::kButtonHeightTall);
     discord_btn->setStyleSheet(ui::kDiscordCompactButtonStyle);
-    discord_btn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
+    discord_btn->setAccessibleName(QStringLiteral("Join Discord"));
+    discord_btn->setAccessibleDescription(QStringLiteral("Join S.A.K. Utility Discord server"));
     discord_btn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
     connect(discord_btn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://discord.gg/pMh2n9kSK3")));
@@ -1738,7 +1740,8 @@ void MainWindow::createThemeSelector() {
     m_theme_button->setFlat(true);
     m_theme_button->setCursor(Qt::PointingHandCursor);
     m_theme_button->setStyleSheet(sak::ui::compactLinkButtonStyle());
-    m_theme_button->setAccessibleName(tr("App theme"));
+    m_theme_button->setAccessibleName(tr("Theme"));
+    m_theme_button->setAccessibleDescription(tr("App theme"));
     m_theme_button->setToolTip(tr("Light, Dark, or System to follow the Windows app theme"));
     auto* menu = new QMenu(m_theme_button);
     auto* choices = new QActionGroup(menu);
@@ -1772,6 +1775,7 @@ void MainWindow::refreshThemeButton() {
         action->setChecked(current);
         if (current) {
             m_theme_button->setText(tr("Theme: %1").arg(action->text()));
+            m_theme_button->setAccessibleName(m_theme_button->text());
         }
     }
 }

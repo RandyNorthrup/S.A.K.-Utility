@@ -163,7 +163,7 @@ void revealTabWidget(QTabWidget* tabs) {
 QPushButton* themeButton(const QWidget& window) {
     const auto buttons = window.findChildren<QPushButton*>();
     for (QPushButton* button : buttons) {
-        if (button->accessibleName() == QStringLiteral("App theme")) {
+        if (button->accessibleDescription() == QStringLiteral("App theme")) {
             return button;
         }
     }

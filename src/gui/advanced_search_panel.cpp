@@ -204,7 +204,9 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
     ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns \u25BE"), panel);
     ui.regex_patterns_button->setStyleSheet(ui::kPrimaryButtonStyle);
     ui.regex_patterns_button->setToolTip(QObject::tr("Select built-in or custom regex patterns"));
-    setAccessible(ui.regex_patterns_button, QObject::tr("Regex pattern library"));
+    setAccessible(ui.regex_patterns_button,
+                  QObject::tr("Regex Patterns"),
+                  QObject::tr("Regex pattern library"));
     row->addWidget(ui.regex_patterns_button);
 
     ui.case_sensitive_check = new QCheckBox(QObject::tr("Case sensitive"), panel);
@@ -262,12 +264,14 @@ SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
 
     ui.archive_search_check = new QCheckBox(QObject::tr("Archive search"), panel);
     ui.archive_search_check->setToolTip(QObject::tr("Search inside ZIP/EPUB archives"));
-    setAccessible(ui.archive_search_check, QObject::tr("Search archives"));
+    setAccessible(ui.archive_search_check,
+                  QObject::tr("Archive search"),
+                  QObject::tr("Search archives"));
     row->addWidget(ui.archive_search_check);
 
     ui.binary_hex_check = new QCheckBox(QObject::tr("Binary/hex"), panel);
     ui.binary_hex_check->setToolTip(QObject::tr("Search binary files for hex patterns"));
-    setAccessible(ui.binary_hex_check, QObject::tr("Binary hex search"));
+    setAccessible(ui.binary_hex_check, QObject::tr("Binary/hex"), QObject::tr("Binary hex search"));
     row->addWidget(ui.binary_hex_check);
 
     row->addStretch();
@@ -723,12 +727,14 @@ void AdvancedSearchPanel::createSearchTargetRow(QVBoxLayout* search_layout) {
     target_row->addWidget(m_target_refresh_button);
 
     m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
-    m_target_scan_button->setAccessibleName(tr("Scan disk and partition search targets"));
+    m_target_scan_button->setAccessibleName(tr("Scan Disks"));
+    m_target_scan_button->setAccessibleDescription(tr("Scan disk and partition search targets"));
     m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
     target_row->addWidget(m_target_scan_button);
 
     m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
-    m_target_manual_button->setAccessibleName(tr("Add raw or image search target"));
+    m_target_manual_button->setAccessibleName(tr("Add Raw/Image"));
+    m_target_manual_button->setAccessibleDescription(tr("Add raw or image search target"));
     m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
     target_row->addWidget(m_target_manual_button);
     search_layout->addLayout(target_row);

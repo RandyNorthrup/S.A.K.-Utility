@@ -437,12 +437,14 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     target_row->addWidget(m_target_refresh_button);
 
     m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
-    m_target_scan_button->setAccessibleName(tr("Scan disk and partition organizer targets"));
+    m_target_scan_button->setAccessibleName(tr("Scan Disks"));
+    m_target_scan_button->setAccessibleDescription(tr("Scan disk and partition organizer targets"));
     m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
     target_row->addWidget(m_target_scan_button);
 
     m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
-    m_target_manual_button->setAccessibleName(tr("Add raw or image organizer target"));
+    m_target_manual_button->setAccessibleName(tr("Add Raw/Image"));
+    m_target_manual_button->setAccessibleDescription(tr("Add raw or image organizer target"));
     m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
     target_row->addWidget(m_target_manual_button);
     group_layout->addLayout(target_row);
@@ -494,12 +496,14 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
     m_add_category_button->setToolTip(QStringLiteral("Add a new file category row"));
     m_add_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_remove_category_button = new QPushButton(tr("Remove Selected"), this);
-    m_remove_category_button->setAccessibleName(QStringLiteral("Remove Category"));
+    m_remove_category_button->setAccessibleName(QStringLiteral("Remove Selected"));
+    m_remove_category_button->setAccessibleDescription(QStringLiteral("Remove Category"));
     m_remove_category_button->setToolTip(
         QStringLiteral("Remove the selected category from the list"));
     m_remove_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_reset_categories_button = new QPushButton(tr("Reset to Defaults"), this);
-    m_reset_categories_button->setAccessibleName(QStringLiteral("Reset Categories"));
+    m_reset_categories_button->setAccessibleName(QStringLiteral("Reset to Defaults"));
+    m_reset_categories_button->setAccessibleDescription(QStringLiteral("Reset Categories"));
     m_reset_categories_button->setToolTip(
         QStringLiteral("Restore the default category-to-extension mappings"));
     m_reset_categories_button->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -538,7 +542,9 @@ QWidget* OrganizerPanel::createOrganizerTab() {
 
 
     m_create_subdirs_checkbox = new QCheckBox(tr("Create Subdirectories"), this);
-    m_create_subdirs_checkbox->setAccessibleName(QStringLiteral("Create category subdirectories"));
+    m_create_subdirs_checkbox->setAccessibleName(QStringLiteral("Create Subdirectories"));
+    m_create_subdirs_checkbox->setAccessibleDescription(
+        QStringLiteral("Create category subdirectories"));
     m_create_subdirs_checkbox->setChecked(true);
     m_create_subdirs_checkbox->setVisible(false);
 
@@ -614,7 +620,8 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
 
     m_execute_button = new QPushButton(tr("Organize Files"), this);
     m_execute_button->setMinimumWidth(sak::kButtonWidthMedium);
-    m_execute_button->setAccessibleName(QStringLiteral("Execute Organization"));
+    m_execute_button->setAccessibleName(QStringLiteral("Organize Files"));
+    m_execute_button->setAccessibleDescription(QStringLiteral("Execute Organization"));
     m_execute_button->setToolTip(QStringLiteral("Organize files into category folders"));
     m_execute_button->setStyleSheet(ui::kPrimaryButtonStyle);
     row->addWidget(m_execute_button);
@@ -653,7 +660,8 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
 
     auto* btn_row = new QHBoxLayout();
     m_dedup_add_button = new QPushButton(tr("Add Directory"), this);
-    m_dedup_add_button->setAccessibleName(QStringLiteral("Add Scan Directory"));
+    m_dedup_add_button->setAccessibleName(QStringLiteral("Add Directory"));
+    m_dedup_add_button->setAccessibleDescription(QStringLiteral("Add Scan Directory"));
     m_dedup_add_button->setToolTip(QStringLiteral("Add a directory to the scan list"));
     m_dedup_add_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_dedup_remove_button = new QPushButton(tr("Remove Selected"), this);
@@ -696,7 +704,8 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
     m_dedup_scan_button = new QPushButton(tr("Find Duplicates"), this);
     m_dedup_scan_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_dedup_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    m_dedup_scan_button->setAccessibleName(QStringLiteral("Start Duplicate Scan"));
+    m_dedup_scan_button->setAccessibleName(QStringLiteral("Find Duplicates"));
+    m_dedup_scan_button->setAccessibleDescription(QStringLiteral("Start Duplicate Scan"));
     m_dedup_scan_button->setToolTip(
         QStringLiteral("Scan the listed directories for duplicate files"
                        " using content hashing"));
@@ -735,11 +744,14 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     m_dedup_min_size->setValue(0);
     m_dedup_min_size->setVisible(false);
     m_dedup_recursive = new QCheckBox(tr("Recursive Scan"), this);
-    m_dedup_recursive->setAccessibleName(QStringLiteral("Recursive duplicate scan"));
+    m_dedup_recursive->setAccessibleName(QStringLiteral("Recursive Scan"));
+    m_dedup_recursive->setAccessibleDescription(QStringLiteral("Recursive duplicate scan"));
     m_dedup_recursive->setChecked(true);
     m_dedup_recursive->setVisible(false);
     m_dedup_parallel_hashing = new QCheckBox(tr("Parallel Hashing"), this);
-    m_dedup_parallel_hashing->setAccessibleName(QStringLiteral("Parallel duplicate hashing"));
+    m_dedup_parallel_hashing->setAccessibleName(QStringLiteral("Parallel Hashing"));
+    m_dedup_parallel_hashing->setAccessibleDescription(
+        QStringLiteral("Parallel duplicate hashing"));
     m_dedup_parallel_hashing->setChecked(true);
     m_dedup_parallel_hashing->setVisible(false);
     m_dedup_thread_count = new QSpinBox(this);
