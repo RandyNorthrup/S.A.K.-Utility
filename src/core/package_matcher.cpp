@@ -243,21 +243,6 @@ void PackageMatcher::addMapping(const QString& app_name, const QString& choco_pa
     m_exact_mappings[normalized] = choco_package;
 }
 
-void PackageMatcher::removeMapping(const QString& app_name) {
-    const QString normalized = normalizeAppName(app_name);
-    m_exact_mappings.remove(normalized);
-}
-
-bool PackageMatcher::hasMapping(const QString& app_name) const {
-    const QString normalized = normalizeAppName(app_name);
-    return m_exact_mappings.contains(normalized);
-}
-
-QString PackageMatcher::getMapping(const QString& app_name) const {
-    const QString normalized = normalizeAppName(app_name);
-    return m_exact_mappings.value(normalized, QString());
-}
-
 int PackageMatcher::getMappingCount() const {
     return static_cast<int>(m_exact_mappings.size());
 }

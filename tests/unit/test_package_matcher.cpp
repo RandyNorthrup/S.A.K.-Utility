@@ -15,10 +15,7 @@ class PackageMatcherTests : public QObject {
 
 private Q_SLOTS:
     // Mapping management
-    void addMapping_canRetrieve();
-    void removeMapping_noLongerFound();
-    void hasMapping_existingKey();
-    void hasMapping_nonExistentKey();
+    void addMapping_isWhatFindMatchFinds();
     void getMappingCount_afterAdd();
 
     // findMatch
@@ -51,31 +48,13 @@ sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) {
 // Mapping Management
 // ============================================================================
 
-void PackageMatcherTests::addMapping_canRetrieve() {
+void PackageMatcherTests::addMapping_isWhatFindMatchFinds() {
     sak::PackageMatcher matcher;
+    QVERIFY(!matcher.findMatch(makeAppInfo("Test App")).has_value());
     matcher.addMapping("Test App", "test-app-choco");
-    QVERIFY(matcher.hasMapping("Test App"));
-    QCOMPARE(matcher.getMapping("Test App"), QString("test-app-choco"));
-}
-
-void PackageMatcherTests::removeMapping_noLongerFound() {
-    sak::PackageMatcher matcher;
-    matcher.addMapping("ToRemove", "remove-pkg");
-    QVERIFY(matcher.hasMapping("ToRemove"));
-
-    matcher.removeMapping("ToRemove");
-    QVERIFY(!matcher.hasMapping("ToRemove"));
-}
-
-void PackageMatcherTests::hasMapping_existingKey() {
-    sak::PackageMatcher matcher;
-    matcher.addMapping("ExistingApp", "existing-pkg");
-    QVERIFY(matcher.hasMapping("ExistingApp"));
-}
-
-void PackageMatcherTests::hasMapping_nonExistentKey() {
-    sak::PackageMatcher matcher;
-    QVERIFY(!matcher.hasMapping("NonExistentApp_xyz_12345"));
+    const auto result = matcher.findMatch(makeAppInfo("Test App"));
+    QVERIFY(result.has_value());
+    QCOMPARE(result->choco_package, QString("test-app-choco"));
 }
 
 void PackageMatcherTests::getMappingCount_afterAdd() {

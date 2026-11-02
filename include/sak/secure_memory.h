@@ -9,12 +9,8 @@
 
 #include <QtGlobal>
 
-#include <algorithm>
 #include <cstddef>
-#include <cstdio>
-#include <limits>
 #include <span>
-#include <string_view>
 #include <type_traits>
 
 #include <intrin.h>
@@ -58,178 +54,10 @@ public:
     }
 };
 
-/// @brief RAII guard for secure memory - wipes on scope exit
-/// @tparam T Element type
-template <typename T>
-class secure_memory_guard {
-    // The guarded region is wiped byte-wise over m_size * sizeof(T) bytes, which is well-defined
-    // only for a trivially-copyable element type; zeroing the object representation of a
-    // non-trivial T corrupts live object state before its real destructor runs.
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "secure_memory_guard requires a trivially-copyable element type");
-
-public:
-    /// @brief Construct guard for memory region
-    /// @param ptr Pointer to memory to guard
-    /// @param size Size of memory region
-    secure_memory_guard(T* ptr, std::size_t size) noexcept : m_ptr(ptr), m_size(size) {}
-
-    /// @brief Construct guard for span
-    /// @param data Span to guard
-    explicit secure_memory_guard(std::span<T> data) noexcept
-        : m_ptr(data.data()), m_size(data.size()) {}
-
-    // No copy or move
-    secure_memory_guard(const secure_memory_guard&) = delete;
-    secure_memory_guard& operator=(const secure_memory_guard&) = delete;
-    secure_memory_guard(secure_memory_guard&&) = delete;
-    secure_memory_guard& operator=(secure_memory_guard&&) = delete;
-
-    /// @brief Destructor - securely wipes memory
-    ~secure_memory_guard() {
-        if (m_ptr && m_size > 0) {
-            secure_wiper::wipe(m_ptr, m_size * sizeof(T));
-        }
-    }
-
-private:
-    T* m_ptr;
-    std::size_t m_size;
-};
-
-/// @brief Helper to create secure_memory_guard for automatic memory wiping
-/// @tparam T Element type
-/// @param ptr Pointer to memory
-/// @param size Size of memory region
-/// @return RAII guard that will wipe memory on destruction
-template <typename T>
-[[nodiscard]] auto makeSecureGuard(T* ptr, std::size_t size) {
-    return secure_memory_guard<T>(ptr, size);
-}
-
-/// @brief Helper to create secure_memory_guard for span
-/// @tparam T Element type
-/// @param data Span to guard
-/// @return RAII guard that will wipe memory on destruction
-template <typename T>
-[[nodiscard]] auto makeSecureGuard(std::span<T> data) {
-    return secure_memory_guard<T>(data);
-}
-
-/// @brief Secure comparison - constant time to prevent timing attacks
-/// @param a First buffer
-/// @param b Second buffer
-/// @return True if buffers are equal
-template <typename T>
-[[nodiscard]] bool secureCompare(std::span<const T> a, std::span<const T> b) noexcept {
-    if (a.size() != b.size()) {
-        return false;
-    }
-
-    // Refuse to compare when the byte-count multiplication below would wrap: a wrapped count
-    // would compare only a prefix and could report differing buffers as equal.
-    if (a.size() > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
-        return false;
-    }
-
-    // Constant-time comparison
-    volatile unsigned char result = 0;
-    const auto* ptr_a = reinterpret_cast<const unsigned char*>(a.data());
-    const auto* ptr_b = reinterpret_cast<const unsigned char*>(b.data());
-    const std::size_t byte_count = a.size() * sizeof(T);
-
-    for (std::size_t i = 0; i < byte_count; ++i) {
-        result |= ptr_a[i] ^ ptr_b[i];
-    }
-
-    return result == 0;
-}
-
-/// @brief Secure string comparison - constant time
-/// @param a First string
-/// @param b Second string
-/// @return True if strings are equal
-[[nodiscard]] inline bool secureCompare(std::string_view a, std::string_view b) noexcept {
-    if (a.size() != b.size()) {
-        return false;
-    }
-
-    volatile unsigned char result = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        result |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
-    }
-
-    return result == 0;
-}
-
-/// @brief Generate cryptographically secure random bytes
-/// @param buffer Buffer to fill with random bytes
-/// @param size Number of bytes to generate
-/// @return True if successful
-[[nodiscard]] bool generateSecureRandom(void* buffer, std::size_t size) noexcept;
-
-/// @brief Generate cryptographically secure random bytes into span
-/// @tparam T Element type
-/// @param data Span to fill with random bytes
-/// @return True if successful
-template <typename T>
-[[nodiscard]] bool generateSecureRandom(std::span<T> data) noexcept {
-    // Filling the object representation of a non-trivial T with random bytes produces invalid
-    // objects (e.g. a std::string with a randomized internal pointer corrupts the heap on
-    // destruction); constrain to trivially-copyable element types.
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "generateSecureRandom requires a trivially-copyable element type");
-    return generateSecureRandom(data.data(), data.size_bytes());
-}
-
-/// @brief Lock memory to prevent swapping (platform-specific)
-/// @param ptr Pointer to memory
-/// @param size Size of memory region
-/// @return True if successful (may fail on some platforms)
-/// @note Requires elevated privileges on some platforms
-[[nodiscard]] bool lockMemory(void* ptr, std::size_t size) noexcept;
-
 /// @brief Unlock previously locked memory
 /// @param ptr Pointer to memory
 /// @param size Size of memory region
 /// @return True if successful
 [[nodiscard]] bool unlockMemory(void* ptr, std::size_t size) noexcept;
-
-/// @brief RAII wrapper for locked memory
-class locked_memory {
-public:
-    /// @brief Lock memory region
-    /// @param ptr Pointer to memory
-    /// @param size Size of memory region
-    locked_memory(void* ptr, std::size_t size) noexcept
-        : m_ptr(ptr), m_size(size), m_locked(lockMemory(ptr, size)) {}
-
-    // No copy or move
-    locked_memory(const locked_memory&) = delete;
-    locked_memory& operator=(const locked_memory&) = delete;
-    locked_memory(locked_memory&&) = delete;
-    locked_memory& operator=(locked_memory&&) = delete;
-
-    /// @brief Destructor - unlocks memory
-    ~locked_memory() {
-        if (m_locked && m_ptr) {
-            if (!unlockMemory(m_ptr, m_size)) {
-                // Memory unlock failure in destructor is non-recoverable but should
-                // be visible during development. Use fprintf to avoid header dependencies
-                // on logger or Windows headers.
-                (void)std::fprintf(
-                    stderr, "SAK: WARNING -- VirtualUnlock failed in locked_memory destructor\n");
-            }
-        }
-    }
-
-    /// @brief Check if memory was successfully locked
-    [[nodiscard]] bool isLocked() const noexcept { return m_locked; }
-
-private:
-    void* m_ptr;
-    std::size_t m_size;
-    bool m_locked;
-};
 
 }  // namespace sak

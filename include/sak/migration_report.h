@@ -3,10 +3,8 @@
 
 #pragma once
 
-#include "sak/app_scanner.h"
-#include "sak/package_matcher.h"
-
 #include <QDateTime>
+#include <QMap>
 #include <QString>
 
 #include <optional>
@@ -79,10 +77,6 @@ public:
         double match_rate{0.0};
         QString report_version;  // Format version for compatibility
     };
-
-    // Report generation
-    void generateReport(const std::vector<AppScanner::AppInfo>& apps,
-                        const std::vector<PackageMatcher::MatchResult>& matches);
 
     void addEntry(const MigrationEntry& entry);
     void updateEntry(int index, const MigrationEntry& entry);
@@ -157,9 +151,6 @@ private:
     static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
     static ReportMetadata parseMetadataFromJson(const QJsonObject& root,
                                                 const ReportMetadata& current);
-    static void populateMatchFields(MigrationEntry& entry,
-                                    const QMap<QString, PackageMatcher::MatchResult>& match_map,
-                                    const QString& app_name);
     static QString buildHtmlStyles();
     void buildHtmlEntryRows(QTextStream& out) const;
 

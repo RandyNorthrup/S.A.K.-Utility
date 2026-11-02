@@ -27,7 +27,6 @@
 namespace sak {
 
 namespace {
-constexpr double kAutoSelectConfidenceThreshold = 0.8;
 // Hard cap on a report JSON read from disk before it is parsed wholesale into a
 // DOM. Even thousands of apps are a few MiB, so 16 MiB is generous while bounding
 // a hostile/oversized file (self-DoS via readAll on an attacker-planted report).
@@ -45,78 +44,6 @@ MigrationReport::MigrationReport() {
     m_metadata.created_by = getCurrentUser();
     m_metadata.created_at = QDateTime::currentDateTime();
     m_metadata.report_version = "1.0";
-}
-
-void MigrationReport::generateReport(const std::vector<AppScanner::AppInfo>& apps,
-                                     const std::vector<PackageMatcher::MatchResult>& matches) {
-    m_entries.clear();
-
-    // Create a map of app names to match results for quick lookup
-    QMap<QString, PackageMatcher::MatchResult> match_map;
-    for (const auto& match : matches) {
-        match_map[match.matched_name] = match;
-    }
-
-    // Generate entries for all apps
-    for (const auto& app : apps) {
-        MigrationEntry entry;
-
-        // App info
-        entry.app_name = app.name;
-        entry.app_version = app.version;
-        entry.app_publisher = app.publisher;
-        entry.install_location = app.install_location;
-        entry.install_date = QDateTime::fromString(app.install_date, Qt::ISODate);
-        entry.registry_key = app.registry_key;
-
-        populateMatchFields(entry, match_map, app.name);
-
-        // Migration control (default: auto-select high confidence matches)
-        entry.selected = (entry.confidence >= kAutoSelectConfidenceThreshold);
-        entry.version_lock = false;
-        entry.locked_version.clear();
-        entry.notes = "";
-
-        // Execution status
-        entry.status = "pending";
-        entry.error_message = "";
-
-        m_entries.push_back(entry);
-    }
-
-    // Update metadata
-    m_metadata.total_apps = static_cast<int>(apps.size());
-    m_metadata.matched_apps = getMatchedCount();
-    m_metadata.selected_apps = getSelectedCount();
-    m_metadata.match_rate = getMatchRate();
-    m_metadata.created_at = QDateTime::currentDateTime();
-}
-
-void MigrationReport::populateMatchFields(
-    MigrationEntry& entry,
-    const QMap<QString, PackageMatcher::MatchResult>& match_map,
-    const QString& app_name) {
-    QString normalized_name = app_name;
-    normalized_name.remove(QRegularExpression("[\\(\\)\\[\\]]"));
-
-    auto it = match_map.constFind(app_name);
-    if (it == match_map.constEnd()) {
-        it = match_map.constFind(normalized_name);
-    }
-
-    if (it != match_map.constEnd()) {
-        entry.choco_package = it->choco_package;
-        entry.confidence = it->confidence;
-        entry.match_type = it->match_type;
-        entry.available = it->available;
-        entry.available_version = it->version;
-    } else {
-        entry.choco_package.clear();
-        entry.confidence = 0.0;
-        entry.match_type = "none";
-        entry.available = false;
-        entry.available_version.clear();
-    }
 }
 
 void MigrationReport::addEntry(const MigrationEntry& entry) {

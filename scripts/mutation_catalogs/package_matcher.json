@@ -21,30 +21,6 @@
       "why": "a direct exact-mapping hit reports perfect confidence 1.0; degrading it to 0.5 still clears the min_confidence gate but violates the strength assertion. findMatch_exactMapping asserts QVERIFY(result->confidence > 0.9)"
     },
     {
-      "id": "hasmapping-membership-inverted",
-      "file": "src/core/package_matcher.cpp",
-      "find": "return m_exact_mappings.contains(normalized);",
-      "replace": "return !m_exact_mappings.contains(normalized);",
-      "expect": "killed",
-      "why": "hasMapping reports true when the normalized key exists; negating makes a present mapping read as absent. hasMapping_existingKey asserts QVERIFY(matcher.hasMapping(\"ExistingApp\")) after addMapping"
-    },
-    {
-      "id": "removemapping-wrong-key",
-      "file": "src/core/package_matcher.cpp",
-      "find": "m_exact_mappings.remove(normalized);",
-      "replace": "m_exact_mappings.remove(QString());",
-      "expect": "killed",
-      "why": "removeMapping must delete the entry for the given (normalized) app name; removing the empty key leaves the real mapping in place. removeMapping_noLongerFound asserts QVERIFY(!matcher.hasMapping(\"ToRemove\")) after removeMapping"
-    },
-    {
-      "id": "getmapping-lookup-key-blanked",
-      "file": "src/core/package_matcher.cpp",
-      "find": "return m_exact_mappings.value(normalized, QString());",
-      "replace": "return m_exact_mappings.value(QString(), QString());",
-      "expect": "killed",
-      "why": "getMapping must look up the normalized app name; keying on the empty string always returns the default \"\". addMapping_canRetrieve asserts QCOMPARE(matcher.getMapping(\"Test App\"), QString(\"test-app-choco\"))"
-    },
-    {
       "id": "mapping-count-zeroed",
       "file": "src/core/package_matcher.cpp",
       "find": "return static_cast<int>(m_exact_mappings.size());",

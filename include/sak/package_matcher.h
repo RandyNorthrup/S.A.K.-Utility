@@ -58,9 +58,6 @@ public:
 
     // Manual mapping management
     void addMapping(const QString& app_name, const QString& choco_package);
-    void removeMapping(const QString& app_name);
-    bool hasMapping(const QString& app_name) const;
-    QString getMapping(const QString& app_name) const;
 
     int getMappingCount() const;
 
