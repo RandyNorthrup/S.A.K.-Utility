@@ -7,6 +7,7 @@
 ///        overall outcome must reflect every drive, not just one that succeeded.
 
 #include "sak/actions/check_disk_errors_action.h"
+#include "sak/process_runner.h"
 
 #include <QtTest/QtTest>
 
@@ -29,7 +30,112 @@ private Q_SLOTS:
     void parseDriveScanResult_reportsWhatTheScanReturned();
     void driveTypeIsScannable_onlyLocalVolumes();
     void runIsBoundByItsOwnTimeLimit();
+    void selectScanTargets_setsNetworkDrivesApart();
+    void executeSaysItSkippedANetworkDrive();
+    void executeStopsItsScanWhenCancelled();
+    void reportSaysNetworkDrivesAreNotChecked();
 };
+
+namespace {
+constexpr unsigned kFixed = 3;   // DRIVE_FIXED
+constexpr unsigned kRemote = 4;  // DRIVE_REMOTE
+
+CheckDiskErrorsAction::MountedVolume volume(const char* root,
+                                            unsigned type,
+                                            bool read_only = false) {
+    return {.root = QString::fromLatin1(root),
+            .valid = true,
+            .read_only = read_only,
+            .drive_type = type};
+}
+
+/// Runs the action's real flow over a volume list and scan output of the test's choosing. Nothing
+/// reaches a real drive: no Repair-Volume, not even PowerShell.
+class ScriptedCheckDisk : public CheckDiskErrorsAction {
+public:
+    QVector<MountedVolume> volumes;
+    QStringList scripts_run;
+    bool cancel_during_scan{false};
+    bool saw_cancel_through_callback{false};
+
+protected:
+    QVector<MountedVolume> mountedVolumes() const override { return volumes; }
+
+    using ProcessResult = sak::ProcessResult;
+
+    ProcessResult runScanProcess(const QString& script,
+                                 int,
+                                 const std::function<bool()>& should_cancel) override {
+        scripts_run << script;
+        ProcessResult proc;
+        proc.exit_code = 0;
+        if (cancel_during_scan) {
+            cancel();
+            saw_cancel_through_callback = should_cancel();
+            proc.cancelled = saw_cancel_through_callback;
+            return proc;
+        }
+        proc.std_out = QStringLiteral(
+            "===SCAN_START===\nDrive: C:\nScanResult: NoErrorsFound\n===SCAN_END===\n");
+        return proc;
+    }
+};
+}  // namespace
+
+void CheckDiskErrorsActionTests::selectScanTargets_setsNetworkDrivesApart() {
+    const auto targets = Action::selectScanTargets({volume("C:/", kFixed),
+                                                    volume("Z:/", kRemote),
+                                                    volume("Y:/", kRemote, true),
+                                                    volume("Z:/", kRemote),
+                                                    volume("C:/Mount/Foreign/", kFixed),
+                                                    volume("E:/", kFixed, true),
+                                                    volume("F:/", kFixed)});
+    QCOMPARE(targets.drives, (QVector<QChar>{QLatin1Char('C'), QLatin1Char('F')}));
+    QCOMPARE(targets.network_drives, (QVector<QChar>{QLatin1Char('Z'), QLatin1Char('Y')}));
+}
+
+void CheckDiskErrorsActionTests::executeSaysItSkippedANetworkDrive() {
+    ScriptedCheckDisk action;
+    action.volumes = {volume("C:/", kFixed), volume("Z:/", kRemote)};
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QCOMPARE(action.scripts_run.size(), 1);
+    QVERIFY(!action.scripts_run.first().contains(QStringLiteral("Z:")));
+    QVERIFY2(result.log.contains(QStringLiteral("Drive Z: - skipped, it is a network drive")),
+             qPrintable(result.log));
+    // Left out on purpose, so it is not counted as a drive that could not be checked.
+    QVERIFY2(result.success, qPrintable(result.message));
+    QVERIFY2(result.log.contains(QStringLiteral("1 of 1 drive(s) scanned")),
+             qPrintable(result.log));
+}
+
+void CheckDiskErrorsActionTests::reportSaysNetworkDrivesAreNotChecked() {
+    ScriptedCheckDisk action;
+    action.volumes = {volume("C:/", kFixed)};
+
+    action.execute();
+
+    // Elevated, Windows may hide the signed-in user's mapped drives altogether, so the report
+    // says this even with none to name.
+    QVERIFY2(action.lastExecutionResult().log.contains(
+                 QStringLiteral("Network drives are not checked.")),
+             qPrintable(action.lastExecutionResult().log));
+}
+
+void CheckDiskErrorsActionTests::executeStopsItsScanWhenCancelled() {
+    ScriptedCheckDisk action;
+    action.volumes = {volume("C:/", kFixed), volume("F:/", kFixed)};
+    action.cancel_during_scan = true;
+
+    action.execute();
+
+    QVERIFY2(action.saw_cancel_through_callback, "the scan is handed a callback that sees cancel");
+    QCOMPARE(action.scripts_run.size(), 1);  // F: never starts
+    QCOMPARE(action.status(), sak::QuickAction::ActionStatus::Cancelled);
+    QVERIFY(!action.lastExecutionResult().success);
+}
 
 // Every name is from the Volume.RepairStatus enumeration in Windows' own Storage module.
 void CheckDiskErrorsActionTests::classifyScanResult_coversEveryRepairStatus() {

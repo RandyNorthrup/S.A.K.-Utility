@@ -58,6 +58,8 @@ struct FakeSystem {
     std::atomic<int> brokers_destroyed{0};
     std::atomic<int> helper_cancels{0};
     std::atomic<bool> helper_cancel_pending{false};
+    /// When set, the helper reports this result instead of plain success.
+    std::optional<sak::ElevatedTaskResult> elevated_result;
 
     QStringList inProcessRuns() {
         const std::lock_guard<std::mutex> lock(mutex);
@@ -157,6 +159,9 @@ public:
                             {QStringLiteral("status"),
                              static_cast<int>(sak::QuickAction::ActionStatus::Cancelled)}};
             return result;
+        }
+        if (m_system->elevated_result.has_value()) {
+            return *m_system->elevated_result;
         }
         result.success = true;
         result.data = QJsonObject{{QStringLiteral("message"), QStringLiteral("fake elevated ok")}};

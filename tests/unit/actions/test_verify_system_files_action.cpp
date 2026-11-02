@@ -28,6 +28,11 @@ private Q_SLOTS:
     void makeUniqueSfcOutputName_uniqueAndWellFormed();
     void sfcOutputIsReadAsUtf16WithoutAByteOrderMark();
     void parseSfcOutput_readsEachVerdict();
+    void parseSfcOutput_tellsAnEnglishRefusalFromAnotherLanguage();
+    void healthyPcInAnotherLanguageIsNotToldItFailed();
+    void unreadableSfcWithDismFailingIsStillAFailure();
+    void englishRefusalIsStillAFailure();
+    void cleanEnglishRunStillPasses();
     // One 60-minute bound for the whole run, and the registry waits exactly that long.
     void runIsBoundByOneSixtyMinuteTimeout();
     void stepTimeoutIsCutToTheRemainingBudget();
@@ -165,11 +170,124 @@ void VerifySystemFilesActionTests::sfcOutputIsReadAsUtf16WithoutAByteOrderMark()
              "a NUL means the file was read as the wrong encoding");
     const auto refused = Action::parseSfcOutput(refused_output);
     QVERIFY(!refused.ran);
-    QCOMPARE(refused.detail, QStringLiteral("use the sfc utility."));
+    QCOMPARE(refused.detail,
+             QStringLiteral("You must be an administrator running a console session in order to "
+                            "use the sfc utility."));
 
     const auto scanned = Action::parseSfcOutput(runThroughPowerShell(clean));
     QVERIFY2(scanned.ran, "a clean scan must be read as a completed one");
     QVERIFY(!scanned.found_issues);
+}
+
+namespace {
+const QString kGermanHealthy = QStringLiteral(
+    "Die Systemsuche wird gestartet. Dieser Vorgang kann einige Zeit dauern.\r\n"
+    "Die \u00DCberpr\u00FCfung ist zu 100 % abgeschlossen.\r\n"
+    "Der Windows-Ressourcenschutz hat keine Integrit\u00E4tsverletzungen gefunden.\r\n"
+    "CBS_LOG_PATH:C:\\Windows\\Logs\\CBS\\CBS.log");
+const QString kDismHealthy = QStringLiteral(
+    "No component store corruption detected.\nThe operation completed successfully.");
+
+/// Runs the action's real logic against fixed step output. Nothing reaches this Windows install:
+/// no SFC, no DISM, not even PowerShell.
+class ScriptedVerifyAction : public VerifySystemFilesAction {
+public:
+    QString sfc_output;
+    QString dism_output;
+
+protected:
+    sak::ProcessResult runStep(const QString& script, int) override {
+        sak::ProcessResult proc;
+        proc.exit_code = 0;
+        proc.std_out = script.contains(QStringLiteral("sfc.exe")) ? sfc_output : dism_output;
+        return proc;
+    }
+};
+}  // namespace
+
+void VerifySystemFilesActionTests::parseSfcOutput_tellsAnEnglishRefusalFromAnotherLanguage() {
+    const auto german = Action::parseSfcOutput(kGermanHealthy);
+    QVERIFY(!german.ran);
+    QVERIFY(german.unreadable);
+    QVERIFY2(german.detail.contains(QStringLiteral("Integrit")), qPrintable(german.detail));
+    QVERIFY(!german.detail.contains(QStringLiteral("CBS_LOG_PATH")));
+
+    for (const char* refusal :
+         {"You must be an administrator running a console session in order\r\n"
+          "to use the sfc utility.",
+          "Windows Resource Protection could not start the repair service.",
+          "Windows Resource Protection could not perform the requested "
+          "operation.",
+          "There is a system repair pending which requires reboot to "
+          "complete."}) {
+        const auto verdict = Action::parseSfcOutput(QString::fromLatin1(refusal));
+        QVERIFY2(!verdict.ran && !verdict.unreadable, refusal);
+        QVERIFY2(!verdict.detail.isEmpty(), refusal);
+    }
+
+    // After a repair the verdict is not the last line: both have to reach the person.
+    const auto repaired = Action::parseSfcOutput(
+        QStringLiteral("Le Verdict.\r\nLes d\u00E9tails sont dans CBS.log.\r\n"));
+    QVERIFY2(repaired.detail.contains(QStringLiteral("Le Verdict.")), qPrintable(repaired.detail));
+
+    // Nothing at all from SFC is not a language problem: it did not run.
+    QVERIFY(!Action::parseSfcOutput(QString()).unreadable);
+    QVERIFY(!Action::parseSfcOutput(QStringLiteral("CBS_LOG_PATH:C:\\x")).unreadable);
+}
+
+void VerifySystemFilesActionTests::healthyPcInAnotherLanguageIsNotToldItFailed() {
+    ScriptedVerifyAction action;
+    action.sfc_output = kGermanHealthy;
+    action.dism_output = kDismHealthy;
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QVERIFY2(!result.success, "a verdict nobody could read is not a pass");
+    QVERIFY(result.inconclusive);
+    QVERIFY2(result.message.contains(QStringLiteral("This is not a failure")),
+             qPrintable(result.message));
+    QVERIFY2(result.message.contains(QStringLiteral("Integrit")), qPrintable(result.message));
+    QVERIFY2(result.message.contains(QStringLiteral("DISM found no issues")),
+             qPrintable(result.message));
+}
+
+void VerifySystemFilesActionTests::unreadableSfcWithDismFailingIsStillAFailure() {
+    ScriptedVerifyAction action;
+    action.sfc_output = kGermanHealthy;
+    action.dism_output = QStringLiteral("Error: 740\nElevated permissions are required.");
+
+    action.execute();
+
+    QVERIFY(!action.lastExecutionResult().success);
+    QVERIFY(!action.lastExecutionResult().inconclusive);
+}
+
+void VerifySystemFilesActionTests::englishRefusalIsStillAFailure() {
+    ScriptedVerifyAction action;
+    action.sfc_output =
+        QStringLiteral("Windows Resource Protection could not start the repair service.");
+    action.dism_output = kDismHealthy;
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QVERIFY(!result.success);
+    QVERIFY(!result.inconclusive);
+    QVERIFY2(result.message.contains(QStringLiteral("did not complete a verification run")),
+             qPrintable(result.message));
+}
+
+void VerifySystemFilesActionTests::cleanEnglishRunStillPasses() {
+    ScriptedVerifyAction action;
+    action.sfc_output =
+        QStringLiteral("Windows Resource Protection did not find any integrity violations.");
+    action.dism_output = kDismHealthy;
+
+    action.execute();
+
+    QVERIFY(action.lastExecutionResult().success);
+    QVERIFY(!action.lastExecutionResult().inconclusive);
 }
 
 void VerifySystemFilesActionTests::parseSfcOutput_readsEachVerdict() {

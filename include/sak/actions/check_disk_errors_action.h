@@ -4,11 +4,14 @@
 #pragma once
 
 #include "sak/action_constants.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
 #include <QString>
 #include <QVector>
+
+#include <functional>
 
 class CheckDiskErrorsActionTests;
 
@@ -45,6 +48,23 @@ public:
     // Pure decision seams (public for unit testing; no I/O, no state)
     // ------------------------------------------------------------------
 
+    /// @brief One mounted volume as Windows reports it.
+    struct MountedVolume {
+        QString root;  ///< "C:/", or a folder for a directory-mounted volume.
+        bool valid{false};
+        bool read_only{false};
+        unsigned int drive_type{0};  ///< GetDriveTypeW's answer.
+    };
+
+    /// @brief The drives a run scans, and the network drives it says it left out.
+    struct ScanTargets {
+        QVector<QChar> drives;
+        QVector<QChar> network_drives;
+    };
+
+    /// @brief Sort mounted volumes into what this check scans and what it reports skipping. Pure.
+    [[nodiscard]] static ScanTargets selectScanTargets(const QVector<MountedVolume>& volumes);
+
     /// @brief Aggregate outcome across every enumerated drive.
     struct DiskCheckOutcome {
         bool success;       ///< True only if EVERY drive was scanned successfully.
@@ -79,6 +99,14 @@ public:
     ///        local volume, so a mapped network drive would otherwise always read as a failure.
     ///        Pure; unit-testable.
     [[nodiscard]] static bool driveTypeIsScannable(unsigned int drive_type);
+
+protected:
+    /// @brief The volumes Windows reports mounted right now.
+    [[nodiscard]] virtual QVector<MountedVolume> mountedVolumes() const;
+    /// @brief Run one drive's scan script, stopped when @p should_cancel says so.
+    [[nodiscard]] virtual ProcessResult runScanProcess(const QString& script,
+                                                       int timeout_ms,
+                                                       const std::function<bool()>& should_cancel);
 
 private:
     friend class ::CheckDiskErrorsActionTests;

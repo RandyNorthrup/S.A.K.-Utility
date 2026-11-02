@@ -1206,7 +1206,7 @@ void DiagnosticBenchmarkPanel::onQuickActionFinished(const QuickActionRun& run,
     const QString text = quickActionOutcomeText(run, result, status);
     logMessage(text);
     Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
-    if (status == QuickAction::ActionStatus::Failed) {
+    if (status == QuickAction::ActionStatus::Failed && !result.inconclusive) {
         sak::logError("Diagnostics quick action failed: {} - {}",
                       run.action_name.toStdString(),
                       result.message.toStdString());

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/action_constants.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action.h"
 
 #include <QDeadlineTimer>
@@ -60,7 +61,10 @@ public:
         bool ran = false;  ///< SFC reached a verdict this app can read.
         bool found_issues = false;
         bool repaired = false;
-        QString detail;  ///< SFC's last line, kept for a run that reached no readable verdict.
+        QString detail;  ///< SFC's last lines, kept for a run that reached no readable verdict.
+        /// SFC said something other than an English refusal: on non-English Windows that may well
+        /// be a clean bill of health, which this check has no way to tell.
+        bool unreadable = false;
     };
     [[nodiscard]] static SfcVerdict parseSfcOutput(const QString& output);
 
@@ -77,10 +81,15 @@ public:
     /// guarantees two runs in the same millisecond never collide.
     static QString makeUniqueSfcOutputName(qint64 entropy, qint64 msecs, unsigned counter);
 
+protected:
+    /// @brief Run one step's PowerShell, stopped by cancel().
+    [[nodiscard]] virtual ProcessResult runStep(const QString& script, int timeout_ms);
+
 private:
     bool m_sfc_found_issues{false};
     bool m_sfc_repaired{false};
     bool m_sfc_ran{false};
+    bool m_sfc_unreadable{false};
     QString m_sfc_detail;
     bool m_dism_successful{false};
     bool m_dism_repaired_issues{false};

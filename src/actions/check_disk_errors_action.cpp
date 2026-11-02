@@ -41,31 +41,6 @@ bool isBareDriveRoot(const QString& root) {
             root.at(kDriveRootSeparatorIndex) == QLatin1Char('\\'));
 }
 
-QVector<QChar> enumerateWritableDriveLetters() {
-    QVector<QChar> drives;
-    const auto volumes = QStorageInfo::mountedVolumes();
-    drives.reserve(volumes.size());
-    for (const QStorageInfo& storage : volumes) {
-        if (!storage.isValid() || storage.isReadOnly()) {
-            continue;
-        }
-        const QString root = storage.rootPath();
-        if (!isBareDriveRoot(root)) {
-            continue;
-        }
-        const std::wstring wide_root = root.toStdWString();
-        if (!CheckDiskErrorsAction::driveTypeIsScannable(GetDriveTypeW(wide_root.c_str()))) {
-            continue;
-        }
-        // De-duplicate so one drive is never scanned (or counted) twice.
-        const QChar drive = root.at(0).toUpper();
-        if (!drives.contains(drive)) {
-            drives.append(drive);
-        }
-    }
-    return drives;
-}
-
 /// @brief Describe WHY a scan subprocess did not finish cleanly, surfacing the
 ///        authoritative process status -- cancellation, a crash exit-status, or
 ///        the child's exit code -- so the per-drive report states the real cause
@@ -89,6 +64,54 @@ QString describeProcessFailure(const ProcessResult& proc) {
 }  // namespace
 
 CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
+
+QVector<CheckDiskErrorsAction::MountedVolume> CheckDiskErrorsAction::mountedVolumes() const {
+    QVector<MountedVolume> volumes;
+    const auto mounted = QStorageInfo::mountedVolumes();
+    volumes.reserve(mounted.size());
+    for (const QStorageInfo& storage : mounted) {
+        const QString root = storage.rootPath();
+        const std::wstring wide_root = root.toStdWString();
+        volumes.append({.root = root,
+                        .valid = storage.isValid(),
+                        .read_only = storage.isReadOnly(),
+                        .drive_type = GetDriveTypeW(wide_root.c_str())});
+    }
+    return volumes;
+}
+
+CheckDiskErrorsAction::ScanTargets CheckDiskErrorsAction::selectScanTargets(
+    const QVector<MountedVolume>& volumes) {
+    ScanTargets targets;
+    for (const MountedVolume& volume : volumes) {
+        if (!isBareDriveRoot(volume.root)) {
+            continue;
+        }
+        const QChar drive = volume.root.at(0).toUpper();
+        // Repair-Volume cannot scan a network drive, and that is worth saying, not skipping
+        // quietly.
+        if (volume.drive_type == DRIVE_REMOTE) {
+            if (!targets.network_drives.contains(drive)) {
+                targets.network_drives.append(drive);
+            }
+            continue;
+        }
+        if (!volume.valid || volume.read_only || !driveTypeIsScannable(volume.drive_type)) {
+            continue;
+        }
+        // De-duplicate so one drive is never scanned (or counted) twice.
+        if (!targets.drives.contains(drive)) {
+            targets.drives.append(drive);
+        }
+    }
+    return targets;
+}
+
+ProcessResult CheckDiskErrorsAction::runScanProcess(const QString& script,
+                                                    int timeout_ms,
+                                                    const std::function<bool()>& should_cancel) {
+    return runPowerShell(script, timeout_ms, true, true, should_cancel);
+}
 
 bool CheckDiskErrorsAction::driveTypeIsScannable(unsigned int drive_type) {
     return drive_type == DRIVE_FIXED || drive_type == DRIVE_REMOVABLE;
@@ -152,13 +175,18 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
                                                     QString& report) {
     Q_EMIT executionProgress("Detecting disk drives...", progress::kStep5);
 
-    drives = enumerateWritableDriveLetters();
+    const ScanTargets targets = selectScanTargets(mountedVolumes());
+    drives = targets.drives;
+    QString skipped;
+    for (const QChar network_drive : targets.network_drives) {
+        skipped += QString("Drive %1: - skipped, it is a network drive\n\n").arg(network_drive);
+    }
 
     if (drives.isEmpty()) {
         ExecutionResult result;
         result.success = false;
         result.message = "No valid drives found for scanning";
-        result.log = "Unable to detect any readable, writable volumes";
+        result.log = skipped + "Unable to detect any readable, writable volumes";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
         finishWithResult(result, ActionStatus::Failed);
         return false;
@@ -168,6 +196,7 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
     report += "|" + QString(" DISK ERROR CHECK & REPAIR REPORT").leftJustified(kDiskReportWidth) +
               "|\n";
     report += "+" + QString("=").repeated(kDiskReportWidth) + "+\n\n";
+    report += skipped;
 
     return true;
 }
@@ -321,7 +350,7 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
         const int granted_ms =
             static_cast<int>(std::min<qint64>(kDriveScanTimeoutMs, remaining_ms));
         const ProcessResult proc =
-            runPowerShell(ps_cmd, granted_ms, true, true, [this]() { return isCancelled(); });
+            runScanProcess(ps_cmd, granted_ms, [this]() { return isCancelled(); });
         if (proc.cancelled) {
             return;
         }
@@ -374,6 +403,10 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                         .arg(outcome.drives_failed)
                         .arg(totals.errors_found)
                         .arg(totals.repairs_recommended);
+
+    // Run as administrator, Windows may not even show this check the drives mapped for the
+    // signed-in user, so this holds whether or not any network drive was named above.
+    final_report += "Network drives are not checked.\n";
 
     if (totals.repairs_recommended > 0) {
         final_report +=

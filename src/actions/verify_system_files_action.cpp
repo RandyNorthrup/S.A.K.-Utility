@@ -35,6 +35,8 @@ namespace {
 // /English, which forces English output regardless of system language, so these phrases are what
 // DISM prints on any locale. The fail-closed behaviour is unchanged if the switch is ever
 // unavailable: the phrases simply do not match and the probe reports "did not run".
+constexpr int kSfcQuotedLines = 2;
+
 bool dismProbeCompleted(const ProcessResult& proc) {
     return proc.std_out.contains("corruption", Qt::CaseInsensitive) ||
            proc.std_out.contains("repairable", Qt::CaseInsensitive);
@@ -63,16 +65,30 @@ VerifySystemFilesAction::SfcVerdict VerifySystemFilesAction::parseSfcOutput(cons
                   output.contains("did not find any integrity violations", Qt::CaseInsensitive);
     if (!verdict.ran) {
         // SFC's words stay English only on English Windows. Elsewhere its verdict is one this
-        // check cannot read, so hand it to the person instead of inventing one.
+        // check cannot read, so hand it to the person instead of inventing one. Its last two lines:
+        // after a repair the verdict comes second to last, ahead of a line about the log file.
         const QStringList lines = output.split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
                                                Qt::SkipEmptyParts);
-        for (qsizetype i = lines.size() - 1; i >= 0; --i) {
+        QStringList tail;
+        for (qsizetype i = lines.size() - 1; i >= 0 && tail.size() < kSfcQuotedLines; --i) {
             const QString line = lines.at(i).trimmed();
             if (!line.isEmpty() && !line.startsWith(QLatin1String("CBS_LOG_PATH:"))) {
-                verdict.detail = line;
-                break;
+                tail.prepend(line);
             }
         }
+        verdict.detail = tail.join(QLatin1Char(' '));
+        // The English refusals are SFC saying it did not run. Anything else it said could be a
+        // clean bill of health in another language.
+        static const QStringList kEnglishRefusals = {
+            QStringLiteral("You must be an administrator"),
+            QStringLiteral("Windows Resource Protection could not"),
+            QStringLiteral("system repair pending"),
+        };
+        verdict.unreadable =
+            !verdict.detail.isEmpty() &&
+            std::ranges::none_of(kEnglishRefusals, [&output](const QString& refusal) {
+                return output.contains(refusal, Qt::CaseInsensitive);
+            });
     }
     return verdict;
 }
@@ -112,6 +128,10 @@ void VerifySystemFilesAction::noteStepOutcome(const ProcessResult& proc,
     }
 }
 
+ProcessResult VerifySystemFilesAction::runStep(const QString& script, int timeout_ms) {
+    return runPowerShell(script, timeout_ms, true, true, [this]() { return isCancelled(); });
+}
+
 void VerifySystemFilesAction::runSFC() {
     Q_EMIT executionProgress("Running System File Checker (SFC)...", progress::kStep10);
 
@@ -147,8 +167,7 @@ void VerifySystemFilesAction::runSFC() {
     if (granted_ms == 0) {
         return;
     }
-    const ProcessResult proc =
-        runPowerShell(ps_script, granted_ms, true, true, [this]() { return isCancelled(); });
+    const ProcessResult proc = runStep(ps_script, granted_ms);
     noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
@@ -169,6 +188,7 @@ void VerifySystemFilesAction::runSFC() {
     m_sfc_found_issues = verdict.found_issues;
     m_sfc_repaired = verdict.repaired;
     m_sfc_ran = verdict.ran;
+    m_sfc_unreadable = verdict.unreadable;
     m_sfc_detail = verdict.detail;
 }
 
@@ -185,8 +205,7 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     if (granted_ms == 0) {
         return false;  // no budget left: not assessed, so the run cannot claim a clean store
     }
-    const ProcessResult proc =
-        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    const ProcessResult proc = runStep(script, granted_ms);
     noteStepOutcome(proc, granted_ms, sak::kTimeoutDismCheckMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
@@ -212,8 +231,7 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     if (granted_ms == 0) {
         return false;  // no budget left: not assessed, so the run cannot claim a clean store
     }
-    const ProcessResult proc =
-        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    const ProcessResult proc = runStep(script, granted_ms);
     noteStepOutcome(proc, granted_ms, sak::kTimeoutDismScanMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM ScanHealth warning: " + proc.std_err.trimmed());
@@ -240,8 +258,7 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
     if (granted_ms == 0) {
         return;
     }
-    const ProcessResult proc =
-        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    const ProcessResult proc = runStep(script, granted_ms);
     noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM RestoreHealth warning: " + proc.std_err.trimmed());
@@ -290,9 +307,15 @@ QString VerifySystemFilesAction::buildSfcSummary() const {
         // SFC never produced an authoritative verdict (e.g. elevation refused or
         // the service aborted). Do NOT claim a clean bill of health -- that is
         // distinct from a completed run that found no violations.
+        if (m_sfc_unreadable) {
+            return QStringLiteral(
+                       "SFC finished, but this check can only read its result in English, so it "
+                       "cannot say whether SFC passed. This is not a failure. SFC said: %1 ")
+                .arg(m_sfc_detail);
+        }
         return m_sfc_detail.isEmpty()
                    ? QStringLiteral("SFC did not complete a verification run. ")
-                   : QStringLiteral("SFC gave no result this check can read. It said: %1 ")
+                   : QStringLiteral("SFC did not complete a verification run. It said: %1 ")
                          .arg(m_sfc_detail);
     }
     if (!m_sfc_found_issues) {
@@ -314,6 +337,7 @@ void VerifySystemFilesAction::execute() {
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
     m_sfc_ran = false;
+    m_sfc_unreadable = false;
     m_sfc_detail.clear();
     m_dism_successful = false;
     m_dism_repaired_issues = false;
@@ -363,6 +387,9 @@ VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificat
 
     ExecutionResult result;
     result.success = verificationSucceeded();
+    // A healthy PC on non-English Windows lands here, so it must not be told it failed. With DISM
+    // also unable to answer there is nothing good to report, and that stays a failure.
+    result.inconclusive = m_sfc_unreadable && m_dism_successful;
     result.message = message;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.log = QString(

@@ -34,6 +34,7 @@ constexpr int kElevationRequestProgress = 5;
 constexpr auto kBackupLocationPayloadKey = "backup_location";
 constexpr auto kMessageResultKey = "message";
 constexpr auto kLogResultKey = "log";
+constexpr auto kInconclusiveResultKey = "inconclusive";
 constexpr auto kStatusResultKey = "status";
 
 // What an elevated execution thread hands back. Shared between the thread, which writes it
@@ -108,6 +109,8 @@ QuickAction::ExecutionResult makeElevatedActionResult(
     result.success = broker_result->success;
     result.message = broker_result->data[QString::fromLatin1(kMessageResultKey)].toString();
     result.log = broker_result->data[QString::fromLatin1(kLogResultKey)].toString();
+    result.inconclusive = !result.success &&
+                          broker_result->data[QString::fromLatin1(kInconclusiveResultKey)].toBool();
 
     // Decode the status defensively: never cast an out-of-range integer to the enum, and
     // never surface a status that contradicts the authoritative success flag. A malformed
@@ -493,12 +496,17 @@ void QuickActionController::finishCurrent(const QuickAction::ExecutionResult& re
     joinCurrentThread();
 
     const qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
-    logRun(run,
-           result.success ? QStringLiteral("Execution complete: %1 (%2 bytes in %3s)")
-                                .arg(result.message)
-                                .arg(result.bytes_processed)
-                                .arg(duration_sec)
-                          : QStringLiteral("Execution failed: %1").arg(result.message));
+    if (result.success) {
+        logRun(run,
+               QStringLiteral("Execution complete: %1 (%2 bytes in %3s)")
+                   .arg(result.message)
+                   .arg(result.bytes_processed)
+                   .arg(duration_sec));
+    } else if (result.inconclusive) {
+        logRun(run, QStringLiteral("Execution finished, result unknown: %1").arg(result.message));
+    } else {
+        logRun(run, QStringLiteral("Execution failed: %1").arg(result.message));
+    }
     // The action's own detail: per-drive results, backup paths, the CBS log path. Every panel shows
     // runLog in its Log, so this is the one place that makes it reach all of them.
     if (!result.log.trimmed().isEmpty()) {
@@ -584,6 +592,8 @@ QString quickActionOutcomeText(const QuickActionRun& run,
         text = QStringLiteral("Completed: %1").arg(run.action_name);
     } else if (status == QuickAction::ActionStatus::Cancelled) {
         text = QStringLiteral("Cancelled: %1").arg(run.action_name);
+    } else if (result.inconclusive) {
+        text = QStringLiteral("Result unknown: %1 - %2").arg(run.action_name, result.message);
     } else {
         text = QStringLiteral("Failed: %1 - %2").arg(run.action_name, result.message);
     }

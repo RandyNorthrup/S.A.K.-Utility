@@ -67,6 +67,9 @@ public:
         qint64 duration_ms{0};      // Actual duration
         QString output_path;        // Path to backup/report (if applicable)
         QString log;                // Detailed operation log
+        /// It ran, but this app could not read what it found. Not a pass, so success stays false,
+        /// and not a failure, so nothing tells the person it failed.
+        bool inconclusive{false};
     };
 
     /**

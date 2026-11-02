@@ -210,6 +210,7 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
     QJsonObject data;
     data["message"] = exec_result.message;
     data["log"] = exec_result.log;
+    data["inconclusive"] = exec_result.inconclusive;
     data["status"] = static_cast<int>(action->status());
     data["cancelled"] = cancelled;
     result.data = data;

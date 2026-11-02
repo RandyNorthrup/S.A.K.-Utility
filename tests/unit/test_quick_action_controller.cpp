@@ -145,6 +145,7 @@ private Q_SLOTS:
     // -- The elevated helper's broker ---------------------------
     void elevatedRunsShareOneBrokerAndCarryTheirFolder();
     void elevatedRunRefusesAnUnsafeOutputFolder();
+    void anInconclusiveElevatedRunIsNotCalledAFailure();
     void stopReachesOnlyTheOwnersElevatedTask();
     void destroyingTheControllerCancelsTheTaskAndShutsTheHelperDown();
 
@@ -409,6 +410,51 @@ void TestQuickActionController::elevatedRunsShareOneBrokerAndCarryTheirFolder() 
              keys.path());
     QCOMPARE(m_system->brokers_created.load(), 1);  // one broker for every elevated run
     QCOMPARE(m_system->brokers_destroyed.load(), 0);
+}
+
+// SFC on non-English Windows ends this way. The app could not read the result, which says nothing
+// about the PC, so neither the Log nor the status line may say it failed.
+void TestQuickActionController::anInconclusiveElevatedRunIsNotCalledAFailure() {
+    if (ElevationManager::isElevated()) {
+        QSKIP("Run unelevated: administrator actions then take the elevated-helper route");
+    }
+    QVERIFY(registerFakes(*m_ctrl, m_system, {kCheckDisk}));
+    ElevatedTaskResult helper_result;
+    helper_result.success = false;
+    helper_result.data =
+        QJsonObject{{QStringLiteral("message"), QStringLiteral("could not read it")},
+                    {QStringLiteral("inconclusive"), true}};
+    m_system->elevated_result = helper_result;
+    QSignalSpy logged(m_ctrl.get(), &QuickActionController::runLog);
+    FinishedRuns finished;
+    finished.watch(*m_ctrl);
+
+    const QuickActionRun run{kCheckDisk, QStringLiteral("diagnostics"), {}};
+    m_ctrl->requestRun(run);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kRunTimeoutMs);
+
+    const QuickAction::ExecutionResult& result = finished.results.at(0);
+    QVERIFY(!result.success);
+    QVERIFY(result.inconclusive);
+    QCOMPARE(quickActionOutcomeText(run, result, QuickAction::ActionStatus::Failed),
+             QStringLiteral("Result unknown: ") + kCheckDisk +
+                 QStringLiteral(" - could not read it"));
+    QStringList lines;
+    for (const auto& entry : logged) {
+        lines << entry.at(1).toString();
+    }
+    const QString all = lines.join(QLatin1Char('\n'));
+    QVERIFY2(all.contains(QStringLiteral("result unknown: could not read it")), qPrintable(all));
+    QVERIFY2(!all.contains(QStringLiteral("Execution failed")), qPrintable(all));
+
+    // The same flag without the rest of the story is not enough to soften a real failure.
+    helper_result.data = QJsonObject{{QStringLiteral("message"), QStringLiteral("broken")}};
+    m_system->elevated_result = helper_result;
+    m_ctrl->requestRun(run);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, kRunTimeoutMs);
+    QVERIFY(!finished.results.at(1).inconclusive);
+    QVERIFY(quickActionOutcomeText(run, finished.results.at(1), QuickAction::ActionStatus::Failed)
+                .startsWith(QStringLiteral("Failed: ")));
 }
 
 void TestQuickActionController::elevatedRunRefusesAnUnsafeOutputFolder() {
