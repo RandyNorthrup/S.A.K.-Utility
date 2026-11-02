@@ -160,6 +160,8 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onAccessModeChanged(int index);
+    /// @brief Ask before Unattended Full Access goes into force. True once the person agrees.
+    [[nodiscard]] bool confirmUnattendedAccess();
     void onPromptTemplateSelected(int index);
     void onAddWorkflowClicked();
     void onWorkflowDetailsClicked();
@@ -1060,6 +1062,10 @@ private:
                                                      QPointer<AiAssistantPanel> panel_guard);
 
     [[nodiscard]] bool handleBusySendPrompt(const QString& message);
+    /// @brief What to tell the person before a workflow starts whose local-tool steps this access
+    ///        mode will refuse. Empty when nothing will be refused.
+    [[nodiscard]] static QString blockedWorkflowStepsNotice(const ai::WorkflowTemplate& workflow,
+                                                            ai::AiAccessMode mode);
     [[nodiscard]] WorkflowSendResult startAttachedWorkflowFromPrompt(const QString& message);
     void appendUserTurn(const QString& message,
                         const QString& workflow_id = {},
@@ -1123,6 +1129,10 @@ private:
     QPushButton* m_clearContextButton{nullptr};
     QPushButton* m_sendButton{nullptr};
     QPushButton* m_generateReportButton{nullptr};
+    /// The mode the person last settled on, which a declined switch to Unattended goes back to.
+    int m_confirmedAccessModeIndex{0};
+    /// True while they are being asked about Unattended, which is not in force until they agree.
+    bool m_accessModeConfirmPending{false};
     QPushButton* m_browserExtensionButton{nullptr};
     QLabel* m_browserExtensionStatusLabel{nullptr};
     // Empty in production (installer uses real Chrome-policy paths); the panel test seam

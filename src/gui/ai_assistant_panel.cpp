@@ -2726,12 +2726,15 @@ QString durationText(qint64 duration_ms) {
         static_cast<double>(duration_ms) / kReadableDurationMillisecondsPerSecondF, 'f', 1));
 }
 
+// Any chat can be exported, about anything, so the report is named for what it holds.
+constexpr auto kAiReportTitle = "AI Session Report";
+
 void appendReportMetadataMarkdown(QStringList* lines,
                                   const PanelReportData& data,
                                   const QString& report_path) {
     const QString session_url = QUrl::fromLocalFile(data.session.path).toString();
     const QString report_dir = QFileInfo(report_path).absolutePath();
-    *lines << QStringLiteral("# PC Health Report") << QString();
+    *lines << QStringLiteral("# %1").arg(QLatin1String(kAiReportTitle)) << QString();
     *lines << QStringLiteral("- Status: **%1**").arg(overallReportStatus(data));
     *lines << QStringLiteral("- Generated: %1 UTC").arg(reportGeneratedAtUtc());
     *lines << QStringLiteral("- Session: `%1`").arg(data.session.id);
@@ -2992,13 +2995,13 @@ void appendReportHtmlDocumentStart(QStringList* html, const PanelReportData& dat
     *html << QStringLiteral(
                  "<!doctype html><html><head><meta charset=\"utf-8\">"
                  "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                 "<title>PC Health Report</title>") +
+                 "<title>AI Session Report</title>") +
                  QString::fromLatin1(sak::ui::kHtmlStyleTagOpen) +
                  report::aiHealthReportStyleSheet() +
                  QString::fromLatin1(sak::ui::kHtmlStyleHeadMainCloseOpen);
     *html << QStringLiteral(
-                 "<div class=\"hero\"><span class=\"badge\">%1</span><h1>PC Health Report</h1>"
-                 "<p>Generated %2 UTC from S.A.K. Utility AI workflow evidence.</p></div>")
+                 "<div class=\"hero\"><span class=\"badge\">%1</span><h1>AI Session Report</h1>"
+                 "<p>Generated %2 UTC from this S.A.K. Utility AI session.</p></div>")
                  .arg(htmlText(overallReportStatus(data)), htmlText(reportGeneratedAtUtc()));
 }
 
@@ -9103,7 +9106,9 @@ ai::AiAccessMode AiAssistantPanel::currentAccessMode() const {
         return ai::AiAccessMode::Invalid;
     }
 
-    const QVariant mode_value = m_accessModeCombo->currentData();
+    const QVariant mode_value = m_accessModeConfirmPending
+                                    ? m_accessModeCombo->itemData(m_confirmedAccessModeIndex)
+                                    : m_accessModeCombo->currentData();
     if (mode_value.typeId() != QMetaType::Int) {
         return ai::AiAccessMode::Invalid;
     }
@@ -10411,6 +10416,12 @@ QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase&
     WorkflowToolDispatchPlan plan = workflowToolDispatchPlan(tool_context, phase, policy, context);
     if (!plan.ok) {
         return plan.error;
+    }
+    // Nobody declined anything in a mode that runs no local tools, so do not say they did.
+    if (!ai::aiAccessModeAllowsLocalExecution(tool_context.access_mode)) {
+        return toolError(QStringLiteral("Workflow step '%1' needs local tools, which this access "
+                                        "mode turns off. Choose Assisted Full Access to run it.")
+                             .arg(phase.id));
     }
     if (!authorizeWorkflowToolPhase(tool_context, phase, plan)) {
         return toolError(QStringLiteral("User declined workflow tool phase '%1'").arg(phase.id));
@@ -12110,8 +12121,50 @@ void AiAssistantPanel::finishAiRunTrace(const QString& status, const QJsonObject
     }
 }
 
+bool AiAssistantPanel::confirmUnattendedAccess() {
+#ifdef SAK_AI_TEST_HOOKS
+    // Tests set the combo directly all over the place; only one that installs a hook gets asked.
+    if (!aiApprovalPromptTestHook()) {
+        return true;
+    }
+#endif  // SAK_AI_TEST_HOOKS
+    const ApprovalPromptSpec spec{
+        .parent = this,
+        .window_title = tr("Turn On Unattended Full Access"),
+        .heading = tr("The assistant will run commands and change this PC without asking first."),
+        .body = tr("Actions that cannot be undone, such as erasing a drive, still ask. Everything "
+                   "else runs on what the assistant decides, so turn this on only for work you "
+                   "have reviewed."),
+        .command_text = tr("Local tool access: Unattended Full Access"),
+        .buttons = QVector<ApprovalPromptButton>{
+            {.text = tr("Turn On"),
+             .choice = ApprovalPromptChoice::Accept,
+             .style = ApprovalPromptButtonStyle::Danger,
+             .default_button = false},
+            {.text = tr("Cancel"),
+             .choice = ApprovalPromptChoice::Cancel,
+             .style = ApprovalPromptButtonStyle::Secondary,
+             .default_button = true},
+        }};
+    return showApprovalPrompt(spec) == ApprovalPromptChoice::Accept;
+}
+
 void AiAssistantPanel::onAccessModeChanged(int index) {
-    (void)index;
+    Q_ASSERT(m_accessModeCombo);
+    const bool to_unattended = m_accessModeCombo->itemData(index).toInt() ==
+                               static_cast<int>(ai::AiAccessMode::UnattendedFullAccess);
+    if (to_unattended && !m_accessModeConfirmPending) {
+        // Until the answer, anything reading the mode gets the one already in force.
+        m_accessModeConfirmPending = true;
+        const bool confirmed = confirmUnattendedAccess();
+        m_accessModeConfirmPending = false;
+        if (!confirmed) {
+            const QSignalBlocker blocker(m_accessModeCombo);
+            m_accessModeCombo->setCurrentIndex(m_confirmedAccessModeIndex);
+            return;
+        }
+    }
+    m_confirmedAccessModeIndex = index;
     updateAccessStatus();
     appendLocalEvent(tr("Access mode set to %1").arg(currentAccessModeLabel()));
     Q_EMIT statusMessage(tr("AI access mode: %1").arg(currentAccessModeLabel()),
@@ -12978,6 +13031,27 @@ bool AiAssistantPanel::handleBusySendPrompt(const QString& message) {
     return true;
 }
 
+QString AiAssistantPanel::blockedWorkflowStepsNotice(const ai::WorkflowTemplate& workflow,
+                                                     ai::AiAccessMode mode) {
+    if (ai::aiAccessModeAllowsLocalExecution(mode)) {
+        return {};
+    }
+    QStringList steps;
+    for (const ai::WorkflowPhase& phase : workflow.phases) {
+        if (!phase.tool.trimmed().isEmpty()) {
+            steps << phase.id;
+        }
+    }
+    if (steps.isEmpty()) {
+        return {};
+    }
+    return tr("This workflow has %1 step(s) that need local tools: %2. This access mode turns "
+              "those off, so they will be refused and the workflow cannot finish them. Choose "
+              "Assisted Full Access to run them.")
+        .arg(steps.size())
+        .arg(steps.join(QStringLiteral(", ")));
+}
+
 AiAssistantPanel::WorkflowSendResult AiAssistantPanel::startAttachedWorkflowFromPrompt(
     const QString& message) {
     const ai::WorkflowTemplate* workflow = attachedWorkflow();
@@ -12995,6 +13069,11 @@ AiAssistantPanel::WorkflowSendResult AiAssistantPanel::startAttachedWorkflowFrom
     appendUserTurn(message, workflow->id, workflow_inputs);
     appendSessionMemory(QStringLiteral("User"), QStringLiteral("Workflow request"), message);
     m_messageEdit->clear();
+    const QString blocked = blockedWorkflowStepsNotice(*workflow, currentAccessMode());
+    if (!blocked.isEmpty()) {
+        appendTranscriptMessage(QStringLiteral("System"), blocked, true);
+        appendLocalEvent(blocked);
+    }
     runWorkflowAsync(*workflow, message, workflow_inputs, workflow_run_id);
     return WorkflowSendResult::Handled;
 }

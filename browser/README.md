@@ -123,9 +123,9 @@ screenshot rather than clicking stale coordinates. It is an input tool and takes
 hard confirmation gate as the other input actions.
 
 Confirmation policy: every input action requires an explicit human confirmation in the
-app in EVERY non-chat access mode, including Unattended (where read-only browser tools and
-navigation may auto-run). The prompt is the app's trusted UI -- untrusted page content can
-never grant permission. The classifier fails CLOSED: any win32 tool not on the read-only
+app in EVERY non-chat access mode, including Unattended (where only read-only browser tools
+may auto-run; navigation asks too). The prompt is the app's trusted UI -- untrusted page
+content can never grant permission. The classifier fails CLOSED: any win32 tool not on the read-only
 allowlist requires confirmation, so a new automation tool cannot silently act as the user.
 
 ## Dialogs (unit 10)

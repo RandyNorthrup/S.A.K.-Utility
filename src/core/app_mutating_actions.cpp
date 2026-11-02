@@ -25,6 +25,7 @@
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/flash_coordinator.h"
+#include "sak/image_source.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_item_guard.h"
 #include "sak/leftover_scan_provenance.h"
@@ -1487,6 +1488,15 @@ AppActionResult flashImage(const QJsonObject& args, const AppActionCancelCheck& 
     }
     if (!info.isFile()) {
         return {false, QStringLiteral("No such image file: %1").arg(image_path), {}};
+    }
+    // Before the inventory or any device: this action only writes raw, and the answer does not
+    // depend on the target.
+    const WindowsUSBCreator::InstallImageCheck install_image =
+        CompressedImageSource::isCompressed(image_path)
+            ? WindowsUSBCreator::InstallImageCheck::NotFound
+            : WindowsUSBCreator::checkInstallImage(image_path);
+    if (const QString refusal = flashImageRefusal(install_image); !refusal.isEmpty()) {
+        return {false, refusal, {}};
     }
     const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
 
@@ -4272,6 +4282,24 @@ std::optional<AppActionResult> validatePartitionApplyArgs(const QJsonObject& arg
         return byte_error;
     }
     return partitionApplyGateArgsError(args);
+}
+
+QString flashImageRefusal(WindowsUSBCreator::InstallImageCheck install_image) {
+    switch (install_image) {
+    case WindowsUSBCreator::InstallImageCheck::NotFound:
+        return {};
+    case WindowsUSBCreator::InstallImageCheck::Found:
+        return QStringLiteral(
+            "flash_image writes an image byte for byte, and a Windows install ISO written that way "
+            "does not boot. Nothing was changed. Use the Image Flasher tab, which builds Windows "
+            "install media from it.");
+    case WindowsUSBCreator::InstallImageCheck::Failed:
+        break;
+    }
+    return QStringLiteral(
+        "flash_image could not look inside the image to tell whether it is a Windows install ISO, "
+        "so nothing was changed. The bundled 7-Zip tool may be missing from the application "
+        "folder.");
 }
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {

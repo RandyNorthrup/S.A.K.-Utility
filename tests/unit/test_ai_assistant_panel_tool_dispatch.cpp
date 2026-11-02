@@ -41,6 +41,9 @@
 #include "sak/pst_parser.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
+#include "sak/windows_usb_creator.h"
+
+#include "../support/iso_fixture.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -196,6 +199,162 @@ private Q_SLOTS:
         QCOMPARE(continuation.untrusted_input_messages.first().role,
                  ai::OpenAIInputMessageRole::User);
         QVERIFY(continuation.untrusted_input_messages.first().text.contains(stored_tool_text));
+    }
+
+    // Unattended lets the assistant change the PC unasked, so choosing it asks first, and until the
+    // person agrees it is not in force.
+    void unattendedAccessAsksFirstAndHoldsTheOldModeUntilAnswered() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::ChatAndResearch);
+        const auto reset_hook = qScopeGuard([]() { aiApprovalPromptTestHook() = nullptr; });
+
+        ai::AiAccessMode mode_while_asked = ai::AiAccessMode::Invalid;
+        QString title_shown;
+        int prompts = 0;
+        aiApprovalPromptTestHook() = [&](const QString& title, const QString&) -> int {
+            title_shown = title;
+            ++prompts;
+            mode_while_asked = panel.currentAccessMode();
+            return 3;                                 // ApprovalPromptChoice::Cancel
+        };
+        panel.m_accessModeCombo->setCurrentIndex(2);  // Unattended
+        QCOMPARE(prompts, 1);
+        QVERIFY2(title_shown.contains(QStringLiteral("Unattended")), qPrintable(title_shown));
+        QCOMPARE(mode_while_asked, ai::AiAccessMode::ChatAndResearch);
+        QCOMPARE(panel.m_accessModeCombo->currentIndex(), 0);
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::ChatAndResearch);
+
+        // From Assisted, a refusal goes back to Assisted, not to the first entry.
+        panel.m_accessModeCombo->setCurrentIndex(1);
+        QCOMPARE(prompts, 1);  // Assisted does not ask.
+        panel.m_accessModeCombo->setCurrentIndex(2);
+        QCOMPARE(prompts, 2);
+        QCOMPARE(panel.m_accessModeCombo->currentIndex(), 1);
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::AssistedFullAccess);
+
+        aiApprovalPromptTestHook() = [&](const QString&, const QString&) -> int {
+            ++prompts;
+            return 0;  // ApprovalPromptChoice::Accept
+        };
+        panel.m_accessModeCombo->setCurrentIndex(2);
+        QCOMPARE(prompts, 3);
+        QCOMPARE(panel.m_accessModeCombo->currentIndex(), 2);
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::UnattendedFullAccess);
+    }
+
+    // Every export said "PC Health Report", whatever the chat was about.
+    void exportedReportIsNamedForTheSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        QVERIFY(panel.ensurePersistentSession(QStringLiteral("Printer help")));
+        const auto reportText = [&](AiAssistantPanel::ReportFormat format, const QString& name) {
+            QString error;
+            const QString path = panel.generateReport(&error, dir.filePath(name), format);
+            QFile file(path);
+            return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : error;
+        };
+        const QString markdown = reportText(AiAssistantPanel::ReportFormat::Markdown,
+                                            QStringLiteral("r.md"));
+        QVERIFY2(markdown.startsWith(QStringLiteral("# AI Session Report")),
+                 qPrintable(markdown.left(80)));
+        const QString html = reportText(AiAssistantPanel::ReportFormat::Html,
+                                        QStringLiteral("r.html"));
+        QVERIFY(html.contains(QStringLiteral("<title>AI Session Report</title>")));
+        QVERIFY(html.contains(QStringLiteral("<h1>AI Session Report</h1>")));
+        QVERIFY2(!html.contains(QStringLiteral("PC Health")), qPrintable(html.left(200)));
+        const QString plain = reportText(AiAssistantPanel::ReportFormat::PlainText,
+                                         QStringLiteral("r.txt"));
+        QVERIFY2(plain.contains(QStringLiteral("AI Session Report")), qPrintable(plain.left(80)));
+        QVERIFY(!plain.contains(QStringLiteral("PC Health")));
+    }
+
+    // In Chat and Research nobody declined anything, and the step that fails is the mode's doing.
+    void workflowToolStepInChatModeSaysWhyItWasRefused() {
+        AiAssistantPanel panel;
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("collect_events");
+        phase.type = QStringLiteral("tool_action");
+        phase.tool = QStringLiteral("run_powershell");
+        phase.arguments = QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}};
+        ai::AiToolCallContext chat = panel.captureToolCallContext();
+        chat.access_mode = ai::AiAccessMode::ChatAndResearch;
+
+        const QJsonObject result = panel.dispatchWorkflowToolPhase(
+            phase, ai::AiToolPolicy::NoLocalExecution, ai::AiWorkflowPhaseContext{}, chat);
+
+        QCOMPARE(result.value(QStringLiteral("success")).toBool(), false);
+        const QString error = result.value(QStringLiteral("error_message")).toString();
+        QVERIFY2(!error.contains(QStringLiteral("declined")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("collect_events")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("Assisted Full Access")), qPrintable(error));
+    }
+
+    void blockedWorkflowStepsAreNamedBeforeTheWorkflowStarts() {
+        ai::WorkflowTemplate workflow;
+        ai::WorkflowPhase tool;
+        tool.id = QStringLiteral("collect_events");
+        tool.type = QStringLiteral("tool_action");
+        tool.tool = QStringLiteral("run_powershell");
+        ai::WorkflowPhase thinking;
+        thinking.id = QStringLiteral("analyze");
+        thinking.type = QStringLiteral("delegate");
+        ai::WorkflowPhase cleanup;
+        cleanup.id = QStringLiteral("cleanup");
+        cleanup.type = QStringLiteral("cleanup");
+        workflow.phases = {tool, thinking, cleanup};
+
+        const QString notice = AiAssistantPanel::blockedWorkflowStepsNotice(
+            workflow, ai::AiAccessMode::ChatAndResearch);
+        QVERIFY2(notice.contains(QStringLiteral("collect_events")), qPrintable(notice));
+        QVERIFY2(!notice.contains(QStringLiteral("analyze")), qPrintable(notice));
+        QVERIFY2(!notice.contains(QStringLiteral("cleanup")), qPrintable(notice));
+        QVERIFY(AiAssistantPanel::blockedWorkflowStepsNotice(workflow,
+                                                             ai::AiAccessMode::AssistedFullAccess)
+                    .isEmpty());
+        QVERIFY(AiAssistantPanel::blockedWorkflowStepsNotice(workflow,
+                                                             ai::AiAccessMode::UnattendedFullAccess)
+                    .isEmpty());
+
+        workflow.phases = {thinking, cleanup};
+        QVERIFY(AiAssistantPanel::blockedWorkflowStepsNotice(workflow,
+                                                             ai::AiAccessMode::ChatAndResearch)
+                    .isEmpty());
+    }
+
+    // Through the real Send route, stopped at the run itself so nothing reaches a model.
+    void sendingABlockedWorkflowWarnsInTheLog() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_workflowStore != nullptr);
+        const ai::WorkflowTemplate* chosen = nullptr;
+        const auto workflows = panel.m_workflowStore->workflows();
+        for (const ai::WorkflowTemplate& candidate : workflows) {
+            const bool has_tool_step =
+                std::ranges::any_of(candidate.phases, [](const ai::WorkflowPhase& phase) {
+                    return !phase.tool.trimmed().isEmpty();
+                });
+            if (has_tool_step && candidate.required_inputs.isEmpty()) {
+                chosen = &candidate;
+                break;
+            }
+        }
+        QVERIFY2(chosen != nullptr, "the bundled workflows should include one with no inputs");
+        AiAssistantPanel::ContextItem item;
+        item.type = AiAssistantPanel::ContextItem::Type::Workflow;
+        item.path = QStringLiteral("workflow:") + chosen->id;
+        panel.m_contextItems = {item};
+        panel.m_workflowRunActive = true;  // runWorkflowAsync stops at once, before any model call
+        const auto clear_run = qScopeGuard([&panel]() { panel.m_workflowRunActive = false; });
+        QSignalSpy log(&panel, &AiAssistantPanel::logOutput);
+
+        QCOMPARE(panel.startAttachedWorkflowFromPrompt(QStringLiteral("Check this PC")),
+                 AiAssistantPanel::WorkflowSendResult::Handled);
+
+        const bool warned = std::ranges::any_of(log, [](const QList<QVariant>& entry) {
+            return entry.at(0).toString().contains(QStringLiteral("need local tools"));
+        });
+        QVERIFY(warned);
     }
 
     void accessModePolicyUsesTypedValueNotDisplayText() {
@@ -6605,6 +6764,51 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // A raw Windows install ISO does not boot, so the action refuses it and points at the tab that
+    // does build one. Refused before the inventory, so no disk is read or named.
+    void flashImageRefusesAWindowsInstallIso() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString iso = dir.filePath(QStringLiteral("win.iso"));
+        QFile file(iso);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray image = sak_test::isoWithSourcesFile("INSTALL.WIM");
+        QCOMPARE(file.write(image), static_cast<qint64>(image.size()));
+        file.close();
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // approve the forced catastrophic confirm
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("image_path"), iso},
+                                                        {QStringLiteral("disk_number"), 99}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QString message = result.value(QStringLiteral("message")).toString();
+        // A build that skipped the app itself has no bundled 7-Zip beside this test, and without
+        // one the action refuses for that reason instead. Neither route reaches a disk.
+        const bool has_tool = QFile::exists(QCoreApplication::applicationDirPath() +
+                                            QStringLiteral("/tools/chocolatey/tools/7z.exe"));
+        QVERIFY2(message.contains(has_tool ? QStringLiteral("Image Flasher")
+                                           : QStringLiteral("could not look inside")),
+                 qPrintable(message));
+    }
+
+    void flashImageRefusalCoversEveryCheckResult() {
+        using Check = WindowsUSBCreator::InstallImageCheck;
+        QVERIFY(flashImageRefusal(Check::NotFound).isEmpty());
+        QVERIFY(flashImageRefusal(Check::Found).contains(QStringLiteral("Image Flasher")));
+        QVERIFY(flashImageRefusal(Check::Failed).contains(QStringLiteral("could not look inside")));
     }
 
     // W2d(6): missing args fail cleanly (no disk enumeration, no flash).

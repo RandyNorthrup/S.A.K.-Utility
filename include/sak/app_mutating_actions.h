@@ -6,6 +6,7 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/app_action_registry.h"
 #include "sak/partition_manager_types.h"
+#include "sak/windows_usb_creator.h"
 
 #include <QJsonObject>
 #include <QString>
@@ -89,6 +90,10 @@ struct FlashTargetResolution {
 /// This is the sole guard between a headless flash and a wiped disk (FlashCoordinator
 /// itself has no system-drive check), so it fails CLOSED: anything not provably safe
 /// is rejected. Pure and side-effect-free for deterministic certification.
+/// @brief Why imaging.flash_image will not write this image, or empty when it may. The action only
+///        writes raw, and a raw Windows install ISO does not boot. Pure.
+[[nodiscard]] QString flashImageRefusal(WindowsUSBCreator::InstallImageCheck install_image);
+
 [[nodiscard]] FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory,
                                                        int disk_number);
 
