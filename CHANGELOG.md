@@ -8,6 +8,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Speed test results stay on screen** - The result was written and wiped in the same moment, so
+  the Log had the numbers and the Bandwidth tab was blank. iPerf3 had the same fault. A test you stop,
+  or one that could not finish, now says No result instead of 0.00 Mbps, and a latency that could not
+  be measured says unknown. A finished speed test now reaches the network report, which listed it as
+  not run.
+- **Reset Network says a reboot is required** - The status bar replaced the action's message with one
+  that left that out.
+- **Backup and Restore Settings work on non-English Windows** - The restore list read netsh's English
+  words, so it found no adapters. They also stop saying Ethernet, since they work on any adapter.
+- **Bridge Connections is gone** - It only opened the window Open Adapter Settings opens. Flush Cache
+  no longer claims it needs an administrator. Diagnose opens Settings, Troubleshoot where Windows has
+  removed its troubleshooter, and says so. F5 and Esc work on the Network Adapters tab.
+- **The log opens beside the main window when it can fit** - Opening it moves a main window that
+  leaves no room to the left, and narrows the log if that is enough. A maximized window stays put,
+  and the log overlaps it.
+- **The assistant refuses to write a Windows install ISO raw** - That does not boot. It points at the
+  Image Flasher tab, which builds Windows install media.
+- **Unattended Full Access asks first** - It is not in force until you agree, and declining goes back
+  to the mode you had.
+- **Workflows in Chat and Research say why a step is refused** - Send names the steps that need local
+  tools before the workflow starts, and they no longer report that you declined them.
+- **Exported AI reports are titled AI Session Report** - They all said PC Health Report, whatever the
+  chat was about.
+- **A healthy PC on non-English Windows is no longer told SFC failed** - SFC's verdict can only be read
+  in English. The result now reads as unknown, quotes SFC's own words, and says it is not a failure.
+- **Check Disk Errors says it skipped network drives** - It names each one it can see, and the report
+  always says network drives are not checked.
+- **Button names for screen readers and voice control** - 85 buttons had accessible names that did not
+  contain the words on the button. Each now does, and the start-up accessibility check holds that.
+- **Dead code removed** - Unused memory-lock, comparison and random helpers, an unused migration report
+  entry point, and three unused package-mapping helpers.
+
 - **Email Inspector now reads a whole Outlook file** - Tested on real archives, the reader hid every
   folder behind a block reference with a reserved bit set, which Outlook does write. On a 1.1 GB PST
   that was its two largest folders and about one message in seven. Those messages now list and open.

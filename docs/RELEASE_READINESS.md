@@ -410,15 +410,11 @@ DESIGN DECISIONS:
 - A compressed image is decoded for its size rather than trusting xz's index or gzip's trailer.
   gzip's trailer is modulo 4 GiB, bzip2 records nothing, and one path serves all three. It costs one
   extra pass; xz's index could make that instant for xz alone if it ever matters.
-- SFC's verdict is English only and has no switch like DISM's /English, so on a non-English Windows
-  the run reports failed and quotes SFC's line. Reading CBS.log's [SR] lines would avoid that, and
-  has not been tried on a real scan.
+- SFC's verdict is English only and has no switch like DISM's /English. Reading CBS.log's [SR] lines
+  might avoid that, and has not been tried on a real scan. Round 5 made this an unknown result rather
+  than a failure.
 - Stress test with no CPU sensor keeps running, with the warning on screen and in the report, rather
   than refusing every PC that cannot report a temperature. Only the CPU is watched.
-
-INCOMPLETE, found while fixing this and not fixed: the assistant's `flash_image` action always writes
-raw, and a raw Windows install ISO does not boot from USB. It should refuse such an ISO using
-`WindowsUSBCreator::checkInstallImage` and point at the Image Flasher tab.
 
 INCOMPLETE, all need an administrator session on a VM. This PC's session is not elevated, and the
 capture VM is held:
@@ -482,6 +478,67 @@ Not covered by a test:
   a line scan, not an importing client.
 - Outlook has not opened the sample PST. libpff opens it but lists only the root folder; the app reads
   all of it, which is what the screenshots need.
+
+### Network, assistant, help and leftover fixes (2026-11-02)
+
+Reading: `fix_round_5` of the owner's "fix everything the agents find".
+
+- FIXED: speed test and iPerf3 results wiped by the operation's end, confirmed at runtime on the
+  capture VM. Stop and failure no longer show 0.00 Mbps, a failed latency no longer shows negative. A
+  finished speed test reaches the report, which listed it as not run.
+- FIXED: Reset Network's status bar left out the reboot. Its backup paths and step errors have reached
+  the Log since the imaging round.
+- FIXED: the adapter list read netsh's English words. It now comes from Get-NetAdapter. Compared with
+  netsh on this PC, read-only: it lists all nine netsh did, plus Bluetooth and two Hyper-V switches,
+  so the restore list and the assistant's adapter actions can see those too. A restore onto one is
+  the person's choice, and the assistant still asks.
+- FIXED: Backup and Restore Settings said Ethernet and work on any adapter. Flush Cache's tooltip
+  claimed an administrator nothing asks for. F5 and Esc did not reach the Network Adapters tab.
+- FIXED: Windows install ISO through `flash_image`, non-English SFC, Check Disk and network drives.
+- FIXED: 85 buttons whose accessible name left out the words on them. The start-up audit now fails on
+  this for every button built with the main window. Buttons in dialogs are not covered by that audit.
+- REMOVED, each with no caller: `secure_memory_guard`, `locked_memory`, `lockMemory`,
+  `generateSecureRandom`, `secureCompare`, `MigrationReport::generateReport`, and `removeMapping`,
+  `hasMapping`, `getMapping` on `PackageMatcher`.
+
+DESIGN DECISIONS, the owner may want to overrule:
+
+- A button's accessible name must hold its label, and may add to it: "Stop HTTP speed test" for Stop.
+  Equal names would give several panels two buttons with one name, which a screen reader cannot tell
+  apart, and WCAG 2.5.3 asks only that the name contain the label.
+- Bridge Connections was removed rather than made real. Creating a bridge is a network apply nothing
+  here can certify, and the Windows window it opened is one menu away.
+- Opening the log moves the main window to make room, when it is not maximized. A maximized window
+  still has the log over its right side. Fitting that needs the log inside the main window, which is a
+  layout change nobody asked for.
+- Choosing Unattended Full Access asks once each time, and the choice is not remembered between runs,
+  because the app already starts in Chat and Research.
+- SFC's unreadable result stays unknown rather than being read from CBS.log's [SR] lines, which have
+  never been seen from a real run here.
+
+INCOMPLETE, VM smoke:
+
+- Flush Cache unelevated. `DnsFlushResolverCache` was not run here, because it changes this PC's DNS
+  state. If it needs an administrator after all, the button says "Failed to flush the DNS resolver
+  cache." `FeatureId::DnsCacheFlush` in `include/sak/elevation_tier.h` still says Elevated; nothing
+  reads that entry to gate anything.
+- Diagnose on a Windows with no msdt.exe: the plan is tested, the launch of Settings is not. This PC
+  has msdt.exe and it was not launched.
+- Restore Settings on a non-English Windows, end to end. The script's output is tested on this PC
+  (English) and the JSON reader on other languages' names.
+- Reset Network, Backup Settings' restore, and every other network apply: command building and result
+  handling only, by standing rule.
+- SFC and Check Disk results on real runs: fixed output only. Nothing here ran `sfc`, `dism /online` or
+  `Repair-Volume`.
+- A real mapped drive through Check Disk, elevated. Windows may hide it from an elevated process, which
+  is why the report says network drives are not checked whether or not it names one.
+- The assistant's Unattended prompt and the workflow notice through a real model run. No paid API was
+  called: the tests stop at the run or use the approval hook.
+
+INCOMPLETE, found and not fixed: 43 labels carry an explicit accessible name, which hides their text
+from UI Automation, so a screen reader hears "Access mode status" rather than the status. Each needs its
+own decision (some are images with no text), and the capture harness reads through it. `unlockMemory`
+in `src/core/secure_memory.cpp` has no caller since `lockMemory` went, and was not on the approved list.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
