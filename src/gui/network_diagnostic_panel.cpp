@@ -30,12 +30,15 @@
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
+#include <QLabel>
+#include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
@@ -45,6 +48,7 @@
 #include <QScrollArea>
 #include <QShortcut>
 #include <QtConcurrent>
+#include <QTextEdit>
 #include <QTextStream>
 #include <QTimer>
 #include <QTreeWidget>
@@ -274,7 +278,7 @@ NetworkDiagnosticPanel::~NetworkDiagnosticPanel() {
 // ===================================================================
 
 void NetworkDiagnosticPanel::setupUi() {
-    // Root layout -- compact header, splitter for adapter+tools, report pinned at bottom.
+    // Root layout -- compact header, then the tool tabs, then the log toggle and Generate Report.
     auto* root_layout = new QVBoxLayout(this);
     root_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
@@ -311,6 +315,17 @@ void NetworkDiagnosticPanel::setupUi() {
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     status_row->addWidget(m_logToggle);
     status_row->addStretch();
+
+    m_generateReportBtn = new QPushButton(tr("Generate Report..."), this);
+    m_generateReportBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_generateReportBtn->setToolTip(
+        tr("Save the results of the diagnostics run here as an HTML or JSON report"));
+    setAccessible(m_generateReportBtn, tr("Generate network report"));
+    connect(m_generateReportBtn,
+            &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onGenerateReportClicked);
+    status_row->addWidget(m_generateReportBtn);
     root_layout->addLayout(status_row);
 
     setupKeyboardShortcuts();
@@ -1727,9 +1742,6 @@ QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
     scroll_area->setWidget(widget);
     return scroll_area;
 }
-
-// -- Report Section ------------------------------------------------------
-
 
 // ===================================================================
 // Signal Connections
@@ -4665,6 +4677,92 @@ void NetworkDiagnosticPanel::onError(QString error) {
     // Errors from workers with missing completion signals will still
     // get cleaned up by QThread::finished -> removeOperation -> operationFinished.
     // No need to force-reset all buttons here.
+}
+
+// ===================================================================
+// Report
+// ===================================================================
+
+namespace {
+
+struct NetworkReportDetails {
+    QString technician;
+    QString ticket;
+    QString notes;
+};
+
+/// The same three fields, words and accessible names as the Diagnostics Scan Report, asked for
+/// when a report is made so the panel does not carry them on screen the rest of the time.
+std::optional<NetworkReportDetails> askNetworkReportDetails(QWidget* parent) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("Generate Network Report"));
+    dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* info_row = new QHBoxLayout();
+    info_row->addWidget(new QLabel(QObject::tr("Technician:"), &dialog));
+    auto* technician = new QLineEdit(&dialog);
+    technician->setPlaceholderText(QObject::tr("Name"));
+    technician->setAccessibleName(QStringLiteral("Technician Name"));
+    info_row->addWidget(technician);
+    info_row->addWidget(new QLabel(QObject::tr("Ticket #:"), &dialog));
+    auto* ticket = new QLineEdit(&dialog);
+    ticket->setPlaceholderText(QObject::tr("Ticket number"));
+    ticket->setAccessibleName(QStringLiteral("Ticket Number"));
+    info_row->addWidget(ticket);
+    layout->addLayout(info_row);
+
+    layout->addWidget(new QLabel(QObject::tr("Notes:"), &dialog));
+    auto* notes = new QTextEdit(&dialog);
+    notes->setPlaceholderText(QObject::tr("Additional notes for the report..."));
+    notes->setAccessibleName(QStringLiteral("Network report notes"));
+    layout->addWidget(notes);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel,
+                                            &dialog);
+    QObject::connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return std::nullopt;
+    }
+    return NetworkReportDetails{.technician = technician->text().trimmed(),
+                                .ticket = ticket->text().trimmed(),
+                                .notes = notes->toPlainText().trimmed()};
+}
+
+}  // namespace
+
+void NetworkDiagnosticPanel::onGenerateReportClicked() {
+    Q_ASSERT(m_controller);
+    if (!m_controller->canGenerateReport()) {
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("A network diagnostic is still running. Wait for it to "
+                                      "finish, then generate the report."));
+        return;
+    }
+    const auto details = askNetworkReportDetails(this);
+    if (!details.has_value()) {
+        return;
+    }
+    QString path = QFileDialog::getSaveFileName(this,
+                                                tr("Save Network Report"),
+                                                QStringLiteral("network_report"),
+                                                tr("HTML Report (*.html);;JSON Report (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const bool is_json = path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive);
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QStringLiteral(".html");
+    }
+    m_controller->generateReport(path,
+                                 is_json ? QStringLiteral("json") : QStringLiteral("html"),
+                                 details->technician,
+                                 details->ticket,
+                                 details->notes);
 }
 
 // ===================================================================

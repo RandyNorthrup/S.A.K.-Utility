@@ -82,6 +82,11 @@ public:
     /// @brief Check if any operation is running
     [[nodiscard]] bool hasActiveOperations() const;
 
+    /// @brief True only when no blocking operation is active (the passive connection
+    ///        monitor is permitted to overlap). Deterministic -- does not consult the
+    ///        order-dependent m_state.
+    [[nodiscard]] bool canGenerateReport() const;
+
     // -- Adapter Inspection --
     void scanAdapters();
 
@@ -301,11 +306,6 @@ private:
     /// @brief Drop the cached result for @p op so a failed re-run cannot leave stale
     ///        prior-run data eligible for the next report.
     void clearCacheFor(State op);
-
-    /// @brief True only when no blocking operation is active (the passive connection
-    ///        monitor is permitted to overlap). Deterministic -- does not consult the
-    ///        order-dependent m_state.
-    [[nodiscard]] bool canGenerateReport() const;
 
     /// @brief Handle an incoming LAN transfer client connection
     void handleLanClientConnection(QTcpSocket* socket);

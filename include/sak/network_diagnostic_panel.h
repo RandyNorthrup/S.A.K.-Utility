@@ -48,8 +48,7 @@ class ViewEmptyState;
 ///
 /// Sub-tabbed interface with adapter inspector (always visible),
 /// diagnostic tool tabs (Ping, Traceroute, MTR, DNS, Port Scan,
-/// Bandwidth, WiFi, Connections, Firewall, Shares), and report
-/// generation section.
+/// Bandwidth, WiFi, Connections, Firewall, Shares), and a Generate Report action.
 class NetworkDiagnosticPanel : public QWidget {
     Q_OBJECT
 
@@ -183,6 +182,9 @@ private Q_SLOTS:
     // Button reset helpers for onOperationFinished
     void resetDiagnosticButtons(int finished_state);
     void resetToolButtons(int finished_state);
+
+    // Report
+    void onGenerateReportClicked();
 
     // Quick Action
     void onResetNetworkClicked();
@@ -330,6 +332,7 @@ private:
     QList<QFuture<sak::AdapterAdminOutcome>> m_pending_command_futures;
 
     LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
+    QPushButton* m_generateReportBtn = nullptr;     ///< Owned by layout hierarchy
     LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
 
     // All widget pointers below are owned by the Qt parent/layout hierarchy.
