@@ -55,6 +55,21 @@ public:
     /// needs-repair; this matches the corruption-PRESENT states instead.
     static bool dismReportsCorruption(const QString& dism_output);
 
+    /// @brief What SFC's own output says happened. Pure; unit-testable.
+    struct SfcVerdict {
+        bool ran = false;  ///< SFC reached a verdict this app can read.
+        bool found_issues = false;
+        bool repaired = false;
+        QString detail;  ///< SFC's last line, kept for a run that reached no readable verdict.
+    };
+    [[nodiscard]] static SfcVerdict parseSfcOutput(const QString& output);
+
+    /// @brief The PowerShell that reads the file SFC's output was redirected to. SFC writes
+    ///        UTF-16 with no byte order mark, which Get-Content does not detect on its own: read
+    ///        without saying so, every character comes back followed by a NUL and no verdict
+    ///        phrase can ever match.
+    [[nodiscard]] static QString sfcOutputReadCommand();
+
     /// @brief Build an unpredictable per-run temp filename for SFC's redirected
     /// stdout, so concurrent runs cannot overwrite each other and a planted
     /// reparse point at a guessed name cannot redirect the elevated write. The
@@ -66,6 +81,7 @@ private:
     bool m_sfc_found_issues{false};
     bool m_sfc_repaired{false};
     bool m_sfc_ran{false};
+    QString m_sfc_detail;
     bool m_dism_successful{false};
     bool m_dism_repaired_issues{false};
     // Each DISM health probe (CheckHealth, ScanHealth) sets its OWN assessed flag, and only when

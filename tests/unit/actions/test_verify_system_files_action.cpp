@@ -7,6 +7,8 @@
 ///        SFC temp filename must be unique per run.
 
 #include "sak/actions/verify_system_files_action.h"
+#include "sak/layout_constants.h"
+#include "sak/process_runner.h"
 
 #include <QtTest/QtTest>
 
@@ -24,6 +26,8 @@ private Q_SLOTS:
     void dismReportsCorruption_repairableAndDetectedAreCorrupt();
     // B6-08: SFC redirect target is unpredictable and PowerShell-safe.
     void makeUniqueSfcOutputName_uniqueAndWellFormed();
+    void sfcOutputIsReadAsUtf16WithoutAByteOrderMark();
+    void parseSfcOutput_readsEachVerdict();
     // One 60-minute bound for the whole run, and the registry waits exactly that long.
     void runIsBoundByOneSixtyMinuteTimeout();
     void stepTimeoutIsCutToTheRemainingBudget();
@@ -126,6 +130,71 @@ void VerifySystemFilesActionTests::makeUniqueSfcOutputName_uniqueAndWellFormed()
     // Must be safe to embed in a single-quoted PowerShell string.
     QVERIFY(!a.contains(QLatin1Char('\'')));
     QVERIFY(!a.contains(QLatin1Char(' ')));
+}
+
+// The real thing, end to end: real PowerShell reads a file holding SFC's real bytes. The refusal
+// below was captured from sfc.exe on Windows 11 with its output redirected, the same way the action
+// does it: UTF-16 little endian, no byte order mark. With the Get-Content left at its default this
+// comes back with a NUL after every character, and no verdict phrase can match.
+void VerifySystemFilesActionTests::sfcOutputIsReadAsUtf16WithoutAByteOrderMark() {
+    const QString refusal = QStringLiteral(
+        "\r\r\nYou must be an administrator running a console session in order to \r\r\n"
+        "use the sfc utility.\r\r\n");
+    const QString clean = QStringLiteral(
+        "\r\nBeginning system scan.  This process will take some time.\r\n\r\n"
+        "Beginning verification phase of system scan.\r\nVerification 100% complete.\r\n\r\n"
+        "Windows Resource Protection did not find any integrity violations.\r\n");
+    const auto runThroughPowerShell = [](const QString& text) {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("sfc_output.txt"));
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return QString();
+        }
+        // No BOM, just the code units, exactly what sfc.exe writes.
+        file.write(reinterpret_cast<const char*>(text.utf16()), text.size() * 2);
+        file.close();
+        const sak::ProcessResult proc = sak::runPowerShell(
+            QStringLiteral("$sfcOutput = '%1'; %2").arg(path, Action::sfcOutputReadCommand()),
+            sak::kTimeoutProcessLongMs);
+        return proc.completedSuccessfully() ? proc.std_out : QStringLiteral("<powershell failed>");
+    };
+
+    const QString refused_output = runThroughPowerShell(refusal);
+    QVERIFY2(!refused_output.contains(QChar(0)),
+             "a NUL means the file was read as the wrong encoding");
+    const auto refused = Action::parseSfcOutput(refused_output);
+    QVERIFY(!refused.ran);
+    QCOMPARE(refused.detail, QStringLiteral("use the sfc utility."));
+
+    const auto scanned = Action::parseSfcOutput(runThroughPowerShell(clean));
+    QVERIFY2(scanned.ran, "a clean scan must be read as a completed one");
+    QVERIFY(!scanned.found_issues);
+}
+
+void VerifySystemFilesActionTests::parseSfcOutput_readsEachVerdict() {
+    auto verdict = Action::parseSfcOutput(QStringLiteral(
+        "Windows Resource Protection found corrupt files and successfully repaired them."));
+    QVERIFY(verdict.ran && verdict.found_issues && verdict.repaired);
+
+    verdict = Action::parseSfcOutput(QStringLiteral(
+        "Windows Resource Protection found corrupt files but was unable to fix some of them."));
+    QVERIFY(verdict.ran && verdict.found_issues && !verdict.repaired);
+
+    // No verdict: not a pass, and SFC's own last line is kept. The CBS marker the script appends
+    // is ours, not SFC's, so it is never what gets quoted.
+    verdict = Action::parseSfcOutput(
+        QStringLiteral("Windows Resource Protection could not perform the requested operation.\n"
+                       "CBS_LOG_PATH:C:\\Windows\\Logs\\CBS\\CBS.log\n"));
+    QVERIFY(!verdict.ran && !verdict.found_issues);
+    QCOMPARE(verdict.detail,
+             QStringLiteral(
+                 "Windows Resource Protection could not perform the requested operation."));
+
+    // Nothing at all.
+    verdict = Action::parseSfcOutput(QString());
+    QVERIFY(!verdict.ran);
+    QVERIFY(verdict.detail.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(VerifySystemFilesActionTests)

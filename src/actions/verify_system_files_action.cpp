@@ -52,6 +52,35 @@ bool VerifySystemFilesAction::dismReportsCorruption(const QString& dism_output) 
            dism_output.contains("corruption", Qt::CaseInsensitive);
 }
 
+VerifySystemFilesAction::SfcVerdict VerifySystemFilesAction::parseSfcOutput(const QString& output) {
+    SfcVerdict verdict;
+    verdict.found_issues = output.contains("found corrupt files", Qt::CaseInsensitive);
+    verdict.repaired = verdict.found_issues &&
+                       output.contains("successfully repaired", Qt::CaseInsensitive);
+    // SFC only ran authoritatively if it either found corruption or gave a clean bill of health;
+    // an elevation refusal / aborted service leaves neither phrase, so ran stays false.
+    verdict.ran = verdict.found_issues ||
+                  output.contains("did not find any integrity violations", Qt::CaseInsensitive);
+    if (!verdict.ran) {
+        // SFC's words stay English only on English Windows. Elsewhere its verdict is one this
+        // check cannot read, so hand it to the person instead of inventing one.
+        const QStringList lines = output.split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
+                                               Qt::SkipEmptyParts);
+        for (qsizetype i = lines.size() - 1; i >= 0; --i) {
+            const QString line = lines.at(i).trimmed();
+            if (!line.isEmpty() && !line.startsWith(QLatin1String("CBS_LOG_PATH:"))) {
+                verdict.detail = line;
+                break;
+            }
+        }
+    }
+    return verdict;
+}
+
+QString VerifySystemFilesAction::sfcOutputReadCommand() {
+    return QStringLiteral("Get-Content -LiteralPath $sfcOutput -Encoding Unicode | Write-Output");
+}
+
 QString VerifySystemFilesAction::makeUniqueSfcOutputName(qint64 entropy,
                                                          qint64 msecs,
                                                          unsigned counter) {
@@ -107,11 +136,11 @@ void VerifySystemFilesAction::runSFC() {
             "$process = Start-Process -FilePath (Join-Path $sys 'sfc.exe') -ArgumentList "
             "'/scannow' -PassThru "
             "-NoNewWindow -Wait -RedirectStandardOutput $sfcOutput; "
-            "Get-Content $sfcOutput | Write-Output; "
+            "%2; "
             "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
             "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
             "Remove-Item -LiteralPath $sfcOutput -Force -ErrorAction Stop")
-            .arg(sfc_out_name);
+            .arg(sfc_out_name, sfcOutputReadCommand());
 
     Q_EMIT executionProgress("SFC scanning...", progress::kStep25);
     const int granted_ms = nextStepTimeoutMs(sak::kTimeoutSystemRepairMs);
@@ -136,15 +165,11 @@ void VerifySystemFilesAction::runSFC() {
         m_cbs_log_path = cbs_match.captured(1).trimmed();
     }
 
-    if (accumulated_output.contains("found corrupt files", Qt::CaseInsensitive)) {
-        m_sfc_found_issues = true;
-        m_sfc_repaired = accumulated_output.contains("successfully repaired", Qt::CaseInsensitive);
-    }
-    // SFC only ran authoritatively if it either found corruption or gave a clean bill of health;
-    // an elevation refusal / aborted service leaves neither phrase, so m_sfc_ran stays false.
-    m_sfc_ran = m_sfc_found_issues ||
-                accumulated_output.contains("did not find any integrity violations",
-                                            Qt::CaseInsensitive);
+    const SfcVerdict verdict = parseSfcOutput(accumulated_output);
+    m_sfc_found_issues = verdict.found_issues;
+    m_sfc_repaired = verdict.repaired;
+    m_sfc_ran = verdict.ran;
+    m_sfc_detail = verdict.detail;
 }
 
 bool VerifySystemFilesAction::runDismCheckHealth() {
@@ -265,7 +290,10 @@ QString VerifySystemFilesAction::buildSfcSummary() const {
         // SFC never produced an authoritative verdict (e.g. elevation refused or
         // the service aborted). Do NOT claim a clean bill of health -- that is
         // distinct from a completed run that found no violations.
-        return QStringLiteral("SFC did not complete a verification run. ");
+        return m_sfc_detail.isEmpty()
+                   ? QStringLiteral("SFC did not complete a verification run. ")
+                   : QStringLiteral("SFC gave no result this check can read. It said: %1 ")
+                         .arg(m_sfc_detail);
     }
     if (!m_sfc_found_issues) {
         return QStringLiteral("SFC found no integrity violations. ");
@@ -286,6 +314,7 @@ void VerifySystemFilesAction::execute() {
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
     m_sfc_ran = false;
+    m_sfc_detail.clear();
     m_dism_successful = false;
     m_dism_repaired_issues = false;
     m_dism_check_assessed = false;
