@@ -2,41 +2,40 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_package_matcher.cpp
-/// @brief Unit tests for package name matching and fuzzy search
+/// @brief Unit tests for matching installed applications to Chocolatey packages
 
 #include "sak/package_matcher.h"
 
 #include <QtTest/QtTest>
 
+#include <vector>
+
 class PackageMatcherTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // Constructor
-    void constructor_initializesCommonMappings();
-
-    // Exact matching
+    // Mapping management
     void addMapping_canRetrieve();
     void removeMapping_noLongerFound();
     void hasMapping_existingKey();
     void hasMapping_nonExistentKey();
     void getMappingCount_afterAdd();
 
-
-    // Fuzzy matching internal -- via findMatch
+    // findMatch
     void findMatch_exactMapping();
+    void findMatch_caseInsensitive();
     void findMatch_noResult();
+    void findMatch_realDisplayNames_data();
+    void findMatch_realDisplayNames();
+    void normalizeAppName_data();
+    void normalizeAppName();
 
-    // Fuzzy internals via the cache-seed seam (uninitialized ChocolateyManager)
-    void fuzzyMatch_similarityAtThresholdMatches();
-    void fuzzyMatch_bestSelectTieKeepsFirst();
-
-    // Match config
-    void matchConfig_defaults();
-    void matchConfig_exactOnly();
-
-    // Stats
-    void stats_initiallyZero();
+    // applyMatches
+    void applyMatches_recordsTheTableMatchOnADesktopApp();
+    void applyMatches_leavesAnUnknownAppUnmatched();
+    void applyMatches_keepsTheIdChocolateyReported();
+    void applyMatches_dropsChocolateysOwnPackage();
+    void applyMatches_leavesStoreAppsUnmatched();
 
 private:
     static sak::AppScanner::AppInfo makeAppInfo(const QString& name);
@@ -46,16 +45,6 @@ sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) {
     sak::AppScanner::AppInfo info;
     info.name = name;
     return info;
-}
-
-// ============================================================================
-// Constructor
-// ============================================================================
-
-void PackageMatcherTests::constructor_initializesCommonMappings() {
-    sak::PackageMatcher matcher;
-    // initializeCommonMappings seeds an exact table of 42 distinct app->package keys.
-    QCOMPARE(matcher.getMappingCount(), 42);
 }
 
 // ============================================================================
@@ -107,13 +96,7 @@ void PackageMatcherTests::findMatch_exactMapping() {
     sak::PackageMatcher matcher;
     matcher.addMapping("My Test Application", "my-test-app");
 
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
-
-    auto info = makeAppInfo("My Test Application");
-    auto result = matcher.findMatch(info, nullptr, cfg);
+    auto result = matcher.findMatch(makeAppInfo("My Test Application"));
 
     QVERIFY(result.has_value());
     QCOMPARE(result->choco_package, QString("my-test-app"));
@@ -124,106 +107,167 @@ void PackageMatcherTests::findMatch_exactMapping() {
     QCOMPARE(result->confidence, 1.0);
 }
 
-void PackageMatcherTests::findMatch_noResult() {
+void PackageMatcherTests::findMatch_caseInsensitive() {
     sak::PackageMatcher matcher;
 
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
-
-    auto info = makeAppInfo("CompletelyUnknownApp_xyz_99999");
-    auto result = matcher.findMatch(info, nullptr, cfg);
-
-    QVERIFY(!result.has_value());
-}
-
-// ============================================================================
-// Fuzzy internals (cache-seed seam)
-// ============================================================================
-//
-// fuzzyMatch() is only reachable with a non-null ChocolateyManager, and its
-// scoring path was previously never exercised because every other test passes
-// choco_mgr=nullptr and disables fuzzy matching. fetchSearchOutput() consults
-// the in-object search cache BEFORE it ever calls searchPackage() (whose only
-// m_initialized gate lives), so seeding the cache lets these tests drive the
-// real parse+score path with an UNINITIALIZED manager -- searchPackage() is
-// never reached. The friend seam grants access to cacheSearch()/fuzzyMatch().
-
-void PackageMatcherTests::fuzzyMatch_similarityAtThresholdMatches() {
-    // A candidate whose similarity to the query lands EXACTLY on the fuzzy
-    // threshold (0.6) must be accepted. calculateSimilarity("abcd","axyd") is
-    // exactly 0.6: jaro-winkler("abcd","axyd") == 0.7 (jaro 2/3, one-char common
-    // prefix) and levenshtein-sim == 0.5 (2 subs over length 4), averaged to
-    // (0.7 + 0.5)/2 == 0.6. The real ">=" admits it; a ">" boundary-tighten
-    // would reject it and return nullopt.
-    sak::PackageMatcher matcher;
-    sak::ChocolateyManager choco;  // uninitialized on purpose
-
-    matcher.cacheSearch("abcd", QStringLiteral("axyd|1.0.0\n"));
-
-    auto result = matcher.fuzzyMatch("abcd", &choco);
-
-    QVERIFY(result.has_value());  // kills the ">=" -> ">" boundary tighten
-    QCOMPARE(result->choco_package, QString("axyd"));
-    QCOMPARE(result->matched_name, QString("axyd"));
-    QCOMPARE(result->match_type, QString("fuzzy"));
-    QVERIFY(qFuzzyCompare(result->confidence, 0.6));
-}
-
-void PackageMatcherTests::fuzzyMatch_bestSelectTieKeepsFirst() {
-    // Two candidates that TIE on similarity: both contain the query "abcd", so
-    // each scores exactly kContainedNameSimilarity (0.85). The real "<=" keeps
-    // the FIRST candidate on a tie (a later equal score is skipped); the "<"
-    // tie-flip mutant lets the second overwrite it. Order is the crafted line
-    // order, so the winner distinguishes the two comparators.
-    sak::PackageMatcher matcher;
-    sak::ChocolateyManager choco;  // uninitialized on purpose
-
-    matcher.cacheSearch("abcd", QStringLiteral("abcde|1.0.0\nabcdz|2.0.0\n"));
-
-    auto result = matcher.fuzzyMatch("abcd", &choco);
+    auto result = matcher.findMatch(makeAppInfo("Paint.NET"));
 
     QVERIFY(result.has_value());
-    // Real comparator keeps "abcde" (first); the "<" mutant would pick "abcdz".
-    QCOMPARE(result->choco_package, QString("abcde"));
-    QCOMPARE(result->match_type, QString("fuzzy"));
-    QCOMPARE(result->matched_name, QString("abcde"));
-    QVERIFY(qFuzzyCompare(result->confidence, 0.85));
+    QCOMPARE(result->choco_package, QString("paint.net"));
+    QCOMPARE(result->confidence, 0.95);
 }
 
-// ============================================================================
-// Match Config
-// ============================================================================
-
-void PackageMatcherTests::matchConfig_defaults() {
-    sak::PackageMatcher::MatchConfig cfg;
-    QVERIFY(cfg.use_exact_mappings);
-    QVERIFY(cfg.use_fuzzy_matching);
-    QVERIFY(cfg.use_choco_search);
-    QCOMPARE(cfg.min_confidence, sak::kPackageMatcherDefaultMinConfidence);
-}
-
-void PackageMatcherTests::matchConfig_exactOnly() {
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
-
-    QVERIFY(cfg.use_exact_mappings);
-    QVERIFY(!cfg.use_fuzzy_matching);
-    QVERIFY(!cfg.use_choco_search);
-}
-
-// ============================================================================
-// Stats
-// ============================================================================
-
-void PackageMatcherTests::stats_initiallyZero() {
+void PackageMatcherTests::findMatch_noResult() {
     sak::PackageMatcher matcher;
-    QCOMPARE(matcher.getExactMatchCount(), 0);
-    QCOMPARE(matcher.getFuzzyMatchCount(), 0);
-    QCOMPARE(matcher.getSearchMatchCount(), 0);
+    QVERIFY(!matcher.findMatch(makeAppInfo("CompletelyUnknownApp_xyz_99999")).has_value());
+}
+
+void PackageMatcherTests::findMatch_realDisplayNames_data() {
+    QTest::addColumn<QString>("display_name");
+    QTest::addColumn<QString>("expected_package");
+
+    // Taken from a real PC's Uninstall keys. An empty expectation means no match is correct.
+    const auto row = [](const char* name, const char* package) {
+        QTest::newRow(name) << QString::fromLatin1(name) << QString::fromLatin1(package);
+    };
+    row("7-Zip 22.01 (x64)", "7zip");
+    row("Mozilla Firefox (x64 en-US)", "firefox");
+    row("Mozilla Thunderbird (x64 en-US)", "thunderbird");
+    row("Notepad++ (32-bit x86)", "notepadplusplus");
+    row("Microsoft Visual Studio Code (User)", "vscode");
+    row("PuTTY release 0.81 (64-bit)", "putty");
+    row("Oracle VirtualBox 7.2.8", "virtualbox");
+    row("OpenVPN 2.7.5-I001 amd64", "openvpn");
+    row("PowerShell 7.6.9.0-x64", "powershell-core");
+    row("Python 3.14.10 (64-bit)", "python");
+    row("Adobe Acrobat (64-bit)", "adobereader");
+    row("Docker Desktop", "docker-desktop");
+    row("GitHub Desktop", "github-desktop");
+    row("GitHub CLI", "gh");
+    row("FileZilla 3.62.2", "filezilla");
+    row("CPUID CPU-Z 2.09", "cpu-z");
+    row("Google Chrome", "googlechrome");
+    row("VLC media player", "vlc");
+    row("Java 8 Update 381 (64-bit)", "javaruntime");
+
+    // Components and look-alikes that must not take the product's package.
+    row("Python 3.13.16 Documentation (64-bit)", "");
+    row("Python 3.13.16 Core Interpreter (64-bit)", "");
+    row("Python Launcher", "");
+    row("Microsoft Edge WebView2 Runtime", "");
+    row("Microsoft Teams Meeting Add-in for Microsoft Office", "");
+    row("Git Extensions", "");
+    row("Visual Studio Code Insiders", "");
+    row("(x64)", "");
+}
+
+void PackageMatcherTests::findMatch_realDisplayNames() {
+    QFETCH(QString, display_name);
+    QFETCH(QString, expected_package);
+
+    const sak::PackageMatcher matcher;
+    const auto result = matcher.findMatch(makeAppInfo(display_name));
+
+    if (expected_package.isEmpty()) {
+        QVERIFY2(!result.has_value(), qPrintable(result ? result->choco_package : QString()));
+        return;
+    }
+    QVERIFY(result.has_value());
+    QCOMPARE(result->choco_package, expected_package);
+}
+
+void PackageMatcherTests::normalizeAppName_data() {
+    QTest::addColumn<QString>("raw");
+    QTest::addColumn<QString>("normalized");
+
+    QTest::newRow("bracketed architecture") << "7-Zip 22.01 (x64)" << "7-Zip";
+    QTest::newRow("hyphen in the product survives") << "7-Zip" << "7-Zip";
+    QTest::newRow("bracketed arch and locale") << "Mozilla Firefox (x64 en-US)"
+                                               << "Mozilla Firefox";
+    QTest::newRow("version word") << "Tickr version 0.7.1" << "Tickr";
+    QTest::newRow("release word") << "PuTTY release 0.81 (64-bit)" << "PuTTY";
+    QTest::newRow("version with a suffix") << "OpenVPN 2.7.5-I001 amd64" << "OpenVPN";
+    QTest::newRow("hyphen before arch") << "PowerShell 7-x64" << "PowerShell";
+    QTest::newRow("packaging word") << "Telegram Desktop 5.0.1" << "Telegram";
+    QTest::newRow("word after a version stays") << "Ableton Live 11 Lite" << "Ableton Live 11 Lite";
+    QTest::newRow("trailing space")
+        << "Magic The Gathering Online " << "Magic The Gathering Online";
+    QTest::newRow("only build detail") << "(x64)" << "";
+    QTest::newRow("empty") << "" << "";
+}
+
+void PackageMatcherTests::normalizeAppName() {
+    QFETCH(QString, raw);
+    QFETCH(QString, normalized);
+    QCOMPARE(sak::PackageMatcher::normalizeAppName(raw), normalized);
+}
+
+// ============================================================================
+// applyMatches
+// ============================================================================
+
+void PackageMatcherTests::applyMatches_recordsTheTableMatchOnADesktopApp() {
+    std::vector<sak::AppScanner::AppInfo> apps{makeAppInfo("7-Zip 22.01 (x64)")};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QCOMPARE(apps[0].choco_package, QString("7zip"));
+    QVERIFY(apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::High);
+}
+
+void PackageMatcherTests::applyMatches_leavesAnUnknownAppUnmatched() {
+    std::vector<sak::AppScanner::AppInfo> apps{makeAppInfo("Solar Fire v9")};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
+    QVERIFY(!apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::Unknown);
+}
+
+void PackageMatcherTests::applyMatches_keepsTheIdChocolateyReported() {
+    auto app = makeAppInfo("ripgrep");
+    app.source = sak::AppScanner::AppInfo::Source::Chocolatey;
+    app.choco_package = "ripgrep";
+    app.choco_available = true;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QCOMPARE(apps[0].choco_package, QString("ripgrep"));
+    QVERIFY(apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::High);
+}
+
+// `choco list` always reports Chocolatey itself. Offering it would "install" the bundled tool.
+void PackageMatcherTests::applyMatches_dropsChocolateysOwnPackage() {
+    auto app = makeAppInfo("chocolatey");
+    app.source = sak::AppScanner::AppInfo::Source::Chocolatey;
+    app.choco_package = "chocolatey";
+    app.choco_available = true;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
+    QVERIFY(!apps[0].choco_available);
+}
+
+void PackageMatcherTests::applyMatches_leavesStoreAppsUnmatched() {
+    // A Store package named exactly like a table entry still does not install through Chocolatey.
+    auto app = makeAppInfo("Spotify");
+    app.source = sak::AppScanner::AppInfo::Source::AppX;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(PackageMatcherTests)

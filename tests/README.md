@@ -178,7 +178,8 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_migration_report | `migration_report` | Migration report generation |
-| test_package_matcher | `package_matcher` | App-to-Chocolatey matching, confidence scoring |
+| test_package_matcher | `package_matcher` | App-to-Chocolatey matching on real display names |
+| test_user_profile_app_restore_flow | backup and restore wizard pages | Scan to restore: real install offers, one install per package, elevation gate |
 | test_chocolatey_manager | `chocolatey_manager` | Package install, update, version queries |
 | test_app_scanner | `app_scanner` | Installed app enumeration from registry |
 | test_app_installation_worker | `app_installation_worker` | Package installation workflow, retry, error handling |

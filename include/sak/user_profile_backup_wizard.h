@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/app_scanner.h"
 #include "sak/backup_file_codec.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
@@ -25,8 +26,10 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 class QVBoxLayout;
+class UserProfileAppRestoreFlowTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
@@ -429,6 +432,7 @@ private:
  */
 class UserProfileBackupExecutePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupExecutePage(BackupManifest& manifest,
@@ -523,6 +527,7 @@ private:
  */
 class UserProfileBackupInstalledAppsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupInstalledAppsPage(QWidget* parent = nullptr);
@@ -550,6 +555,10 @@ private:
 
     /// @brief Categorize an application by name/publisher into a UI group
     static QString categorizeApp(const QString& name);
+
+    /// @brief What the page lists and the backup records for a finished scan, with each
+    ///        application's Chocolatey match. Runs on the scan's worker thread.
+    static QVector<InstalledAppInfo> inventoryFromScan(std::vector<AppScanner::AppInfo> apps);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_scanButton{nullptr};

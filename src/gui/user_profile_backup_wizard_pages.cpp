@@ -8,6 +8,7 @@
 #include "sak/ethernet_config_manager.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/package_matcher.h"
 #include "sak/per_user_customization_dialog.h"
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
@@ -64,6 +65,9 @@ constexpr int kDefaultMaxFolderSizeGb = 50;
 constexpr int kInstalledAppColumnName = 0;
 constexpr int kInstalledAppColumnVersion = 1;
 constexpr int kInstalledAppColumnPublisher = 2;
+// The matched Chocolatey id rides on the row, so it reaches installed_apps.json with the selection
+// without another column on this page.
+constexpr int kInstalledAppPackageRole = Qt::UserRole;
 constexpr int kAppDataColumnName = 0;
 constexpr int kAppDataColumnPath = 1;
 constexpr int kAppDataColumnSize = 2;
@@ -1031,6 +1035,8 @@ static void collectCategoryApps(QTreeWidgetItem* category,
         info.name = app_item->text(kInstalledAppColumnName);
         info.version = app_item->text(kInstalledAppColumnVersion);
         info.publisher = app_item->text(kInstalledAppColumnPublisher);
+        info.choco_package =
+            app_item->data(kInstalledAppColumnName, kInstalledAppPackageRole).toString();
         info.category = category->text(kInstalledAppColumnName);
         info.selected = true;
         out.append(info);
@@ -1170,57 +1176,69 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
     // Run heavy scanning work on a background thread to avoid freezing the UI
     auto* watcher = new QFutureWatcher<QVector<InstalledAppInfo>>(this);
 
-    connect(watcher,
-            &QFutureWatcher<QVector<InstalledAppInfo>>::finished,
-            this,
-            [safe_this, watcher]() {
-                watcher->deleteLater();
-                if (!safe_this) {
-                    return;  // Page was destroyed
-                }
+    connect(
+        watcher,
+        &QFutureWatcher<QVector<InstalledAppInfo>>::finished,
+        this,
+        [safe_this, watcher]() {
+            watcher->deleteLater();
+            if (!safe_this) {
+                return;  // Page was destroyed
+            }
 
-                auto app_infos = watcher->result();
+            auto app_infos = watcher->result();
 
-                safe_this->m_scanned = true;
-                safe_this->m_scanButton->setEnabled(true);
-                safe_this->m_selectAllButton->setEnabled(true);
-                safe_this->m_selectNoneButton->setEnabled(true);
-                safe_this->m_appTree->setEnabled(true);
-                safe_this->m_scanProgress->setVisible(false);
+            safe_this->m_scanned = true;
+            safe_this->m_scanButton->setEnabled(true);
+            safe_this->m_selectAllButton->setEnabled(true);
+            safe_this->m_selectNoneButton->setEnabled(true);
+            safe_this->m_appTree->setEnabled(true);
+            safe_this->m_scanProgress->setVisible(false);
 
-                safe_this->m_statusLabel->setText(
-                    QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
-                                                "Found %1 application(s)")
-                        .arg(app_infos.size()));
-                safe_this->populateTree(app_infos);
-                safe_this->updateNextButtonText();
-                Q_EMIT safe_this->completeChanged();
-            });
+            const auto with_package = std::ranges::count_if(app_infos,
+                                                            [](const InstalledAppInfo& app) {
+                                                                return !app.choco_package.isEmpty();
+                                                            });
+            safe_this->m_statusLabel->setText(
+                QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
+                                            "Found %1 application(s), %2 with a Chocolatey package")
+                    .arg(app_infos.size())
+                    .arg(with_package));
+            safe_this->populateTree(app_infos);
+            safe_this->updateNextButtonText();
+            Q_EMIT safe_this->completeChanged();
+        });
 
     watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
-        // Scan installed apps from registry + AppX (no Chocolatey calls).
-        // Backup only needs name/version/publisher -- restore handles Chocolatey matching.
         AppScanner scanner;
         auto apps = scanner.scanAll();
-
         sak::logDebug("onScanApps background: scanAll returned {} apps", apps.size());
-
-        QVector<InstalledAppInfo> app_infos;
-        app_infos.reserve(static_cast<qsizetype>(apps.size()));
-
-        for (const auto& app : apps) {
-            InstalledAppInfo info;
-            info.name = app.name;
-            info.version = app.version;
-            info.publisher = app.publisher;
-            info.selected = true;
-            info.category = categorizeApp(app.name);
-            app_infos.append(info);
-        }
-
-        sak::logDebug("onScanApps background: returning {} app infos", app_infos.size());
-        return app_infos;
+        return inventoryFromScan(std::move(apps));
     }));
+}
+
+QVector<InstalledAppInfo> UserProfileBackupInstalledAppsPage::inventoryFromScan(
+    std::vector<AppScanner::AppInfo> apps) {
+    // Matching happens here because restore only reads what the backup recorded. It makes no
+    // network calls, so a backup on an offline PC records the same matches (see PackageMatcher).
+    const PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVector<InstalledAppInfo> app_infos;
+    app_infos.reserve(static_cast<qsizetype>(apps.size()));
+
+    for (const auto& app : apps) {
+        InstalledAppInfo info;
+        info.name = app.name;
+        info.version = app.version;
+        info.publisher = app.publisher;
+        info.choco_package = app.choco_package;
+        info.selected = true;
+        info.category = categorizeApp(app.name);
+        app_infos.append(info);
+    }
+
+    return app_infos;
 }
 
 void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledAppInfo>& apps) {
@@ -1246,6 +1264,9 @@ void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledApp
             app_item->setText(kInstalledAppColumnName, app->name);
             app_item->setText(kInstalledAppColumnVersion, app->version);
             app_item->setText(kInstalledAppColumnPublisher, app->publisher);
+            app_item->setData(kInstalledAppColumnName,
+                              kInstalledAppPackageRole,
+                              app->choco_package);
             app_item->setFlags(app_item->flags() | Qt::ItemIsUserCheckable);
             app_item->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
         }

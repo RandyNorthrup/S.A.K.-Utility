@@ -23,6 +23,7 @@
 #include <QWizardPage>
 
 class QVBoxLayout;
+class UserProfileAppRestoreFlowTests;  // unit-test friend (global namespace)
 
 namespace sak::ui {
 class ViewEmptyState;
@@ -194,6 +195,7 @@ private:
  */
 class UserProfileRestoreAppRestorePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreAppRestorePage(QWidget* parent = nullptr);
@@ -218,7 +220,10 @@ private:
                              const QVector<const RestoreAppInfo*>& apps,
                              int& total_with_package);
     void updateParentCheckState(QTreeWidgetItem* parent);
-    /// @brief Collect checked apps from the tree widget
+    /// @brief The administrator gate and the bundled Chocolatey check. Says why when it refuses.
+    [[nodiscard]] bool installPrerequisitesMet();
+    /// @brief Collect checked apps from the tree widget, one entry per package: several rows can
+    ///        name one package, as two installed Python versions do.
     QVector<RestoreAppInfo> collectSelectedApps() const;
     /// @brief Install apps sequentially on a worker thread; returns (installed,
     /// failed) counts. Static and page-agnostic: all UI updates are posted only

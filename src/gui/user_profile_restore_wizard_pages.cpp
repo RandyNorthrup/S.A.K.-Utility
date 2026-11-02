@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/chocolatey_manager.h"
+#include "sak/elevation_gate.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -21,6 +22,7 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QPointer>
+#include <QSet>
 #include <QtConcurrent>
 #include <QVBoxLayout>
 
@@ -69,6 +71,10 @@ constexpr int kTreePackageColumn = 2;
 constexpr int kTreeDetailColumn = 2;
 constexpr int kSizeDisplayPrecision = 2;
 constexpr int kMegabyteDisplayPrecision = 1;
+
+QString bundledChocolateyRoot() {
+    return QApplication::applicationDirPath() + QStringLiteral("/tools/chocolatey");
+}
 
 // Select the merge-mode combo entry whose data equals `mode` (no-op if absent).
 void setMergeModeValue(QComboBox* mode_combo, MergeMode mode) {
@@ -1855,6 +1861,13 @@ void UserProfileRestoreAppRestorePage::loadApps() {
         info.version = obj["version"].toString();
         info.publisher = obj["publisher"].toString();
         info.choco_package = obj["choco_package"].toString();
+        // The list is a file on the backup drive. An id Chocolatey would refuse is not an offer.
+        if (!info.choco_package.isEmpty() &&
+            !ChocolateyManager::validatePackageName(info.choco_package)) {
+            sak::logWarning("Ignoring invalid Chocolatey id for {} in installed_apps.json",
+                            info.name.toStdString());
+            info.choco_package.clear();
+        }
         info.category = obj["category"].toString();
         info.selected = !info.choco_package.isEmpty();
         m_apps.append(info);
@@ -2085,6 +2098,10 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
         return;
     }
 
+    if (!installPrerequisitesMet()) {
+        return;
+    }
+
     // Disable controls during install
     m_installing = true;
     m_installButton->setEnabled(false);
@@ -2134,21 +2151,50 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     // instead.)
 }
 
+bool UserProfileRestoreAppRestorePage::installPrerequisitesMet() {
+    // Installers write to system locations: the same gate as App Installation.
+    const auto gate = sak::showElevationGate(
+        this,
+        tr("Application Restore"),
+        tr("Installing applications via Chocolatey requires administrator privileges."));
+    if (gate != sak::ElevationGateResult::AlreadyElevated) {
+        return false;
+    }
+
+    ChocolateyManager bundled_choco;
+    if (!bundled_choco.initialize(bundledChocolateyRoot())) {
+        sak::showWarningLogged(
+            this,
+            tr("Chocolatey Not Available"),
+            tr("This copy of S.A.K. Utility has no bundled Chocolatey, so applications cannot be "
+               "installed from here."));
+        return false;
+    }
+    return true;
+}
+
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {
     Q_ASSERT(m_appTree);
     QVector<RestoreAppInfo> selected_apps;
+    QSet<QString> seen_packages;
     for (int category_index = 0; category_index < m_appTree->topLevelItemCount();
          ++category_index) {
         auto* category = m_appTree->topLevelItem(category_index);
         for (int child_index = 0; child_index < category->childCount(); ++child_index) {
             auto* app_item = category->child(child_index);
-            if (((app_item->flags() & Qt::ItemIsEnabled) != 0) &&
-                app_item->checkState(0) == Qt::Checked) {
-                RestoreAppInfo info;
-                info.name = app_item->text(0);
-                info.choco_package = app_item->text(kTreePackageColumn);
-                selected_apps.append(info);
+            if ((app_item->flags() & Qt::ItemIsEnabled) == 0 ||
+                app_item->checkState(0) != Qt::Checked) {
+                continue;
             }
+            const QString package = app_item->text(kTreePackageColumn);
+            if (seen_packages.contains(package.toLower())) {
+                continue;
+            }
+            seen_packages.insert(package.toLower());
+            RestoreAppInfo info;
+            info.name = app_item->text(0);
+            info.choco_package = package;
+            selected_apps.append(info);
         }
     }
     return selected_apps;
@@ -2156,13 +2202,14 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
 
 QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
     const QVector<RestoreAppInfo>& apps, QPointer<UserProfileRestoreAppRestorePage> page) {
+    const int total = static_cast<int>(apps.size());
     auto choco_manager = std::make_shared<ChocolateyManager>();
-    const QString choco_path = QApplication::applicationDirPath() + "/tools/chocolatey";
-    choco_manager->initialize(choco_path);
+    if (!choco_manager->initialize(bundledChocolateyRoot())) {
+        return {0, total};
+    }
 
     int installed = 0;
     int failed = 0;
-    const int total = static_cast<int>(apps.size());
 
     for (int i = 0; i < apps.size(); ++i) {
         const auto& app = apps[i];
@@ -2191,6 +2238,9 @@ QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
             installed++;
         } else {
             failed++;
+            sak::logWarning("Restore could not install {}: {}",
+                            app.choco_package.toStdString(),
+                            result.error_message.toStdString());
         }
 
         if (auto* live = page.data()) {

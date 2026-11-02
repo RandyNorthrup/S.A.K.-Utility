@@ -90,7 +90,6 @@ public:
     std::vector<PackageInfo> parseSearchResults(const QString& output);
     bool isPackageInstalled(const QString& package_name);
     QString getInstalledVersion(const QString& package_name);
-    bool isPackageAvailable(const QString& package_name);
     QStringList getOutdatedPackages();
 
     // Retry logic

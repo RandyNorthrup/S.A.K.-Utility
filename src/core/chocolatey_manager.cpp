@@ -592,27 +592,6 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
     return QString();
 }
 
-bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
-    // Validate before the name is handed to choco (defense in depth): an option-like
-    // id must never be interpreted as a search flag rather than a package.
-    if (!validatePackageName(package_name)) {
-        return false;
-    }
-    if (!m_initialized) {
-        return false;
-    }
-
-    const Result result = searchPackage(package_name, 1);
-    if (!result.success) {
-        return false;
-    }
-
-    auto packages = parseSearchResults(result.output);
-    return std::ranges::any_of(packages, [&package_name](const auto& pkg) {
-        return pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0;
-    });
-}
-
 QStringList ChocolateyManager::getOutdatedPackages() {
     QStringList outdated;
 

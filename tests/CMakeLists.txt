@@ -3365,7 +3365,33 @@ add_test(NAME test_smart_disk_analyzer COMMAND test_smart_disk_analyzer
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_smart_disk_analyzer")
 
-# test_package_matcher - mapping CRUD, export/import, findMatch
+# test_user_profile_app_restore_flow - a scanned app reaches the restore page as an install offer
+add_executable(test_user_profile_app_restore_flow
+    unit/test_user_profile_app_restore_flow.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_user_profile_app_restore_flow PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_app_restore_flow PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_app_restore_flow PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_app_restore_flow COMMAND test_user_profile_app_restore_flow
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_app_restore_flow.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform; the case answers its own message box.
+set_tests_properties(test_user_profile_app_restore_flow PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_user_profile_app_restore_flow")
+
+# test_package_matcher - table lookup and name normalization on real display names
 add_executable(test_package_matcher
     unit/test_package_matcher.cpp
 )
@@ -3375,7 +3401,7 @@ set_target_properties(test_package_matcher PROPERTIES
 )
 target_link_libraries(test_package_matcher PRIVATE
     sak_core sak_foundation
-    Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_package_matcher PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include

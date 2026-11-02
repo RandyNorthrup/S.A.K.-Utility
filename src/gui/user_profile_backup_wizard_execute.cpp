@@ -310,13 +310,7 @@ bool UserProfileBackupExecutePage::saveInstalledAppsToBackup(
 
     QJsonArray apps_array;
     for (const auto& app : installed_apps) {
-        QJsonObject app_obj;
-        app_obj["name"] = app.name;
-        app_obj["version"] = app.version;
-        app_obj["publisher"] = app.publisher;
-        app_obj["choco_package"] = app.choco_package;
-        app_obj["category"] = app.category;
-        apps_array.append(app_obj);
+        apps_array.append(app.toJson());
     }
 
     QString error;
