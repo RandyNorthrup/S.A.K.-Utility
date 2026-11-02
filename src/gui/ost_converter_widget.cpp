@@ -425,11 +425,11 @@ QWidget* OstConverterWidget::createButtonBar() {
 // ============================================================================
 
 void OstConverterWidget::onAddFilesClicked() {
-    const QStringList files =
-        QFileDialog::getOpenFileNames(this,
-                                      tr("Select OST/PST Files"),
-                                      QString(),
-                                      tr("Outlook Data Files (*.ost *.pst);;All Files (*.*)"));
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this,
+        tr("Select OST/PST Files"),
+        QString(),
+        tr("Outlook Data Files (*.ost *.pst *.nst);;All Files (*.*)"));
 
     for (const auto& file : files) {
         m_controller->addFile(file);
@@ -681,6 +681,10 @@ QString OstConverterWidget::formatBytes(qint64 bytes) {
 }
 
 QString OstConverterWidget::progressSummary(const OstConversionResult& result) {
+    // A store can be whole and hold nothing, as a group-mail cache often does.
+    if (result.items_converted == 0 && result.items_failed == 0 && result.itemsSkipped() == 0) {
+        return tr("No messages in this file");
+    }
     QStringList parts{tr("%1 items").arg(result.items_converted)};
     if (result.items_failed > 0) {
         parts.append(tr("%1 failed").arg(result.items_failed));

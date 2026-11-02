@@ -64,6 +64,38 @@ bool needsDetailLoad(const sak::EmailSearchCriteria& criteria) {
 // counter and never races a concurrent search on another thread.
 thread_local int t_item_read_failures = 0;
 
+/// A filter's group of item types: Calendar takes in meeting requests and Contact takes in
+/// distribution lists, as the Calendar and Contacts windows do.
+bool typeMatchesFilter(sak::EmailItemType type, sak::EmailItemType filter) {
+    if (filter == sak::EmailItemType::Calendar) {
+        return type == sak::EmailItemType::Calendar || type == sak::EmailItemType::MeetingRequest;
+    }
+    if (filter == sak::EmailItemType::Contact) {
+        return type == sak::EmailItemType::Contact || type == sak::EmailItemType::DistList;
+    }
+    return type == filter;
+}
+
+/// Whether a date is inside the range. An item with no date cannot be shown to be in any range, so
+/// a date filter leaves it out, whichever end of the range is set.
+bool dateInRange(const QDateTime& date, const sak::EmailSearchCriteria& criteria) {
+    if (!criteria.date_from.isValid() && !criteria.date_to.isValid()) {
+        return true;
+    }
+    if (!date.isValid()) {
+        return false;
+    }
+    return (!criteria.date_from.isValid() || date >= criteria.date_from) &&
+           (!criteria.date_to.isValid() || date <= criteria.date_to);
+}
+
+/// Events and journal entries belong to the day they happen. The date in a contents table is when
+/// the item reached the store, so a range would otherwise find a meeting by its invitation.
+bool datedByItsStart(sak::EmailItemType type) {
+    return type == sak::EmailItemType::Calendar || type == sak::EmailItemType::MeetingRequest ||
+           type == sak::EmailItemType::JournalEntry;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -98,7 +130,8 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
     Q_EMIT progressUpdated(0, state.total_items);
 
     for (const auto& entry : folders) {
-        if (m_cancelled.load(std::memory_order_relaxed)) {
+        if (m_cancelled.load(std::memory_order_relaxed) ||
+            state.total_hits >= sak::email::kMaxSearchResults) {
             break;
         }
         searchSingleFolder(parser, criteria, entry.path, entry.folder, state);
@@ -165,7 +198,10 @@ bool EmailSearchWorker::searchItemPage(PstParser* parser,
         }
         ++state.items_searched;
 
-        if (!passesItemFilters(item, criteria)) {
+        // The result cap above counts hits, so a filter narrows first and the cap applies to what
+        // is left: a filter reaches items a plain search would have stopped short of.
+        QDateTime filter_date = item.date;
+        if (!passesItemFilters(item, criteria, parser, filter_date)) {
             continue;
         }
 
@@ -176,7 +212,7 @@ bool EmailSearchWorker::searchItemPage(PstParser* parser,
             hit.item_type = item.item_type;
             hit.subject = item.subject;
             hit.sender = item.sender_name;
-            hit.date = item.date;
+            hit.date = filter_date;
             hit.context_snippet = match->context;
             hit.match_field = match->field;
             hit.folder_path = folder_path;
@@ -278,7 +314,7 @@ bool EmailSearchWorker::searchMessagePage(MboxParser* parser,
         }
         ++state.items_searched;
 
-        if (!passesMboxFilters(msg, criteria)) {
+        if (!passesMboxFilters(msg, criteria, parser)) {
             continue;
         }
 
@@ -375,27 +411,40 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
 // ============================================================================
 
 bool EmailSearchWorker::passesItemFilters(const sak::PstItemSummary& item,
-                                          const sak::EmailSearchCriteria& criteria) const {
+                                          const sak::EmailSearchCriteria& criteria,
+                                          PstParser* parser,
+                                          QDateTime& filter_date) const {
     if (criteria.item_type_filter != sak::EmailItemType::Unknown &&
-        item.item_type != criteria.item_type_filter) {
-        return false;
-    }
-    if (criteria.date_from.isValid() && item.date < criteria.date_from) {
-        return false;
-    }
-    if (criteria.date_to.isValid() && item.date > criteria.date_to) {
+        !typeMatchesFilter(item.item_type, criteria.item_type_filter)) {
         return false;
     }
     if (criteria.has_attachment_only && !item.has_attachments) {
         return false;
     }
-    return true;
+    const bool has_range = criteria.date_from.isValid() || criteria.date_to.isValid();
+    if (has_range && datedByItsStart(item.item_type)) {
+        auto detail = parser->readItemDetail(item.node_id);
+        if (!detail) {
+            // Unreadable, so it cannot be placed in the range. The search says results may be
+            // incomplete rather than leaving it out without a word.
+            ++t_item_read_failures;
+            return false;
+        }
+        if (detail->start_time.isValid()) {
+            filter_date = detail->start_time;
+        }
+    }
+    return dateInRange(filter_date, criteria);
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItem(
     const sak::PstItemSummary& item,
     const sak::EmailSearchCriteria& criteria,
     PstParser* parser) const {
+    // No text to look for: the filters said what is wanted, and this item passed them.
+    if (criteria.query_text.isEmpty() && criteria.hasFilter()) {
+        return MatchResult{.field = QStringLiteral("filter"), .context = {}};
+    }
     // First enabled field to hit wins. Each matcher checks its own enable flag and
     // returns nullopt when disabled, so this stays a flat chain (no unwieldy branch).
     if (auto r = matchPstSubject(item, criteria)) {
@@ -527,24 +576,34 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemAtt
 }
 
 bool EmailSearchWorker::passesMboxFilters(const sak::MboxMessage& msg,
-                                          const sak::EmailSearchCriteria& criteria) const {
-    if (criteria.date_from.isValid() && msg.date < criteria.date_from) {
+                                          const sak::EmailSearchCriteria& criteria,
+                                          MboxParser* parser) const {
+    // A mailbox holds only email, so asking it for anything else finds nothing.
+    if (criteria.item_type_filter != sak::EmailItemType::Unknown &&
+        criteria.item_type_filter != sak::EmailItemType::Email) {
         return false;
     }
-    if (criteria.date_to.isValid() && msg.date > criteria.date_to) {
+    if (!dateInRange(msg.date, criteria)) {
         return false;
     }
-    if (criteria.has_attachment_only && !msg.has_attachments) {
+    if (!criteria.has_attachment_only) {
+        return true;
+    }
+    // The index has only the headers to go on, and they say "might": any multipart message, which
+    // is nearly all mail. On real mailboxes that was 766 hits where 21 messages had attachments.
+    if (!msg.has_attachments) {
         return false;
     }
-    return true;
+    const auto detail = parser->readMessageDetail(msg.message_index);
+    if (!detail) {
+        ++t_item_read_failures;
+        return false;
+    }
+    return !detail->attachments.isEmpty();
 }
 
-std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
-    const sak::MboxMessage& msg,
-    int message_index,
-    const sak::EmailSearchCriteria& criteria,
-    MboxParser* parser) const {
+std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxHeaders(
+    const sak::MboxMessage& msg, const sak::EmailSearchCriteria& criteria) const {
     if (criteria.search_subject &&
         matchesQuery(msg.subject, criteria.query_text, criteria.case_sensitive)) {
         return MatchResult{.field = QStringLiteral("subject"),
@@ -557,6 +616,20 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
     if (criteria.search_sender &&
         matchesQuery(msg.from, criteria.query_text, criteria.case_sensitive)) {
         return MatchResult{.field = QStringLiteral("sender"), .context = msg.from};
+    }
+    return std::nullopt;
+}
+
+std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
+    const sak::MboxMessage& msg,
+    int message_index,
+    const sak::EmailSearchCriteria& criteria,
+    MboxParser* parser) const {
+    if (criteria.query_text.isEmpty() && criteria.hasFilter()) {
+        return MatchResult{.field = QStringLiteral("filter"), .context = {}};
+    }
+    if (auto r = matchMboxHeaders(msg, criteria)) {
+        return r;
     }
 
     // Body/recipient/attachment-name all live in the message detail: load it ONCE and

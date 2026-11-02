@@ -36,6 +36,9 @@ public:
     /// no extension, in Mail or ImapMail account folders and in .sbd subfolders of those.
     [[nodiscard]] static QStringList thunderbirdMailboxes(const QString& profiles_dir);
 
+    /// The file patterns a scan lists, besides Thunderbird's mailboxes with no extension.
+    [[nodiscard]] static QStringList mailFilePatterns();
+
 private Q_SLOTS:
     void onScanClicked();
     void onOpenClicked();

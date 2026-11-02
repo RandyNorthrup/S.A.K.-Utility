@@ -102,6 +102,17 @@ private Q_SLOTS:
                               QStringLiteral("Status"),
                               QStringLiteral("Progress")}));
     }
+
+    // A whole store holding nothing is an answer, not a blank line in the queue.
+    void aStoreWithNoMessagesSaysSo() {
+        sak::OstConversionResult empty;
+        QCOMPARE(sak::OstConverterWidget::progressSummary(empty),
+                 QStringLiteral("No messages in this file"));
+        sak::OstConversionResult only_other;
+        only_other.skipped_calendar = 2;
+        QCOMPARE(sak::OstConverterWidget::progressSummary(only_other),
+                 QStringLiteral("0 items, 2 not mail"));
+    }
 };
 
 QTEST_MAIN(OstConverterWidgetTests)

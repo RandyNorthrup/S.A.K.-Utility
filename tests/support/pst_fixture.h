@@ -62,6 +62,7 @@ inline constexpr int kMetaPad = 4;
 inline constexpr int kNbtEntrySize = 32;
 inline constexpr int kBbtEntrySize = 24;
 inline constexpr int kMaxEntriesPerPage = 0x14;
+inline constexpr int kPageTrailerBidOffset = 8;  // PAGETRAILER.bid
 inline constexpr uint8_t kPtypeNbt = 0x81;
 inline constexpr uint8_t kPtypeBbt = 0x80;
 
@@ -449,8 +450,14 @@ inline QByteArray buildEmptyUnicodeStore() {
 
 // A legacy-Unicode BTree leaf page holding entry_count entries (level 0) with a valid
 // PAGETRAILER. entries (entry_count * entry_size bytes) is copied to page offset 0.
-inline QByteArray makeLeafPageWithEntries(
-    uint8_t ptype, int entry_size, int page_offset, const QByteArray& entries, int entry_count) {
+/// Where a page sits, and the BID its parent's BREF names it by.
+struct PagePlace {
+    int offset = 0;
+    uint64_t bid = 0;
+};
+
+inline QByteArray makeLeafPageAt(
+    uint8_t ptype, int entry_size, PagePlace place, const QByteArray& entries, int entry_count) {
     QByteArray page(kPageSize, '\0');
     const int trailer_offset = kPageSize - kTrailerSize;
     const int meta_offset = trailer_offset - kMetaPad - kMetaSize;
@@ -461,9 +468,15 @@ inline QByteArray makeLeafPageWithEntries(
     page[meta_offset + 3] = 0;  // cLevel 0 == leaf
     page[trailer_offset] = static_cast<char>(ptype);
     page[trailer_offset + 1] = static_cast<char>(ptype);
-    writeLe16(page, trailer_offset + 2, computeSig(static_cast<uint64_t>(page_offset), 0));
+    writeLe16(page, trailer_offset + 2, computeSig(static_cast<uint64_t>(place.offset), place.bid));
     writeLe32(page, trailer_offset + 4, weakCrc(page, 0, kPageSize - kTrailerSize));
+    writeLe64(page, trailer_offset + kPageTrailerBidOffset, place.bid);
     return page;
+}
+
+inline QByteArray makeLeafPageWithEntries(
+    uint8_t ptype, int entry_size, int page_offset, const QByteArray& entries, int entry_count) {
+    return makeLeafPageAt(ptype, entry_size, {page_offset, 0}, entries, entry_count);
 }
 
 // One-entry convenience wrapper (the openable store's NBT/BBT each carry a single entry).

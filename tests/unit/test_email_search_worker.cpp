@@ -8,6 +8,10 @@
 #include "sak/email_search_worker.h"
 #include "sak/email_types.h"
 #include "sak/mbox_parser.h"
+#include "sak/pst_named_properties.h"
+#include "sak/pst_parser.h"
+
+#include "../support/pst_store_builder.h"
 
 #include <QSignalSpy>
 #include <QTemporaryFile>
@@ -43,7 +47,176 @@ private Q_SLOTS:
     // -- B7-34: MBOX honors recipient / attachment-name criteria ---------
     void mboxRecipientSearchMatchesToField();
     void mboxAttachmentNameSearchMatches();
+
+    // -- Filters ---------------------------------------------------------
+    void plainSearchIsUnchangedWhenNoFilterIsSet();
+    void itemTypeFilterGroupsAsTheWindowsDo();
+    void hasAttachmentFilterNarrows();
+    void dateRangeCoversBothEndsAndLeavesOutTheUndated();
+    void anEventIsInARangeByWhenItHappens();
+    void filtersAloneListWhatTheyMatch();
+    void aFilteredSearchIsASubsetOfThePlainOne();
+    void anMboxHasOnlyEmailToFind();
+    void mboxDateAndAttachmentFilters();
+    void theResultLimitCountsWhatIsLeftAfterFiltering();
 };
+
+namespace {
+
+using namespace sak::pst_fixture;
+
+BuilderMessage filterMail(const QString& subject, const QDateTime& date, bool attached = false) {
+    BuilderMessage msg;
+    msg.subject = subject;
+    msg.sender_name = QStringLiteral("Owen Lark");
+    msg.sender_email = QStringLiteral("owen@harborlane.example");
+    msg.date = date;
+    msg.body_plain = QStringLiteral("needle in ") + subject;
+    if (attached) {
+        msg.attachments = {{QStringLiteral("f.bin"), {}, QByteArray("data"), {}}};
+    }
+    return msg;
+}
+
+QDateTime dayOf(int month, int day) {
+    return QDateTime(QDate(2026, month, day), QTime(12, 0), QTimeZone::UTC);
+}
+
+BuilderMessage ofClass(const QString& cls, const QString& subject, const QDateTime& date) {
+    BuilderMessage msg;
+    msg.message_class = cls;
+    msg.subject = subject;
+    msg.date = date;
+    msg.body_plain = QStringLiteral("needle in ") + subject;
+    return msg;
+}
+
+/// One store holding one of everything a filter can ask for.
+QByteArray filterStore() {
+    BuilderFolder inbox;
+    inbox.name = QStringLiteral("Inbox");
+    BuilderMessage undated = filterMail(QStringLiteral("Undated draft"), {});
+    inbox.messages = {
+        filterMail(QStringLiteral("March mail"), dayOf(3, 10)),
+        filterMail(QStringLiteral("April mail with file"), dayOf(4, 10), true),
+        filterMail(QStringLiteral("May mail"), dayOf(5, 10)),
+        undated,
+        ofClass(
+            QStringLiteral("IPM.Schedule.Meeting.Request"), QStringLiteral("Invite"), dayOf(1, 5)),
+    };
+    BuilderMessage event =
+        ofClass(QStringLiteral("IPM.Appointment"), QStringLiteral("Event"), dayOf(1, 5));
+    event.named_props = {{0x02,
+                          sak::pst::kLidAppointmentStartWhole,
+                          sak::email::kPropTypeSysTime,
+                          builderFiletime(dayOf(4, 20))}};
+    BuilderFolder calendar;
+    calendar.name = QStringLiteral("Calendar");
+    calendar.container_class = QStringLiteral("IPF.Appointment");
+    calendar.messages = {event};
+    BuilderFolder contacts;
+    contacts.name = QStringLiteral("Contacts");
+    contacts.container_class = QStringLiteral("IPF.Contact");
+    contacts.messages = {
+        ofClass(QStringLiteral("IPM.Contact"), QStringLiteral("Person"), dayOf(2, 2)),
+        ofClass(QStringLiteral("IPM.DistList"), QStringLiteral("Group"), dayOf(2, 3)),
+    };
+    BuilderFolder tasks;
+    tasks.name = QStringLiteral("Tasks");
+    tasks.container_class = QStringLiteral("IPF.Task");
+    tasks.messages = {ofClass(QStringLiteral("IPM.Task"), QStringLiteral("Job"), dayOf(2, 4))};
+    BuilderFolder notes;
+    notes.name = QStringLiteral("Notes");
+    notes.container_class = QStringLiteral("IPF.StickyNote");
+    notes.messages = {
+        ofClass(QStringLiteral("IPM.StickyNote"), QStringLiteral("Note"), dayOf(2, 5))};
+    BuilderFolder journal;
+    journal.name = QStringLiteral("Journal");
+    journal.container_class = QStringLiteral("IPF.Journal");
+    journal.messages = {
+        ofClass(QStringLiteral("IPM.Activity"), QStringLiteral("Log"), dayOf(2, 6))};
+    return PstStoreBuilder{}.build({inbox, calendar, contacts, tasks, notes, journal});
+}
+
+QString writeTemp(const QByteArray& bytes, const QString& suffix, QTemporaryDir& dir) {
+    static int counter = 0;
+    const QString path = dir.filePath(QStringLiteral("search%1%2").arg(++counter).arg(suffix));
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(bytes);
+    }
+    return path;
+}
+
+QStringList hitSubjects(PstParser& parser, const sak::EmailSearchCriteria& criteria) {
+    EmailSearchWorker worker;
+    QStringList subjects;
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchHit,
+                     &worker,
+                     [&subjects](const sak::EmailSearchHit& hit) { subjects.append(hit.subject); });
+    worker.search(&parser, criteria);
+    subjects.sort();
+    return subjects;
+}
+
+sak::EmailSearchCriteria needle() {
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("needle");
+    return criteria;
+}
+
+QByteArray dateAttachedMailbox() {
+    QByteArray box;
+    const auto add = [&box](const char* subject, const char* date, bool attached) {
+        box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+        box += "From: a@example.test\n";
+        box += QByteArray("Subject: ") + subject + "\n";
+        if (date[0] != '\0') {
+            box += QByteArray("Date: ") + date + "\n";
+        }
+        if (attached) {
+            box += "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"B\"\n\n";
+            box += "--B\nContent-Type: text/plain\n\nneedle\n";
+            box += "--B\nContent-Type: application/pdf; name=\"f.pdf\"\n";
+            box += "Content-Disposition: attachment; filename=\"f.pdf\"\n\nX\n--B--\n\n";
+        } else {
+            box += "\nneedle\n\n";
+        }
+    };
+    // A text file that came with a Content-ID: inline, and still an attachment.
+    box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+    box += "From: a@example.test\nSubject: Inline file\n";
+    box += "Date: Sun, 15 Mar 2026 12:00:00 +0000\n";
+    box += "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"I\"\n\n";
+    box += "--I\nContent-Type: text/plain\n\nneedle\n";
+    box += "--I\nContent-Type: text/plain\n";
+    box += "Content-Disposition: inline; filename=\"notes.txt\"\n\nneedle\n--I--\n\n";
+    // Multipart with no attachment: its headers look just like a message with one.
+    box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+    box += "From: a@example.test\nSubject: Alternative\n";
+    box += "MIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=\"A\"\n\n";
+    box += "--A\nContent-Type: text/plain\n\nneedle\n";
+    box += "--A\nContent-Type: text/html\n\n<p>needle</p>\n--A--\n\n";
+    add("March", "Tue, 10 Mar 2026 12:00:00 +0000", false);
+    add("April", "Fri, 10 Apr 2026 12:00:00 +0000", true);
+    add("May", "Sun, 10 May 2026 12:00:00 +0000", false);
+    return box;
+}
+
+QStringList mboxHitSubjects(MboxParser& parser, const sak::EmailSearchCriteria& criteria) {
+    EmailSearchWorker worker;
+    QStringList subjects;
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchHit,
+                     &worker,
+                     [&subjects](const sak::EmailSearchHit& hit) { subjects.append(hit.subject); });
+    worker.searchMbox(&parser, criteria);
+    subjects.sort();
+    return subjects;
+}
+
+}  // namespace
 
 // ============================================================================
 // Criteria Defaults
@@ -565,6 +738,184 @@ void TestEmailSearchWorker::mboxAttachmentNameSearchMatches() {
     QCOMPARE(gated_done_spy.count(), 1);
     QCOMPARE(gated_hit_spy.count(), 0);
     parser.close();
+}
+
+void TestEmailSearchWorker::plainSearchIsUnchangedWhenNoFilterIsSet() {
+    QVERIFY(!sak::EmailSearchCriteria{}.hasFilter());
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    QVERIFY(parser.isOpen());
+    // Everything with the word in it, dated or not, whatever it is.
+    QCOMPARE(hitSubjects(parser, needle()).size(), 11);
+    // No text and no filter still finds nothing.
+    QVERIFY(hitSubjects(parser, {}).isEmpty());
+}
+
+void TestEmailSearchWorker::itemTypeFilterGroupsAsTheWindowsDo() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    const auto of_type = [&parser](sak::EmailItemType type) {
+        sak::EmailSearchCriteria criteria = needle();
+        criteria.item_type_filter = type;
+        return hitSubjects(parser, criteria);
+    };
+    QCOMPARE(of_type(sak::EmailItemType::Email),
+             QStringList({QStringLiteral("April mail with file"),
+                          QStringLiteral("March mail"),
+                          QStringLiteral("May mail"),
+                          QStringLiteral("Undated draft")}));
+    QCOMPARE(of_type(sak::EmailItemType::Calendar),
+             QStringList({QStringLiteral("Event"), QStringLiteral("Invite")}));
+    QCOMPARE(of_type(sak::EmailItemType::Contact),
+             QStringList({QStringLiteral("Group"), QStringLiteral("Person")}));
+    QCOMPARE(of_type(sak::EmailItemType::Task), QStringList{QStringLiteral("Job")});
+    QCOMPARE(of_type(sak::EmailItemType::StickyNote), QStringList{QStringLiteral("Note")});
+    QCOMPARE(of_type(sak::EmailItemType::JournalEntry), QStringList{QStringLiteral("Log")});
+}
+
+void TestEmailSearchWorker::hasAttachmentFilterNarrows() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    sak::EmailSearchCriteria criteria = needle();
+    criteria.has_attachment_only = true;
+    QCOMPARE(hitSubjects(parser, criteria), QStringList{QStringLiteral("April mail with file")});
+}
+
+void TestEmailSearchWorker::dateRangeCoversBothEndsAndLeavesOutTheUndated() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    sak::EmailSearchCriteria criteria = needle();
+    criteria.item_type_filter = sak::EmailItemType::Email;
+    criteria.date_from = dayOf(3, 10);
+    criteria.date_to = dayOf(4, 10);
+    QCOMPARE(hitSubjects(parser, criteria),
+             QStringList({QStringLiteral("April mail with file"), QStringLiteral("March mail")}));
+
+    // One end alone: an item with no date cannot be shown to be in it, whichever end it is.
+    criteria.date_from = {};
+    criteria.date_to = dayOf(4, 10);
+    QVERIFY(!hitSubjects(parser, criteria).contains(QStringLiteral("Undated draft")));
+    criteria.date_to = {};
+    criteria.date_from = dayOf(4, 10);
+    QVERIFY(!hitSubjects(parser, criteria).contains(QStringLiteral("Undated draft")));
+}
+
+// A meeting is found by the day it happens, not by the day its invitation landed.
+void TestEmailSearchWorker::anEventIsInARangeByWhenItHappens() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    sak::EmailSearchCriteria criteria = needle();
+    criteria.item_type_filter = sak::EmailItemType::Calendar;
+    criteria.date_from = dayOf(4, 1);
+    criteria.date_to = dayOf(4, 30);
+    QCOMPARE(hitSubjects(parser, criteria), QStringList{QStringLiteral("Event")});
+
+    // And the hit shows the date it was found by.
+    EmailSearchWorker worker;
+    QVector<sak::EmailSearchHit> hits;
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchHit,
+                     &worker,
+                     [&hits](const sak::EmailSearchHit& hit) { hits.append(hit); });
+    worker.search(&parser, criteria);
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits.first().date, dayOf(4, 20));
+}
+
+void TestEmailSearchWorker::filtersAloneListWhatTheyMatch() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    sak::EmailSearchCriteria criteria;
+    criteria.item_type_filter = sak::EmailItemType::Task;
+    QCOMPARE(hitSubjects(parser, criteria), QStringList{QStringLiteral("Job")});
+}
+
+void TestEmailSearchWorker::aFilteredSearchIsASubsetOfThePlainOne() {
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(filterStore(), QStringLiteral(".pst"), dir));
+    const QStringList plain = hitSubjects(parser, needle());
+    for (const auto type : {sak::EmailItemType::Email,
+                            sak::EmailItemType::Calendar,
+                            sak::EmailItemType::Contact,
+                            sak::EmailItemType::Task,
+                            sak::EmailItemType::StickyNote,
+                            sak::EmailItemType::JournalEntry}) {
+        sak::EmailSearchCriteria criteria = needle();
+        criteria.item_type_filter = type;
+        for (const QString& subject : hitSubjects(parser, criteria)) {
+            QVERIFY2(plain.contains(subject), qPrintable(subject));
+        }
+    }
+}
+
+void TestEmailSearchWorker::anMboxHasOnlyEmailToFind() {
+    QTemporaryDir dir;
+    MboxParser parser;
+    parser.open(writeTemp(dateAttachedMailbox(), QStringLiteral(".mbox"), dir));
+    QVERIFY(parser.isOpen());
+    sak::EmailSearchCriteria criteria = needle();
+    criteria.item_type_filter = sak::EmailItemType::Email;
+    QCOMPARE(mboxHitSubjects(parser, criteria).size(), 5);
+    criteria.item_type_filter = sak::EmailItemType::Calendar;
+    QVERIFY(mboxHitSubjects(parser, criteria).isEmpty());
+}
+
+void TestEmailSearchWorker::mboxDateAndAttachmentFilters() {
+    QTemporaryDir dir;
+    MboxParser parser;
+    parser.open(writeTemp(dateAttachedMailbox(), QStringLiteral(".mbox"), dir));
+    sak::EmailSearchCriteria attached;
+    attached.has_attachment_only = true;
+    QCOMPARE(mboxHitSubjects(parser, attached),
+             QStringList({QStringLiteral("April"), QStringLiteral("Inline file")}));
+
+    sak::EmailSearchCriteria ranged = needle();
+    ranged.date_from = dayOf(3, 1);
+    ranged.date_to = dayOf(4, 30);
+    QCOMPARE(mboxHitSubjects(parser, ranged),
+             QStringList({QStringLiteral("April"),
+                          QStringLiteral("Inline file"),
+                          QStringLiteral("March")}));
+}
+
+// The filter narrows first and the limit counts what is left, so a filter reaches an item that a
+// plain search would have stopped short of.
+void TestEmailSearchWorker::theResultLimitCountsWhatIsLeftAfterFiltering() {
+    QByteArray box;
+    const int plain_messages = sak::email::kMaxSearchResults + 5;
+    box.reserve(static_cast<qsizetype>(plain_messages) * 80);
+    for (int i = 0; i < plain_messages; ++i) {
+        box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+        box += "From: a@example.test\nSubject: needle plain\n\nx\n\n";
+    }
+    box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+    box += "From: a@example.test\nSubject: needle last\n";
+    box += "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"B\"\n\n";
+    box += "--B\nContent-Type: text/plain\n\nx\n";
+    box += "--B\nContent-Type: application/pdf; name=\"f.pdf\"\n";
+    box += "Content-Disposition: attachment; filename=\"f.pdf\"\n\nX\n--B--\n\n";
+
+    QTemporaryDir dir;
+    MboxParser parser;
+    parser.open(writeTemp(box, QStringLiteral(".mbox"), dir));
+    QVERIFY(parser.isOpen());
+    sak::EmailSearchCriteria plain;
+    plain.query_text = QStringLiteral("needle");
+    plain.search_body = false;
+    const QStringList capped = mboxHitSubjects(parser, plain);
+    QCOMPARE(capped.size(), sak::email::kMaxSearchResults);
+    QVERIFY(!capped.contains(QStringLiteral("needle last")));
+
+    sak::EmailSearchCriteria filtered = plain;
+    filtered.has_attachment_only = true;
+    QCOMPARE(mboxHitSubjects(parser, filtered), QStringList{QStringLiteral("needle last")});
 }
 
 QTEST_MAIN(TestEmailSearchWorker)

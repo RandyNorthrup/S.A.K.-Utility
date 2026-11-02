@@ -60,7 +60,8 @@ const PstFolder* findFlaggedIpmSubtree(const QVector<PstFolder>& folders) {
 }
 
 void collectInto(const PstFolder& folder, QVector<uint64_t>& out) {
-    if (!isMailFolder(folder.display_name, folder.container_class)) {
+    if (!isMailFolder(folder.display_name, folder.container_class) &&
+        !holdsSystemFolderEmails(folder)) {
         return;
     }
     out.append(folder.node_id);
@@ -69,7 +70,42 @@ void collectInto(const PstFolder& folder, QVector<uint64_t>& out) {
     }
 }
 
+void collectOutside(const PstFolder& folder, const PstFolder* ipm, QVector<const PstFolder*>& out) {
+    if (&folder == ipm) {
+        return;
+    }
+    if (folder.system_folder_emails > 0) {
+        out.append(&folder);
+    }
+    for (const auto& child : folder.children) {
+        collectOutside(child, ipm, out);
+    }
+}
+
 }  // namespace
+
+bool isRealEmail(EmailItemType type) {
+    return type == EmailItemType::Email || type == EmailItemType::MeetingRequest;
+}
+
+bool holdsSystemFolderEmails(const PstFolder& folder) {
+    return folder.system_folder_emails > 0 ||
+           std::ranges::any_of(folder.children, [](const PstFolder& child) {
+               return holdsSystemFolderEmails(child);
+           });
+}
+
+QVector<const PstFolder*> foldersWithMailOutsideMailTree(const QVector<PstFolder>& tree) {
+    QVector<const PstFolder*> found;
+    const PstFolder* ipm = findIpmSubtree(tree);
+    if (ipm == nullptr || ipm->children.isEmpty()) {
+        return found;  // With no mail tree every folder is listed from the roots already
+    }
+    for (const auto& root : tree) {
+        collectOutside(root, ipm, found);
+    }
+    return found;
+}
 
 bool isMailFolder(const QString& display_name, const QString& container_class) {
     const bool has_non_mail_prefix =
@@ -89,9 +125,10 @@ bool isMailFolder(const QString& display_name, const QString& container_class) {
 
 static const PstFolder* findNamedIpmSubtree(const QVector<PstFolder>& folders);
 
-bool isTaskOrNoteFolder(const QString& display_name, const QString& container_class) {
+bool isTaskNoteOrJournalFolder(const QString& display_name, const QString& container_class) {
     const bool holds_them = container_class.startsWith(QLatin1String("IPF.Task")) ||
-                            container_class.startsWith(QLatin1String("IPF.StickyNote"));
+                            container_class.startsWith(QLatin1String("IPF.StickyNote")) ||
+                            container_class.startsWith(QLatin1String("IPF.Journal"));
     // Exchange's own bookkeeping folders can carry these classes too.
     return holds_them &&
            std::ranges::none_of(nonMailFolderNames(), [&display_name](const QString& n) {
@@ -154,6 +191,9 @@ QVector<uint64_t> mailFolderNodeIds(const QVector<PstFolder>& tree) {
                                                                                     : tree;
     for (const auto& folder : source) {
         collectInto(folder, ids);
+    }
+    for (const PstFolder* outside : foldersWithMailOutsideMailTree(tree)) {
+        ids.append(outside->node_id);
     }
     return ids;
 }

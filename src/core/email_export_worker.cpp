@@ -8,6 +8,8 @@
 // sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
 #include "sak/csv_escape.h"
 #include "sak/email_constants.h"
+#include "sak/email_folder_selection.h"
+#include "sak/email_ics_writer.h"
 #include "sak/eml_writer.h"
 #include "sak/html_email_writer.h"
 #include "sak/io_write_utils.h"
@@ -52,28 +54,6 @@ QString escapeCalendarText(const QString& value) {
     return out;
 }
 
-/// Strip C0 control characters (including CR/LF) so a value cannot terminate an
-/// iCalendar content line or a MIME/param context.
-QString stripControlChars(const QString& value) {
-    QString out;
-    out.reserve(value.size());
-    for (const QChar ch : value) {
-        if (ch.unicode() >= kMinimumPrintableCodePoint) {
-            out.append(ch);
-        }
-    }
-    return out;
-}
-
-/// Quote an iCalendar (RFC 5545) parameter value. Parameter values use a DQUOTE
-/// wrapper -- NOT TEXT backslash-escaping -- and cannot themselves contain a DQUOTE,
-/// so embedded quotes are dropped. Prevents a CN value from injecting extra params.
-QString icsParamQuote(const QString& value) {
-    QString v = stripControlChars(value);
-    v.remove(QLatin1Char('"'));
-    return QLatin1Char('"') + v + QLatin1Char('"');
-}
-
 /// Detect an image MIME subtype (for a vCard PHOTO TYPE) from magic bytes; empty
 /// when the format is not recognized so the caller does not mislabel it.
 QString detectPhotoType(const QByteArray& data) {
@@ -89,18 +69,11 @@ QString detectPhotoType(const QByteArray& data) {
     return {};
 }
 
-/// Format a datetime for iCalendar (DTSTART/DTEND)
-QString toIcsDateTime(const QDateTime& datetime) {
-    if (!datetime.isValid()) {
-        return {};
-    }
-    return datetime.toUTC().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
-}
-
 /// Check if a format is one of the CSV variants
 bool isCsvFormat(sak::ExportFormat format) {
     return format == sak::ExportFormat::CsvEmails || format == sak::ExportFormat::CsvContacts ||
-           format == sak::ExportFormat::CsvCalendar || format == sak::ExportFormat::CsvTasks;
+           format == sak::ExportFormat::CsvCalendar || format == sak::ExportFormat::CsvTasks ||
+           format == sak::ExportFormat::CsvJournal;
 }
 
 /// Check if a format exports one file per message body.
@@ -127,6 +100,7 @@ constexpr ExportFormatName kExportFormatNames[] = {
     {.format = sak::ExportFormat::CsvTasks, .display_name = "CSV (Tasks)"},
     {.format = sak::ExportFormat::PlainTextNotes, .display_name = "TXT"},
     {.format = sak::ExportFormat::Attachments, .display_name = "Attachments"},
+    {.format = sak::ExportFormat::CsvJournal, .display_name = "CSV (Journal)"},
 };
 
 sak::ExportFormat messageFormatOrEml(sak::ExportFormat format) {
@@ -160,6 +134,7 @@ void prepareMessageWriters(sak::ExportFormat format,
 /// than trust the truncated id list); true if the folder was fully enumerated.
 [[nodiscard]] bool pageFolderItemIds(PstParser* parser,
                                      uint64_t folder_id,
+                                     bool only_real_email,
                                      QVector<uint64_t>& out) {
     for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
         auto items_result =
@@ -169,7 +144,9 @@ void prepareMessageWriters(sak::ExportFormat format,
         }
         const auto& page = items_result.value();
         for (const auto& item : page) {
-            out.append(item.node_id);
+            if (!only_real_email || sak::isRealEmail(item.item_type)) {
+                out.append(item.node_id);
+            }
         }
         if (page.size() < sak::email::kMaxItemsPerLoad) {
             return true;  // last (short) page reached cleanly
@@ -439,6 +416,18 @@ void addCalendarTaskCsvFields(CsvFieldMap& map) {
     map.insert(QStringLiteral("% Complete"), [](const auto& it) {
         return QString::number(it.task_percent_complete * sak::kPercentMaxF, 'f', 0);
     });
+    map.insert(QStringLiteral("Repeats"), [](const auto& it) { return it.recurrence.description; });
+    map.insert(QStringLiteral("Attendees"), [](const auto& it) {
+        QStringList people;
+        for (const auto& attendee : it.attendees) {
+            people.append(attendee.name.isEmpty() ? attendee.email : attendee.name);
+        }
+        return people.join(QStringLiteral("; "));
+    });
+    map.insert(QStringLiteral("Type"), [](const auto& it) { return it.journal_type; });
+    map.insert(QStringLiteral("Minutes"),
+               [](const auto& it) { return QString::number(it.journal_duration_minutes); });
+    map.insert(QStringLiteral("Notes"), [](const auto& it) { return it.body_plain; });
 }
 
 /// Validate a CSV export config. Every requested column must map to a known
@@ -566,7 +555,7 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
         folders = expandWithSubfolders(parser->folderTree(), folders);
     }
     for (const uint64_t folder : folders) {
-        if (!pageFolderItemIds(parser, folder, item_ids)) {
+        if (!pageFolderItemIds(parser, folder, config.only_real_email, item_ids)) {
             result.errors.append(
                 QStringLiteral("Folder %1 read error; item list is incomplete").arg(folder));
             ++result.items_failed;
@@ -733,6 +722,9 @@ void EmailExportWorker::exportIcsFormat(PstParser* parser,
     const QString ics_path = config.output_path + QStringLiteral("/calendar_export.ics");
     if (writeIcs(events, ics_path)) {
         result.items_exported += static_cast<int>(events.size());
+        for (const auto& event : events) {
+            result.notes += sak::icsEventNotes(event);
+        }
     } else {
         result.items_failed += static_cast<int>(events.size());
         result.errors.append(QStringLiteral("Failed to write ICS file"));
@@ -1092,57 +1084,7 @@ bool EmailExportWorker::writeIcs(const QVector<sak::PstItemDetail>& events,
 }
 
 QByteArray EmailExportWorker::buildIcsContent(const QVector<sak::PstItemDetail>& events) {
-    QByteArray ics;
-    ics += "BEGIN:VCALENDAR\r\n";
-    ics += "VERSION:2.0\r\n";
-    ics += "PRODID:-//SAK Utility//Email Export//EN\r\n";
-    ics += "CALSCALE:GREGORIAN\r\n";
-
-    // DTSTAMP is the object-creation time (the export moment): a legitimate value,
-    // not a fabricated stand-in for missing data.
-    const QByteArray dtstamp = toIcsDateTime(QDateTime::currentDateTimeUtc()).toUtf8();
-
-    for (const auto& event : events) {
-        ics += "BEGIN:VEVENT\r\n";
-
-        // UID and DTSTAMP are REQUIRED by RFC 5545; a VEVENT lacking them is rejected
-        // by strict consumers. Derive a stable UID from the message id or node id.
-        const QString uid = event.message_id.isEmpty()
-                                ? QStringLiteral("%1@sak-utility").arg(event.node_id)
-                                : event.message_id;
-        ics += "UID:" + escapeCalendarText(uid).toUtf8() + "\r\n";
-        ics += "DTSTAMP:" + dtstamp + "\r\n";
-
-        if (event.start_time.isValid()) {
-            ics += "DTSTART:" + toIcsDateTime(event.start_time).toUtf8() + "\r\n";
-        }
-        if (event.end_time.isValid()) {
-            ics += "DTEND:" + toIcsDateTime(event.end_time).toUtf8() + "\r\n";
-        }
-        if (!event.subject.isEmpty()) {
-            ics += "SUMMARY:" + escapeCalendarText(event.subject).toUtf8() + "\r\n";
-        }
-        if (!event.location.isEmpty()) {
-            ics += "LOCATION:" + escapeCalendarText(event.location).toUtf8() + "\r\n";
-        }
-        if (!event.body_plain.isEmpty()) {
-            ics += "DESCRIPTION:" + escapeCalendarText(event.body_plain).toUtf8() + "\r\n";
-        }
-
-        for (const auto& attendee : event.attendees) {
-            // CN is a parameter (DQUOTE-quoted), the mailto value is the CAL-ADDRESS.
-            // Using TEXT escaping in the unquoted param context let a value inject
-            // extra parameters; quote the param and strip controls from the address.
-            const QString clean = stripControlChars(attendee);
-            ics += "ATTENDEE;CN=" + icsParamQuote(attendee).toUtf8() + ":mailto:" + clean.toUtf8() +
-                   "\r\n";
-        }
-
-        ics += "END:VEVENT\r\n";
-    }
-
-    ics += "END:VCALENDAR\r\n";
-    return ics;
+    return sak::buildIcsCalendar(events, QDateTime::currentDateTimeUtc());
 }
 
 // ============================================================================
@@ -1566,12 +1508,21 @@ QStringList EmailExportWorker::defaultCsvColumns(sak::ExportFormat format) {
                 QStringLiteral("Start"),
                 QStringLiteral("End"),
                 QStringLiteral("Location"),
-                QStringLiteral("All Day")};
+                QStringLiteral("All Day"),
+                QStringLiteral("Repeats"),
+                QStringLiteral("Attendees")};
     case sak::ExportFormat::CsvTasks:
         return {QStringLiteral("Subject"),
                 QStringLiteral("Due Date"),
                 QStringLiteral("Status"),
                 QStringLiteral("% Complete")};
+    case sak::ExportFormat::CsvJournal:
+        return {QStringLiteral("Subject"),
+                QStringLiteral("Type"),
+                QStringLiteral("Start"),
+                QStringLiteral("End"),
+                QStringLiteral("Minutes"),
+                QStringLiteral("Notes")};
     default:
         return {};
     }
@@ -1591,6 +1542,8 @@ QString EmailExportWorker::csvFilename(sak::ExportFormat format) {
         return QStringLiteral("calendar_export.csv");
     case sak::ExportFormat::CsvTasks:
         return QStringLiteral("tasks_export.csv");
+    case sak::ExportFormat::CsvJournal:
+        return QStringLiteral("journal_export.csv");
     default:
         return QStringLiteral("export.csv");
     }

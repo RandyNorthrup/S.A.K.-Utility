@@ -75,9 +75,12 @@ private:
                                                 const QString& query,
                                                 int context_chars) const;
 
-    /// Check if a PST item passes pre-match filters
+    /// Check if a PST item passes pre-match filters. @p filter_date receives the date the range was
+    /// judged by, which a hit then shows.
     [[nodiscard]] bool passesItemFilters(const sak::PstItemSummary& item,
-                                         const sak::EmailSearchCriteria& criteria) const;
+                                         const sak::EmailSearchCriteria& criteria,
+                                         PstParser* parser,
+                                         QDateTime& filter_date) const;
 
     /// Try to match a PST item against query criteria
     [[nodiscard]] std::optional<MatchResult> matchPstItem(const sak::PstItemSummary& item,
@@ -114,13 +117,18 @@ private:
 
     /// Check if an MBOX message passes pre-match filters
     [[nodiscard]] bool passesMboxFilters(const sak::MboxMessage& msg,
-                                         const sak::EmailSearchCriteria& criteria) const;
+                                         const sak::EmailSearchCriteria& criteria,
+                                         MboxParser* parser) const;
 
     /// Try to match an MBOX message against query criteria
     [[nodiscard]] std::optional<MatchResult> matchMboxItem(const sak::MboxMessage& msg,
                                                            int message_index,
                                                            const sak::EmailSearchCriteria& criteria,
                                                            MboxParser* parser) const;
+
+    /// Match the headers the index already holds: subject and sender.
+    [[nodiscard]] std::optional<MatchResult> matchMboxHeaders(
+        const sak::MboxMessage& msg, const sak::EmailSearchCriteria& criteria) const;
 
     /// MBOX detail-based matchers (body/recipients/attachment names), mirroring the
     /// PST matchers so the MBOX path evaluates the same criteria (B7-34). Each reads

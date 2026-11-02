@@ -39,8 +39,20 @@ inline constexpr int kBuilderXblockEntries = 1021;   // BIDs one XBLOCK holds
 inline constexpr int kBuilderNbtPerPage = 15;        // 488 bytes / 32
 inline constexpr int kBuilderBbtPerPage = 20;        // 488 bytes / 24
 inline constexpr int kBuilderIndexEntrySize = 24;    // key(8) + BREF(16)
-inline constexpr int kBuilderIndexChildOffset = 16;  // BREF.ib within an index entry
-inline constexpr int kBuilderIndexPerPage = 20;      // 488 bytes / 24
+inline constexpr int kBuilderIndexChildBidOffset = 8;     // BREF.bid within an index entry
+inline constexpr int kBuilderIndexChildOffset = 16;       // BREF.ib within an index entry
+inline constexpr int kBuilderIndexPerPage = 20;           // 488 bytes / 24
+inline constexpr uint64_t kBuilderFirstPageBid = 0x8000;  // Pages have their own BID sequence
+inline constexpr int kRootNbtBidField = 36;               // ROOT.BREFNBT.bid
+inline constexpr int kRootBbtBidField = 52;               // ROOT.BREFBBT.bid
+inline constexpr uint64_t kBuilderMissingBlockBid = 0x7F'FF'FF'FC;
+inline constexpr uint32_t kBuilderNidAttachmentTable = 0x671;
+inline constexpr uint32_t kBuilderNidRecipientTable = sak::email::kNidRecipientTable;
+inline constexpr uint16_t kBuilderPropNameidBucketCount = 0x0001;
+inline constexpr uint16_t kBuilderPropNameidStreamString = 0x0004;
+inline constexpr uint32_t kBuilderNameidBuckets = 251;  // The count Outlook uses
+inline constexpr uint8_t kBuilderSetCommon = 0x08;      // PSETID_Common
+inline constexpr uint32_t kBuilderLidCommonStart = 0x8516;
 inline constexpr uint16_t kBuilderPropTypeObject = 0x000D;
 inline constexpr uint16_t kBuilderNidTypeLtp = 0x1F;
 inline constexpr uint32_t kBuilderMsgFlagRead = 0x01;
@@ -95,6 +107,18 @@ struct BuilderAttachment {
     QByteArray data;
     QString content_id;
     bool ole_object = false;  ///< Store @c data the way an OLE attachment (method 6) is stored
+    bool hidden = false;      ///< PidTagAttachmentHidden, as a repeating event's exceptions have
+};
+
+/// A row of a message's recipient table.
+struct BuilderRecipient {
+    QString name;
+    QString smtp_address;    ///< PR_SMTP_ADDRESS
+    QString email_address;   ///< PR_EMAIL_ADDRESS, an Exchange path when address_type says EX
+    QString address_type = QStringLiteral("SMTP");
+    int recipient_type = 1;  ///< 1=To/Required, 2=Cc/Optional, 3=Bcc/Resource
+    bool organizer = false;
+    int track_status = 0;
 };
 
 struct BuilderMessage {
@@ -115,7 +139,9 @@ struct BuilderMessage {
     QVector<BuilderMessage> attached_messages;  ///< Emails attached to this one
     QVector<BuilderProp> extra_props;
     QVector<BuilderNamedProp> named_props;
-    bool data_bid_reserved_bit = false;  ///< Set MS-PST's ignored bit 0 on the NBT data reference
+    QVector<BuilderRecipient> recipients;
+    bool damaged_recipient_table = false;  ///< Point the recipient table at a block not in the file
+    bool data_bid_reserved_bit = false;    ///< Set MS-PST's ignored bit 0 on the NBT data reference
 };
 
 struct BuilderFolder {
@@ -125,6 +151,7 @@ struct BuilderFolder {
     QVector<BuilderFolder> children;
     int declared_count = -1;     ///< PR_CONTENT_COUNT to state; -1 states the real count
     bool minimal_table = false;  ///< Contents table with only the row-id column (for large folders)
+    bool search_folder = false;  ///< A search folder: its rows are copies of mail filed elsewhere
 };
 
 class PstStoreBuilder {
@@ -133,6 +160,9 @@ public:
     QString ipm_subtree_name = QStringLiteral("Top of Personal Folders");
     bool bbt_keys_reserved_bit = false;       ///< Record every BBT key with the ignored bit 0 set
     QVector<BuilderMessage> orphan_messages;  ///< In the NBT but in no folder: hard-deleted mail
+    QVector<BuilderFolder> outside_folders;   ///< Under the root, beside the mail tree
+    /// wMagicClient: PST ("SM"), or OST ("SO"), which an NST also says.
+    uint16_t content_type = sak::email::kPstContentType;
 
     /// Build a store whose IPM subtree holds @p folders.
     [[nodiscard]] QByteArray build(const QVector<BuilderFolder>& folders) {
@@ -145,6 +175,7 @@ public:
         m_next_ltp_index = 0x10;
         m_named_ids.clear();
         collectNamedProps(folders);
+        collectNamedProps(outside_folders);
 
         const uint32_t subtree_nid = allocateFolderNid();
         BuilderFolder subtree;
@@ -190,6 +221,9 @@ private:
     uint32_t allocateFolderNid() {
         return (m_next_folder_index++ << 5) | sak::email::kNidTypeNormalFolder;
     }
+    uint32_t allocateSearchFolderNid() {
+        return (m_next_folder_index++ << 5) | sak::email::kNidTypeSearchFolder;
+    }
     uint32_t allocateMessageNid() {
         return (m_next_message_index++ << 5) | sak::email::kNidTypeNormalMessage;
     }
@@ -233,10 +267,14 @@ private:
         return addInternalBlock(xblock);
     }
 
-    uint64_t addSubnodeBlock(const std::vector<SubEntry>& entries) {
+    uint64_t addSubnodeBlock(std::vector<SubEntry> entries) {
         if (entries.empty()) {
             return 0;
         }
+        // A sub-node block is a B-tree leaf: a reader looks a NID up by its order.
+        std::sort(entries.begin(), entries.end(), [](const SubEntry& a, const SubEntry& b) {
+            return a.nid < b.nid;
+        });
         QByteArray block(
             kSubnodeBlockHeaderLen + (static_cast<qsizetype>(entries.size()) * kSlEntryLen), '\0');
         block[0] = static_cast<char>(kSubnodeBlockBType);
@@ -347,9 +385,18 @@ private:
         int bit;
     };
 
-    /// Append the TCROWID row index to a table's allocations and point its TCINFO at it.
+    /// Append the TCROWID row index to a table's allocations and point its TCINFO at it. A table
+    /// with no rows still has the index, with no records in it.
     static void appendRowIndex(QVector<QByteArray>& allocs, const QVector<uint32_t>& row_ids) {
         if (row_ids.isEmpty()) {
+            QByteArray empty_header(kBthHdrSize, '\0');
+            empty_header[0] = static_cast<char>(kBthSignature);
+            empty_header[kBthKeySizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+            empty_header[kBthDataSizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+            allocs.append(empty_header);
+            writeLe32(allocs[0],
+                      kTcinfoHidRowIndexOffset,
+                      static_cast<uint32_t>(allocs.size()) << kHidIndexShift);
             return;
         }
         // Sorted by row id, as a BTH must be; the value is the row's place in the matrix.
@@ -507,7 +554,8 @@ private:
 
         QVector<uint32_t> child_nids;
         for (int i = 0; i < folder.children.size(); ++i) {
-            child_nids.append(allocateFolderNid());
+            child_nids.append(folder.children[i].search_folder ? allocateSearchFolderNid()
+                                                               : allocateFolderNid());
         }
         for (int i = 0; i < folder.children.size(); ++i) {
             addFolderNode(folder.children[i], child_nids[i], nid);
@@ -602,6 +650,7 @@ private:
 
     QByteArray buildMessageHeap(const BuilderMessage& msg, std::vector<SubEntry>& subs) {
         const QByteArray heap = buildPropertyContext(messageProps(msg), subs);
+        const size_t first_attachment = subs.size();
         int attach_number = 0;
         for (const BuilderAttachment& att : msg.attachments) {
             addAttachmentSubnode(att, attach_number++, subs);
@@ -609,7 +658,98 @@ private:
         for (const BuilderMessage& attached : msg.attached_messages) {
             addAttachedMessageSubnode(attached, attach_number++, subs);
         }
+        addAttachmentTable(first_attachment, subs);
+        addRecipientTable(msg, subs);
         return heap;
+    }
+
+    /// The table a reader finds a message's attachments through (MS-PST 2.4.6.1).
+    void addAttachmentTable(size_t first_attachment, std::vector<SubEntry>& subs) {
+        QVector<uint32_t> attachment_nids;
+        for (size_t i = first_attachment; i < subs.size(); ++i) {
+            if ((subs[i].nid & kNidTypeFolderMask) == sak::email::kNidTypeAttachment) {
+                attachment_nids.append(static_cast<uint32_t>(subs[i].nid));
+            }
+        }
+        if (!attachment_nids.isEmpty()) {
+            subs.push_back({kBuilderNidAttachmentTable, addRowIdTable(attachment_nids), 0});
+        }
+    }
+
+    /// Which of a recipient row's columns hold a value: bit 7 of the first byte is column 0.
+    static uint8_t recipientRowCeb(const BuilderRecipient& who) {
+        constexpr uint32_t kFirstColumnBit = 0x80;
+        uint32_t ceb = 0xFF;
+        const auto clear_if_empty = [&ceb](const QString& text, int column) {
+            if (text.isEmpty()) {
+                ceb &= ~(kFirstColumnBit >> column);
+            }
+        };
+        clear_if_empty(who.name, 2);
+        clear_if_empty(who.email_address, 3);
+        clear_if_empty(who.address_type, 4);
+        clear_if_empty(who.smtp_address, 5);
+        return static_cast<uint8_t>(ceb);
+    }
+
+    /// The table a message's recipients live in (MS-PST 2.4.5.2), one row each.
+    void addRecipientTable(const BuilderMessage& msg, std::vector<SubEntry>& subs) {
+        if (msg.damaged_recipient_table) {
+            subs.push_back({kBuilderNidRecipientTable, kBuilderMissingBlockBid, 0});
+            return;
+        }
+        if (msg.recipients.isEmpty()) {
+            return;
+        }
+        constexpr int kCellType = 4;
+        constexpr int kCellName = 8;
+        constexpr int kCellEmail = 12;
+        constexpr int kCellAddrType = 16;
+        constexpr int kCellSmtp = 20;
+        constexpr int kCellFlags = 24;
+        constexpr int kCellTrack = 28;
+        constexpr int kCeb = 32;
+        constexpr int kRow = 33;
+        const QVector<TcColumn> cols{
+            {sak::email::kPropTypeInt32, kPidTagLtpRowId, 0, 4, 0},
+            {sak::email::kPropTypeInt32, sak::email::kPropIdRecipientType, kCellType, 4, 1},
+            {sak::email::kPropTypeUnicode, sak::email::kPropIdDisplayName, kCellName, 4, 2},
+            {sak::email::kPropTypeUnicode, sak::email::kPropIdEmailAddress, kCellEmail, 4, 3},
+            {sak::email::kPropTypeUnicode, sak::email::kPropIdAddressType, kCellAddrType, 4, 4},
+            {sak::email::kPropTypeUnicode, sak::email::kPropIdSmtpAddress, kCellSmtp, 4, 5},
+            {sak::email::kPropTypeInt32, sak::email::kPropIdRecipientFlags, kCellFlags, 4, 6},
+            {sak::email::kPropTypeInt32, sak::email::kPropIdRecipientTrackStatus, kCellTrack, 4, 7},
+        };
+        QVector<QByteArray> values;
+        const auto addValue = [&values](const QString& text) -> uint32_t {
+            if (text.isEmpty()) {
+                return 0;
+            }
+            values.append(builderUnicode(text));
+            return static_cast<uint32_t>(values.size() + 2) << kHidIndexShift;
+        };
+        QVector<uint32_t> row_ids;
+        QByteArray rows(static_cast<qsizetype>(msg.recipients.size()) * kRow, '\0');
+        for (int i = 0; i < msg.recipients.size(); ++i) {
+            const BuilderRecipient& who = msg.recipients[i];
+            const int row = i * kRow;
+            const auto row_id = static_cast<uint32_t>(i + 1);
+            row_ids.append(row_id);
+            writeLe32(rows, row, row_id);
+            writeLe32(rows, row + kCellType, static_cast<uint32_t>(who.recipient_type));
+            writeLe32(rows, row + kCellName, addValue(who.name));
+            writeLe32(rows, row + kCellEmail, addValue(who.email_address));
+            writeLe32(rows, row + kCellAddrType, addValue(who.address_type));
+            writeLe32(rows, row + kCellSmtp, addValue(who.smtp_address));
+            writeLe32(rows,
+                      row + kCellFlags,
+                      who.organizer ? sak::email::kRecipientOrganizer : uint32_t{0});
+            writeLe32(rows, row + kCellTrack, static_cast<uint32_t>(who.track_status));
+            rows[row + kCeb] = static_cast<char>(recipientRowCeb(who));
+        }
+        subs.push_back({kBuilderNidRecipientTable,
+                        addDataTree(buildTable(cols, {kCeb, kRow}, rows, values, row_ids)),
+                        0});
     }
 
     void addAttachmentSubnode(const BuilderAttachment& att,
@@ -640,6 +780,11 @@ private:
             props.append({sak::email::kPropIdAttachContentId,
                           sak::email::kPropTypeUnicode,
                           builderUnicode(att.content_id)});
+        }
+        if (att.hidden) {
+            props.append({sak::email::kPropIdAttachmentHidden,
+                          sak::email::kPropTypeBoolean,
+                          QByteArray(1, 1)});
         }
         Q_UNUSED(number);
         uint64_t sub_bid = 0;
@@ -743,9 +888,16 @@ private:
         search_root.container_class.clear();
         addFolderNode(search_root, search_root_nid, kRootFolderNid);
 
+        QVector<uint32_t> root_children{subtree_nid, search_root_nid};
+        for (const BuilderFolder& outside : outside_folders) {
+            const uint32_t nid = allocateFolderNid();
+            addFolderNode(outside, nid, kRootFolderNid);
+            root_children.append(nid);
+        }
+
         const uint32_t base = kRootFolderNid & ~static_cast<uint32_t>(kNidTypeFolderMask);
         m_nodes.push_back({base | sak::email::kNidTypeHierarchyTable,
-                           addRowIdTable({subtree_nid, search_root_nid}),
+                           addRowIdTable(root_children),
                            0,
                            kRootFolderNid});
         m_nodes.push_back(
@@ -774,6 +926,10 @@ private:
     }
 
     void addNameToIdNode() {
+        // A real store's map is never empty, and a reader may refuse one that is.
+        if (m_named_ids.isEmpty()) {
+            m_named_ids.append({.set_byte = kBuilderSetCommon, .long_id = kBuilderLidCommonStart});
+        }
         // GUID stream: one entry per set in use, then NAMEIDs pointing at them by wGuid = 3 +
         // index.
         QVector<uint8_t> sets;
@@ -799,44 +955,79 @@ private:
             writeLe16(entries, off + 4, static_cast<uint16_t>(guid_index << 1));
             writeLe16(entries, off + 6, static_cast<uint16_t>(i));
         }
+        // MS-PST 2.4.7 names four properties; every entry here is numeric, so the string stream is
+        // present and empty.
         const QVector<BuilderProp> props{
+            {kBuilderPropNameidBucketCount,
+             sak::email::kPropTypeInt32,
+             builderInt32(kBuilderNameidBuckets)},
             {0x0002, sak::email::kPropTypeBinary, guids},
             {0x0003, sak::email::kPropTypeBinary, entries},
+            {kBuilderPropNameidStreamString, sak::email::kPropTypeBinary, QByteArray()},
         };
         uint64_t sub_bid = 0;
         const uint64_t data_bid = addPropertyNode(props, &sub_bid);
         m_nodes.push_back({sak::email::kNidNameToIdMap, data_bid, sub_bid, 0});
     }
 
+    /// A child of a B-tree index page: the lowest key under it, and its BREF.
+    struct IndexChild {
+        uint64_t first_key = 0;
+        uint64_t page_bid = 0;
+        int page_offset = 0;
+    };
+
+    /// A B-tree's root, as the header's BREF names it.
+    struct BTreeRoot {
+        uint64_t page_bid = 0;
+        int page_offset = 0;
+    };
+
+    /// An index page holds BTENTRY records: btkey, then the child's BREF (MS-PST 2.2.2.7.7.2). A
+    /// reader looking one key up descends by comparing against btkey, so a page with blank keys
+    /// reads as whole only to a walker that visits every page, which this store's parser does.
     static QByteArray makeIndexPage(uint8_t ptype,
                                     int page_offset,
-                                    const QVector<int>& child_offsets) {
+                                    uint64_t page_bid,
+                                    const QVector<IndexChild>& children) {
         QByteArray page(kPageSize, '\0');
         const int trailer = kPageSize - kTrailerSize;
         const int meta = trailer - kMetaPad - kMetaSize;
-        for (int i = 0; i < child_offsets.size(); ++i) {
+        for (int i = 0; i < children.size(); ++i) {
+            const int entry = i * kBuilderIndexEntrySize;
+            writeLe64(page, entry, children[i].first_key);
+            writeLe64(page, entry + kBuilderIndexChildBidOffset, children[i].page_bid);
             writeLe64(page,
-                      (i * kBuilderIndexEntrySize) + kBuilderIndexChildOffset,
-                      static_cast<uint64_t>(child_offsets[i]));
+                      entry + kBuilderIndexChildOffset,
+                      static_cast<uint64_t>(children[i].page_offset));
         }
-        page[meta] = static_cast<char>(child_offsets.size());
+        page[meta] = static_cast<char>(children.size());
         page[meta + 1] = static_cast<char>(kBuilderIndexPerPage);
         page[meta + 2] = static_cast<char>(kBuilderIndexEntrySize);
         page[meta + 3] = 1;  // cLevel 1: index page
         page[trailer] = static_cast<char>(ptype);
         page[trailer + 1] = static_cast<char>(ptype);
-        writeLe16(page, trailer + 2, computeSig(static_cast<uint64_t>(page_offset), 0));
+        writeLe16(page, trailer + 2, computeSig(static_cast<uint64_t>(page_offset), page_bid));
         writeLe32(page, trailer + 4, weakCrc(page, 0, kPageSize - kTrailerSize));
+        writeLe64(page, trailer + kPageTrailerBidOffset, page_bid);
         return page;
     }
 
-    /// Append leaf pages over @p entries and an index page above them; returns the root offset.
-    static int appendBTree(QByteArray& file,
-                           uint8_t ptype,
-                           int entry_size,
-                           int per_page,
-                           const QVector<QByteArray>& entries) {
-        QVector<int> leaf_offsets;
+    /// What kind of B-tree a run of pages belongs to.
+    struct BTreeShape {
+        uint8_t ptype = 0;
+        int entry_size = 0;
+        int per_page = 0;
+    };
+
+    /// Append leaf pages over @p entries, each entry key-first and already in key order, and an
+    /// index page above them when they need more than one leaf.
+    static BTreeRoot appendBTree(QByteArray& file,
+                                 const BTreeShape& shape,
+                                 const QVector<QByteArray>& entries,
+                                 uint64_t& next_page_bid) {
+        const auto [ptype, entry_size, per_page] = shape;
+        QVector<IndexChild> leaves;
         for (int start = 0; start < entries.size() || start == 0; start += per_page) {
             const int count = std::min(per_page, static_cast<int>(entries.size()) - start);
             QByteArray body;
@@ -844,16 +1035,22 @@ private:
                 body.append(entries[start + i]);
             }
             const int offset = static_cast<int>(file.size());
-            leaf_offsets.append(offset);
-            file.append(makeLeafPageWithEntries(ptype, entry_size, offset, body, count));
+            const uint64_t page_bid = next_page_bid++;
+            uint64_t first_key = 0;
+            if (count > 0) {
+                std::memcpy(&first_key, entries[start].constData(), sizeof(first_key));
+            }
+            leaves.append({first_key, page_bid, offset});
+            file.append(makeLeafPageAt(ptype, entry_size, {offset, page_bid}, body, count));
         }
-        if (leaf_offsets.size() == 1) {
-            return leaf_offsets.first();
+        if (leaves.size() == 1) {
+            return {leaves.first().page_bid, leaves.first().page_offset};
         }
-        Q_ASSERT(leaf_offsets.size() <= kBuilderIndexPerPage);
+        Q_ASSERT(leaves.size() <= kBuilderIndexPerPage);
         const int root = static_cast<int>(file.size());
-        file.append(makeIndexPage(ptype, root, leaf_offsets));
-        return root;
+        const uint64_t root_bid = next_page_bid++;
+        file.append(makeIndexPage(ptype, root, root_bid, leaves));
+        return {root_bid, root};
     }
 
     [[nodiscard]] QByteArray assembleFile() const {
@@ -862,12 +1059,18 @@ private:
         file[1] = static_cast<char>(kMagicByte1);
         file[2] = static_cast<char>(kMagicByte2);
         file[3] = static_cast<char>(kMagicByte3);
-        writeLe16(file, kContentTypeOffset, sak::email::kPstContentType);
+        writeLe16(file, kContentTypeOffset, content_type);
         writeLe16(file, kVersionOffset, sak::email::kUnicodeVersion);
         file[kCryptOffsetUnicode] = static_cast<char>(sak::email::kEncryptNone);
 
+        // A B-tree is in key order. Blocks were made in the order the store needed them, with their
+        // external and internal BIDs counting separately.
+        std::vector<Block> blocks = m_blocks;
+        std::sort(blocks.begin(), blocks.end(), [](const Block& a, const Block& b) {
+            return a.bid < b.bid;
+        });
         QVector<QByteArray> bbt_entries;
-        for (const Block& block : m_blocks) {
+        for (const Block& block : blocks) {
             const int offset = static_cast<int>(file.size());
             const uint64_t recorded_bid = bbt_keys_reserved_bit ? (block.bid | 1U) : block.bid;
             QByteArray disk(blockDiskSize(static_cast<int>(block.data.size())), '\0');
@@ -903,14 +1106,17 @@ private:
             writeLe32(entry, kNbtEntryParentOffset, node.parent);
             nbt_entries.append(entry);
         }
-        const int nbt_root =
-            appendBTree(file, kPtypeNbt, kNbtEntrySize, kBuilderNbtPerPage, nbt_entries);
-        const int bbt_root =
-            appendBTree(file, kPtypeBbt, kBbtEntrySize, kBuilderBbtPerPage, bbt_entries);
+        uint64_t next_page_bid = kBuilderFirstPageBid;
+        const BTreeRoot nbt = appendBTree(
+            file, {kPtypeNbt, kNbtEntrySize, kBuilderNbtPerPage}, nbt_entries, next_page_bid);
+        const BTreeRoot bbt = appendBTree(
+            file, {kPtypeBbt, kBbtEntrySize, kBuilderBbtPerPage}, bbt_entries, next_page_bid);
 
         writeLe64(file, kRootOffset + kRootFileSizeField, static_cast<uint64_t>(file.size()));
-        writeLe64(file, kRootOffset + kRootNbtField, static_cast<uint64_t>(nbt_root));
-        writeLe64(file, kRootOffset + kRootBbtField, static_cast<uint64_t>(bbt_root));
+        writeLe64(file, kRootOffset + kRootNbtBidField, nbt.page_bid);
+        writeLe64(file, kRootOffset + kRootNbtField, static_cast<uint64_t>(nbt.page_offset));
+        writeLe64(file, kRootOffset + kRootBbtBidField, bbt.page_bid);
+        writeLe64(file, kRootOffset + kRootBbtField, static_cast<uint64_t>(bbt.page_offset));
         writeLe32(file, kCrcPartialOffset, weakCrc(file, kCrcPartialStart, kCrcPartialLen));
         writeLe32(file, kCrcFullOffset, weakCrc(file, kCrcFullStart, kCrcFullLen));
         return file;

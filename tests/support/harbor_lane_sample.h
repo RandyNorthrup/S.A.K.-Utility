@@ -14,6 +14,7 @@
 #include "sak/pst_named_properties.h"
 
 #include "pst_store_builder.h"
+#include "recurrence_blob.h"
 
 #include <QBuffer>
 #include <QColor>
@@ -418,6 +419,50 @@ inline BuilderMessage event(const QString& subject,
     return msg;
 }
 
+inline constexpr int kStaffMeetingIndex = 2;
+
+/// The staff meeting is the one event that shows a calendar's people and repeats: weekly, with one
+/// week cancelled, in the bakery's own time zone. Its wall clock is the start read in UTC-8, which
+/// is why this zone: the sample's times are stated in UTC and this keeps them what they say.
+inline void addStaffMeetingSeries(BuilderMessage& meeting, const QDateTime& start_utc) {
+    constexpr int kOffsetHours = -8;
+    constexpr int kWeeksUntilCancelled = 2;
+    constexpr int kWeeksInSeries = 12;
+    constexpr int kMinutesPerHour = 60;
+    const QDateTime wall = start_utc.addSecs(static_cast<qint64>(kOffsetHours) * 3600);
+    RecurrenceSpec spec;
+    spec.day_or_mask = 1U << (wall.date().dayOfWeek() % 7);
+    spec.start_date = wall.date();
+    spec.start_minutes = wall.time().hour() * kMinutesPerHour;
+    spec.end_minutes = spec.start_minutes + kMinutesPerHour;
+    spec.deleted = {wall.date().addDays(7LL * kWeeksUntilCancelled)};
+    spec.end_type = kRecurEndAfterCount;
+    spec.occurrence_count = kWeeksInSeries;
+    spec.end_date = wall.date().addDays(7LL * (kWeeksInSeries - 1));
+    meeting.named_props.append({kSetAppointment,
+                                sak::pst::kLidAppointmentRecur,
+                                sak::email::kPropTypeBinary,
+                                buildRecurrenceBlob(spec)});
+    meeting.named_props.append({kSetAppointment,
+                                sak::pst::kLidTimeZoneStruct,
+                                sak::email::kPropTypeBinary,
+                                buildTimeZoneStruct(480, 0, {}, {})});
+    meeting.named_props.append({kSetAppointment,
+                                sak::pst::kLidTimeZoneDescription,
+                                sak::email::kPropTypeUnicode,
+                                builderUnicode(QStringLiteral("Harbor Lane time"))});
+
+    BuilderRecipient organizer{kOwnerName, kOwnerAddress};
+    organizer.organizer = true;
+    BuilderRecipient baker{QStringLiteral("Marisol Quint"),
+                           QStringLiteral("marisol@harborlane.example")};
+    baker.track_status = 3;
+    BuilderRecipient driver{QStringLiteral("Owen Lark"), QStringLiteral("owen@harborlane.example")};
+    driver.recipient_type = 2;
+    driver.track_status = 2;
+    meeting.recipients = {organizer, baker, driver};
+}
+
 /// Events fall in the month of @p anchor, so the calendar's opening month is not empty whenever the
 /// sample is generated.
 inline BuilderFolder calendarFolder(QDate anchor) {
@@ -454,6 +499,7 @@ inline BuilderFolder calendarFolder(QDate anchor) {
               120,
               QStringLiteral("Bring the awning and two tables.")),
     };
+    addStaffMeetingSeries(folder.messages[kStaffMeetingIndex], on(12, 15));
     return folder;
 }
 

@@ -306,6 +306,7 @@ constexpr uint16_t kPropIdAttachSize = 0x0E20;
 constexpr uint16_t kPropIdAttachMimeTag = 0x370E;
 constexpr uint16_t kPropIdAttachContentId = 0x3712;
 constexpr uint16_t kPropIdAttachMethod = 0x3705;
+constexpr uint16_t kPropIdAttachmentHidden = 0x7FFE;
 
 // -- Contact properties --
 constexpr uint16_t kPropIdEmailAddress = 0x3003;
@@ -319,6 +320,16 @@ constexpr uint16_t kPropIdSurname = 0x3A11;
 
 // -- Task properties --
 constexpr uint16_t kPropIdTaskPriority = 0x0026;
+
+// -- Recipient properties --
+constexpr uint16_t kPropIdAddressType = 0x3002;
+constexpr uint16_t kPropIdSmtpAddress = 0x39FE;
+constexpr uint16_t kPropIdRecipientType = 0x0C15;
+constexpr uint16_t kPropIdRecipientFlags = 0x5FFD;
+constexpr uint16_t kPropIdRecipientTrackStatus = 0x5FFF;
+
+/// PidTagRecipientFlags: this recipient is the meeting's organizer.
+constexpr uint32_t kRecipientOrganizer = 0x0002;
 
 // ============================================================================
 // PST Node ID Types (NID_TYPE)
@@ -341,6 +352,7 @@ constexpr uint8_t kNidTypeHierarchyTable = 0x0D;
 constexpr uint32_t kNidMessageStore = 0x21;
 constexpr uint32_t kNidNameToIdMap = 0x61;
 constexpr uint32_t kNidRootFolder = 0x122;
+constexpr uint32_t kNidRecipientTable = 0x692;  ///< A sub-node of a message
 
 // ============================================================================
 // Attachment Methods

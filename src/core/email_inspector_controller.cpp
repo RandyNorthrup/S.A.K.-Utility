@@ -55,7 +55,8 @@ void accumulateFolderStats(const sak::PstFolderTree& tree, EmailReportGenerator:
             data.total_tasks += folder.content_count;
         } else if (cls.startsWith(QStringLiteral("IPF.StickyNote"), Qt::CaseInsensitive)) {
             data.total_notes += folder.content_count;
-        } else {
+        } else if (!cls.startsWith(QStringLiteral("IPF.Journal"), Qt::CaseInsensitive)) {
+            // A journal entry is no email, and the report has no line of its own for them.
             data.total_emails += folder.content_count;
         }
         accumulateFolderStats(folder.children, data);
@@ -159,17 +160,14 @@ void EmailInspectorController::openFile(const QString& file_path) {
     const QFileInfo fi(file_path);
     const QString suffix = fi.suffix().toLower();
 
-    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
-        const bool is_ost = (suffix == QStringLiteral("ost"));
+    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost") ||
+        suffix == QStringLiteral("nst")) {
+        // An NST, Outlook's cache of Microsoft 365 group mail, has the same layout as an OST.
+        const bool is_ost = (suffix != QStringLiteral("pst"));
         m_file_type = is_ost ? FileType::Ost : FileType::Pst;
         sak::logInfo("Opening {} file: {}", is_ost ? "OST" : "PST", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_pst_parser->open(file_path);
-    } else if (suffix == QStringLiteral("nst")) {
-        m_file_type = FileType::None;
-        setState(State::Idle);
-        Q_EMIT errorOccurred(QStringLiteral(
-            "NST files, Outlook's cache of Microsoft 365 group mail, are not supported"));
     } else if (suffix == QStringLiteral("mbox") ||
                (suffix.isEmpty() && MboxParser::looksLikeMailbox(file_path))) {
         // Thunderbird's mailboxes have no extension, so those are recognised by their contents.

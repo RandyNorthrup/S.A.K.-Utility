@@ -96,6 +96,9 @@ private Q_SLOTS:
 
     // -- CODEX_REVIEW_2 remediation --------------------------------------
     void summaryAttachmentHeuristicBroadened();
+    void aPartThatNamesAFileIsAnAttachmentNotTheBody();
+    void aSinglePartThatNamesAFileIsAnAttachment();
+    void aTextPartThatNamesNoFileIsStillTheBody();
     void quotedFilenameWithSpacesPreserved();
     void malformedBase64AttachmentFailsClosed();
     void unknownCharsetFailsClosed();
@@ -923,6 +926,105 @@ void TestMboxParser::cancelDoesNotBlockLaterReads() {
 
 // A single-part message that is itself a file (application/pdf marked as an
 // attachment) must surface as an attachment, not as garbled body text (B7-33).
+// Real stores give ordinary text attachments a Content-ID, which comes out as an inline
+// disposition. Read as text, one replaced the message's real body and was lost as an attachment.
+void TestMboxParser::aPartThatNamesAFileIsAnAttachmentNotTheBody() {
+    QByteArray c;
+    c += "From x@example.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: Named parts\r\n";
+    c += "MIME-Version: 1.0\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n\r\nthe real body\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n";
+    c += "Content-Disposition: inline; filename=\"notes.txt\"\r\n";
+    c += "Content-ID: <n1>\r\nContent-Transfer-Encoding: base64\r\n\r\n";
+    c += "bm90ZXM=\r\n";  // "notes"
+    c += "--B\r\nContent-Type: text/html; name=\"page.html\"\r\n\r\n<p>a page</p>\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n";
+    c += "Content-Disposition: attachment; filename*=UTF-8''caf%C3%A9%20menu.txt\r\n\r\nmenu\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n";
+    c += "Content-Disposition: attachment; filename*=ISO-8859-1''caf%E9.txt\r\n\r\nold\r\n";
+    c += "--B--\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QVERIFY(detail->body_plain.contains(QStringLiteral("the real body")));
+    QVERIFY(detail->body_html.isEmpty());
+    QCOMPARE(detail->attachments.size(), 4);
+    QCOMPARE(detail->attachments.at(0).long_filename, QStringLiteral("notes.txt"));
+    QCOMPARE(detail->attachments.at(0).filename, QStringLiteral("notes.txt"));
+    QCOMPARE(detail->attachments.at(0).content_id, QStringLiteral("<n1>"));
+    QCOMPARE(detail->attachments.at(0).size_bytes, Q_INT64_C(5));
+    QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("page.html"));
+    QCOMPARE(detail->attachments.at(2).long_filename, QStringLiteral("caf\u00E9 menu.txt"));
+    QCOMPARE(detail->attachments.at(3).long_filename, QStringLiteral("caf\u00E9.txt"));
+    const auto payloads = parser.readAllAttachments(0);
+    QVERIFY(payloads.has_value());
+    QCOMPARE(payloads->size(), 4);
+    QCOMPARE(payloads->at(0).filename, QStringLiteral("notes.txt"));
+    QCOMPARE(payloads->at(0).data, QByteArray("notes"));
+    parser.close();
+}
+
+void TestMboxParser::aSinglePartThatNamesAFileIsAnAttachment() {
+    QByteArray c;
+    c += "From x@example.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: One file\r\n";
+    c += "Content-Type: text/plain\r\n";
+    c += "Content-Disposition: inline; filename=\"notes.txt\"\r\n\r\n";
+    c += "the file\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    const auto listed = parser.readMessages(0, 1);
+    QVERIFY(listed.has_value());
+    QVERIFY(listed->first().has_attachments);
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("notes.txt"));
+    QVERIFY(detail->body_plain.isEmpty());
+    parser.close();
+}
+
+// The other side of naming a file: an inline text part with no name is the message itself, and a
+// parameter that only ends in "name" is not a name.
+void TestMboxParser::aTextPartThatNamesNoFileIsStillTheBody() {
+    QByteArray c;
+    c += "From x@example.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: Inline body\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\nContent-Type: text/plain; x-name=\"not-a-file\"\r\n";
+    c += "Content-Disposition: inline\r\n\r\nthe real body\r\n";
+    c += "--B--\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QVERIFY(detail->attachments.isEmpty());
+    QVERIFY(detail->body_plain.contains(QStringLiteral("the real body")));
+    parser.close();
+}
+
 void TestMboxParser::singlePartAttachmentNotTreatedAsBody() {
     QTemporaryFile f;
     QVERIFY(f.open());

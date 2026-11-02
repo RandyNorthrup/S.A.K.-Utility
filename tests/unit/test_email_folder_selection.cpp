@@ -301,6 +301,69 @@ private Q_SLOTS:
             makeFolder(12, QStringLiteral("Calendar"), QStringLiteral("IPF.Appointment")));
         QVERIFY(sak::mailFolderNodeIds(QVector<sak::PstFolder>{subtree}).isEmpty());
     }
+
+    // A real email in a system folder is reachable: the folder, and the path down to it, come in.
+    void aSystemFolderHoldingEmailJoinsTheMailFolders() {
+        sak::PstFolder inbox = makeFolder(10, QStringLiteral("Inbox"), QStringLiteral("IPF.Note"));
+        sak::PstFolder empty_system =
+            makeFolder(11, QStringLiteral("Conversation History"), QStringLiteral("IPF.Note"));
+        sak::PstFolder sync =
+            makeFolder(12, QStringLiteral("Sync Issues"), QStringLiteral("IPF.Note"));
+        sak::PstFolder conflicts =
+            makeFolder(13, QStringLiteral("Conflicts"), QStringLiteral("IPF.Note"));
+        conflicts.system_folder_emails = 3;
+        sync.children = {conflicts};
+        sak::PstFolder subtree = makeFolder(5, QStringLiteral("IPM_SUBTREE"), QString());
+        subtree.is_ipm_subtree = true;
+        subtree.children = {inbox, empty_system, sync};
+        const QVector<sak::PstFolder> tree{subtree};
+
+        QCOMPARE(sak::mailFolderNodeIds(tree), QVector<uint64_t>({10, 12, 13}));
+        QVERIFY(sak::holdsSystemFolderEmails(sync));
+        QVERIFY(sak::holdsSystemFolderEmails(conflicts));
+        QVERIFY(!sak::holdsSystemFolderEmails(empty_system));
+    }
+
+    void foldersOutsideTheMailTreeAreListedWhenTheyHoldEmail() {
+        sak::PstFolder subtree = makeFolder(5, QStringLiteral("IPM_SUBTREE"), QString());
+        subtree.is_ipm_subtree = true;
+        subtree.children = {makeFolder(10, QStringLiteral("Inbox"), QStringLiteral("IPF.Note"))};
+        sak::PstFolder stray = makeFolder(20, QStringLiteral("Stray"), QStringLiteral("IPF.Note"));
+        stray.system_folder_emails = 1;
+        sak::PstFolder bare = makeFolder(21, QStringLiteral("Bare"), QStringLiteral("IPF.Note"));
+        sak::PstFolder root = makeFolder(1, QStringLiteral("Root"), QString());
+        root.children = {subtree, stray, bare};
+        const QVector<sak::PstFolder> tree{root};
+
+        const auto outside = sak::foldersWithMailOutsideMailTree(tree);
+        QCOMPARE(outside.size(), 1);
+        QCOMPARE(outside.first()->node_id, uint64_t{20});
+        QCOMPARE(sak::mailFolderNodeIds(tree), QVector<uint64_t>({10, 20}));
+    }
+
+    void journalFoldersAreBrowsedLikeTasksAndNotes() {
+        QVERIFY(sak::isTaskNoteOrJournalFolder(QStringLiteral("Journal"),
+                                               QStringLiteral("IPF.Journal")));
+        QVERIFY(
+            sak::isTaskNoteOrJournalFolder(QStringLiteral("Tasks"), QStringLiteral("IPF.Task")));
+        QVERIFY(
+            !sak::isTaskNoteOrJournalFolder(QStringLiteral("Inbox"), QStringLiteral("IPF.Note")));
+        QVERIFY(!sak::isMailFolder(QStringLiteral("Journal"), QStringLiteral("IPF.Journal")));
+    }
+
+    void whatCountsAsRealEmail() {
+        QVERIFY(sak::isRealEmail(sak::EmailItemType::Email));
+        QVERIFY(sak::isRealEmail(sak::EmailItemType::MeetingRequest));
+        for (const auto type : {sak::EmailItemType::Contact,
+                                sak::EmailItemType::Calendar,
+                                sak::EmailItemType::Task,
+                                sak::EmailItemType::StickyNote,
+                                sak::EmailItemType::JournalEntry,
+                                sak::EmailItemType::DistList,
+                                sak::EmailItemType::Unknown}) {
+            QVERIFY(!sak::isRealEmail(type));
+        }
+    }
 };
 
 QTEST_MAIN(TestEmailFolderSelection)

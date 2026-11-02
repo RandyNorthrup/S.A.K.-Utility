@@ -6,6 +6,7 @@
 
 #include "sak/pst_parser.h"
 
+#include "sak/email_folder_selection.h"
 #include "sak/email_html_sanitizer.h"
 #include "sak/eml_writer.h"
 #include "sak/error_codes.h"
@@ -757,6 +758,8 @@ static const QHash<uint16_t, AttachSetter>& attachmentSetters() {
              a.attach_method = v.toInt();
              a.is_embedded_message = (a.attach_method == sak::email::kAttachEmbeddedMessage);
          }},
+        {sak::email::kPropIdAttachmentHidden,
+         [](sak::PstAttachmentInfo& a, const QString& v) { a.hidden = v == QLatin1String("true"); }},
     };
     return kMap;
 }
@@ -1041,6 +1044,50 @@ void PstParser::loadNamedPropertyMap() {
     m_named_properties = sak::pst::parseNameIdMap(guid_stream, entry_stream);
 }
 
+void PstParser::countSystemFolderEmails() {
+    // With no populated mail tree the folders are listed from the roots, and all of them are in it.
+    const sak::PstFolder* mail_tree = sak::findIpmSubtree(m_folder_tree);
+    const bool all_inside = mail_tree == nullptr || mail_tree->children.isEmpty();
+    for (auto& root : m_folder_tree) {
+        countSystemFolderEmailsIn(root, all_inside, mail_tree);
+    }
+    // Declared counts can run behind the tables. Before a store is called empty, look.
+    if (m_file_info.total_items == 0) {
+        const std::function<int(const sak::PstFolderTree&)> rows_in =
+            [this, &rows_in](const sak::PstFolderTree& tree) {
+                int rows = 0;
+                for (const auto& folder : tree) {
+                    auto items = readContentsTable(contentsTableNid(folder.node_id), 0, 0);
+                    rows += items ? static_cast<int>(items->size()) : 0;
+                    rows += rows_in(folder.children);
+                }
+                return rows;
+            };
+        m_file_info.total_items = rows_in(m_folder_tree);
+    }
+}
+
+void PstParser::countSystemFolderEmailsIn(sak::PstFolder& folder,
+                                          bool inside_mail_tree,
+                                          const sak::PstFolder* mail_tree) {
+    const bool is_mail_root = &folder == mail_tree;
+    const bool is_search = (folder.node_id & kNidTypeMask) == sak::email::kNidTypeSearchFolder;
+    const bool is_ordinary = inside_mail_tree &&
+                             sak::isMailFolder(folder.display_name, folder.container_class);
+    if (!is_mail_root && !is_search && !is_ordinary) {
+        auto items = readContentsTable(contentsTableNid(folder.node_id), 0, 0);
+        if (items) {
+            folder.system_folder_emails =
+                static_cast<int>(std::ranges::count_if(*items, [](const sak::PstItemSummary& item) {
+                    return sak::isRealEmail(item.item_type);
+                }));
+        }
+    }
+    for (auto& child : folder.children) {
+        countSystemFolderEmailsIn(child, inside_mail_tree || is_mail_root, mail_tree);
+    }
+}
+
 void PstParser::open(const QString& file_path) {
     close();
     m_cancelled.store(false, std::memory_order_relaxed);
@@ -1063,6 +1110,7 @@ void PstParser::open(const QString& file_path) {
 
     loadMessageStoreProperties();
     loadNamedPropertyMap();
+    countSystemFolderEmails();
 
     m_is_open = true;
     Q_EMIT progressUpdated(kPstOpenProgressComplete, QStringLiteral("File loaded successfully"));
@@ -2346,8 +2394,11 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
     if (node_it == m_nbt_cache.end()) {
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readTableContextForNode(node_it.value());
+}
 
-    const auto& node = node_it.value();
+std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTableContextForNode(
+    const sak::PstNode& node) {
     if (node.data_bid == 0) {
         return QVector<QVector<sak::MapiProperty>>{};
     }
@@ -3076,6 +3127,24 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
 // Messaging Layer -- Contents Table
 // ============================================================================
 
+sak::PstItemSummary PstParser::summaryFromRow(const QVector<sak::MapiProperty>& row) {
+    const auto& setters = summarySetters();
+    sak::PstItemSummary item;
+    bool has_class_column = false;
+    for (const auto& col : row) {
+        has_class_column = has_class_column || col.tag_id == sak::email::kPropIdMessageClass;
+        auto setter_it = setters.find(col.tag_id);
+        if (setter_it != setters.end()) {
+            (*setter_it)(item, col);
+        }
+    }
+    // A table is free to leave the class out, and what an item is decides where it goes.
+    if (!has_class_column) {
+        enrichSingleItemProps(item);
+    }
+    return item;
+}
+
 std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsTable(
     uint64_t contents_nid, int offset, int limit, int* total_rows) {
     auto table_result = readTableContext(contents_nid);
@@ -3100,20 +3169,12 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
     QVector<sak::PstItemSummary> items;
     items.reserve(end_idx - start);
 
-    const auto& setters = summarySetters();
     for (int row_idx = start; row_idx < end_idx; ++row_idx) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        sak::PstItemSummary item;
-        for (const auto& col : rows[row_idx]) {
-            auto setter_it = setters.find(col.tag_id);
-            if (setter_it != setters.end()) {
-                (*setter_it)(item, col);
-            }
-        }
-        items.append(std::move(item));
+        items.append(summaryFromRow(rows[row_idx]));
     }
 
     return items;
@@ -3217,6 +3278,7 @@ void PstParser::applyMessageProperties(sak::PstItemDetail& detail,
                                        const QVector<sak::MapiProperty>& props) const {
     const auto& setters = detailSetters();
     MessageExtraProperties extra;
+    sak::pst::AppointmentRawValues appointment;
     for (const auto& prop : props) {
         auto setter_it = setters.find(prop.tag_id);
         if (setter_it != setters.end()) {
@@ -3224,13 +3286,92 @@ void PstParser::applyMessageProperties(sak::PstItemDetail& detail,
         } else if (prop.tag_id >= sak::pst::kFirstNamedPropertyId) {
             const auto named = m_named_properties.constFind(prop.tag_id);
             if (named != m_named_properties.constEnd()) {
-                sak::pst::applyNamedProperty(detail, *named, prop);
+                sak::pst::applyNamedProperty(detail, appointment, *named, prop);
             }
         } else {
             extra.note(prop);
         }
     }
     extra.apply(detail);
+    if (detail.item_type == sak::EmailItemType::Calendar ||
+        detail.item_type == sak::EmailItemType::MeetingRequest) {
+        sak::pst::finishAppointment(detail, appointment);
+    }
+}
+
+namespace {
+
+/// A recipient row's SMTP address. Exchange recipients keep an X.500 path in the address field,
+/// which no other mail program can use, so it never counts as an address here.
+QString attendeeAddress(const QString& smtp, const QString& address, const QString& address_type) {
+    if (!smtp.isEmpty()) {
+        return smtp;
+    }
+    const bool is_smtp = address_type.compare(QLatin1String("SMTP"), Qt::CaseInsensitive) == 0;
+    return (is_smtp || address.contains(QLatin1Char('@'))) ? address : QString();
+}
+
+sak::PstAttendee attendeeFromRow(const QVector<sak::MapiProperty>& row) {
+    sak::PstAttendee attendee;
+    QString smtp;
+    QString address;
+    QString address_type;
+    for (const auto& col : row) {
+        switch (col.tag_id) {
+        case sak::email::kPropIdDisplayName:
+            attendee.name = col.display_value;
+            break;
+        case sak::email::kPropIdEmailAddress:
+            address = col.display_value;
+            break;
+        case sak::email::kPropIdAddressType:
+            address_type = col.display_value;
+            break;
+        case sak::email::kPropIdSmtpAddress:
+            smtp = col.display_value;
+            break;
+        case sak::email::kPropIdRecipientType:
+            attendee.role = col.display_value.toInt();
+            break;
+        case sak::email::kPropIdRecipientFlags:
+            attendee.organizer = (col.display_value.toUInt() & sak::email::kRecipientOrganizer) !=
+                                 0;
+            break;
+        case sak::email::kPropIdRecipientTrackStatus:
+            attendee.response = col.display_value.toInt();
+            break;
+        default:
+            break;
+        }
+    }
+    attendee.email = attendeeAddress(smtp, address, address_type);
+    return attendee;
+}
+
+}  // namespace
+
+void PstParser::readAttendees(const sak::PstNode& node, sak::PstItemDetail& detail) {
+    if (node.subnode_bid == 0) {
+        return;
+    }
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
+    if (!subnodes) {
+        detail.attendees_unreadable = true;
+        return;
+    }
+    const auto table_node = subnodes->constFind(sak::email::kNidRecipientTable);
+    if (table_node == subnodes->constEnd()) {
+        return;
+    }
+    auto rows = readTableContextForNode(*table_node);
+    if (!rows) {
+        detail.attendees_unreadable = true;
+        return;
+    }
+    detail.attendees.reserve(rows->size());
+    for (const auto& row : *rows) {
+        detail.attendees.append(attendeeFromRow(row));
+    }
 }
 
 std::expected<sak::PstItemDetail, error_code> PstParser::readMessageForNode(
@@ -3253,6 +3394,11 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessageForNode(
         return std::unexpected(att_result.error());
     }
     detail.attachments = std::move(*att_result);
+
+    if (detail.item_type == sak::EmailItemType::Calendar ||
+        detail.item_type == sak::EmailItemType::MeetingRequest) {
+        readAttendees(node, detail);
+    }
 
     applyRtfBody(detail);
 
@@ -3608,10 +3754,25 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
         const char* prefix;
         sak::EmailItemType type;
     };
+    // Most specific first. A class names mail only if it is listed here: Outlook files its own
+    // bookkeeping under IPM too (rule templates, settings, people-card records, and kinds nobody
+    // has listed yet), and the store says nothing else about what such an item is. One left out
+    // this way is still counted as left out, and still opens in its folder.
     static constexpr Mapping kMappings[] = {
+        {.prefix = "IPM.Note.Rules", .type = sak::EmailItemType::Unknown},
         {.prefix = "IPM.Note", .type = sak::EmailItemType::Email},
         {.prefix = "IPM.Post", .type = sak::EmailItemType::Email},
         {.prefix = "IPM.Report", .type = sak::EmailItemType::Email},
+        {.prefix = "REPORT", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Sharing", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Document", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.OLE", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.TaskRequest", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Outlook.Recall", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Recall", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Resend", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Conflict", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.InfoPathForm", .type = sak::EmailItemType::Email},
         {.prefix = "IPM.Contact", .type = sak::EmailItemType::Contact},
         {.prefix = "IPM.Appointment", .type = sak::EmailItemType::Calendar},
         {.prefix = "IPM.Task", .type = sak::EmailItemType::Task},
@@ -3619,11 +3780,17 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
         {.prefix = "IPM.Activity", .type = sak::EmailItemType::JournalEntry},
         {.prefix = "IPM.DistList", .type = sak::EmailItemType::DistList},
         {.prefix = "IPM.Schedule.Meeting", .type = sak::EmailItemType::MeetingRequest},
-        {.prefix = "IPM", .type = sak::EmailItemType::Email},
     };
 
+    // A class name extends by a dot: IPM.TaskRequest is a message about a task, not an IPM.Task.
+    const auto names = [&message_class](const char* prefix) {
+        const QLatin1String name(prefix);
+        return message_class.compare(name, Qt::CaseInsensitive) == 0 ||
+               (message_class.startsWith(name, Qt::CaseInsensitive) &&
+                message_class.at(name.size()) == QLatin1Char('.'));
+    };
     for (const auto& m : kMappings) {
-        if (message_class.startsWith(QLatin1String(m.prefix), Qt::CaseInsensitive)) {
+        if (names(m.prefix)) {
             return m.type;
         }
     }

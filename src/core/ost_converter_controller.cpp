@@ -31,15 +31,11 @@ OstConverterController::~OstConverterController() {
 
 QString OstConverterController::refusalForFile(const QString& path) {
     const QString suffix = QFileInfo(path).suffix().toLower();
-    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
+    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost") ||
+        suffix == QStringLiteral("nst")) {
         return {};
     }
-    if (suffix == QStringLiteral("nst")) {
-        return tr("%1 was not added: NST files, Outlook's cache of Microsoft 365 group mail, are "
-                  "not supported.")
-            .arg(QFileInfo(path).fileName());
-    }
-    return tr("%1 was not added: only PST and OST files can be converted.")
+    return tr("%1 was not added: only PST, OST and NST files can be converted.")
         .arg(QFileInfo(path).fileName());
 }
 

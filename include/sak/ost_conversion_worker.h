@@ -124,10 +124,21 @@ private:
     /// Rows in the folders a run converts, which is what its progress counts up to.
     [[nodiscard]] static int countConvertibleItems(PstParser* parser, const PstFolderTree& tree);
 
-    /// Count a non-mail folder's items, and its subfolders', as left out of the MBOX.
-    static void countSkippedFolder(PstParser* parser,
-                                   const PstFolder& folder,
-                                   OstConversionResult& result);
+    /// Convert one folder's items. Returns whether it turned out to hold mail, which is what makes
+    /// a folder that is not a mail folder count as processed.
+    [[nodiscard]] bool convertFolderItems(PstParser* parser,
+                                          const PstFolder& folder,
+                                          const QString& folder_path,
+                                          const OstConversionConfig& config,
+                                          OstConversionResult& result);
+
+    /// Walk the folders outside the store's mail tree. Real emails can be filed anywhere.
+    void processFoldersOutsideMailTree(PstParser* parser,
+                                       const PstFolder& folder,
+                                       const PstFolder* mail_tree,
+                                       const OstConversionConfig& config,
+                                       OstConversionResult& result);
+
 
     /// Check if a folder passes the include/exclude filter
     [[nodiscard]] bool folderPassesFilter(const QString& folder_name,

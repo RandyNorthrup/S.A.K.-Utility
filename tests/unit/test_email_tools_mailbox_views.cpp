@@ -16,20 +16,26 @@
 #include "sak/pst_parser.h"
 
 #include "../support/pst_store_builder.h"
+#include "../support/recurrence_blob.h"
 
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTextBrowser>
+#include <QThreadPool>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QtTest/QtTest>
@@ -41,7 +47,10 @@ namespace {
 constexpr uint8_t kSetAppointment = 0x02;
 constexpr uint8_t kSetTask = 0x03;
 constexpr uint8_t kSetAddress = 0x04;
+constexpr uint8_t kSetLog = 0x0A;
 constexpr int kWaitMs = 5000;
+constexpr int kDriverPollMs = 20;
+constexpr int kDayListSubjectColumn = 1;
 
 QByteArray sixMessageMailbox() {
     QByteArray content;
@@ -225,6 +234,174 @@ private:
         QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QLatin1Char('|'))));
     }
 
+    /// Answers whatever nested event loop a panel call opens: a menu or a modal dialog. They run
+    /// inside the call that opened them, so only a poll from outside can reach them.
+    class ModalDriver {
+    public:
+        std::function<void(QMenu*)> onMenu;
+        std::function<void(QWidget*)> onModal;
+        bool menuSeen = false;
+
+        ModalDriver() {
+            m_timer.setInterval(kDriverPollMs);
+            // Queued: answering a menu can open a dialog, whose loop runs inside the answer, and a
+            // timer does not fire again while its own handler is still on the stack.
+            QObject::connect(&m_timer, &QTimer::timeout, &m_timer, [this] {
+                QMetaObject::invokeMethod(&m_timer, [this] { answer(); }, Qt::QueuedConnection);
+            });
+            m_timer.start();
+        }
+
+    private:
+        void answer() {
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                menu != nullptr && onMenu) {
+                menuSeen = true;
+                onMenu(menu);
+                return;
+            }
+            if (QWidget* modal = QApplication::activeModalWidget(); modal != nullptr && onModal) {
+                onModal(modal);
+            }
+        }
+
+        QTimer m_timer;
+    };
+
+    static void collectTreeTexts(const QTreeWidgetItem* item, QStringList& out) {
+        out.append(item->text(0));
+        for (int i = 0; i < item->childCount(); ++i) {
+            collectTreeTexts(item->child(i), out);
+        }
+    }
+
+    static QStringList panelTreeTexts(const sak::EmailInspectorPanel& panel) {
+        QStringList texts;
+        for (int i = 0; i < panel.m_folder_tree->topLevelItemCount(); ++i) {
+            collectTreeTexts(panel.m_folder_tree->topLevelItem(i), texts);
+        }
+        return texts;
+    }
+
+    static QTreeWidgetItem* treeItem(const sak::EmailInspectorPanel& panel, const QString& text) {
+        const auto found = panel.m_folder_tree->findItems(text,
+                                                          Qt::MatchExactly | Qt::MatchRecursive);
+        return found.isEmpty() ? nullptr : found.first();
+    }
+
+    [[nodiscard]] static BuilderMessage storedMail(const QString& subject) {
+        BuilderMessage msg;
+        msg.subject = subject;
+        msg.sender_name = QStringLiteral("Owen Lark");
+        msg.sender_email = QStringLiteral("owen@harborlane.example");
+        msg.date = QDateTime(QDate(2026, 3, 9), QTime(14, 5), QTimeZone::UTC);
+        msg.body_plain = QStringLiteral("Body of ") + subject;
+        return msg;
+    }
+
+    [[nodiscard]] static BuilderFolder journalFolder() {
+        const auto logged = [](uint32_t long_id, uint16_t type, const QByteArray& value) {
+            return BuilderNamedProp{
+                .set_byte = kSetLog, .long_id = long_id, .type = type, .value = value};
+        };
+        const QDateTime start(QDate(2026, 3, 9), QTime(14, 0), QTimeZone::UTC);
+        BuilderMessage entry;
+        entry.message_class = QStringLiteral("IPM.Activity");
+        entry.subject = QStringLiteral("Call with the oven company");
+        entry.body_plain = QStringLiteral("Thermostat part on order.");
+        entry.named_props = {
+            logged(sak::pst::kLidLogType,
+                   sak::email::kPropTypeUnicode,
+                   builderUnicode(QStringLiteral("Phone call"))),
+            logged(sak::pst::kLidLogStart, sak::email::kPropTypeSysTime, builderFiletime(start)),
+            logged(sak::pst::kLidLogDuration, sak::email::kPropTypeInt32, builderInt32(15)),
+        };
+        BuilderFolder journal;
+        journal.name = QStringLiteral("Journal");
+        journal.container_class = QStringLiteral("IPF.Journal");
+        journal.messages = {entry};
+        return journal;
+    }
+
+    /// One series with people on it, one week deleted and one moved, and one that cannot be read.
+    [[nodiscard]] static BuilderFolder repeatingCalendar(const QDateTime& start) {
+        const auto named = [](uint32_t long_id, uint16_t type, const QByteArray& value) {
+            return BuilderNamedProp{
+                .set_byte = kSetAppointment, .long_id = long_id, .type = type, .value = value};
+        };
+        RecurrenceSpec spec;
+        spec.start_date = QDate(2026, 11, 2);
+        spec.deleted = {QDate(2026, 11, 9)};
+        RecurChangedOccurrence moved;
+        moved.original_start = QDateTime(QDate(2026, 11, 23), QTime(9, 0), QTimeZone::UTC);
+        moved.start = QDateTime(QDate(2026, 11, 24), QTime(14, 0), QTimeZone::UTC);
+        moved.end = QDateTime(QDate(2026, 11, 24), QTime(15, 0), QTimeZone::UTC);
+        spec.changed = {moved};
+
+        BuilderMessage series;
+        series.message_class = QStringLiteral("IPM.Appointment");
+        series.subject = QStringLiteral("Staff meeting");
+        series.named_props = {
+            named(sak::pst::kLidAppointmentStartWhole,
+                  sak::email::kPropTypeSysTime,
+                  builderFiletime(start)),
+            named(sak::pst::kLidAppointmentEndWhole,
+                  sak::email::kPropTypeSysTime,
+                  builderFiletime(start.addSecs(3600))),
+            named(sak::pst::kLidAppointmentRecur,
+                  sak::email::kPropTypeBinary,
+                  buildRecurrenceBlob(spec)),
+            named(sak::pst::kLidTimeZoneStruct, sak::email::kPropTypeBinary, pacificZoneStruct()),
+        };
+        BuilderRecipient organizer{QStringLiteral("Dana Whitlock"),
+                                   QStringLiteral("dana@harborlane.example")};
+        organizer.organizer = true;
+        BuilderRecipient required{QStringLiteral("Marisol Quint"),
+                                  QStringLiteral("marisol@harborlane.example")};
+        required.track_status = 3;
+        BuilderRecipient optional{QStringLiteral("Owen Lark")};
+        optional.recipient_type = 2;
+        optional.track_status = 4;
+        series.recipients = {organizer, required, optional};
+        BuilderAttachment exception;
+        exception.name = QStringLiteral("Changed occurrence");
+        exception.data = QByteArray("stored exception");
+        exception.hidden = true;
+        series.attachments = {exception};
+
+        RecurrenceSpec odd = spec;
+        odd.frequency = 0x2099;
+        BuilderMessage unreadable;
+        unreadable.message_class = QStringLiteral("IPM.Appointment");
+        unreadable.subject = QStringLiteral("Unreadable series");
+        unreadable.named_props = {
+            named(sak::pst::kLidAppointmentStartWhole,
+                  sak::email::kPropTypeSysTime,
+                  builderFiletime(start.addDays(1))),
+            named(sak::pst::kLidAppointmentRecur,
+                  sak::email::kPropTypeBinary,
+                  buildRecurrenceBlob(odd)),
+        };
+        BuilderFolder calendar;
+        calendar.name = QStringLiteral("Calendar");
+        calendar.container_class = QStringLiteral("IPF.Appointment");
+        calendar.messages = {series, unreadable};
+        return calendar;
+    }
+
+    [[nodiscard]] static const sak::PstFolder* findByClass(const sak::PstFolderTree& tree,
+                                                           const QString& container_class) {
+        for (const auto& folder : tree) {
+            if (folder.container_class == container_class) {
+                return &folder;
+            }
+            if (const auto* found = findByClass(folder.children, container_class)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
 private Q_SLOTS:
     void initTestCase() { QVERIFY(m_dir.isValid()); }
 
@@ -262,14 +439,349 @@ private Q_SLOTS:
         QCOMPARE(panel.m_controller->fileInfo().total_items, 6);
     }
 
-    void refusesAnNstWithItsOwnMessage() {
+    // The real NST here held no mail, so this is what shows mail in one is listed and opens.
+    void anNstWithMailListsAndOpensIt() {
+        PstStoreBuilder builder;
+        builder.content_type = sak::email::kOstContentType;
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages = {storedMail(QStringLiteral("Group note"))};
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel, writeFile(QStringLiteral(".nst"), builder.build({inbox})));
+        QVERIFY(panel.m_controller->isFileOpen());
+        QCOMPARE(panel.m_controller->fileInfo().total_items, 1);
+        QVERIFY(panel.m_controller->fileInfo().is_ost);
+        QVERIFY(panel.m_search_edit->isEnabled());
+        QVERIFY(panelTreeTexts(panel).contains(QStringLiteral("Inbox (1)")));
+    }
+
+    // Empty is an answer, not a broken file.
+    void aStoreWithNoMessagesSaysSo() {
+        PstStoreBuilder builder;
+        builder.content_type = sak::email::kOstContentType;
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        sak::EmailInspectorPanel panel;
+        QSignalSpy errors(panel.m_controller.get(), &EmailInspectorController::errorOccurred);
+        openAndWait(panel, writeFile(QStringLiteral(".nst"), builder.build({inbox})));
+        QVERIFY(panel.m_controller->isFileOpen());
+        QCOMPARE(errors.count(), 0);
+        QVERIFY2(panel.m_status_label->text().contains(QStringLiteral("holds no messages")),
+                 qPrintable(panel.m_status_label->text()));
+        QVERIFY(panelTreeTexts(panel).contains(QStringLiteral("Inbox (0)")));
+
+        // And a click on its folder keeps saying so, rather than asking for a folder again.
+        panel.onFolderTreeItemClicked(treeItem(panel, QStringLiteral("Inbox (0)")), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.m_controller->currentState(),
+                                  EmailInspectorController::State::Idle,
+                                  kWaitMs);
+        QCOMPARE(panel.m_item_list->rowCount(), 0);
+    }
+
+    void aFileThatIsNoStoreStillSaysSo() {
         const QString path = writeFile(QStringLiteral(".nst"), "anything");
         sak::EmailInspectorPanel panel;
         QSignalSpy errors(panel.m_controller.get(), &EmailInspectorController::errorOccurred);
         panel.m_controller->openFile(path);
-        QCOMPARE(errors.count(), 1);
-        QVERIFY(errors.first().first().toString().contains(QStringLiteral("NST")));
+        QVERIFY(errors.count() >= 1);
         QVERIFY(!panel.m_controller->isFileOpen());
+    }
+
+    // Real mail in a system folder is reachable. The system folders with nothing in them stay gone.
+    void systemFoldersShowOnlyWhenTheyHoldEmail() {
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages = {storedMail(QStringLiteral("Ordinary"))};
+        BuilderFolder history;
+        history.name = QStringLiteral("Conversation History");
+        history.messages = {storedMail(QStringLiteral("Saved chat"))};
+        BuilderFolder files;
+        files.name = QStringLiteral("Files");
+        BuilderFolder sync;
+        sync.name = QStringLiteral("Sync Issues");
+        BuilderFolder conflicts;
+        conflicts.name = QStringLiteral("Conflicts");
+        conflicts.messages = {storedMail(QStringLiteral("Conflicted"))};
+        BuilderFolder failures;
+        failures.name = QStringLiteral("Local Failures");
+        sync.children = {conflicts, failures};
+        PstStoreBuilder builder;
+        BuilderFolder stray;
+        stray.name = QStringLiteral("Stray");
+        stray.messages = {storedMail(QStringLiteral("Far"))};
+        BuilderFolder bare;
+        bare.name = QStringLiteral("Bare");
+        builder.outside_folders = {stray, bare};
+
+        sak::EmailInspectorPanel panel;
+        openAndWait(
+            panel, writeFile(QStringLiteral(".pst"), builder.build({inbox, history, files, sync})));
+        const QStringList tree = panelTreeTexts(panel);
+        QVERIFY2(tree.contains(QStringLiteral("Conversation History (1)")),
+                 qPrintable(tree.join(QLatin1Char('|'))));
+        QVERIFY(tree.contains(QStringLiteral("Sync Issues (0)")));  // The way down to its child
+        QVERIFY(tree.contains(QStringLiteral("Conflicts (1)")));
+        QVERIFY(!tree.contains(QStringLiteral("Files (0)")));
+        QVERIFY(!tree.contains(QStringLiteral("Local Failures (0)")));
+        QVERIFY(tree.contains(QStringLiteral("Other Folders")));
+        QVERIFY(tree.contains(QStringLiteral("Stray (1)")));
+        QVERIFY(!tree.contains(QStringLiteral("Bare (0)")));
+
+        // And a click on one lists its mail.
+        QTreeWidgetItem* item = treeItem(panel, QStringLiteral("Conflicts (1)"));
+        QVERIFY(item != nullptr);
+        panel.onFolderTreeItemClicked(item, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.m_item_list->rowCount(), 1, kWaitMs);
+        QCOMPARE(panel.m_item_list->item(0, sak::EmailInspectorPanel::ColSubject)->text(),
+                 QStringLiteral("Conflicted"));
+
+        // The group's own row names no folder, and a click on it does nothing.
+        panel.m_current_folder_id = 0;
+        panel.onFolderTreeItemClicked(treeItem(panel, QStringLiteral("Other Folders")), 0);
+        QCOMPARE(panel.m_current_folder_id, uint64_t{0});
+    }
+
+    void aStoreWithoutStrayMailHasNoOtherFoldersRow() {
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages = {storedMail(QStringLiteral("Ordinary"))};
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel, writeFile(QStringLiteral(".pst"), PstStoreBuilder{}.build({inbox})));
+        QVERIFY(!panelTreeTexts(panel).contains(QStringLiteral("Other Folders")));
+    }
+
+    void journalFoldersOpenAndExportLikeTasksAndNotes() {
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel,
+                    writeFile(QStringLiteral(".pst"), PstStoreBuilder{}.build({journalFolder()})));
+        QVERIFY(panelTreeTexts(panel).contains(QStringLiteral("Journal (1)")));
+
+        panel.onFolderTreeItemClicked(treeItem(panel, QStringLiteral("Journal (1)")), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.m_item_list->rowCount(), 1, kWaitMs);
+        QCOMPARE(panel.m_item_list->item(0, sak::EmailInspectorPanel::ColType)->text(),
+                 QStringLiteral("Journal"));
+        QSignalSpy opened(panel.m_controller.get(), &EmailInspectorController::itemDetailLoaded);
+        panel.onItemListCellClicked(0, sak::EmailInspectorPanel::ColSubject);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(), 1, kWaitMs);
+        const QString shown = panel.m_content_browser->toPlainText();
+        QVERIFY2(shown.contains(QStringLiteral("Phone call")), qPrintable(shown));
+        QVERIFY(shown.contains(QStringLiteral("15 minutes")));
+        QVERIFY(shown.contains(QStringLiteral("Thermostat part on order.")));
+
+        sak::PstFolder folder;
+        folder.container_class = QStringLiteral("IPF.Journal");
+        QMenu menu;
+        panel.addFolderExportActions(menu, &folder, std::optional<uint64_t>(1));
+        QCOMPARE(menu.actions().size(), 1);
+        QCOMPARE(menu.actions().first()->text(), QStringLiteral("Export Journal as CSV..."));
+
+        PstParser parser;
+        parser.open(writeFile(QStringLiteral(".pst"), PstStoreBuilder{}.build({journalFolder()})));
+        const QString out = m_dir.filePath(QStringLiteral("journal_csv"));
+        exportFirstFolder(parser, sak::ExportFormat::CsvJournal, out);
+        QFile csv(out + QStringLiteral("/journal_export.csv"));
+        QVERIFY(csv.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(csv.readAll());
+        QVERIFY2(text.contains(QStringLiteral("Phone call")), qPrintable(text));
+        QVERIFY(text.contains(QStringLiteral("Call with the oven company")));
+        QVERIFY(text.contains(QStringLiteral(",15,")));
+    }
+
+    // Through the panel, from the right-click to the file on disk: nothing here calls the export
+    // directly, so a menu that names the wrong format or the wrong folder shows up.
+    void aRightClickExportWritesTheFolderItWasOpenedOn() {
+        sak::EmailInspectorPanel panel;
+        panel.resize(1200, 800);
+        panel.show();
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages = {storedMail(QStringLiteral("Ordinary"))};
+        openAndWait(panel,
+                    writeFile(QStringLiteral(".pst"),
+                              PstStoreBuilder{}.build({inbox, tasksFolder()})));
+        // Selected: the Inbox. Right-clicked: Tasks. It must be Tasks that comes out.
+        panel.onFolderTreeItemClicked(treeItem(panel, QStringLiteral("Inbox (1)")), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.m_item_list->rowCount(), 1, kWaitMs);
+
+        QTreeWidgetItem* tasks = treeItem(panel, QStringLiteral("Tasks (1)"));
+        QVERIFY(tasks != nullptr);
+        const QPoint at = panel.m_folder_tree->visualItemRect(tasks).center();
+        const QString out = m_dir.filePath(QStringLiteral("right_click"));
+        QVERIFY(QDir().mkpath(out));
+
+        QSignalSpy finished(panel.m_controller.get(), &EmailInspectorController::exportComplete);
+        ModalDriver driver;
+        driver.onMenu = [](QMenu* menu) {
+            for (QAction* action : menu->actions()) {
+                if (action->text() == QStringLiteral("Export Tasks as CSV...")) {
+                    menu->setActiveAction(action);
+                    QTest::keyClick(menu, Qt::Key_Return);
+                    return;
+                }
+            }
+            menu->close();
+        };
+        driver.onModal = [&out](QWidget* modal) {
+            if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
+                // The folder the dialog is showing is its answer. Selecting it as well would read
+                // as a folder of that name inside itself.
+                dialog->setDirectory(out);
+                static_cast<QDialog*>(dialog)->accept();
+            }
+        };
+        panel.onFolderTreeContextMenu(at);
+        QVERIFY(driver.menuSeen);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kWaitMs);
+
+        QFile csv(out + QStringLiteral("/tasks_export.csv"));
+        QVERIFY2(csv.open(QIODevice::ReadOnly), qPrintable(csv.fileName()));
+        const QString text = QString::fromUtf8(csv.readAll());
+        QVERIFY2(text.contains(QStringLiteral("Order flour")), qPrintable(text));
+        QVERIFY(!text.contains(QStringLiteral("Ordinary")));
+    }
+
+    // "All mail folders" means all the mail: the system folder's, and none of a filed contact.
+    void exportAllTakesEveryEmailAndNothingElse() {
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        BuilderMessage filed;
+        filed.message_class = QStringLiteral("IPM.Contact");
+        filed.subject = QStringLiteral("Filed contact");
+        inbox.messages = {storedMail(QStringLiteral("Ordinary")), filed};
+        BuilderFolder history;
+        history.name = QStringLiteral("Conversation History");
+        history.messages = {storedMail(QStringLiteral("Saved chat"))};
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel,
+                    writeFile(QStringLiteral(".pst"), PstStoreBuilder{}.build({inbox, history})));
+
+        const QString out = m_dir.filePath(QStringLiteral("export_all"));
+        QVERIFY(QDir().mkpath(out));
+        QSignalSpy finished(panel.m_controller.get(), &EmailInspectorController::exportComplete);
+        ModalDriver driver;
+        driver.onModal = [&out](QWidget* modal) {
+            if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
+                // The folder the dialog is showing is its answer. Selecting it as well would read
+                // as a folder of that name inside itself.
+                dialog->setDirectory(out);
+                static_cast<QDialog*>(dialog)->accept();
+            }
+        };
+        panel.exportAllMailFoldersAs(sak::ExportFormat::CsvEmails);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kWaitMs);
+        const auto result = finished.first().first().value<sak::EmailExportResult>();
+        QCOMPARE(result.items_exported, 2);
+        QFile csv(out + QStringLiteral("/emails_export.csv"));
+        QVERIFY(csv.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(csv.readAll());
+        QVERIFY(text.contains(QStringLiteral("Saved chat")));
+        QVERIFY(!text.contains(QStringLiteral("Filed contact")));
+    }
+
+    // Counting a mailbox reads all of it. Stop has to leave nothing half-open behind.
+    void stoppingWhileAMailboxIsCountedAbandonsIt() {
+        const QString path = writeFile(QStringLiteral(".mbox"), sixMessageMailbox());
+        sak::EmailInspectorPanel panel;
+        QSignalSpy opened(panel.m_controller.get(), &EmailInspectorController::fileOpened);
+        panel.m_controller->openFile(path);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Opening);
+        QVERIFY(panel.m_cancel_operation_button->isEnabled());
+
+        panel.m_cancel_operation_button->click();
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Idle);
+        QVERIFY(!panel.m_controller->isFileOpen());
+        QVERIFY(!panel.m_cancel_operation_button->isEnabled());
+
+        // A count that finished just before the Stop must not announce a file that is gone.
+        QCoreApplication::processEvents();
+        QCOMPARE(opened.count(), 0);
+        QVERIFY(!panel.m_mbox_active);
+        QVERIFY(!panel.m_search_edit->isEnabled());
+
+        // And the same mailbox opens afterwards.
+        openAndWait(panel, path);
+        QVERIFY(panel.m_controller->isFileOpen());
+        QCOMPARE(panel.m_controller->fileInfo().total_items, 6);
+    }
+
+    // With every pool thread busy the count has not begun, so waiting for it runs it right there on
+    // this thread. A Stop that was forgotten then counts the whole file and announces it mid-close.
+    void stoppingBeforeTheCountHasBegunAbandonsIt() {
+        const QString path = writeFile(QStringLiteral(".mbox"), sixMessageMailbox());
+        sak::EmailInspectorPanel panel;
+        QSignalSpy opened(panel.m_controller.get(), &EmailInspectorController::fileOpened);
+
+        QThreadPool* pool = QThreadPool::globalInstance();
+        QSemaphore release;
+        QSemaphore started;
+        const int threads = pool->maxThreadCount();
+        for (int i = 0; i < threads; ++i) {
+            pool->start([&release, &started] {
+                started.release();
+                release.acquire();
+            });
+        }
+        started.acquire(threads);
+
+        panel.m_controller->openFile(path);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Opening);
+        panel.m_cancel_operation_button->click();
+        release.release(threads);
+        pool->waitForDone();
+
+        QCOMPARE(opened.count(), 0);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Idle);
+        QVERIFY(!panel.m_controller->isFileOpen());
+        QCoreApplication::processEvents();
+        QCOMPARE(opened.count(), 0);
+        QVERIFY(!panel.m_mbox_active);
+    }
+
+    // In an MBOX both ids are legitimately 0: the one folder, and the first message. Treating 0 as
+    // "nothing chosen" made View Containing Email do nothing for the first message in a mailbox.
+    void viewingAnAttachmentsEmailOpensTheFirstMessageOfAnMbox() {
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel, writeFile(QStringLiteral(".mbox"), mailboxWithAttachment()));
+        QSignalSpy listed(panel.m_controller.get(), &EmailInspectorController::mboxMessagesLoaded);
+        ModalDriver driver;
+        bool chose = false;
+        driver.onModal = [&chose](QWidget* modal) {
+            auto* dialog = qobject_cast<sak::EmailAttachmentsBrowserDialog*>(modal);
+            if (dialog == nullptr || !dialog->m_scan_complete) {
+                return;
+            }
+            chose = true;
+            dialog->m_navigate_folder_id = dialog->m_all_attachments.first().source_folder_id;
+            dialog->m_navigate_message_id = dialog->m_all_attachments.first().message_node_id;
+            dialog->accept();
+        };
+        panel.onExportAttachmentsClicked();
+        QVERIFY(chose);
+        // The panel takes no message from the browser's own scan, only from where it navigates.
+        QTRY_VERIFY_WITH_TIMEOUT(panel.m_current_item_id.has_value(), kWaitMs);
+        QCOMPARE(panel.m_current_item_id, std::optional<uint64_t>(0));
+        QCOMPARE(panel.m_current_detail.subject, QStringLiteral("First, with a file"));
+        QTRY_VERIFY_WITH_TIMEOUT(listed.count() >= 1, kWaitMs);
+    }
+
+    // In a PST or OST a zero id names nothing, so closing the browser that way navigates nowhere.
+    void closingTheAttachmentsBrowserOfAStoreGoesNowhere() {
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel, writeFile(QStringLiteral(".pst"), storeWithInlinePicture()));
+        ModalDriver driver;
+        bool closed = false;
+        driver.onModal = [&closed](QWidget* modal) {
+            auto* dialog = qobject_cast<sak::EmailAttachmentsBrowserDialog*>(modal);
+            if (dialog != nullptr && dialog->m_scan_complete) {
+                closed = true;
+                dialog->accept();
+            }
+        };
+        panel.onExportAttachmentsClicked();
+        QVERIFY(closed);
+        QCoreApplication::processEvents();
+        QVERIFY(!panel.m_current_item_id.has_value());
+        QCOMPARE(panel.m_current_folder_id, uint64_t{0});
     }
 
     // An MBOX holds only mail. The buttons lit up anyway, because fileOpened followed mboxOpened.
@@ -611,6 +1123,148 @@ private Q_SLOTS:
         QCOMPARE(event.location, QStringLiteral("Front kitchen"));
         QVERIFY(dialog.m_date_index.contains(start.toLocalTime().date()));
         QVERIFY(!dialog.m_date_index.contains(start.addDays(-21).toLocalTime().date()));
+    }
+
+    void anEventShowsItsPeopleAndHowItRepeats() {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("series.pst"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QDateTime start(QDate(2026, 11, 2), QTime(17, 0), QTimeZone::UTC);
+        file.write(PstStoreBuilder{}.build({repeatingCalendar(start)}));
+        file.close();
+
+        EmailInspectorController controller;
+        sak::PstFolderTree tree;
+        QObject::connect(&controller,
+                         &EmailInspectorController::folderTreeLoaded,
+                         &controller,
+                         [&tree](const sak::PstFolderTree& loaded) { tree = loaded; });
+        controller.openFile(path);
+        QVERIFY(controller.isFileOpen());
+        const sak::PstFolder* calendar = findByClass(tree, QStringLiteral("IPF.Appointment"));
+        QVERIFY(calendar != nullptr);
+
+        sak::EmailCalendarDialog dialog(&controller, {calendar->node_id});
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.m_all_events.size(), 2, kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(dialog.m_all_events.first().detail_loaded, kWaitMs);
+
+        dialog.displayEventSummary(dialog.m_all_events[0]);
+        // Its changed occurrence is stored as a hidden attachment, and is no file anyone attached.
+        QCOMPARE(dialog.m_all_events[0].attachment_count, 0);
+        const QString shown = dialog.m_detail_browser->toPlainText();
+        QVERIFY2(shown.contains(QStringLiteral("Every week on Monday")), qPrintable(shown));
+        QVERIFY2(shown.contains(QStringLiteral("1 deleted, 1 changed")), qPrintable(shown));
+        QVERIFY2(shown.contains(QStringLiteral("Marisol Quint <marisol@harborlane.example> "
+                                               "(Required, Accepted)")),
+                 qPrintable(shown));
+        QVERIFY(
+            shown.contains(QStringLiteral("Dana Whitlock <dana@harborlane.example> "
+                                          "(Organizer)")));
+        QVERIFY(shown.contains(QStringLiteral("Owen Lark (Optional, Declined)")));
+
+        // Marked wherever its title is drawn.
+        dialog.populateDayEventList(start.toLocalTime().date());
+        QVERIFY(dialog.m_day_event_list->rowCount() >= 1);
+        QVERIFY2(
+            dialog.m_day_event_list->item(0, kDayListSubjectColumn)->text().contains(QChar(0x21BB)),
+            "the day list does not mark a repeating event");
+
+        // A pattern that cannot be read says so, on the event.
+        dialog.displayEventSummary(dialog.m_all_events[1]);
+        const QString unreadable = dialog.m_detail_browser->toPlainText();
+        QVERIFY2(unreadable.contains(QStringLiteral("could not be read")), qPrintable(unreadable));
+    }
+
+    // The right-click export carries all of it, through the same writer as the whole calendar.
+    void aSingleEventExportCarriesItsPeopleAndPattern() {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("series.pst"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QDateTime start(QDate(2026, 11, 2), QTime(17, 0), QTimeZone::UTC);
+        file.write(PstStoreBuilder{}.build({repeatingCalendar(start)}));
+        file.close();
+        EmailInspectorController controller;
+        sak::PstFolderTree tree;
+        QObject::connect(&controller,
+                         &EmailInspectorController::folderTreeLoaded,
+                         &controller,
+                         [&tree](const sak::PstFolderTree& loaded) { tree = loaded; });
+        controller.openFile(path);
+        const sak::PstFolder* calendar = findByClass(tree, QStringLiteral("IPF.Appointment"));
+        QVERIFY(calendar != nullptr);
+        sak::EmailCalendarDialog dialog(&controller, {calendar->node_id});
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.m_all_events.size(), 2, kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(dialog.m_all_events.first().detail_loaded, kWaitMs);
+
+        const QString out = dir.filePath(QStringLiteral("Staff meeting.ics"));
+        ModalDriver driver;
+        driver.onModal = [&dir](QWidget* modal) {
+            if (auto* save = qobject_cast<QFileDialog*>(modal)) {
+                save->setDirectory(dir.path());
+                static_cast<QDialog*>(save)->accept();
+            }
+        };
+        dialog.exportSingleEventIcs(dialog.m_all_events[0]);
+        QFile ics(out);
+        QVERIFY2(ics.open(QIODevice::ReadOnly),
+                 qPrintable(QDir(dir.path()).entryList(QDir::Files).join(QLatin1Char('|'))));
+        const QByteArray text = ics.readAll();
+        QVERIFY2(text.contains("RRULE:FREQ=WEEKLY"), text.constData());
+        QVERIFY(text.contains("ATTENDEE;CN=\"Marisol Quint\""));
+        QVERIFY(text.contains("EXDATE;TZID="));
+        QVERIFY(text.contains("RECURRENCE-ID;TZID="));
+        // The old single-event writer left out what RFC 5545 requires, and doubled its line ends.
+        QVERIFY(text.contains("UID:"));
+        QVERIFY(text.contains("DTSTAMP:"));
+        QVERIFY(!text.contains("\r\r\n"));
+    }
+
+    void theWholeCalendarExportSaysWhatItCouldNotCarry() {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("series.pst"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QDateTime start(QDate(2026, 11, 2), QTime(17, 0), QTimeZone::UTC);
+        file.write(PstStoreBuilder{}.build({repeatingCalendar(start)}));
+        file.close();
+
+        PstParser parser;
+        parser.open(path);
+        QVERIFY(parser.isOpen());
+        const sak::PstFolderTree tree = parser.folderTree();
+        const sak::PstFolder* calendar = findByClass(tree, QStringLiteral("IPF.Appointment"));
+        QVERIFY(calendar != nullptr);
+        sak::EmailExportConfig config;
+        config.format = sak::ExportFormat::Ics;
+        config.output_path = dir.path();
+        config.has_folder = true;
+        config.folder_id = calendar->node_id;
+        EmailExportWorker worker;
+        QSignalSpy done(&worker, &EmailExportWorker::exportComplete);
+        worker.exportItems(&parser, config);
+        QCOMPARE(done.count(), 1);
+        const auto result = done.first().first().value<sak::EmailExportResult>();
+        QCOMPARE(result.items_exported, 2);
+        QVERIFY(result.errors.isEmpty());
+        QCOMPARE(result.items_failed, 0);
+        QCOMPARE(result.notes.size(), 1);
+        QVERIFY2(result.notes.first().contains(QStringLiteral("Unreadable series")),
+                 qPrintable(result.notes.first()));
+
+        // The log and the status line carry it through the panel.
+        sak::EmailInspectorPanel panel;
+        QSignalSpy logged(&panel, &sak::EmailInspectorPanel::logOutput);
+        panel.onExportComplete(result);
+        QVERIFY2(panel.m_status_label->text().contains(QStringLiteral("note")),
+                 qPrintable(panel.m_status_label->text()));
+        bool in_log = false;
+        for (const auto& line : logged) {
+            in_log = in_log ||
+                     line.first().toString().contains(QStringLiteral("Unreadable series"));
+        }
+        QVERIFY(in_log);
     }
 };
 

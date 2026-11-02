@@ -10,6 +10,7 @@
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_controller.h"
 #include "sak/pst_parser.h"
+#include "sak/pst_recurrence.h"
 
 #include "../support/harbor_lane_sample.h"
 
@@ -169,6 +170,19 @@ private Q_SLOTS:
             QCOMPARE(event->start_time.date().month(), kCalendarMonth.month());
             QVERIFY(event->end_time > event->start_time);
             QVERIFY(!event->location.isEmpty());
+            if (event->subject == QStringLiteral("Staff meeting")) {
+                QCOMPARE(event->attendees.size(), 3);
+                QCOMPARE(event->recurrence.state, sak::RecurrenceState::Readable);
+                QVERIFY2(event->recurrence.rrule.contains(QStringLiteral("COUNT=12")),
+                         qPrintable(event->recurrence.rrule));
+                QCOMPARE(event->recurrence.deleted.size(), 1);
+                QCOMPARE(sak::pst::zoneWallClockToUtc(event->time_zone,
+                                                      event->recurrence.wall_start),
+                         event->start_time);
+            } else {
+                QVERIFY(event->attendees.isEmpty());
+                QCOMPARE(event->recurrence.state, sak::RecurrenceState::None);
+            }
         }
 
         const auto tasks = itemsIn(QStringLiteral("Tasks"));

@@ -5928,6 +5928,70 @@ add_test(NAME test_pst_store_structure COMMAND test_pst_store_structure
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_pst_store_structure")
 
+# test_pst_recurrence - repeating appointments: the pattern, the zone, and failing clearly
+add_executable(test_pst_recurrence
+    unit/test_pst_recurrence.cpp
+    support/recurrence_blob.h
+)
+set_target_properties(test_pst_recurrence PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_pst_recurrence PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_pst_recurrence PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_pst_recurrence COMMAND test_pst_recurrence
+         -o "${TEST_OUTPUT_DIR}/test_pst_recurrence.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_pst_recurrence")
+
+# test_email_ics_writer - what an exported calendar says, in RFC 5545
+add_executable(test_email_ics_writer
+    unit/test_email_ics_writer.cpp
+    support/recurrence_blob.h
+)
+set_target_properties(test_email_ics_writer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_ics_writer PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_ics_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_ics_writer COMMAND test_email_ics_writer
+         -o "${TEST_OUTPUT_DIR}/test_email_ics_writer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_ics_writer")
+
+# test_mbox_python_reader - a converted mailbox read by Python's mailbox module. Python itself is
+# found further down this file, so the paths it needs are set there.
+add_executable(test_mbox_python_reader
+    unit/test_mbox_python_reader.cpp
+    support/pst_store_builder.h
+)
+set_target_properties(test_mbox_python_reader PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_mbox_python_reader PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_mbox_python_reader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_mbox_python_reader COMMAND test_mbox_python_reader
+         -o "${TEST_OUTPUT_DIR}/test_mbox_python_reader.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_mbox_python_reader")
+
 # test_pst_rtf_body - compressed RTF bodies: MS-OXRTFCP vectors and text extraction
 add_executable(test_pst_rtf_body
     unit/test_pst_rtf_body.cpp
@@ -6901,6 +6965,8 @@ if(NOT SAK_PYTHON_EXECUTABLE)
     message(FATAL_ERROR
             "Python was not found, so the lizard JavaScript-baseline gate test cannot run.")
 endif()
+set_tests_properties(test_mbox_python_reader PROPERTIES
+    ENVIRONMENT "SAK_TEST_PYTHON=${SAK_PYTHON_EXECUTABLE};SAK_TEST_MBOX_READER=${CMAKE_CURRENT_SOURCE_DIR}/unit/read_mbox_with_python.py")
 add_test(NAME test_run_lizard_js_baseline
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")

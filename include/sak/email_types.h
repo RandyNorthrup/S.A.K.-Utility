@@ -105,7 +105,8 @@ enum class ExportFormat {
     CsvCalendar,     ///< CSV with calendar fields
     CsvTasks,        ///< CSV with task fields
     PlainTextNotes,  ///< Plain .txt files for sticky notes
-    Attachments      ///< Extract attachment files
+    Attachments,     ///< Extract attachment files
+    CsvJournal       ///< CSV with journal entry fields
 };
 
 // ============================================================================
@@ -135,6 +136,9 @@ struct PstFolder {
     int subfolder_count = 0;
     QString container_class;      ///< IPF.Note, IPF.Contact, IPF.Appointment, etc.
     bool is_ipm_subtree = false;  ///< The store names this folder as its top of mail folders
+    /// Real emails in a folder that is not an ordinary mail folder: a system folder, or one outside
+    /// the mail tree. Ordinary mail folders are not counted, since they are shown regardless.
+    int system_folder_emails = 0;
     QVector<PstFolder> children;  ///< Subfolders
 };
 
@@ -155,6 +159,9 @@ struct PstAttachmentInfo {
     QString content_id;     ///< For inline images
     int attach_method = 0;  ///< 1=ByValue, 5=EmbeddedMessage, 6=OLE
     bool is_embedded_message = false;
+    /// PidTagAttachmentHidden: part of how the item is stored, not a file someone attached. A
+    /// changed occurrence of a repeating event is kept as one.
+    bool hidden = false;
 };
 
 // ============================================================================
@@ -174,6 +181,70 @@ struct PstItemSummary {
     bool is_read = false;
     int importance = 1;          ///< 0=Low, 1=Normal, 2=High
     uint32_t message_flags = 0;  ///< PR_MESSAGE_FLAGS (0x0E07)
+};
+
+// ============================================================================
+// Calendar Item Parts
+// ============================================================================
+
+/// @brief A person on a calendar item, from its recipient table
+struct PstAttendee {
+    QString name;
+    QString email;     ///< An SMTP address; empty when the store has only an Exchange path
+    int role = 1;      ///< 1=Required, 2=Optional, 3=Resource (MAPI_TO, MAPI_CC, MAPI_BCC)
+    bool organizer = false;
+    int response = 0;  ///< PidTagRecipientTrackStatus: 2=Tentative, 3=Accepted, 4=Declined
+};
+
+/// @brief One yearly daylight-saving change: the Nth (5 = last) weekday of a month, at a local time
+struct PstTimeZoneRule {
+    int month = 0;        ///< 1-12; 0 when the zone has no change
+    int day_of_week = 0;  ///< 0=Sunday
+    int week = 0;
+    int hour = 0;
+    int minute = 0;
+};
+
+/// @brief The time zone a calendar item was created in
+struct PstTimeZone {
+    bool known = false;
+    QString name;
+    int standard_offset_minutes = 0;  ///< East of UTC
+    int daylight_offset_minutes = 0;
+    PstTimeZoneRule to_standard;
+    PstTimeZoneRule to_daylight;
+};
+
+/// @brief How a calendar item's repeat pattern was read
+enum class RecurrenceState {
+    None,        ///< It does not repeat
+    Readable,    ///< rrule states the pattern exactly
+    Unreadable,  ///< It repeats, and the pattern could not be read
+};
+
+/// @brief One occurrence of a series that was moved or edited. Times are wall-clock.
+struct PstRecurrenceException {
+    QDateTime original_start;
+    QDateTime start;
+    QDateTime end;
+    bool has_subject = false;
+    QString subject;
+    bool has_location = false;
+    QString location;
+    bool body_changed = false;
+};
+
+/// @brief A repeating event's pattern. Wall-clock times are held in UTC QDateTimes, so that no
+///        zone's rules apply to them until one is chosen.
+struct PstRecurrence {
+    RecurrenceState state = RecurrenceState::None;
+    QString rrule;        ///< The RFC 5545 RECUR value
+    QString description;  ///< The pattern in plain words, or why it could not be read
+    QString problem;      ///< Set when Unreadable
+    QDateTime wall_start;
+    QDateTime wall_end;
+    QVector<QDateTime> deleted;  ///< Original starts of the occurrences that were deleted
+    QVector<PstRecurrenceException> exceptions;
 };
 
 // ============================================================================
@@ -226,9 +297,14 @@ struct PstItemDetail {
     QDateTime end_time;
     QString location;
     bool is_all_day = false;
-    int busy_status = 0;  ///< 0=Free, 1=Tentative, 2=Busy, 3=OOF
-    QString recurrence_description;
-    QStringList attendees;
+    int busy_status = 0;         ///< 0=Free, 1=Tentative, 2=Busy, 3=OOF
+    QString
+        recurrence_description;  ///< Outlook's own wording of the pattern (PidLidRecurrencePattern)
+    QVector<PstAttendee> attendees;
+    bool attendees_unreadable = false;  ///< The recipient table is there and could not be read
+    bool marked_recurring = false;      ///< PidLidRecurring
+    PstRecurrence recurrence;
+    PstTimeZone time_zone;
 
     // Task-specific
     QDateTime task_due_date;
@@ -238,6 +314,10 @@ struct PstItemDetail {
 
     // Note-specific
     int note_color = kDefaultNoteColorYellow;  ///< 0=Blue, 1=Green, 2=Pink, 3=Yellow, 4=White
+
+    // Journal-specific; a journal entry's start and end are in start_time and end_time
+    QString journal_type;  ///< PidLidLogType, such as "Phone call"
+    int journal_duration_minutes = 0;
 };
 
 // ============================================================================
@@ -305,15 +385,24 @@ struct EmailSearchCriteria {
     bool case_sensitive = false;
 
     // Filters
-    QDateTime date_from;                                      ///< Null = no lower bound
-    QDateTime date_to;                                        ///< Null = no upper bound
+    QDateTime date_from;  ///< Null = no lower bound
+    QDateTime date_to;    ///< Null = no upper bound
     bool has_attachment_only = false;
-    EmailItemType item_type_filter = EmailItemType::Unknown;  ///< Unknown = all
-    uint64_t folder_scope_id = 0;                             ///< 0 = search all folders
+    /// Unknown = all. Calendar takes in meeting requests and Contact takes in distribution lists,
+    /// the same grouping the Calendar and Contacts windows use.
+    EmailItemType item_type_filter = EmailItemType::Unknown;
+    uint64_t folder_scope_id = 0;  ///< 0 = search all folders
 
     // MAPI property search (advanced)
     uint16_t mapi_property_id = 0;  ///< 0 = disabled
     QString mapi_property_value;
+
+    /// Whether anything narrows the search beyond its text. With no text, such a search lists what
+    /// the filters match; with neither, there is nothing to search for.
+    [[nodiscard]] bool hasFilter() const {
+        return date_from.isValid() || date_to.isValid() || has_attachment_only ||
+               item_type_filter != EmailItemType::Unknown;
+    }
 };
 
 /// @brief A single search result hit
@@ -341,6 +430,9 @@ struct EmailExportConfig {
     uint64_t folder_id = 0;        ///< Single folder to export; read only when has_folder
     QVector<uint64_t> folder_ids;  ///< Multiple folders to aggregate in one pass
     bool recurse_subfolders = false;
+    /// Take only real emails from the folders: what a whole-store mail export wants, since a mail
+    /// folder can hold a filed contact and a system folder holds its bookkeeping beside any mail.
+    bool only_real_email = false;
 
     // CSV options
     QStringList csv_columns;
@@ -372,6 +464,9 @@ struct EmailExportResult {
     QStringList errors;
     QDateTime started;
     QDateTime finished;
+    /// How much the export could not carry exactly, such as a repeating event written as one
+    /// event. The items are written and counted as exported, so these never mark a failure alone.
+    QStringList notes;
 };
 
 // ============================================================================
@@ -483,6 +578,9 @@ Q_DECLARE_METATYPE(sak::PstNode)
 Q_DECLARE_METATYPE(sak::MapiProperty)
 Q_DECLARE_METATYPE(sak::PstFolder)
 Q_DECLARE_METATYPE(sak::PstAttachmentInfo)
+Q_DECLARE_METATYPE(sak::PstAttendee)
+Q_DECLARE_METATYPE(sak::PstRecurrence)
+Q_DECLARE_METATYPE(sak::PstTimeZone)
 Q_DECLARE_METATYPE(sak::PstItemSummary)
 Q_DECLARE_METATYPE(sak::PstItemDetail)
 Q_DECLARE_METATYPE(sak::PstFileInfo)

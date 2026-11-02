@@ -8,6 +8,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Email search filters** - Email Inspector's search has a Filters button, with From and To dates,
+  Has attachment, and a type of item: Email, Calendar, Contact, Task, Note or Journal. They start off,
+  and a search with none set works as before. They apply to the search box and to Search in This
+  Folder, and with one set the text can be left empty to list what it matches. An MBOX holds only
+  email, and says so if asked for anything else. The 10,000 result limit counts results after the
+  filters, so a filter reaches items a plain search stopped short of, and the count now says when the
+  limit was reached.
+- **Attendees and repeating events** - Calendar items now read their recipient table, and the Calendar
+  window lists each attendee with their address, part and reply. Repeating events read their pattern:
+  the window says how an event repeats and marks it, and ICS export writes ATTENDEE, ORGANIZER,
+  RRULE, EXDATE for deleted occurrences and a RECURRENCE-ID event for each changed one, in the time
+  zone the series was made in. A pattern that cannot be read exactly is never guessed at: the event
+  says so, and it exports as one event with a note in the log. The right-click Export Event as ICS
+  now goes through the same writer, so it has the UID and DTSTAMP that RFC 5545 requires, and no longer
+  doubles its line endings. The calendar CSV gains Repeats and Attendees columns.
+- **Every real email converts** - The converter looked at folders, so email in Outlook's system folders
+  was left out while a contact or appointment filed in Deleted Items was written out as mail. It now
+  looks at what each item is, in every folder: real email converts wherever it lives, and everything
+  else is left out and counted. Those system folders appear in Email Inspector's tree when they hold
+  real email, and stay hidden when they do not. Export ALL Mail Folders takes the same emails.
+- **NST files open and convert** - NST files, Outlook's cache of Microsoft 365 group mail, are
+  accepted by Email Inspector, the Scan window and the converter, the same as an OST. A file with no
+  messages says so rather than looking broken.
+- **Journal entries** - Journal folders are listed and open like tasks and notes, with their type,
+  start, end and length, and export to CSV by right-click.
+- **Stop while a mailbox is being counted** - A Stop in the moment before counting began was forgotten,
+  so the whole mailbox was counted and then announced as open while it was being closed. It now stops.
+
+- **MBOX attachments read correctly** - A text file attached with a Content-ID was read as the
+  message itself, replacing its real text, and was never listed as an attachment. Real mail has these:
+  153 of one mailbox's 793 messages with attachments. A part that names a file is now an attachment. A
+  name with non-English letters now reads back instead of coming out blank.
 - **Speed test results stay on screen** - The result was written and wiped in the same moment, so
   the Log had the numbers and the Bandwidth tab was blank. iPerf3 had the same fault. A test you stop,
   or one that could not finish, now says No result instead of 0.00 Mbps, and a latency that could not

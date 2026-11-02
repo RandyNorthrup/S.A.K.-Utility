@@ -30,6 +30,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDateEdit>
 #include <QDateTime>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -295,11 +296,12 @@ void EmailInspectorPanel::setupUi() {
                                  QStringLiteral(":/icons/icons/panel_email.svg"),
                                  tr("Email Tools"),
                                  tr("Browse and export emails, contacts, calendar "
-                                    "items, tasks, and notes from PST/OST/MBOX files"),
+                                    "items, tasks, and notes from PST/OST/NST/MBOX files"),
                                  root_layout);
 
     // Ribbon toolbar
     root_layout->addWidget(createRibbon());
+    root_layout->addWidget(createSearchFilterRow());
 
     // Main splitter: folder tree | content area
     m_main_splitter = new QSplitter(Qt::Horizontal, this);
@@ -462,7 +464,7 @@ void EmailInspectorPanel::addRibbonFileGroup(QHBoxLayout* layout, QWidget* ribbo
 
     m_open_button = makeRibbonButton(tr("Open"),
                                      QStringLiteral(":/icons/icons/icons8-opened-folder.svg"),
-                                     tr("Open a PST, OST, or MBOX file"),
+                                     tr("Open a PST, OST, NST, or MBOX file"),
                                      ribbon);
     connect(m_open_button, &QToolButton::clicked, this, &EmailInspectorPanel::onOpenFileClicked);
     layout->addWidget(m_open_button);
@@ -501,7 +503,82 @@ void EmailInspectorPanel::addRibbonSearchGroup(QHBoxLayout* layout, QWidget* rib
     connect(m_search_edit, &QLineEdit::returnPressed, this, &EmailInspectorPanel::onSearchClicked);
     layout->addWidget(m_search_button);
 
+    m_filter_button = new QPushButton(tr("Filters"), ribbon);
+    m_filter_button->setCheckable(true);
+    m_filter_button->setEnabled(false);
+    m_filter_button->setToolTip(tr("Narrow a search by date, attachment, or type of item"));
+    m_filter_button->setAccessibleName(QStringLiteral("Email Search Filters"));
+    m_filter_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    layout->addWidget(m_filter_button);
+
     layout->addWidget(makeRibbonSeparator(ribbon));
+}
+
+QWidget* EmailInspectorPanel::createSearchFilterRow() {
+    m_filter_row = new QWidget(this);
+    auto* layout = new QHBoxLayout(m_filter_row);
+    layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginNone, ui::kMarginSmall, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingSmall);
+
+    const auto add_date = [this,
+                           layout](const QString& label, QCheckBox*& check, QDateEdit*& edit) {
+        check = new QCheckBox(label, m_filter_row);
+        check->setAccessibleName(tr("Search %1 date").arg(label));
+        edit = new QDateEdit(QDate::currentDate(), m_filter_row);
+        edit->setCalendarPopup(true);
+        edit->setEnabled(false);
+        edit->setAccessibleName(tr("Search %1 date value").arg(label));
+        connect(check, &QCheckBox::toggled, edit, &QDateEdit::setEnabled);
+        connect(check, &QCheckBox::toggled, this, [this] { updateFilterButton(); });
+        layout->addWidget(check);
+        layout->addWidget(edit);
+    };
+    add_date(tr("From"), m_filter_from_check, m_filter_from_date);
+    add_date(tr("To"), m_filter_to_check, m_filter_to_date);
+
+    m_filter_attachment_check = new QCheckBox(tr("Has attachment"), m_filter_row);
+    m_filter_attachment_check->setAccessibleName(tr("Has attachment"));
+    connect(m_filter_attachment_check, &QCheckBox::toggled, this, [this] { updateFilterButton(); });
+    layout->addWidget(m_filter_attachment_check);
+
+    m_filter_type_combo = new QComboBox(m_filter_row);
+    m_filter_type_combo->setAccessibleName(tr("Search item type"));
+    struct TypeChoice {
+        QString label;
+        sak::EmailItemType type{};
+    };
+    const QVector<TypeChoice> types{{.label = tr("Any type"), .type = sak::EmailItemType::Unknown},
+                                    {.label = tr("Email"), .type = sak::EmailItemType::Email},
+                                    {.label = tr("Calendar"), .type = sak::EmailItemType::Calendar},
+                                    {.label = tr("Contact"), .type = sak::EmailItemType::Contact},
+                                    {.label = tr("Task"), .type = sak::EmailItemType::Task},
+                                    {.label = tr("Note"), .type = sak::EmailItemType::StickyNote},
+                                    {.label = tr("Journal"),
+                                     .type = sak::EmailItemType::JournalEntry}};
+    for (const TypeChoice& choice : types) {
+        m_filter_type_combo->addItem(choice.label, static_cast<int>(choice.type));
+    }
+    connect(m_filter_type_combo, &QComboBox::currentIndexChanged, this, [this] {
+        updateFilterButton();
+    });
+    layout->addWidget(m_filter_type_combo);
+
+    m_filter_mbox_note = new QLabel(tr("An MBOX holds only email."), m_filter_row);
+    m_filter_mbox_note->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    m_filter_mbox_note->setVisible(false);
+    layout->addWidget(m_filter_mbox_note);
+
+    m_filter_clear_button = new QPushButton(tr("Clear"), m_filter_row);
+    m_filter_clear_button->setAccessibleName(tr("Clear search filters"));
+    m_filter_clear_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    connect(m_filter_clear_button, &QPushButton::clicked, this, [this] { clearSearchFilters(); });
+    layout->addWidget(m_filter_clear_button);
+    layout->addStretch();
+
+    m_filter_row->setVisible(false);
+    connect(m_filter_button, &QPushButton::toggled, m_filter_row, &QWidget::setVisible);
+    return m_filter_row;
 }
 
 void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon) {
@@ -578,7 +655,7 @@ QWidget* EmailInspectorPanel::createFolderTreePanel() {
             &EmailInspectorPanel::onFolderTreeContextMenu);
     layout->addWidget(m_folder_tree, 1);
     // Designed empty state before any mail store is opened (self-managed, parented to the tree).
-    new ui::ViewEmptyState(m_folder_tree, tr("Open a PST/OST/MBOX file to browse folders"));
+    new ui::ViewEmptyState(m_folder_tree, tr("Open a PST/OST/NST/MBOX file to browse folders"));
 
     return group;
 }
@@ -1018,9 +1095,10 @@ void EmailInspectorPanel::connectControllerMboxSignals() {
 
 void EmailInspectorPanel::onOpenFileClicked() {
     const QString filter = tr(
-        "Email Data Files (*.pst *.ost *.mbox);;"
+        "Email Data Files (*.pst *.ost *.nst *.mbox);;"
         "PST Files (*.pst);;"
         "OST Files (*.ost);;"
+        "NST Files (*.nst);;"
         "MBOX Files (*.mbox);;"
         "All Files (*)");
     const QString path =
@@ -1124,6 +1202,12 @@ void EmailInspectorPanel::addFolderExportActions(QMenu& menu,
         });
         return;
     }
+    if (container_class.startsWith(QLatin1String("IPF.Journal"))) {
+        menu.addAction(tr("Export Journal as CSV..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::CsvJournal, folder_id);
+        });
+        return;
+    }
     menu.addAction(tr("Export Folder as EML..."), this, [this, folder_id] {
         exportFolderAs(sak::ExportFormat::Eml, folder_id);
     });
@@ -1191,10 +1275,46 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
 
 void EmailInspectorPanel::onSearchClicked() {
     const QString query = m_search_edit->text().trimmed();
-    if (query.isEmpty()) {
+    // Filters alone say what to list. With neither there is nothing to search for.
+    if (query.isEmpty() && !searchFiltersActive()) {
         return;
     }
     startSearch(query, kSearchAllFolders, QString());
+}
+
+void EmailInspectorPanel::applySearchFilters(sak::EmailSearchCriteria& criteria) const {
+    if (m_filter_from_check->isChecked()) {
+        criteria.date_from = m_filter_from_date->date().startOfDay();
+    }
+    if (m_filter_to_check->isChecked()) {
+        criteria.date_to = m_filter_to_date->date().endOfDay();
+    }
+    criteria.has_attachment_only = m_filter_attachment_check->isChecked();
+    criteria.item_type_filter =
+        static_cast<sak::EmailItemType>(m_filter_type_combo->currentData().toInt());
+}
+
+bool EmailInspectorPanel::searchFiltersActive() const {
+    sak::EmailSearchCriteria criteria;
+    applySearchFilters(criteria);
+    return criteria.hasFilter();
+}
+
+void EmailInspectorPanel::updateFilterButton() {
+    sak::EmailSearchCriteria criteria;
+    applySearchFilters(criteria);
+    const int active = (criteria.date_from.isValid() || criteria.date_to.isValid() ? 1 : 0) +
+                       (criteria.has_attachment_only ? 1 : 0) +
+                       (criteria.item_type_filter != sak::EmailItemType::Unknown ? 1 : 0);
+    m_filter_button->setText(active == 0 ? tr("Filters") : tr("Filters (%1)").arg(active));
+}
+
+void EmailInspectorPanel::clearSearchFilters() {
+    m_filter_from_check->setChecked(false);
+    m_filter_to_check->setChecked(false);
+    m_filter_attachment_check->setChecked(false);
+    m_filter_type_combo->setCurrentIndex(0);
+    updateFilterButton();
 }
 
 sak::EmailSearchCriteria EmailInspectorPanel::searchCriteria(const QString& query,
@@ -1217,14 +1337,15 @@ void EmailInspectorPanel::searchInFolder(std::optional<uint64_t> folder_id,
         updateStatusBar(tr("This folder cannot be searched"));
         return;
     }
-    // Cancel returns an empty string, so this one check covers Cancel and a blank answer.
+    bool accepted = false;
     const QString query = QInputDialog::getText(this,
                                                 tr("Search in %1").arg(folder_name),
                                                 tr("Search for:"),
                                                 QLineEdit::Normal,
-                                                m_search_edit->text().trimmed())
+                                                m_search_edit->text().trimmed(),
+                                                &accepted)
                               .trimmed();
-    if (query.isEmpty()) {
+    if (!accepted || (query.isEmpty() && !searchFiltersActive())) {
         return;
     }
     startSearch(query, *folder_id, folder_name);
@@ -1233,7 +1354,16 @@ void EmailInspectorPanel::searchInFolder(std::optional<uint64_t> folder_id,
 void EmailInspectorPanel::startSearch(const QString& query,
                                       uint64_t folder_scope,
                                       const QString& scope_name) {
-    m_controller->startSearch(searchCriteria(query, folder_scope));
+    sak::EmailSearchCriteria criteria = searchCriteria(query, folder_scope);
+    applySearchFilters(criteria);
+    if (m_mbox_active && criteria.item_type_filter != sak::EmailItemType::Unknown &&
+        criteria.item_type_filter != sak::EmailItemType::Email) {
+        // Asking would only ever come back empty, and an empty list reads as "none matched".
+        updateStatusBar(tr("An MBOX holds only email, so it has no %1 items to find.")
+                            .arg(m_filter_type_combo->currentText().toLower()));
+        return;
+    }
+    m_controller->startSearch(criteria);
     // A refused search has already said why through errorOccurred; the list stays as it was.
     if (m_controller->currentState() != EmailInspectorController::State::Searching) {
         return;
@@ -1253,10 +1383,16 @@ void EmailInspectorPanel::startSearch(const QString& query,
 void EmailInspectorPanel::finishSearchResults(int total_hits) {
     m_item_empty_state->clearLoading();
     m_item_list->setSortingEnabled(true);
-    m_item_count_label->setText(
-        m_search_scope_name.isEmpty()
-            ? tr("%1 search result(s)").arg(total_hits)
-            : tr("%1 search result(s) in %2").arg(total_hits).arg(m_search_scope_name));
+    QString label = m_search_scope_name.isEmpty()
+                        ? tr("%1 search result(s)").arg(total_hits)
+                        : tr("%1 search result(s) in %2").arg(total_hits).arg(m_search_scope_name);
+    if (total_hits >= email::kMaxSearchResults) {
+        // The limit counts results, so a filter is the way to reach what it stopped short of.
+        label += tr(" (the limit: narrow the search or add a filter to see the rest)");
+    } else if (searchFiltersActive()) {
+        label += tr(" (filtered)");
+    }
+    m_item_count_label->setText(label);
     updateItemListHeaderCheckState();
 }
 
@@ -1426,6 +1562,7 @@ void EmailInspectorPanel::exportAllMailFoldersAs(sak::ExportFormat format) {
     // the list is already filtered: recursing from the roots would pull the non-mail
     // subfolders back in.
     config.folder_ids = folder_ids;
+    config.only_real_email = true;
     config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }
@@ -1602,6 +1739,8 @@ void EmailInspectorPanel::onFileOpened(sak::PstFileInfo info) {
     m_contacts_button->setEnabled(!m_mbox_active);
     m_calendar_button->setEnabled(!m_mbox_active);
     m_attachments_button->setEnabled(true);
+    m_filter_button->setEnabled(true);
+    m_filter_mbox_note->setVisible(m_mbox_active);
     updateFileInfoBar(info);
 }
 
@@ -1645,6 +1784,10 @@ void EmailInspectorPanel::onFileClosed() {
     m_attachments_button->setEnabled(false);
     m_save_attachment_button->setEnabled(false);
     m_save_all_attachments_button->setEnabled(false);
+    clearSearchFilters();
+    m_filter_mbox_note->setVisible(false);
+    m_filter_button->setChecked(false);
+    m_filter_button->setEnabled(false);
 
     updateStatusBar(tr("Ready"));
 }
@@ -1871,6 +2014,17 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
     Q_EMIT logOutput(tr("Exported %1 items (%2 bytes)")
                          .arg(result.items_exported)
                          .arg(formatBytes(result.total_bytes)));
+    if (!result.notes.isEmpty()) {
+        // Everything was written, and not everything came across exactly. Say so where it shows.
+        updateStatusBar(tr("Export complete: %1 items to %2, with %3 note(s) in the log")
+                            .arg(result.items_exported)
+                            .arg(result.export_path)
+                            .arg(result.notes.size()));
+        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
+        for (const QString& note : result.notes) {
+            Q_EMIT logOutput(tr("  Export note: %1").arg(note));
+        }
+    }
 }
 
 void EmailInspectorPanel::onErrorOccurred(QString message) {
@@ -1900,6 +2054,7 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
     m_contacts_button->setEnabled(false);
     m_calendar_button->setEnabled(false);
     m_attachments_button->setEnabled(true);
+    m_filter_button->setEnabled(true);
 
     // For MBOX, create a single root folder item. Its folder id is 0, which the PST
     // paging path treats as "no folder selected"; m_mbox_active tells reloadCurrentPage
@@ -2072,7 +2227,7 @@ QVector<const sak::PstFolder*> EmailInspectorPanel::sortedVisibleFolders(
     QVector<const sak::PstFolder*> sorted;
     sorted.reserve(source.size());
     for (const auto& folder : source) {
-        if (!isHiddenFolder(folder.display_name, folder.container_class)) {
+        if (showsInTree(folder)) {
             sorted.append(&folder);
         }
     }
@@ -2125,14 +2280,38 @@ void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
             addFolderToTree(item, child);
         }
     }
+    addFoldersOutsideMailTree(tree);
     if (m_folder_tree_budget <= 0) {
         logMessage(tr("Folder tree truncated: too many folders in this store"));
     }
     m_folder_tree->expandToDepth(0);
 }
 
+void EmailInspectorPanel::addFoldersOutsideMailTree(const sak::PstFolderTree& tree) {
+    const QVector<const sak::PstFolder*> outside = sak::foldersWithMailOutsideMailTree(tree);
+    if (outside.isEmpty() || m_folder_tree_budget <= 0) {
+        return;
+    }
+    auto* group = new QTreeWidgetItem(m_folder_tree);
+    --m_folder_tree_budget;
+    group->setIcon(0, folderIcon(QString()));
+    group->setText(0, tr("Other Folders"));
+    group->setToolTip(0, tr("Folders outside the mailbox's own folders that hold email"));
+    for (const sak::PstFolder* folder : outside) {
+        if (m_folder_tree_budget <= 0) {
+            return;
+        }
+        auto* item = new QTreeWidgetItem(group);
+        --m_folder_tree_budget;
+        item->setIcon(0, folderIcon(folder->display_name));
+        item->setText(
+            0, QStringLiteral("%1 (%2)").arg(folder->display_name).arg(folder->content_count));
+        item->setData(0, Qt::UserRole, QVariant::fromValue(folder->node_id));
+    }
+}
+
 void EmailInspectorPanel::addFolderToTree(QTreeWidgetItem* parent, const sak::PstFolder& folder) {
-    if (isHiddenFolder(folder.display_name, folder.container_class)) {
+    if (!showsInTree(folder)) {
         return;
     }
     if (m_folder_tree_budget <= 0) {
@@ -2210,11 +2389,17 @@ int EmailInspectorPanel::folderSortOrder(const QString& name, const QString& /*c
 
 // static
 bool EmailInspectorPanel::isHiddenFolder(const QString& name, const QString& container_class) {
-    // Tasks and notes are browsed here like mail, with their own preview. Everything else that is
-    // not mail stays out: contacts and calendars have their own windows, and the mail definition
-    // is shared with the "Export ALL Mail Folders" walk, which must never visit these.
+    // Tasks, notes and journal entries are browsed here like mail, with their own preview.
+    // Everything else that is not mail stays out: contacts and calendars have their own windows,
+    // and the mail definition is shared with the "Export ALL Mail Folders" walk.
     return !sak::isMailFolder(name, container_class) &&
-           !sak::isTaskOrNoteFolder(name, container_class);
+           !sak::isTaskNoteOrJournalFolder(name, container_class);
+}
+
+// static
+bool EmailInspectorPanel::showsInTree(const sak::PstFolder& folder) {
+    return !isHiddenFolder(folder.display_name, folder.container_class) ||
+           sak::holdsSystemFolderEmails(folder);
 }
 
 void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) {
@@ -2341,6 +2526,39 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
     } else {
         m_headers_browser->setPlainText(tr("No transport headers available"));
     }
+}
+
+void EmailInspectorPanel::displayJournalDetail(const sak::PstItemDetail& detail) {
+    QString html = QString::fromLatin1(ui::kHtmlDetailHeading2Open)
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(ui::htmlColor(ui::kColorTextHeading))
+                       .arg(detail.subject.toHtmlEscaped());
+    if (!detail.journal_type.isEmpty()) {
+        html += QStringLiteral("<p><b>Type:</b> %1</p>").arg(detail.journal_type.toHtmlEscaped());
+    }
+    if (detail.start_time.isValid()) {
+        html += QStringLiteral("<p><b>Start:</b> %1</p>")
+                    .arg(detail.start_time.toString(Qt::RFC2822Date));
+    }
+    if (detail.end_time.isValid()) {
+        html +=
+            QStringLiteral("<p><b>End:</b> %1</p>").arg(detail.end_time.toString(Qt::RFC2822Date));
+    }
+    if (detail.journal_duration_minutes > 0) {
+        html += QStringLiteral("<p><b>Duration:</b> %1 minutes</p>")
+                    .arg(detail.journal_duration_minutes);
+    }
+    html += QString::fromLatin1(ui::kHtmlHorizontalRule)
+                .arg(ui::kCssBorderWidthDefaultPx)
+                .arg(ui::htmlColor(ui::kColorBorderDefault));
+    if (!detail.body_html.isEmpty()) {
+        html += buildPreviewHtml(detail.body_html);
+    } else if (!detail.body_plain.isEmpty()) {
+        html += QString::fromLatin1(ui::kHtmlPreWrap).arg(detail.body_plain.toHtmlEscaped());
+    }
+    html += QStringLiteral("</div>");
+    m_content_browser->setHtml(html);
+    m_headers_browser->setPlainText(tr("No transport headers available"));
 }
 
 void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
@@ -2576,7 +2794,12 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
         return;
     }
 
-    // Default: email / journal / RSS / conversation history.
+    if (detail.item_type == sak::EmailItemType::JournalEntry) {
+        displayJournalDetail(detail);
+        return;
+    }
+
+    // Default: email / RSS / conversation history.
     // No cross-format fallback: the toggle is authoritative.
     if (m_show_html) {
         if (detail.body_html.isEmpty()) {
@@ -2655,6 +2878,12 @@ void EmailInspectorPanel::setAttachmentSaveControlsEnabled(bool enabled) {
 }
 
 void EmailInspectorPanel::updateFileInfoBar(const sak::PstFileInfo& info) {
+    if (info.total_items == 0) {
+        // A store can be whole and hold nothing, as a group-mail cache often does.
+        updateStatusBar(tr("%1: this file opened and holds no messages").arg(info.display_name));
+        m_item_empty_state->setEmptyText(tr("This file holds no messages"));
+        return;
+    }
     updateStatusBar(QStringLiteral("%1 \u2014 %2 \u2014 %3 items")
                         .arg(info.display_name)
                         .arg(formatBytes(info.file_size_bytes))
@@ -2745,7 +2974,9 @@ void EmailInspectorPanel::reloadCurrentPage() {
     // refuses this load, and the hits still on their way belong in the list.
     if (m_controller->currentState() != EmailInspectorController::State::Searching) {
         m_showing_search_results = false;
-        m_item_empty_state->setEmptyText(tr("Select a folder to list its items"));
+        m_item_empty_state->setEmptyText(m_controller->fileInfo().total_items == 0
+                                             ? tr("This file holds no messages")
+                                             : tr("This folder is empty"));
     }
     m_item_empty_state->setLoading(tr("Loading folder contents..."));
     const int page_size = currentPageSize();

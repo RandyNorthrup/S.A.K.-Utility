@@ -56,20 +56,19 @@ QString classifySuffix(const QString& suffix) {
     if (suffix == QLatin1String("ost")) {
         return QStringLiteral("OST");
     }
+    if (suffix == QLatin1String("nst")) {
+        return QStringLiteral("NST");
+    }
     return QStringLiteral("MBOX");
 }
 
 QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
-    static const QStringList kFilters = {
-        QStringLiteral("*.pst"),
-        QStringLiteral("*.ost"),
-        QStringLiteral("*.mbox"),
-    };
+    const QStringList filters = EmailFileScannerDialog::mailFilePatterns();
     QVector<ScannedFile> results;
     results.reserve(kExpectedEmailFileScanResults);
 
     auto harvest = [&](const QDir& dir) {
-        const auto entries = dir.entryInfoList(kFilters, QDir::Files | QDir::Readable);
+        const auto entries = dir.entryInfoList(filters, QDir::Files | QDir::Readable);
         for (const auto& entry : entries) {
             results.append(ScannedFile{.path = entry.absoluteFilePath(),
                                        .size_bytes = entry.size(),
@@ -350,6 +349,13 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
 // ============================================================================
 
 // static
+QStringList EmailFileScannerDialog::mailFilePatterns() {
+    return {QStringLiteral("*.pst"),
+            QStringLiteral("*.ost"),
+            QStringLiteral("*.nst"),
+            QStringLiteral("*.mbox")};
+}
+
 QStringList EmailFileScannerDialog::thunderbirdMailboxes(const QString& profiles_dir) {
     QStringList mailboxes;
     const auto profiles = QDir(profiles_dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);

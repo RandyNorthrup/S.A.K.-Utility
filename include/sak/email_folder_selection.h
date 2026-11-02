@@ -22,6 +22,11 @@
 
 namespace sak {
 
+/// @brief Whether an item is mail a person sent or received, wherever it is filed: a message, or a
+///        meeting invitation or reply. Contacts, events, tasks, notes, journal entries and the
+///        store's own bookkeeping are not.
+[[nodiscard]] bool isRealEmail(EmailItemType type);
+
 /// @brief True when a folder holds mail and belongs in the folder tree.
 ///
 /// Contacts, calendar, tasks, sticky notes and journal folders are excluded because they
@@ -38,18 +43,26 @@ namespace sak {
 /// childless node is returned only when no populated one exists anywhere in @p folders.
 [[nodiscard]] const PstFolder* findIpmSubtree(const QVector<PstFolder>& folders);
 
-/// @brief Node ids of every mail folder in @p tree, parents before children.
+/// @brief Node ids of every folder with mail in @p tree, parents before children.
 ///
 /// Starts at the populated IPM_SUBTREE when there is one and falls back to the tree
 /// roots otherwise. A folder that fails isMailFolder is skipped together with its
-/// descendants: a subfolder of Contacts is not mail either, and this mirrors how the
-/// tree renders -- addFolderToTree returns early on a hidden folder, so its children
-/// never appear.
+/// descendants, unless real emails turned up in it or under it. System folders outside
+/// the mail tree come last, for the same reason. This mirrors how the tree renders.
 [[nodiscard]] QVector<uint64_t> mailFolderNodeIds(const QVector<PstFolder>& tree);
 
-/// Whether a folder holds tasks or sticky notes. They are not mail, so "all mail folders" leaves
-/// them out, but they are browsed in the folder tree like mail.
-[[nodiscard]] bool isTaskOrNoteFolder(const QString& display_name, const QString& container_class);
+/// Whether a folder, or anything under it, holds real emails that an ordinary mail folder would
+/// not have shown. Such a folder appears in the tree even though it is a system folder.
+[[nodiscard]] bool holdsSystemFolderEmails(const PstFolder& folder);
+
+/// Folders outside the store's mail tree that hold real emails, for showing apart from it.
+[[nodiscard]] QVector<const PstFolder*> foldersWithMailOutsideMailTree(
+    const QVector<PstFolder>& tree);
+
+/// Whether a folder holds tasks, sticky notes or journal entries. They are not mail, so "all mail
+/// folders" leaves them out, but they are browsed in the folder tree like mail.
+[[nodiscard]] bool isTaskNoteOrJournalFolder(const QString& display_name,
+                                             const QString& container_class);
 
 /// The folder a node id names, or nullptr when the id is empty or not in the tree.
 [[nodiscard]] const PstFolder* findFolderByNodeId(const QVector<PstFolder>& tree,

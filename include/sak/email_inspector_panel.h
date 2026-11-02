@@ -24,6 +24,7 @@ class EmailInspectorPanelTests;
 class EmailToolsViewsTests;  // unit-test friend (global namespace)
 class QCheckBox;
 class QComboBox;
+class QDateEdit;
 class QGroupBox;
 class QHBoxLayout;
 class QHeaderView;
@@ -152,6 +153,7 @@ private:
     void addRibbonSearchGroup(QHBoxLayout* layout, QWidget* ribbon);
     void addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon);
     void addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* ribbon);
+    QWidget* createSearchFilterRow();
     QWidget* createFolderTreePanel();
     QWidget* createContentArea();
     QWidget* createItemListPanel();
@@ -169,11 +171,16 @@ private:
     void setOperationRunning(bool running);
     void populateFolderTree(const sak::PstFolderTree& tree);
     void addFolderToTree(QTreeWidgetItem* parent, const sak::PstFolder& folder);
+    /// Real emails outside the mail tree: reachable, and apart from it. Most stores have none.
+    void addFoldersOutsideMailTree(const sak::PstFolderTree& tree);
     [[nodiscard]] static const sak::PstFolder* findIpmSubtree(
         const QVector<sak::PstFolder>& folders);
     [[nodiscard]] static int folderSortOrder(const QString& name, const QString& container_class);
     [[nodiscard]] static QIcon folderIcon(const QString& name);
     [[nodiscard]] static bool isHiddenFolder(const QString& name, const QString& container_class);
+    /// Whether a folder appears in the tree: anything not hidden, and a hidden system folder that
+    /// real emails were found in or under. Empty system folders stay out of the way.
+    [[nodiscard]] static bool showsInTree(const sak::PstFolder& folder);
     /// The top-level folders to display, in tree order: hidden (non-mail) folders removed,
     /// the rest sorted by folder priority then case-insensitive name. Returned pointers
     /// alias into @p source, which must outlive them.
@@ -205,6 +212,7 @@ private:
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
+    void displayJournalDetail(const sak::PstItemDetail& detail);
     [[nodiscard]] QString buildPreviewHtml(const QString& body_html) const;
     // Resolve image bytes for a `src` value (cid: lookup or cached remote).
     [[nodiscard]] QByteArray resolveInlineImageData(const QString& src,
@@ -239,6 +247,11 @@ private:
     /// @brief Start a search and turn the item list over to its results.
     void startSearch(const QString& query, uint64_t folder_scope, const QString& scope_name);
     void finishSearchResults(int total_hits);
+    /// Add whatever the filter row has set. Nothing set leaves a plain search exactly as it was.
+    void applySearchFilters(sak::EmailSearchCriteria& criteria) const;
+    [[nodiscard]] bool searchFiltersActive() const;
+    void updateFilterButton();
+    void clearSearchFilters();
     void addPreviewControlRow(QVBoxLayout* root_layout);
     [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
@@ -274,6 +287,18 @@ private:
     QToolButton* m_attachments_button{nullptr};
     QLineEdit* m_search_edit{nullptr};
     QPushButton* m_search_button{nullptr};
+
+    // Search filters: a row under the ribbon, hidden until asked for
+    QPushButton* m_filter_button{nullptr};
+    QWidget* m_filter_row{nullptr};
+    QCheckBox* m_filter_from_check{nullptr};
+    QDateEdit* m_filter_from_date{nullptr};
+    QCheckBox* m_filter_to_check{nullptr};
+    QDateEdit* m_filter_to_date{nullptr};
+    QCheckBox* m_filter_attachment_check{nullptr};
+    QComboBox* m_filter_type_combo{nullptr};
+    QLabel* m_filter_mbox_note{nullptr};
+    QPushButton* m_filter_clear_button{nullptr};
 
     // Folder Tree
     QTreeWidget* m_folder_tree{nullptr};

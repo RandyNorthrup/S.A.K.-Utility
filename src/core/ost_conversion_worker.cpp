@@ -326,29 +326,18 @@ void recordSkippedItem(EmailItemType type, OstConversionResult& result) {
 
 }  // namespace
 
-void OstConversionWorker::countSkippedFolder(PstParser* parser,
-                                             const PstFolder& folder,
-                                             OstConversionResult& result) {
-    if (!isSearchFolder(folder)) {
-        const auto items = parser->readFolderItems(folder.node_id, 0, 0);
-        if (items.has_value()) {
-            for (const auto& item : *items) {
-                recordSkippedItem(item.item_type, result);
-            }
-        }
-    }
-    for (const auto& child : folder.children) {
-        countSkippedFolder(parser, child, result);
-    }
-}
-
 int OstConversionWorker::countConvertibleItems(PstParser* parser, const PstFolderTree& tree) {
     int total = 0;
-    for (const uint64_t folder_id : mailFolderNodeIds(tree)) {
-        const auto items = parser->readFolderItems(folder_id, 0, 0);
-        if (items.has_value()) {
-            total += static_cast<int>(items->size());
+    for (const auto& folder : tree) {
+        if (!isSearchFolder(folder)) {
+            const auto items = parser->readFolderItems(folder.node_id, 0, 0);
+            if (items.has_value()) {
+                total += static_cast<int>(std::ranges::count_if(*items, [](const auto& item) {
+                    return isRealEmail(item.item_type);
+                }));
+            }
         }
+        total += countConvertibleItems(parser, folder.children);
     }
     return total;
 }
@@ -364,33 +353,35 @@ void OstConversionWorker::processFolderTree(PstParser* parser,
         }
         processFolder(parser, root_folder, FolderPosition{}, config, result);
     }
-    // Everything outside the mail roots -- the store's bookkeeping folders -- is left out too, and
-    // counted, so a run never drops something without saying so.
     if (&mail_roots == &tree) {
         return;
     }
-    const PstFolder* ipm = findIpmSubtree(tree);
-    const std::function<void(const PstFolder&)> count_outside = [&](const PstFolder& folder) {
-        if (&folder == ipm) {
-            return;
-        }
-        if (!isSearchFolder(folder)) {
-            const auto items = parser->readFolderItems(folder.node_id, 0, 0);
-            if (items.has_value()) {
-                for (const auto& item : *items) {
-                    recordSkippedItem(item.item_type, result);
-                }
-            }
-        }
-        for (const auto& child : folder.children) {
-            count_outside(child);
-        }
-    };
+    const PstFolder* mail_tree = findIpmSubtree(tree);
     for (const auto& root_folder : tree) {
-        count_outside(root_folder);
+        processFoldersOutsideMailTree(parser, root_folder, mail_tree, config, result);
     }
 }
 
+void OstConversionWorker::processFoldersOutsideMailTree(PstParser* parser,
+                                                        const PstFolder& folder,
+                                                        const PstFolder* mail_tree,
+                                                        const OstConversionConfig& config,
+                                                        OstConversionResult& result) {
+    if (&folder == mail_tree || m_cancelled.load()) {
+        return;
+    }
+    if (!isSearchFolder(folder) && folderPassesFilter(folder.display_name, config)) {
+        // Listed apart from the mail tree, the same way the Email Inspector shows them.
+        const QString path = QStringLiteral("Other Folders/") +
+                             sanitizeFolderSegment(folder.display_name);
+        if (convertFolderItems(parser, folder, path, config, result)) {
+            ++result.folders_processed;
+        }
+    }
+    for (const auto& child : folder.children) {
+        processFoldersOutsideMailTree(parser, child, mail_tree, config, result);
+    }
+}
 
 void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary,
                                               PstParser* parser,
@@ -439,7 +430,9 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
                                                     const OstConversionConfig& config,
                                                     OstConversionResult& result) {
     // Every row the table holds, whatever PR_CONTENT_COUNT declares. The declared count can be low
-    // or absent, and walking up to it silently dropped the rest of the folder.
+    // or absent, and walking up to it silently dropped the rest of the folder. What is not mail is
+    // left out and counted, in this folder or any other: real mail turns up in system folders, and
+    // a filed contact or a deleted appointment turns up among mail.
     auto items_result = parser->readFolderItems(folder.node_id, 0, 0);
     if (!items_result.has_value()) {
         // Surface the loss in items_failed instead of silently under-reporting: the table could
@@ -455,8 +448,27 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
         if (m_cancelled.load()) {
             return;
         }
-        processItemInFolder(item_summary, parser, folder_path, config, result);
+        if (isRealEmail(item_summary.item_type)) {
+            processItemInFolder(item_summary, parser, folder_path, config, result);
+        } else {
+            recordSkippedItem(item_summary.item_type, result);
+        }
     }
+}
+
+bool OstConversionWorker::convertFolderItems(PstParser* parser,
+                                             const PstFolder& folder,
+                                             const QString& folder_path,
+                                             const OstConversionConfig& config,
+                                             OstConversionResult& result) {
+    const int converted_before = result.items_converted;
+    const int failed_before = result.items_failed;
+
+    Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
+
+    loadAndProcessFolderItems(parser, folder, folder_path, config, result);
+
+    return result.items_converted != converted_before || result.items_failed != failed_before;
 }
 
 void OstConversionWorker::processFolder(PstParser* parser,
@@ -492,21 +504,17 @@ void OstConversionWorker::processFolder(PstParser* parser,
     if (isSearchFolder(folder)) {
         return;
     }
-    if (!isMailFolder(folder.display_name, folder.container_class)) {
-        countSkippedFolder(parser, folder, result);
-        return;
-    }
 
     if (!folderPassesFilter(folder.display_name, config)) {
         return;
     }
 
-    // Count each processed folder exactly once, not once per item it contains.
-    ++result.folders_processed;
-
-    Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
-
-    loadAndProcessFolderItems(parser, folder, folder_path, config, result);
+    // Each folder once, not once per item. One that is not a mail folder counts only if it held
+    // mail.
+    if (convertFolderItems(parser, folder, folder_path, config, result) ||
+        isMailFolder(folder.display_name, folder.container_class)) {
+        ++result.folders_processed;
+    }
 
     for (const auto& child : folder.children) {
         processFolder(parser,

@@ -16,7 +16,15 @@ class EmailFileScannerDialogTests : public QObject {
 
 private Q_SLOTS:
     void commonScanPathsIncludeTheSystemDrivesBackups();
+    void aScanListsEveryKindOfMailFileTheAppOpens();
 };
+
+void EmailFileScannerDialogTests::aScanListsEveryKindOfMailFileTheAppOpens() {
+    const QStringList patterns = sak::EmailFileScannerDialog::mailFilePatterns();
+    for (const char* pattern : {"*.pst", "*.ost", "*.nst", "*.mbox"}) {
+        QVERIFY2(patterns.contains(QLatin1String(pattern)), pattern);
+    }
+}
 
 // C: was skipped on the claim that the profile paths already covered it, but those are folders
 // under the user's profile, so C:\Backups and C:\Email Backups were never looked at.

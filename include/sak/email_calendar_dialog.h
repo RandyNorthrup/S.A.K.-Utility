@@ -55,8 +55,11 @@ struct CalendarEvent {
     bool is_all_day = false;
     int busy_status = -1;  ///< -1=unknown, 0=Free, 1=Tentative, 2=Busy, 3=OOF
     int importance = 1;    ///< 0=Low, 1=Normal, 2=High
-    QStringList attendees;
-    QString recurrence_description;
+    QVector<PstAttendee> attendees;
+    bool attendees_unreadable = false;
+    PstRecurrence recurrence;
+    PstTimeZone time_zone;
+    QString message_id;
     QString body_plain;
     QString body_html;
     QString sender_email;

@@ -6,6 +6,8 @@
 
 #include "sak/pst_named_properties.h"
 
+#include "sak/pst_recurrence.h"
+
 #include <QtEndian>
 
 #include <array>
@@ -32,6 +34,7 @@ constexpr uint16_t kPropertySetTagBytes = 2;
 constexpr uint8_t kSetByteAppointment = 0x02;
 constexpr uint8_t kSetByteTask = 0x03;
 constexpr uint8_t kSetByteAddress = 0x04;
+constexpr uint8_t kSetByteLog = 0x0A;
 constexpr uint8_t kSetByteNote = 0x0E;
 
 const std::array<uint8_t, kGuidBytes> kSetGuidTemplate = {
@@ -48,6 +51,8 @@ NamedPropertySet setFromGuid(const char* guid) {
         return NamedPropertySet::Task;
     case kSetByteAddress:
         return NamedPropertySet::Address;
+    case kSetByteLog:
+        return NamedPropertySet::Log;
     case kSetByteNote:
         return NamedPropertySet::Note;
     default:
@@ -57,6 +62,31 @@ NamedPropertySet setFromGuid(const char* guid) {
 
 QDateTime parseUtcValue(const sak::MapiProperty& prop) {
     return QDateTime::fromString(prop.display_value, Qt::ISODate);
+}
+
+/// The appointment values read as a group; false when @p lid is not one of them.
+bool applyAppointmentRawValue(AppointmentRawValues& raw,
+                              uint32_t lid,
+                              const sak::MapiProperty& prop) {
+    switch (lid) {
+    case kLidAppointmentRecur:
+        raw.recurrence = prop.raw_value;
+        return true;
+    case kLidTimeZoneStruct:
+        raw.zone_struct = prop.raw_value;
+        return true;
+    case kLidTimeZoneDescription:
+        raw.zone_description = prop.display_value;
+        return true;
+    case kLidTimeZoneDefinitionRecur:
+        raw.zone_definition_recurring = prop.raw_value;
+        return true;
+    case kLidTimeZoneDefinitionStart:
+        raw.zone_definition_start = prop.raw_value;
+        return true;
+    default:
+        return false;
+    }
 }
 
 void applyAppointment(sak::PstItemDetail& detail, uint32_t lid, const sak::MapiProperty& prop) {
@@ -78,6 +108,28 @@ void applyAppointment(sak::PstItemDetail& detail, uint32_t lid, const sak::MapiP
         break;
     case kLidRecurrencePattern:
         detail.recurrence_description = prop.display_value;
+        break;
+    case kLidRecurring:
+        detail.marked_recurring = prop.display_value == QLatin1String("true");
+        break;
+    default:
+        break;
+    }
+}
+
+void applyJournal(sak::PstItemDetail& detail, uint32_t lid, const sak::MapiProperty& prop) {
+    switch (lid) {
+    case kLidLogType:
+        detail.journal_type = prop.display_value;
+        break;
+    case kLidLogStart:
+        detail.start_time = parseUtcValue(prop);
+        break;
+    case kLidLogEnd:
+        detail.end_time = parseUtcValue(prop);
+        break;
+    case kLidLogDuration:
+        detail.journal_duration_minutes = prop.display_value.toInt();
         break;
     default:
         break;
@@ -148,11 +200,17 @@ QHash<uint16_t, NamedPropertyKey> parseNameIdMap(const QByteArray& guid_stream,
 }
 
 void applyNamedProperty(sak::PstItemDetail& detail,
+                        AppointmentRawValues& raw,
                         const NamedPropertyKey& key,
                         const sak::MapiProperty& prop) {
     switch (key.set) {
     case NamedPropertySet::Appointment:
-        applyAppointment(detail, key.long_id, prop);
+        if (!applyAppointmentRawValue(raw, key.long_id, prop)) {
+            applyAppointment(detail, key.long_id, prop);
+        }
+        break;
+    case NamedPropertySet::Log:
+        applyJournal(detail, key.long_id, prop);
         break;
     case NamedPropertySet::Task:
         applyTask(detail, key.long_id, prop);
@@ -167,6 +225,28 @@ void applyNamedProperty(sak::PstItemDetail& detail,
         break;
     case NamedPropertySet::Other:
         break;
+    }
+}
+
+void finishAppointment(sak::PstItemDetail& detail, const AppointmentRawValues& raw) {
+    // The zone the series was set up in, first; the zone its start was shown in only stands in.
+    detail.time_zone = parseTimeZoneDefinition(raw.zone_definition_recurring);
+    if (!detail.time_zone.known) {
+        detail.time_zone = parseTimeZoneStruct(raw.zone_struct, raw.zone_description);
+    }
+    if (!detail.time_zone.known) {
+        detail.time_zone = parseTimeZoneDefinition(raw.zone_definition_start);
+    }
+    if (!raw.recurrence.isEmpty()) {
+        detail.recurrence =
+            parseAppointmentRecurrence(raw.recurrence, detail.time_zone, detail.is_all_day);
+    } else if (detail.marked_recurring) {
+        // Marked as repeating with no pattern stored. It is shown as such, never as a one-off.
+        detail.recurrence.state = RecurrenceState::Unreadable;
+        detail.recurrence.problem = QStringLiteral("the store holds no pattern for it");
+        detail.recurrence.description = QStringLiteral(
+            "Repeats, but the pattern could not be read: the store holds no "
+            "pattern for it");
     }
 }
 

@@ -433,6 +433,116 @@ capture VM is held:
   checksum files, but not through the dialog.
 - Disk benchmark and disk stress on C: unelevated: must run, and leave nothing behind.
 
+### Email items after round 4: NST, every email, attendees, repeats, journal, filters (2026-11-02)
+
+The items the owner asked for after the section below. Same rules: tested against the owner's real
+files on copies, nothing derived from them in the repository, anonymous counts only. libpff is the
+independent reader for stores, Python's mailbox module for MBOX, and icalendar with dateutil for ICS.
+
+| File | Folders | Messages, app and libpff | Converted | Left out, as not email | Failed | Attendees read, app and libpff | Repeating found | RRULE written | Unreadable | Journal |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PST-1 | 34 | 16,886 both | 16,177 | 709 (200 contacts, 399 calendar, 62 tasks, 44 notes, 4 other) | 0 | 2 both, on meeting items; 0 on events | 64 | 63 | 1 | 0 |
+| OST-1 | 57 | 1,316 both | 779 | 537 (255 contacts, 1 calendar, 12 tasks, 1 note, 268 other) | 0 | 1 both | 0 | 0 | 0 | 0 |
+| OST-2 | 61 | 1,395 both | 1,289 | 106 (calendar) | 0 | 0 both | 13 | 13 | 0 | 0 |
+| NST-1 | 24 | 0 both | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+Each row's Converted, Left out and Failed add up to its Messages, and Python's mailbox module counts
+the same number of messages in the output as Converted. PST-1 converted in 25 s with a peak of 127 MB.
+Before these fixes OST-1 converted 774, OST-2 1,287 and PST-1 16,209: the first two left real email in
+system folders out, and PST-1 also wrote 32 contacts, events and tasks filed in Deleted Items as mail.
+
+Repeating events, read independently from the ICS file: dateutil accepted all 76 rules, and all 76 start
+on their DTSTART. All 24 EXDATE dates and all 5 RECURRENCE-ID dates in PST-1 land on an occurrence of
+their rule. No line is over 75 octets. Where Outlook also wrote its own English wording of the pattern
+(19 of PST-1's 63), the frequency, weekday, month and position in it all agree with the rule every time,
+and so does the time in the 18 that name one. The stored start agrees with the pattern in all 32 series
+that know their zone. 44 of PST-1's rules store no time zone at all and are written with floating times.
+
+The one that cannot be read is a yearly series in PST-1 whose pattern's first date is not on its own rule,
+while its stored start, its clip start and Outlook's wording name another month. Nothing in the store
+says which is right, so the event says so, the export log says so, and it is written once with a comment.
+
+Search filters, against independent counts with no search text. Every filtered text search was a subset
+of the plain search of the same word.
+
+| Filter | PST-1, app and libpff | OST-1, app and libpff | OST-2, app and libpff |
+|---|---|---|---|
+| Email | the 10,000 limit, of 16,175 | 779 both | 1,289 both |
+| Calendar, with meeting items | 401 both | 1 both | 106 both |
+| Contact | 200 both | 255 both | 0 both |
+| Task | 62 both | 12 both | 0 both |
+| Note | 44 both | 1 both | 0 both |
+| Journal | 0 both | 0 both | 0 both |
+| Has attachment | 3,019 both | 21 both | 793 both |
+| Email to 2018 | the 10,000 limit, of 16,175 | 17 both | 0 both |
+| Email from 2019 | 0 both | 762 both | 1,289 both |
+
+Converted MBOX files gave the same answers against Python's mailbox module, and Has attachment agrees
+with it message by message. For messages, with attachments, to 2018 and from 2019: OST-1
+has 779, 21, 17 and 762; OST-2 has 1,289, 793, 0 and 1,289; PST-1 has 16,177, 3,015, 16,177 and 0, where
+the app's Email and to-2018 searches stop at the limit. Every other item type finds 0 there and says why. That
+comparison found two bugs in reading an MBOX: Has attachment trusted a guess from the headers (766 hits
+where OST-1 has 21), and a text file carrying a Content-ID was read as the message body, replacing the
+real one, and never listed as an attachment (153 messages of OST-2). Both are fixed. The 10,000
+limit was already applied after filtering, since it counts hits, and it stays that way, with a test.
+On PST-1 a plain search for one common word stops at the limit. The same word with Has attachment finds
+2,701, and 634 of those are items the plain search never reached. The count now says when the limit was
+reached.
+
+Decisions the owner may overrule:
+
+1. **What counts as real email is a list of message classes:** IPM.Note and its kinds except rule
+   templates, IPM.Post, IPM.Schedule.Meeting, delivery reports and a few more, in
+   `PstParser::classifyMessageClass`. A class nobody has listed is left out and counted as other, and
+   still opens in its folder. It used to count as mail.
+2. **A contact, event or task filed in a mail folder is left out of the MBOX**, which is why PST-1's
+   converted count fell by 32. Each is counted, and each still opens in Email Inspector.
+3. **The Calendar window draws a repeating event once**, on its first date, with a mark and the pattern
+   in words. It does not draw later dates. The export carries them all. Drawing them is a further change.
+4. **A repeating event with no stored zone is written with floating times**, so it stays at its clock
+   time wherever it is imported. A non-repeating all-day event with no zone stays in UTC as it was, since
+   its local date cannot be known exactly: 6 of PST-1's 10 all-day events.
+5. **A changed occurrence keeps its new time, subject and location.** Its own body, attendees and
+   attachments live in a hidden attachment that is not read: a changed body is left out rather than
+   shown wrong, and attendees come from the series.
+6. **A filter with no search text lists what it matches.** Not asked for; it is what the empty search
+   box would otherwise do nothing about.
+7. **A date range judges events and journal entries by when they happen**, and an item with no date is
+   left out of any date range. Calendar includes meeting items and Contact includes distribution lists.
+8. **Export ALL Mail Folders takes real email only**, the same set as the converter.
+9. **The calendar CSV gained Repeats and Attendees columns.**
+10. **An MBOX part that names a file is an attachment, even when marked inline.** A sender that gave its
+    message text a file name would show it as a file, not as the body. On an MBOX, Has attachment reads
+    each multipart message to be sure, so it is slower there than the other filters.
+11. **A series whose first date is off its own rule is unreadable, not moved to the next date that fits.**
+    Moving it was tried first, and the other dates in the store showed that would have been wrong.
+
+Not covered by a test, and INCOMPLETE where it needs the VM:
+
+- INCOMPLETE, VM smoke: import a converted MBOX into a real mail client. Open Thunderbird with
+  ImportExportTools NG, Import mbox file, choose a file the converter wrote, and compare the message
+  count and one message with an attachment. Do the same for `calendar_export.ics` in Outlook or Thunderbird:
+  check a weekly series across a daylight-saving change, a deleted week, and a moved occurrence.
+- INCOMPLETE, VM smoke: the sample PST has not been opened by Outlook. libpff reads all of it. The builder
+  writes no allocation maps or name-to-ID hash buckets, so Outlook may still refuse it.
+- A real NST with messages: none exists here. The real one opens and holds none. Reading mail from one is
+  proved on a generated store with the header a real NST has, in the older 512-byte page layout. The 4K
+  layout real NST files use is proved by the real OSTs, which have the same header and version.
+- The PST path's 10,000 limit is only exercised by the MBOX test, since the store builder cannot make a
+  store that size. Both count hits the same way, and PST-1 shows it on real data.
+- A real journal entry: all three stores have a journal folder and none has an entry. Reading one is
+  proved on a generated store from the MS-OXOJRNL property list.
+- The two time zone formats are read from generated bytes and from real stores by count. No real zone
+  has been compared with Windows' own zone database.
+
+Found and not fixed, because they are outside these items:
+
+- Reading an MBOX does not decode non-English subjects and senders in the headers. The converter writes
+  them as encoded words, correctly: Python reads them. Email Inspector shows the encoded form and a search
+  for the real text does not find it.
+- The MBOX list's Has attachments tooltip still uses the guess from the headers, because reading every
+  message to fill a list would be slow. The filter no longer does.
+
 ### Email tools and application management fixes (2026-11-02)
 
 The wiki writer's Email Tools and Application Management list, and the VM agent's MBOX count, on
@@ -445,21 +555,19 @@ below are. An independent reader, libpff, was used to check the folder and messa
 | PST-1, 1.1 GB, Unicode, compressible | 34 | 16,886 both, per folder | 5,160 of 5,160 | 10,000 hits (the limit), 50 of 50 opened | 16,209 | 0 | yes |
 | OST-1, 64 MB, Unicode 4K | 57 | 1,316 both, per folder | 37 of 37 | 757 hits, 50 of 50 opened | 774 | 0 | yes |
 | OST-2, 111 MB, Unicode 4K | 61 | 1,395 both, per folder | 5,069 of 5,069 | 535 hits, 50 of 50 opened | 1,287 | 0 | yes |
-| NST-1, 16 MB | 24 | 0 both | none | not run | refused | n/a | n/a |
+| NST-1, 16 MB | 24 | 0 both | none | not run | refused then; opens and converts now, see above | n/a | n/a |
 | ICS-1 | n/a | n/a | n/a | n/a | refused | n/a | n/a |
 
 PST-1 converted in 21 to 30 s with a peak of 127 MB of memory. Before these fixes the app listed
 14,350 of its 16,886 messages, and with only the reader fixed 1,114 of the 16,886 still failed to
-convert. Each row's Converted plus the items left out as not mail equals its Messages. OST and PST behave the same. NST
-is refused by decision: it is built like an OST and the one real NST held no messages, so reading mail
-from one is unproven. ICS is not an input anywhere; the app only writes it.
+convert. Each row's Converted plus the items left out as not mail equals its Messages. OST and PST behave the same. ICS
+is not an input anywhere; the app only writes it. The counts in this table are from before the section
+above, which replaced decisions 1 and 2 below on the owner's word.
 
 Decisions the owner may overrule:
 
-1. **NST refused outright.** Accepting it as an OST would be one line, but nothing has shown that it
-   reads mail correctly.
-2. **The converter covers mail folders only**, the same set as Email Inspector's tree. Items in other
-   folders are counted in the result, not converted. On OST-1 that left out 5 emails in system folders.
+1. Replaced: NST files are accepted now.
+2. Replaced: the converter decides by item now, in every folder.
 3. **A message with no sender is written with `-` as the MBOX sender**, Thunderbird's own marker, and
    no From header. A message never sent uses the store's last-saved time on the separator line only.
 4. **Tasks and notes were made browsable** rather than removing the promise from the header.
@@ -468,16 +576,8 @@ Decisions the owner may overrule:
 
 Not covered by a test:
 
-- The scan loop's call into the CISA version check needs the network. The check itself is tested.
 - The header and About text for the Vulnerability Scanner, and the Advanced scan label, are text.
-- The GUI handlers for the real right-click export of tasks and notes end in a folder dialog. The menu
-  entries are tested, and the CSV and text exports are not driven through the panel.
-- Attendees are not read, so the calendar and its ICS export carry none. A repeating event appears once.
-- The Stop button during MBOX counting is not driven by a test.
-- Moving a real mailbox file into Thunderbird or Outlook: every count here is by this app's reader and
-  a line scan, not an importing client.
-- Outlook has not opened the sample PST. libpff opens it but lists only the root folder; the app reads
-  all of it, which is what the screenshots need.
+- Moving a real mailbox file into Thunderbird or Outlook: see the section above.
 
 ### Network, assistant, help and leftover fixes (2026-11-02)
 

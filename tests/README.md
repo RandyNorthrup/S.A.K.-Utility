@@ -392,6 +392,9 @@ stay read-only with exact blockers.
 | test_mbox_parser | `mbox_parser` | MBOX parsing, message extraction, header parsing |
 | test_email_search_worker | `email_search_worker` | Full-text search, field filtering |
 | test_email_export_worker | `email_export_worker` | EML/CSV/VCF/ICS export, attachment extraction |
+| test_pst_recurrence | `pst_recurrence` | Repeating appointments: every pattern, end, and occurrence list; time zones; what cannot be read is said, never guessed |
+| test_email_ics_writer | `email_ics_writer` | RFC 5545 output: attendees, RRULE, EXDATE, RECURRENCE-ID, VTIMEZONE, folding, injection |
+| test_mbox_python_reader | `ost_conversion_worker`, `mbox_writer` | A converted mailbox read back by Python's mailbox module, an independent reader |
 | test_email_attachments_browser_dialog | `EmailInspectorController`, `EmailAttachmentsBrowserDialog` | Exact folder-page and item-detail failure identities, wrong-ID refusal, matching failure advancement, plain-text accessible generic error reporting without scan-state mutation, and attachment-specific plus generic double-signal save accounting |
 | test_email_profile_manager | `email_profile_manager` | Email client profile discovery, backup/restore, and controlled junction destination confinement |
 | test_email_report_generator | `email_report_generator` | Email analysis report generation |

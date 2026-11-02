@@ -8,8 +8,10 @@
 
 #include "sak/email_constants.h"
 #include "sak/email_html_sanitizer.h"
+#include "sak/email_ics_writer.h"
 #include "sak/email_inspector_controller.h"
 #include "sak/email_safe_text_browser.h"
+#include "sak/io_write_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
@@ -40,6 +42,7 @@
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSet>
@@ -94,7 +97,13 @@ constexpr int kAllDayBarVerticalInsetPx = 2;
 constexpr int kAllDayBarVerticalInsetTotalPx = 4;
 constexpr int kDefaultEventDurationSec = 3600;
 constexpr int kIcsSubjectFilenameMaxChars = 50;
-constexpr int kIcsDescriptionMaxChars = 500;
+
+/// The small mark on a repeating event, wherever its title is drawn. The event is drawn on its
+/// first date, so this is what says there are more; the detail pane says what they are.
+QString repeatMark(const CalendarEvent& evt) {
+    return evt.recurrence.state == RecurrenceState::None ? QString() : QStringLiteral("\u21BB ");
+}
+
 constexpr int kHighImportanceValue = 2;
 constexpr int kMonthButtonId = static_cast<int>(EmailCalendarDialog::ViewMode::Month);
 constexpr int kWeekButtonId = static_cast<int>(EmailCalendarDialog::ViewMode::Week);
@@ -344,7 +353,7 @@ private:
             label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
                     QStringLiteral(" ");
         }
-        label += evt->subject;
+        label += repeatMark(*evt) + evt->subject;
         return label;
     }
 
@@ -739,7 +748,7 @@ private:
             label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
                     QStringLiteral(" ");
         }
-        label += evt->subject;
+        label += repeatMark(*evt) + evt->subject;
         const QString elided =
             painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
@@ -1509,56 +1518,31 @@ void EmailCalendarDialog::onDayEventListContextMenu(const QPoint& pos) {
 
 namespace {
 
-/// Escape a string for an RFC 5545 TEXT value so event text cannot terminate the
-/// property line or inject a forged property: backslash, semicolon and comma are
-/// escaped and every CR/LF becomes the literal "\n".
-QString icsEscapeText(const QString& value) {
-    QString out = value;
-    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    out.replace(QLatin1Char(';'), QStringLiteral("\\;"));
-    out.replace(QLatin1Char(','), QStringLiteral("\\,"));
-    out.replace(QStringLiteral("\r\n"), QStringLiteral("\\n"));
-    out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
-    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    return out;
-}
-
-/// Fold a content line to <=75 octets per RFC 5545 3.1; continuation lines begin
-/// with a single space. Folding is byte-based and never splits a UTF-8 sequence.
-QString icsFoldLine(const QString& line) {
-    constexpr int kMaxOctets = 75;
-    constexpr int kUtf8ContinuationMask = 0xC0;  // top two bits of a byte
-    constexpr int kUtf8ContinuationByte = 0x80;  // 10xxxxxx marks a UTF-8 continuation byte
-    const QByteArray utf8 = line.toUtf8();
-    if (utf8.size() <= kMaxOctets) {
-        return line;
-    }
-    QByteArray folded;
-    int pos = 0;
-    while (pos < utf8.size()) {
-        int take = qMin(kMaxOctets, static_cast<int>(utf8.size()) - pos);
-        while (pos + take < utf8.size() && take > 1 &&
-               (utf8.at(pos + take) & kUtf8ContinuationMask) == kUtf8ContinuationByte) {
-            --take;
-        }
-        if (!folded.isEmpty()) {
-            folded += "\r\n ";
-        }
-        folded += utf8.mid(pos, take);
-        pos += take;
-    }
-    return QString::fromUtf8(folded);
-}
-
-/// Emit one folded, escaped RFC 5545 TEXT property line.
-void writeIcsTextProperty(QTextStream& out, const QString& name, const QString& value) {
-    out << icsFoldLine(name + QStringLiteral(":") + icsEscapeText(value)) << "\r\n";
+/// What the iCalendar writer needs of an event, which is everything it carries.
+sak::PstItemDetail eventAsDetail(const CalendarEvent& evt) {
+    sak::PstItemDetail detail;
+    detail.node_id = evt.node_id;
+    detail.item_type = evt.item_type;
+    detail.subject = evt.subject;
+    detail.sender_name = evt.sender_name;
+    detail.sender_email = evt.sender_email;
+    detail.start_time = evt.start_time;
+    detail.end_time = evt.end_time;
+    detail.location = evt.location;
+    detail.is_all_day = evt.is_all_day;
+    detail.attendees = evt.attendees;
+    detail.attendees_unreadable = evt.attendees_unreadable;
+    detail.recurrence = evt.recurrence;
+    detail.time_zone = evt.time_zone;
+    detail.message_id = evt.message_id;
+    detail.body_plain = evt.body_plain;
+    return detail;
 }
 
 }  // namespace
 
 void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
-    QString file_path = QFileDialog::getSaveFileName(
+    const QString file_path = QFileDialog::getSaveFileName(
         this,
         tr("Export Event as ICS"),
         evt.subject.simplified().left(kIcsSubjectFilenameMaxChars) + QStringLiteral(".ics"),
@@ -1567,50 +1551,27 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
         return;
     }
 
-    QFile file(file_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        // Fail closed and surface it: a silent return leaves the user believing the
-        // export succeeded when nothing was written.
+    // QSaveFile, so a failed write never leaves a truncated .ics in place of a good one.
+    const sak::PstItemDetail detail = eventAsDetail(evt);
+    QSaveFile file(file_path);
+    if (!file.open(QIODevice::WriteOnly)) {
         sak::showWarningLogged(
             this,
             tr("Export Failed"),
             tr("Could not open '%1' for writing:\n%2").arg(file_path, file.errorString()));
         return;
     }
-    QTextStream out(&file);
-    out << "BEGIN:VCALENDAR\r\n"
-        << "VERSION:2.0\r\n"
-        << "PRODID:-//SAK Utility//EN\r\n"
-        << "BEGIN:VEVENT\r\n";
-    if (evt.start_time.isValid()) {
-        out << "DTSTART:" << evt.start_time.toUTC().toString("yyyyMMdd'T'HHmmss'Z'") << "\r\n";
-    }
-    if (evt.end_time.isValid()) {
-        out << "DTEND:" << evt.end_time.toUTC().toString("yyyyMMdd'T'HHmmss'Z'") << "\r\n";
-    }
-    writeIcsTextProperty(out, QStringLiteral("SUMMARY"), evt.subject);
-    if (!evt.location.isEmpty()) {
-        writeIcsTextProperty(out, QStringLiteral("LOCATION"), evt.location);
-    }
-    if (!evt.body_plain.isEmpty()) {
-        writeIcsTextProperty(out,
-                             QStringLiteral("DESCRIPTION"),
-                             evt.body_plain.left(kIcsDescriptionMaxChars));
-    }
-    out << "END:VEVENT\r\n"
-        << "END:VCALENDAR\r\n";
-
-    // A write can fail mid-stream (disk full, quota, I/O error), which would leave a
-    // truncated .ics behind. Flush and check both the stream and file state, then surface
-    // any failure instead of reporting a phantom success.
-    out.flush();
-    if (out.status() != QTextStream::Ok || file.error() != QFileDevice::NoError) {
-        const QString err = file.errorString();
-        file.close();
-        sak::showWarningLogged(this,
-                               tr("Export Failed"),
-                               tr("Failed while writing '%1':\n%2").arg(file_path, err));
+    const QByteArray ics = sak::buildIcsCalendar({detail}, QDateTime::currentDateTimeUtc());
+    if (!sak::writeFully(file, ics) || !file.commit()) {
+        sak::showWarningLogged(
+            this,
+            tr("Export Failed"),
+            tr("Failed while writing '%1':\n%2").arg(file_path, file.errorString()));
         return;
+    }
+    const QStringList notes = sak::icsEventNotes(detail);
+    if (!notes.isEmpty()) {
+        sak::showWarningLogged(this, tr("Exported With a Note"), notes.join(QLatin1Char('\n')));
     }
 }
 
@@ -1629,6 +1590,9 @@ void EmailCalendarDialog::copyEventDetailsToClipboard(const CalendarEvent& evt) 
     }
     if (!evt.sender_name.isEmpty()) {
         text += tr("Organizer: %1\n").arg(evt.sender_name);
+    }
+    if (evt.recurrence.state != sak::RecurrenceState::None) {
+        text += tr("Repeats: %1\n").arg(evt.recurrence.description);
     }
     QApplication::clipboard()->setText(text);
 }
@@ -1699,11 +1663,16 @@ void EmailCalendarDialog::onDetailLoaded(sak::PstItemDetail detail) {
     evt.busy_status = detail.busy_status;
     evt.importance = detail.importance;
     evt.attendees = detail.attendees;
-    evt.recurrence_description = detail.recurrence_description;
+    evt.attendees_unreadable = detail.attendees_unreadable;
+    evt.recurrence = detail.recurrence;
+    evt.time_zone = detail.time_zone;
+    evt.message_id = detail.message_id;
     evt.body_plain = detail.body_plain;
     evt.body_html = detail.body_html;
     evt.sender_email = detail.sender_email;
-    evt.attachment_count = static_cast<int>(detail.attachments.size());
+    // A changed occurrence is stored as a hidden attachment. It is no file anyone attached.
+    evt.attachment_count = static_cast<int>(std::ranges::count_if(
+        detail.attachments, [](const sak::PstAttachmentInfo& att) { return !att.hidden; }));
 
     if (detail.start_time.isValid()) {
         evt.start_time = detail.start_time;
@@ -1832,7 +1801,7 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
         appendHtmlField(html, QStringLiteral("Email"), evt.sender_email);
     }
     html += buildAttendeesHtml(evt);
-    appendHtmlField(html, QStringLiteral("Recurrence"), evt.recurrence_description);
+    appendHtmlField(html, QStringLiteral("Repeats"), evt.recurrence.description);
     if (evt.importance != 1) {
         const QString importance_str = (evt.importance == kHighImportanceValue) ? tr("High")
                                                                                 : tr("Low");
@@ -1866,13 +1835,45 @@ QString EmailCalendarDialog::buildDateHtml(const CalendarEvent& evt) {
         .arg(date_str);
 }
 
+namespace {
+
+/// One attendee in words: the name, the address, what part they have, and their reply.
+QString attendeeLine(const sak::PstAttendee& attendee) {
+    constexpr int kRoleOptional = 2;
+    constexpr int kRoleResource = 3;
+    QString line = attendee.name;
+    if (!attendee.email.isEmpty()) {
+        line += line.isEmpty() ? attendee.email : QStringLiteral(" <%1>").arg(attendee.email);
+    }
+    QStringList parts;
+    if (attendee.organizer) {
+        parts.append(QStringLiteral("Organizer"));
+    } else if (attendee.role == kRoleOptional) {
+        parts.append(QStringLiteral("Optional"));
+    } else if (attendee.role == kRoleResource) {
+        parts.append(QStringLiteral("Resource"));
+    } else {
+        parts.append(QStringLiteral("Required"));
+    }
+    const QString response = sak::attendeeResponseWord(attendee.response);
+    if (!response.isEmpty()) {
+        parts.append(response);
+    }
+    return line + QStringLiteral(" (%1)").arg(parts.join(QStringLiteral(", ")));
+}
+
+}  // namespace
+
 QString EmailCalendarDialog::buildAttendeesHtml(const CalendarEvent& evt) {
+    if (evt.attendees_unreadable) {
+        return QStringLiteral("<p><b>Attendees:</b> could not be read</p>");
+    }
     if (evt.attendees.isEmpty()) {
         return {};
     }
     QString html = QStringLiteral("<p><b>Attendees:</b></p><ul>");
     for (const auto& attendee : evt.attendees) {
-        html += QStringLiteral("<li>%1</li>").arg(attendee.toHtmlEscaped());
+        html += QStringLiteral("<li>%1</li>").arg(attendeeLine(attendee).toHtmlEscaped());
     }
     html += QStringLiteral("</ul>");
     return html;
@@ -1929,7 +1930,8 @@ void EmailCalendarDialog::populateDayEventList(const QDate& date) {
         time_item->setBackground(fill);
         m_day_event_list->setItem(row, DayColTime, time_item);
 
-        auto* subj_item = new QTableWidgetItem(evt->subject);
+        auto* subj_item = new QTableWidgetItem(repeatMark(*evt) + evt->subject);
+        subj_item->setToolTip(evt->recurrence.description);
         subj_item->setData(Qt::UserRole, QVariant::fromValue(evt->node_id));
         subj_item->setBackground(fill);
         m_day_event_list->setItem(row, DayColSubject, subj_item);
@@ -1990,7 +1992,8 @@ bool EmailCalendarDialog::matchesSearch(const CalendarEvent& evt) const {
         return true;
     }
     for (const auto& attendee : evt.attendees) {
-        if (attendee.contains(m_search_text, Qt::CaseInsensitive)) {
+        if (attendee.name.contains(m_search_text, Qt::CaseInsensitive) ||
+            attendee.email.contains(m_search_text, Qt::CaseInsensitive)) {
             return true;
         }
     }

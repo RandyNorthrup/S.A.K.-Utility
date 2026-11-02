@@ -235,6 +235,17 @@ private:
     /// Load the store's Name-to-ID map
     void loadNamedPropertyMap();
 
+    /// Note how many real emails sit in each folder that is not an ordinary mail folder, so those
+    /// folders can be shown and the empty ones stay out of the way.
+    void countSystemFolderEmails();
+
+    /// Count the real emails in @p folder and everything under it that is not an ordinary mail
+    /// folder. @p inside_mail_tree says whether the folder is under the store's mail tree, whose
+    /// top is @p mail_tree.
+    void countSystemFolderEmailsIn(sak::PstFolder& folder,
+                                   bool inside_mail_tree,
+                                   const sak::PstFolder* mail_tree);
+
     /// Read and size-check the fixed PST header prefix
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readHeaderBytes();
 
@@ -390,6 +401,11 @@ private:
     /// Read the Table Context (TC) for a node -> rows of MAPI properties
     [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
     readTableContext(uint64_t nid);
+
+    /// The same, for a node already in hand: a message's recipient table is one of its sub-nodes,
+    /// so it is not in the Node BTree.
+    [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
+    readTableContextForNode(const sak::PstNode& node);
 
     /// Row matrix payload with per-block end offsets (MS-PST section 2.3.4.4.1).
     /// When the row matrix is stored as a sub-node, each data block ends with
@@ -556,6 +572,9 @@ private:
     [[nodiscard]] std::expected<QVector<sak::PstItemSummary>, sak::error_code> readContentsTable(
         uint64_t contents_nid, int offset, int limit, int* total_rows = nullptr);
 
+    /// One row of a contents table as a summary.
+    [[nodiscard]] sak::PstItemSummary summaryFromRow(const QVector<sak::MapiProperty>& row);
+
     /// Read a full message/contact/calendar/task item
     [[nodiscard]] static uint64_t contentsTableNid(uint64_t folder_node_id);
     [[nodiscard]] std::expected<QVector<sak::MapiProperty>, sak::error_code>
@@ -564,6 +583,9 @@ private:
         const sak::PstNode& node, uint64_t message_nid);
     void applyMessageProperties(sak::PstItemDetail& detail,
                                 const QVector<sak::MapiProperty>& props) const;
+    /// Fill a calendar item's attendees from its recipient table. An unreadable table is noted on
+    /// the item and does not stop it being read.
+    void readAttendees(const sak::PstNode& node, sak::PstItemDetail& detail);
     [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code>
     readAttachmentsForNode(const sak::PstNode& node);
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentDataForNode(

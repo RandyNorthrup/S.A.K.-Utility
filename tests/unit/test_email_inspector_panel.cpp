@@ -11,6 +11,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDateEdit>
 #include <QFile>
 #include <QInputDialog>
 #include <QLabel>
@@ -37,6 +40,7 @@ QByteArray mailboxBytes() {
     content += "From: Sender One <a@example.com>\r\n";
     content += "To: Zebra Recipient <zebracontact@example.com>\r\n";
     content += "Subject: Reaches the zebra person\r\n";
+    content += "Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n";
     content += "\r\n";
     content += "Plain body.\r\n";
     content += "\r\n";
@@ -44,6 +48,7 @@ QByteArray mailboxBytes() {
     content += "From: Sender Two <b@example.com>\r\n";
     content += "To: Someone <someone@example.com>\r\n";
     content += "Subject: Carries a file\r\n";
+    content += "Date: Tue, 2 Jan 2024 12:00:00 +0000\r\n";
     content += "MIME-Version: 1.0\r\n";
     content += "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n";
     content += "\r\n";
@@ -124,6 +129,16 @@ private Q_SLOTS:
     void searchInFolderCancelledSearchesNothing();
     void searchInFolderWithNoFolderIdAsksNothing();
     void folderMenuItemOpensTheScopedSearch();
+
+    void filtersStartOffAndOutOfTheWay();
+    void anAttachmentFilterNarrowsTheRibbonSearch();
+    void aDateFilterNarrowsTheRibbonSearch();
+    void filtersApplyInSearchInThisFolder();
+    void filtersAloneListWhatTheyMatch();
+    void noTextAndNoFilterSearchesNothing();
+    void anMboxSaysItHoldsOnlyEmail();
+    void aCancelledFolderSearchWithFiltersSearchesNothing();
+    void clearAndClosingTurnFiltersOff();
 
 private:
     void openMailbox();
@@ -357,6 +372,169 @@ void EmailInspectorPanelTests::folderMenuItemOpensTheScopedSearch() {
              qPrintable(answerer.title));
     waitForSearchToFinish();
     QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+}
+
+void EmailInspectorPanelTests::filtersStartOffAndOutOfTheWay() {
+    QVERIFY(m_panel->m_filter_row->isHidden());
+    QVERIFY(!m_panel->m_filter_button->isEnabled());
+    QVERIFY(!m_panel->searchFiltersActive());
+    // Nothing set adds nothing to what a plain search asks for.
+    sak::EmailSearchCriteria plain;
+    m_panel->applySearchFilters(plain);
+    QVERIFY(!plain.date_from.isValid());
+    QVERIFY(!plain.date_to.isValid());
+    QVERIFY(!plain.has_attachment_only);
+    QCOMPARE(plain.item_type_filter, sak::EmailItemType::Unknown);
+
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QVERIFY(m_panel->m_filter_button->isEnabled());
+    QVERIFY(m_panel->m_filter_row->isHidden());
+    m_panel->m_filter_button->setChecked(true);
+    QVERIFY(!m_panel->m_filter_row->isHidden());
+    QCOMPARE(m_panel->m_filter_button->text(), QStringLiteral("Filters"));
+}
+
+void EmailInspectorPanelTests::anAttachmentFilterNarrowsTheRibbonSearch() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    runRibbonSearch(QStringLiteral("Sender"));
+    QCOMPARE(m_panel->m_item_list->rowCount(), 2);
+    QVERIFY(!m_panel->m_item_count_label->text().contains(QStringLiteral("filtered")));
+
+    m_panel->m_filter_attachment_check->setChecked(true);
+    QCOMPARE(m_panel->m_filter_button->text(), QStringLiteral("Filters (1)"));
+    runRibbonSearch(QStringLiteral("Sender"));
+    QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+    QVERIFY(columnTexts(*m_panel->m_item_list, sak::EmailInspectorPanel::ColSubject)
+                .first()
+                .contains(QStringLiteral("Carries a file")));
+    QVERIFY(m_panel->m_item_count_label->text().contains(QStringLiteral("filtered")));
+}
+
+void EmailInspectorPanelTests::aDateFilterNarrowsTheRibbonSearch() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_filter_to_check->setChecked(true);
+    m_panel->m_filter_to_date->setDate(QDate(2024, 1, 1));
+    runRibbonSearch(QStringLiteral("Sender"));
+    QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+    QVERIFY(columnTexts(*m_panel->m_item_list, sak::EmailInspectorPanel::ColSubject)
+                .first()
+                .contains(QStringLiteral("zebra")));
+
+    // A day in the range means all of that day.
+    m_panel->m_filter_to_check->setChecked(false);
+    m_panel->m_filter_from_check->setChecked(true);
+    m_panel->m_filter_from_date->setDate(QDate(2024, 1, 2));
+    QCOMPARE(m_panel->m_filter_from_date->isEnabled(), true);
+    runRibbonSearch(QStringLiteral("Sender"));
+    QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+    QVERIFY(columnTexts(*m_panel->m_item_list, sak::EmailInspectorPanel::ColSubject)
+                .first()
+                .contains(QStringLiteral("Carries a file")));
+}
+
+void EmailInspectorPanelTests::filtersApplyInSearchInThisFolder() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_filter_attachment_check->setChecked(true);
+    {
+        InputDialogAnswerer answerer(QStringLiteral("Sender"));
+        m_panel->searchInFolder(uint64_t{0}, QStringLiteral("Inbox"));
+        QVERIFY(answerer.seen);
+    }
+    waitForSearchToFinish();
+    QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+    QVERIFY(m_panel->m_item_count_label->text().contains(QStringLiteral("in Inbox")));
+}
+
+void EmailInspectorPanelTests::filtersAloneListWhatTheyMatch() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_filter_attachment_check->setChecked(true);
+    runRibbonSearch(QString());
+    QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+}
+
+void EmailInspectorPanelTests::noTextAndNoFilterSearchesNothing() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_search_edit->clear();
+    m_panel->m_search_button->click();
+    QCOMPARE(m_panel->m_controller->currentState(), EmailInspectorController::State::Idle);
+    QVERIFY(!m_panel->m_showing_search_results);
+}
+
+// An empty list would read as "none matched". The file cannot hold them, and it says that.
+void EmailInspectorPanelTests::anMboxSaysItHoldsOnlyEmail() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QVERIFY(!m_panel->m_filter_mbox_note->isHidden());
+    m_panel->m_filter_type_combo->setCurrentIndex(
+        m_panel->m_filter_type_combo->findText(QStringLiteral("Calendar")));
+    m_panel->m_search_edit->setText(QStringLiteral("Sender"));
+    m_panel->m_search_button->click();
+    QCOMPARE(m_panel->m_controller->currentState(), EmailInspectorController::State::Idle);
+    QVERIFY(!m_panel->m_showing_search_results);
+    QVERIFY2(m_panel->m_status_label->text().contains(QStringLiteral("holds only email")) &&
+                 m_panel->m_status_label->text().contains(QStringLiteral("calendar")),
+             qPrintable(m_panel->m_status_label->text()));
+
+    // Asking it for email is a question it can answer.
+    m_panel->m_filter_type_combo->setCurrentIndex(
+        m_panel->m_filter_type_combo->findText(QStringLiteral("Email")));
+    runRibbonSearch(QStringLiteral("Sender"));
+    QCOMPARE(m_panel->m_item_list->rowCount(), 2);
+}
+
+// With filters set, an empty answer means "list them", so Cancel has to be told apart from it.
+void EmailInspectorPanelTests::aCancelledFolderSearchWithFiltersSearchesNothing() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_filter_attachment_check->setChecked(true);
+    InputDialogAnswerer answerer(QString(), false);
+    m_panel->searchInFolder(uint64_t{0}, QStringLiteral("Inbox"));
+    QVERIFY(answerer.seen);
+    QCOMPARE(m_panel->m_controller->currentState(), EmailInspectorController::State::Idle);
+    QVERIFY(!m_panel->m_showing_search_results);
+}
+
+void EmailInspectorPanelTests::clearAndClosingTurnFiltersOff() {
+    openMailbox();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    m_panel->m_filter_attachment_check->setChecked(true);
+    m_panel->m_filter_from_check->setChecked(true);
+    QCOMPARE(m_panel->m_filter_button->text(), QStringLiteral("Filters (2)"));
+    m_panel->m_filter_clear_button->click();
+    QVERIFY(!m_panel->searchFiltersActive());
+    QCOMPARE(m_panel->m_filter_button->text(), QStringLiteral("Filters"));
+
+    m_panel->m_filter_attachment_check->setChecked(true);
+    m_panel->m_filter_button->setChecked(true);
+    m_panel->m_controller->closeFile();
+    QVERIFY(!m_panel->searchFiltersActive());
+    QVERIFY(m_panel->m_filter_row->isHidden());
+    QVERIFY(!m_panel->m_filter_button->isEnabled());
+    QVERIFY(m_panel->m_filter_mbox_note->isHidden());
 }
 
 QTEST_MAIN(EmailInspectorPanelTests)

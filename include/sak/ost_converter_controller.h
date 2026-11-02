@@ -62,8 +62,8 @@ public:
     /// Classify a finished conversion into a queue status. Fail closed: any failed
     /// item or recorded error demotes the job to Failed even when some items
     /// converted, so a partial/errored run is never reported as a clean Complete.
-    /// Why a file cannot join the queue, or empty when it can. Only .pst and .ost are accepted: the
-    /// parser reads any "!BDN" file, so an .nst would convert to nothing and read as a success.
+    /// Why a file cannot join the queue, or empty when it can. Outlook's own stores are accepted by
+    /// their extension: .pst, .ost, and .nst, which has an OST's layout.
     [[nodiscard]] static QString refusalForFile(const QString& path);
 
     [[nodiscard]] static OstConversionJob::Status classifyOutcome(

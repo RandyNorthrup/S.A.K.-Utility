@@ -137,17 +137,124 @@ private Q_SLOTS:
         };
         const Run run = convert(PstStoreBuilder{}.build(folders));
 
-        QCOMPARE(run.result.items_converted, 2);
+        QCOMPARE(run.result.items_converted, 3);
         QCOMPARE(run.result.items_failed, 0);
         QVERIFY(run.result.errors.isEmpty());
         QCOMPARE(run.result.skipped_contacts, 2);
         QCOMPARE(run.result.skipped_calendar, 1);
         QCOMPARE(run.result.skipped_tasks, 1);
         QCOMPARE(run.result.skipped_notes, 1);
-        QCOMPARE(run.result.skipped_other, 1);
+        QCOMPARE(run.result.skipped_other, 0);
         QCOMPARE(sak::OstConverterController::classifyOutcome(run.result),
                  sak::OstConversionJob::Status::Complete);
-        QCOMPARE(mailboxMessageCount(run.output), 2);
+        QCOMPARE(mailboxMessageCount(run.output), 3);
+    }
+
+    // Real mail turned up in system folders and was left out, while a contact filed in Deleted
+    // Items was written out as if it were mail. What an item is decides, not where it is filed.
+    void convertsEveryRealEmailWhereverItLivesAndNothingElse() {
+        BuilderMessage invite = mail(QStringLiteral("Invite"));
+        invite.message_class = QStringLiteral("IPM.Schedule.Meeting.Request");
+        const QVector<BuilderFolder> folders{
+            folder(
+                QStringLiteral("Inbox"), QStringLiteral("IPF.Note"), {mail(QStringLiteral("In"))}),
+            folder(QStringLiteral("Deleted Items"),
+                   QString(),
+                   {mail(QStringLiteral("Binned")),
+                    nonMail(QStringLiteral("IPM.Contact"), QStringLiteral("Binned contact")),
+                    nonMail(QStringLiteral("IPM.Appointment"), QStringLiteral("Binned event")),
+                    nonMail(QStringLiteral("IPM.Task"), QStringLiteral("Binned task"))}),
+            folder(QStringLiteral("Conversation History"),
+                   QStringLiteral("IPF.Note"),
+                   {mail(QStringLiteral("System mail")),
+                    nonMail(QStringLiteral("IPM.Configuration.X"), QStringLiteral("Setting"))}),
+            folder(QStringLiteral("Files"), QStringLiteral("IPF.Note"), {}),
+            folder(QStringLiteral("Calendar"), QStringLiteral("IPF.Appointment"), {invite}),
+        };
+        PstStoreBuilder builder;
+        builder.outside_folders = {folder(
+            QStringLiteral("Stray"), QStringLiteral("IPF.Note"), {mail(QStringLiteral("Far"))})};
+        const Run run = convert(builder.build(folders));
+
+        QVERIFY2(run.result.errors.isEmpty(), qPrintable(run.result.errors.join(QLatin1Char('|'))));
+        QCOMPARE(run.result.items_failed, 0);
+        // Inbox, Deleted Items, the system folder, the invitation, and the one outside the tree.
+        QCOMPARE(run.result.items_converted, 5);
+        QCOMPARE(run.result.skipped_contacts, 1);
+        QCOMPARE(run.result.skipped_calendar, 1);
+        QCOMPARE(run.result.skipped_tasks, 1);
+        QCOMPARE(run.result.skipped_other, 1);
+        // Every row is accounted for, one way or the other.
+        const int rows = 1 + 4 + 2 + 0 + 1 + 1;
+        QCOMPARE(run.result.items_converted + run.result.items_failed + run.result.itemsSkipped(),
+                 rows);
+        QCOMPARE(mailboxMessageCount(run.output), 5);
+        const QByteArray written = allMailboxBytes(run.output);
+        QVERIFY(written.contains("Subject: System mail"));
+        QVERIFY(written.contains("Subject: Far"));
+        QVERIFY(!written.contains("Binned contact"));
+        QVERIFY(!written.contains("Setting"));
+        // A folder that held nothing to convert is not counted as one converted.
+        QCOMPARE(run.result.folders_processed, 5);
+    }
+
+    // A search folder lists mail filed elsewhere. Converting it would write each message twice.
+    void aSearchFolderIsNotConverted() {
+        BuilderFolder search = folder(QStringLiteral("Finder"),
+                                      QStringLiteral("IPF.Note"),
+                                      {mail(QStringLiteral("Copy"))});
+        search.search_folder = true;
+        BuilderFolder inbox = folder(QStringLiteral("Inbox"),
+                                     QStringLiteral("IPF.Note"),
+                                     {mail(QStringLiteral("In"))});
+        inbox.children = {search};
+        const Run run = convert(PstStoreBuilder{}.build({inbox}));
+        QCOMPARE(run.result.items_converted, 1);
+        QCOMPARE(run.result.itemsSkipped(), 0);
+        QCOMPARE(mailboxMessageCount(run.output), 1);
+    }
+
+    // An NST reads as an OST: same header, same layout. The real one here held no mail, so this is
+    // what shows mail in one comes through.
+    void anNstWithMailConverts() {
+        PstStoreBuilder builder;
+        builder.content_type = sak::email::kOstContentType;
+        const QByteArray store = builder.build(
+            {folder(QStringLiteral("Inbox"),
+                    QStringLiteral("IPF.Note"),
+                    {mail(QStringLiteral("Group one")), mail(QStringLiteral("Group two"))})});
+        const QString path = m_dir.filePath(QStringLiteral("group-mail.nst"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(store);
+        file.close();
+
+        sak::OstConversionConfig config;
+        const QString out = m_dir.filePath(QStringLiteral("nst_out"));
+        QVERIFY(QDir().mkpath(out));
+        config.output_directory = out;
+        config.include_source_checksums = false;
+        sak::OstConversionWorker worker;
+        sak::OstConversionResult result;
+        QObject::connect(&worker,
+                         &sak::OstConversionWorker::conversionFinished,
+                         &worker,
+                         [&result](const sak::OstConversionResult& done) { result = done; });
+        worker.convert(path, config);
+        QCOMPARE(result.items_converted, 2);
+        QVERIFY(result.errors.isEmpty());
+        QCOMPARE(mailboxMessageCount(out), 2);
+        QVERIFY(sak::OstConverterController::refusalForFile(path).isEmpty());
+    }
+
+    void aStoreWithNoMessagesCompletes() {
+        const Run run = convert(PstStoreBuilder{}.build(
+            {folder(QStringLiteral("Inbox"), QStringLiteral("IPF.Note"), {})}));
+        QCOMPARE(run.result.items_converted, 0);
+        QCOMPARE(run.result.itemsSkipped(), 0);
+        QVERIFY(run.result.errors.isEmpty());
+        QCOMPARE(sak::OstConverterController::classifyOutcome(run.result),
+                 sak::OstConversionJob::Status::Complete);
     }
 
     // Named after the folder, not the store's path to it: "Top of Personal Folders_Inbox" helps no
@@ -248,9 +355,9 @@ private Q_SLOTS:
 
     // An NST reads as an OST to the parser. It must be refused at the door, not "converted" to
     // nothing and reported Complete.
-    void theQueueRefusesAnNstAndAnythingElseNotPstOrOst() {
-        QVERIFY(!sak::OstConverterController::refusalForFile(QStringLiteral("C:/x/mail.nst"))
-                     .isEmpty());
+    void theQueueRefusesAnythingThatIsNotAnOutlookStore() {
+        QVERIFY(
+            sak::OstConverterController::refusalForFile(QStringLiteral("C:/x/mail.nst")).isEmpty());
         QVERIFY(
             !sak::OstConverterController::refusalForFile(QStringLiteral("C:/x/cal.ics")).isEmpty());
         QVERIFY(
@@ -258,7 +365,7 @@ private Q_SLOTS:
         QVERIFY(
             sak::OstConverterController::refusalForFile(QStringLiteral("C:/x/mail.ost")).isEmpty());
 
-        const QString path = m_dir.filePath(QStringLiteral("group.nst"));
+        const QString path = m_dir.filePath(QStringLiteral("calendar.ics"));
         QFile file(path);
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("x");
@@ -266,6 +373,14 @@ private Q_SLOTS:
         sak::OstConverterController controller;
         controller.addFile(path);
         QVERIFY(controller.queue().isEmpty());
+
+        const QString nst = m_dir.filePath(QStringLiteral("cache.nst"));
+        QFile nst_file(nst);
+        QVERIFY(nst_file.open(QIODevice::WriteOnly));
+        nst_file.write("x");
+        nst_file.close();
+        controller.addFile(nst);
+        QCOMPARE(controller.queue().size(), 1);
     }
 };
 

@@ -36,6 +36,44 @@ constexpr int kFromLineSenderOffset = 5;
 // Filename regex capture groups: 1 is the quoted value, 2 is the bare unquoted token.
 constexpr int kUnquotedFilenameGroup = 2;
 
+/// The file name a MIME part gives itself in @p header, or empty. filename*= is the RFC 5987 form
+/// the converter writes for a name with non-ASCII letters: charset'language'percent-encoded bytes.
+QString fileNameInHeader(const QString& header) {
+    static const QRegularExpression extended_form(
+        QStringLiteral(R"re((?:^|[;\s])filename\*\s*=\s*([^\x27;\s]*)\x27[^\x27]*\x27([^;\s]+))re"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto extended = extended_form.match(header);
+    if (extended.hasMatch()) {
+        const QByteArray bytes = QByteArray::fromPercentEncoding(extended.captured(2).toLatin1());
+        QStringDecoder decoder(extended.captured(1).toUtf8().constData());
+        return decoder.isValid() ? QString(decoder.decode(bytes)) : QString::fromUtf8(bytes);
+    }
+    // A quoted value may legitimately contain spaces (filename="my report.pdf"); capture the whole
+    // quoted string in group 1, and fall back to an unquoted token (group 2) for bare values.
+    static const QRegularExpression plain_form(
+        QStringLiteral(
+            R"re((?:^|[;\s])(?:file)?name\s*=\s*(?:\x22([^\x22]*)\x22|([^\x22;\s]+)))re"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto plain = plain_form.match(header);
+    if (!plain.hasMatch()) {
+        return {};
+    }
+    return plain.captured(1).isNull() ? plain.captured(kUnquotedFilenameGroup) : plain.captured(1);
+}
+
+QString partFileName(const QString& content_type, const QString& disposition) {
+    const QString from_disposition = fileNameInHeader(disposition);
+    return from_disposition.isEmpty() ? fileNameInHeader(content_type) : from_disposition;
+}
+
+/// A part that names a file is a file, whatever else it says. Real stores give ordinary text
+/// attachments a Content-ID, which the writer keeps as an inline disposition: read as text, one
+/// replaced the message's body and was lost as an attachment.
+bool isFilePart(const QString& content_type, const QString& disposition) {
+    return disposition.startsWith(QLatin1String("attachment"), Qt::CaseInsensitive) ||
+           !partFileName(content_type, disposition).isEmpty();
+}
+
 /// Header-level attachment heuristic for the summary list. Mirrors the classification
 /// parseMimeMessage applies to full bodies: any multipart/* may carry parts, an explicit
 /// attachment disposition, or a single non-text part all count as "has attachments". The old
@@ -44,7 +82,7 @@ bool summaryHasAttachments(const QString& content_type, const QString& dispositi
     if (content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
         return true;
     }
-    if (disposition.startsWith(QLatin1String("attachment"), Qt::CaseInsensitive)) {
+    if (isFilePart(content_type, disposition)) {
         return true;
     }
     return !content_type.isEmpty() &&
@@ -227,12 +265,14 @@ void MboxParser::indexMessages() {
         return;
     }
 
-    m_cancelled.store(false, std::memory_order_relaxed);
+    // The flag is not cleared here: open() did that, and a Stop that lands before this task starts
+    // must still stop it. Waiting for a task that has not started runs it on the waiting thread, so
+    // clearing it let such a Stop count the whole mailbox and announce a file it was closing.
     Q_EMIT progressUpdated(0, QStringLiteral("Indexing messages..."));
 
     const auto index_result = buildMessageIndex();
     if (!index_result && index_result.error() == error_code::operation_cancelled) {
-        Q_EMIT errorOccurred(QStringLiteral("Indexing cancelled"));
+        // Whoever stopped it knows. Being stopped is not a failure to report.
         return;
     }
     if (!index_result) {
@@ -686,21 +726,8 @@ void MboxParser::appendAttachment(const MimePartInfo& part,
     att.mime_type = part.content_type.section(QLatin1Char(';'), 0, 0).trimmed();
     att.attach_method = sak::email::kAttachByValue;
 
-    // A quoted value may legitimately contain spaces (filename="my report.pdf"); capture the whole
-    // quoted string in group 1, and fall back to an unquoted token (group 2) for bare values.
-    static const QRegularExpression filename_regex(
-        QStringLiteral(R"re(filename\s*=\s*(?:"([^"]*)"|([^";\s]+)))re"),
-        QRegularExpression::CaseInsensitiveOption);
-    auto fn_match = filename_regex.match(part.disposition);
-    if (!fn_match.hasMatch()) {
-        fn_match = filename_regex.match(part.content_type);
-    }
-    if (fn_match.hasMatch()) {
-        att.long_filename = fn_match.captured(1).isNull()
-                                ? fn_match.captured(kUnquotedFilenameGroup)
-                                : fn_match.captured(1);
-        att.filename = att.long_filename;
-    }
+    att.long_filename = partFileName(part.content_type, part.disposition);
+    att.filename = att.long_filename;
 
     const QByteArray decoded = decodeTransferEncoding(part.body, part.encoding);
     att.size_bytes = decoded.size();
@@ -765,8 +792,7 @@ void MboxParser::processMimePart(const QByteArray& part,
         return;
     }
 
-    const bool is_attachment = part_disp.startsWith(QLatin1String("attachment"),
-                                                    Qt::CaseInsensitive);
+    const bool is_attachment = isFilePart(part_ct, part_disp);
     const bool is_non_text = !part_ct.startsWith(QLatin1String("text/"), Qt::CaseInsensitive) &&
                              !part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive);
 
@@ -811,8 +837,7 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
 
     if (!content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
         const QString disposition = headers.value(QStringLiteral("content-disposition"));
-        const bool is_attachment = disposition.startsWith(QLatin1String("attachment"),
-                                                          Qt::CaseInsensitive);
+        const bool is_attachment = isFilePart(content_type, disposition);
         const bool is_non_text = !content_type.startsWith(QLatin1String("text/"),
                                                           Qt::CaseInsensitive);
         if (is_attachment || is_non_text) {
