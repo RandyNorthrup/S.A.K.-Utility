@@ -4,6 +4,8 @@
 #include "sak/linux_distro_catalog.h"
 #include "sak/network_transfer_runner.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -40,6 +42,7 @@ private Q_SLOTS:
     void testResolveDownloadUrl();
     void testResolveChecksumUrl();
     void testResolveFileName();
+    void testVentoysReleaseChecksumFileIsPinned();
     void testResolveGitHubReleaseBranch();
     void testResolveGitHubReleaseCachedAsset();
 
@@ -111,10 +114,42 @@ void TestLinuxDistroCatalog::testAllDistrosHavePositiveSize() {
     // is untouched. The picker would then advertise "530.0 KB" for a 530 MiB ISO
     // (linux_iso_download_dialog.cpp:343-344). Pin the four MiB-derived entries exactly --
     // integer arithmetic, no float rounding.
-    QCOMPARE(m_catalog->distroById("clonezilla").approximateSize, Q_INT64_C(555'745'280));
+    QCOMPARE(m_catalog->distroById("clonezilla").approximateSize, Q_INT64_C(505'413'632));
     QCOMPARE(m_catalog->distroById("gparted-live").approximateSize, Q_INT64_C(680'525'824));
-    QCOMPARE(m_catalog->distroById("shredos").approximateSize, Q_INT64_C(943'718'400));
-    QCOMPARE(m_catalog->distroById("ventoy").approximateSize, Q_INT64_C(205'520'896));
+    QCOMPARE(m_catalog->distroById("shredos").approximateSize, Q_INT64_C(358'612'992));
+    QCOMPARE(m_catalog->distroById("ventoy").approximateSize, Q_INT64_C(196'083'712));
+}
+
+// Ventoy publishes one sha256.txt for its whole release rather than a sidecar per file. Real asset
+// names from the v1.1.18 release.
+void TestLinuxDistroCatalog::testVentoysReleaseChecksumFileIsPinned() {
+    LinuxDistroCatalog catalog;
+    auto d = catalog.distroById("ventoy");
+    const auto asset = [](const QString& name) {
+        QJsonObject object;
+        object["name"] = name;
+        object["browser_download_url"] =
+            QString("https://github.com/ventoy/Ventoy/releases/download/v1.1.18/") + name;
+        return object;
+    };
+    const QJsonArray assets = {asset("sha256.txt"),
+                               asset("ventoy-1.1.18-linux.tar.gz"),
+                               asset("ventoy-1.1.18-livecd.iso"),
+                               asset("ventoy-1.1.18-windows.zip")};
+    catalog.cacheChecksumSidecar(d.id, "ventoy-1.1.18-livecd.iso", d.checksumType, assets);
+    QCOMPARE(catalog.resolveChecksumUrl(d),
+             QString("https://github.com/ventoy/Ventoy/releases/download/v1.1.18/sha256.txt"));
+
+    // ShredOS's sidecar named after the asset still wins that name, and an unrelated .txt is not
+    // taken for a checksum file.
+    LinuxDistroCatalog other;
+    auto shredos = other.distroById("shredos");
+    other.cacheChecksumSidecar(shredos.id,
+                               "shredos-x86-64.iso",
+                               shredos.checksumType,
+                               {asset("sha256.txt"), asset("notes.txt")});
+    QVERIFY2(other.resolveChecksumUrl(shredos).isEmpty(),
+             "a sha256 file is no use to an entry verifying with sha1");
 }
 
 void TestLinuxDistroCatalog::testNoDuplicateIds() {
@@ -135,7 +170,7 @@ void TestLinuxDistroCatalog::testCategoryNames() {
     QCOMPARE(names.value(LinuxDistroCatalog::Category::GeneralPurpose),
              QStringLiteral("General Purpose"));
     QCOMPARE(names.value(LinuxDistroCatalog::Category::Security),
-             QStringLiteral("Security && Pen-Testing"));
+             QStringLiteral("Security & Pen-Testing"));
     QCOMPARE(names.value(LinuxDistroCatalog::Category::SystemRecovery),
              QStringLiteral("System Recovery"));
     QCOMPARE(names.value(LinuxDistroCatalog::Category::DiskTools), QStringLiteral("Disk Tools"));
@@ -465,7 +500,7 @@ void TestLinuxDistroCatalog::testMetadataFetch_httpFailure() {
     QTRY_COMPARE(failed_spy.count(), 1);
     QVERIFY(!succeeded);
     QVERIFY(failed_spy.at(0).at(1).toString().contains(QStringLiteral("HTTP 503")));
-    QCOMPARE(catalog.distroById(QStringLiteral("ventoy")).version, QStringLiteral("1.1.12"));
+    QCOMPARE(catalog.distroById(QStringLiteral("ventoy")).version, QStringLiteral("1.1.18"));
 }
 
 void TestLinuxDistroCatalog::testMetadataFetch_positiveControl() {

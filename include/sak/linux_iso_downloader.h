@@ -35,6 +35,8 @@
  * @see LinuxISODownloadDialog for the UI
  */
 class LinuxISODownloader : public QObject {
+    friend class LinuxISODownloaderTests;  // the checksum-name rule, without a real download
+
     Q_OBJECT
 
 public:
@@ -215,6 +217,11 @@ private:
     /// @brief Launch the background file-hash + gen-tagged verify watcher.
     void launchChecksumHash(QCryptographicHash::Algorithm algorithm, const QString& expectedHash);
     QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
+    /// @brief The digest @p checksumData gives for the file upstream published, which is what is
+    ///        verified whatever the local copy was saved as.
+    [[nodiscard]] QString expectedHashFor(const QString& checksumData) const {
+        return parseExpectedHash(checksumData, m_expectedFileName);
+    }
     /// @brief Hex-character count a digest of the configured checksum type must have.
     [[nodiscard]] qsizetype expectedHashHexLength() const;
     /// @brief Digest for @p expectedFileName carried by a single "hash filename" record line,

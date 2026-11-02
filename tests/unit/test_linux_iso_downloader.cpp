@@ -63,7 +63,8 @@ private Q_SLOTS:
 
     // URL resolution -- SourceForge
     void testResolveSourceForgeUrl_SystemRescue();
-    void testResolveSourceForgeUrl_Clonezilla();
+    void testChecksumMatchesTheUpstreamNameNotTheSavedName();
+    void testClonezillaIsARollingEntryFromItsOwnMirror();
     void testResolveSourceForgeUrl_GParted();
 
     // URL resolution -- GitHub
@@ -74,7 +75,6 @@ private Q_SLOTS:
     void testResolveChecksumUrl_Ubuntu();
     void testResolveChecksumUrl_SystemRescue();
     void testResolveChecksumUrl_GParted();
-    void testResolveChecksumUrl_NoChecksum_Clonezilla();
     void testEveryPinnedChecksumUrlIsHttpsAndPerRelease();
     void testParseExpectedHash_requiresRealDigest();
     void testChecksumSectionAlgorithm_separatesSameLengthDigests();
@@ -235,7 +235,7 @@ void LinuxISODownloaderTests::testCategoryNames() {
     // check could protect, and one that silently renders as "Security  Pen-Testing" if lost.
     QCOMPARE(names.size(), 5);
     QCOMPARE(names[LinuxDistroCatalog::Category::GeneralPurpose], QString("General Purpose"));
-    QCOMPARE(names[LinuxDistroCatalog::Category::Security], QString("Security && Pen-Testing"));
+    QCOMPARE(names[LinuxDistroCatalog::Category::Security], QString("Security & Pen-Testing"));
     QCOMPARE(names[LinuxDistroCatalog::Category::SystemRecovery], QString("System Recovery"));
     QCOMPARE(names[LinuxDistroCatalog::Category::DiskTools], QString("Disk Tools"));
     QCOMPARE(names[LinuxDistroCatalog::Category::Utilities], QString("Utilities"));
@@ -349,14 +349,65 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_SystemRescue() {
                      "13.00/systemrescue-13.00-amd64.iso/download"));
 }
 
-void LinuxISODownloaderTests::testResolveSourceForgeUrl_Clonezilla() {
-    auto d = m_catalog->distroById("clonezilla");
-    QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
+// The checksum is matched against the name upstream published, whatever this copy was saved as.
+// A Save Location with any other name used to fail here, after the whole download.
+void LinuxISODownloaderTests::testChecksumMatchesTheUpstreamNameNotTheSavedName() {
+    LinuxISODownloader downloader;
+    downloader.m_checksumType = QStringLiteral("sha1");
+    downloader.m_expectedFileName =
+        QStringLiteral("shredos-2025.11_32_x86-64_v0.43.1_20261010.iso");
+    downloader.m_savePath = QDir::tempPath() + QStringLiteral("/shredos.iso");
+    // ShredOS's real sidecar for that release, byte for byte.
+    const QString sidecar = QStringLiteral(
+        "4427ccdcb358b7e77a66629a54f6390efdbf71b4  "
+        "shredos-2025.11_32_x86-64_v0.43.1_20261010.iso\n");
+    QCOMPARE(downloader.expectedHashFor(sidecar),
+             QStringLiteral("4427ccdcb358b7e77a66629a54f6390efdbf71b4"));
+    // And the release's real file names show the entry picks the full 64-bit ISO, not a variant.
+    const QRegularExpression pattern(m_catalog->distroById("shredos").githubAssetPattern,
+                                     QRegularExpression::CaseInsensitiveOption);
+    QVERIFY(pattern.match("shredos-2025.11_32_x86-64_v0.43.1_20261010.iso").hasMatch());
+    QVERIFY(!pattern.match("shredos-2025.11_32_x86-64_v0.43.1_20261010_lite.iso").hasMatch());
+    QVERIFY(
+        !pattern.match("shredos-2025.11_32_x86-64_v0.43.1_20261010_plus-partition.iso").hasMatch());
+    QVERIFY(!pattern.match("shredos-2025.11_32_i686_v0.43.1_20261010_lite.iso").hasMatch());
+    QVERIFY(!pattern.match("shredos-2025.11_32_x86-64_v0.43.1_20261010.iso.sha1").hasMatch());
+}
 
-    QString url = m_catalog->resolveDownloadUrl(d);
-    QCOMPARE(url,
-             QString("https://sourceforge.net/projects/clonezilla/files/clonezilla_live_stable/"
-                     "3.3.1-35/clonezilla-live-3.3.1-35-amd64.iso/download"));
+// Clonezilla's mirror keeps only the current release in stable/, so its name comes from the
+// SHA256SUMS beside it. The text below is that file as published for 3.3.3-37, byte for byte.
+void LinuxISODownloaderTests::testClonezillaIsARollingEntryFromItsOwnMirror() {
+    auto d = m_catalog->distroById("clonezilla");
+    QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::DirectURL);
+    QCOMPARE(m_catalog->resolveDownloadUrl(d),
+             QString("https://free.nchc.org.tw/clonezilla-live/stable/"
+                     "clonezilla-live-") +
+                 d.version + QString("-amd64.iso"));
+    QCOMPARE(m_catalog->resolveChecksumUrl(d),
+             QString("https://free.nchc.org.tw/clonezilla-live/stable/SHA256SUMS"));
+    QCOMPARE(d.checksumType, QString("sha256"));
+
+    const QString published = QStringLiteral(
+        "3079458d926a37d3533e5d5caeb61b6e49c2dc69e2c97e0332ef37986bb3414f  "
+        "clonezilla-live-3.3.3-37-amd64.iso\n"
+        "bbb02b409708cf37774debe00f96c642c59c48ebb216f7349dc2252f705ff10e  "
+        "clonezilla-live-3.3.3-37-amd64.zip\n");
+    // The ISO, not the .zip beside it, whichever the file happens to list first.
+    QCOMPARE(LinuxDistroCatalog::filenameFromChecksums(published, d.rollingFilenamePattern),
+             QString("clonezilla-live-3.3.3-37-amd64.iso"));
+    const QString zip_first = QStringLiteral(
+        "bbb02b409708cf37774debe00f96c642c59c48ebb216f7349dc2252f705ff10e  "
+        "clonezilla-live-3.3.3-37-amd64.zip\n"
+        "3079458d926a37d3533e5d5caeb61b6e49c2dc69e2c97e0332ef37986bb3414f  "
+        "clonezilla-live-3.3.3-37-amd64.iso\n");
+    QCOMPARE(LinuxDistroCatalog::filenameFromChecksums(zip_first, d.rollingFilenamePattern),
+             QString("clonezilla-live-3.3.3-37-amd64.iso"));
+
+    LinuxISODownloader downloader;
+    downloader.m_checksumType = QStringLiteral("sha256");
+    downloader.m_expectedFileName = QStringLiteral("clonezilla-live-3.3.3-37-amd64.iso");
+    QCOMPARE(downloader.expectedHashFor(published),
+             QStringLiteral("3079458d926a37d3533e5d5caeb61b6e49c2dc69e2c97e0332ef37986bb3414f"));
 }
 
 void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted() {
@@ -426,15 +477,6 @@ void LinuxISODownloaderTests::testResolveChecksumUrl_GParted() {
              QString("https://downloads.sourceforge.net/project/gparted/gparted-live-stable/"
                      "1.8.1-3/gparted-live-1.8.1-3-README.md"));
     QCOMPARE(d.checksumType, QString("sha256"));
-}
-
-void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_Clonezilla() {
-    // Clonezilla publishes no checksum at a URL that addresses one release for its whole life
-    // (see the note in linux_distro_catalog.cpp), so it stays deliberately unpinned -- and
-    // therefore refused by requirePinnedChecksum rather than downloaded unverified.
-    auto d = m_catalog->distroById("clonezilla");
-    QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(url.isEmpty());
 }
 
 void LinuxISODownloaderTests::testParseExpectedHash_requiresRealDigest() {
@@ -579,7 +621,7 @@ void LinuxISODownloaderTests::testResolveFileName_GitHubTemplate() {
     // GitHub-backed distros keep a deterministic filename template before live asset
     // resolution. The old guarded check was VACUOUS whenever fileName was empty -- which is
     // precisely the regression (a dropped template) it was meant to catch.
-    QCOMPARE(filename, QString("ventoy-1.1.12-livecd.iso"));
+    QCOMPARE(filename, QString("ventoy-") + d.version + QString("-livecd.iso"));
 }
 
 // ============================================================================
@@ -653,7 +695,7 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_NoMatchingAsset() {
     QVERIFY(!regex.match("README.md").hasMatch());
 
     // Should match ISO files
-    QVERIFY(regex.match("shredos-v2025.11_30_x86-64_0.41.iso").hasMatch());
+    QVERIFY(regex.match("shredos-2025.11_32_x86-64_v0.43.1_20261010.iso").hasMatch());
 }
 
 void LinuxISODownloaderTests::testArchLinuxCatalogEntry() {
@@ -719,22 +761,22 @@ void LinuxISODownloaderTests::testStartDownload_WhileDownloading() {
 
 void LinuxISODownloaderTests::testStartDownload_RefusesReleaseWithoutPinnedChecksum() {
     // R5-P5-11: a downloaded ISO is written to bootable media. A catalog entry with no pinned
-    // checksum could not be verified at all, and the SourceForge download URL redirects onto
-    // mirrors that may serve the file over plain HTTP -- so the download previously completed
-    // as an explicitly-unverified artifact. It is now refused up front instead.
-    auto clonezilla = m_catalog->distroById("clonezilla");
-    QVERIFY(m_catalog->resolveChecksumUrl(clonezilla).isEmpty());
-
+    // checksum could not be verified at all, and a download URL may redirect onto mirrors that
+    // serve the file over plain HTTP -- so the download previously completed as an
+    // explicitly-unverified artifact. It is now refused up front instead. Every shipped entry now
+    // has a checksum, so the guard is driven directly.
     LinuxISODownloader downloader;
     QSignalSpy errorSpy(&downloader, &LinuxISODownloader::downloadError);
-    downloader.startDownload("clonezilla", QDir::tempPath() + "/sak-test-clonezilla.iso");
+    downloader.m_checksumUrl.clear();
+    downloader.m_checksumType = QStringLiteral("sha256");
+    QVERIFY(!downloader.requirePinnedChecksum(QStringLiteral("Some Distro")));
 
     QCOMPARE(errorSpy.count(), 1);
     // The whole refusal, naming the distro and the reason. "mentions checksum" was equally
     // satisfied by a checksum DOWNLOAD failure or a mismatch, neither of which proves the
     // download was refused BEFORE any bytes were fetched.
     QCOMPARE(errorSpy.at(0).at(0).toString(),
-             QString("No pinned checksum is published for Clonezilla Live; refusing to download "
+             QString("No pinned checksum is published for Some Distro; refusing to download "
                      "an ISO whose integrity cannot be verified before it is written to "
                      "removable media."));
     QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Failed);
@@ -967,7 +1009,7 @@ void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
                  qPrintable("SF filename missing version: " + d.id + " -> " + filename));
     }
     // systemrescue, clonezilla, gparted-live.
-    QCOMPARE(sourceForgeChecked, 3);
+    QCOMPARE(sourceForgeChecked, 2);
 }
 
 QTEST_GUILESS_MAIN(LinuxISODownloaderTests)

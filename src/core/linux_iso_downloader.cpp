@@ -282,8 +282,7 @@ void LinuxISODownloader::applyDiscoveredFilename(const QString& filename) {
     // Swap ONLY the last path segment of the download URL and the save path to the
     // discovered filename, keeping the pinned host/directory and the user's chosen
     // folder. filenameFromChecksums already guaranteed a bare filename (no path
-    // separators), so this cannot redirect the download elsewhere. The checksum
-    // verify reads QFileInfo(m_savePath).fileName(), so all three must agree.
+    // separators), so this cannot redirect the download elsewhere.
     m_expectedFileName = filename;
 
     const int urlSlash = static_cast<int>(m_downloadUrl.lastIndexOf('/'));
@@ -781,8 +780,10 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
     }
 
     const QString checksumData = QString::fromUtf8(result.body);
-    const QString expectedFileName = QFileInfo(m_savePath).fileName();
-    const QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
+    // The name upstream published, not the name this copy was saved under. The checksum file only
+    // knows the former, and the Save Location belongs to the user.
+    const QString expectedFileName = m_expectedFileName;
+    const QString expectedHash = expectedHashFor(checksumData);
 
     if (expectedHash.isEmpty()) {
         const QString error = "Could not find matching hash in checksum file for: " +

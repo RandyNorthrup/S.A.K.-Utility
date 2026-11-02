@@ -307,12 +307,13 @@ void LinuxISODownloadDialog::onDistroSelected() {
 
     updateDistroDetails();
 
-    // Set default save path using the distro's expected filename
+    // Set default save path using the distro's expected filename. An entry whose name is only known
+    // once its latest release has been looked up (ShredOS) still gets a sensible default: what the
+    // file is called here does not matter to the checksum, which goes by the upstream name.
+    Q_ASSERT(m_saveLocationEdit);
     const QString file_name = m_downloader->catalog()->resolveFileName(distro);
-    if (!file_name.isEmpty()) {
-        Q_ASSERT(m_saveLocationEdit);
-        m_saveLocationEdit->setText(getDefaultSavePath(file_name));
-    }
+    m_saveLocationEdit->setText(
+        getDefaultSavePath(file_name.isEmpty() ? distro.id + QStringLiteral(".iso") : file_name));
 
     updateStartButton();
 }

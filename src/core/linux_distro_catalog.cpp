@@ -37,12 +37,12 @@ constexpr double kLinuxMintSizeGiB = 2.9;
 constexpr double kFedoraWorkstationSizeGiB = 2.7;
 constexpr double kDebianLiveSizeGiB = 3.6;
 constexpr double kArchLinuxSizeGiB = 1.4;
-constexpr qint64 kClonezillaSizeMiB = 530;
+constexpr qint64 kClonezillaSizeMiB = 482;
 constexpr qint64 kGpartedSizeMiB = 649;
-constexpr qint64 kShredOsSizeMiB = 900;
+constexpr qint64 kShredOsSizeMiB = 342;
 constexpr double kKaliSizeGiB = 4.4;
 constexpr double kSystemRescueSizeGiB = 1.3;
-constexpr qint64 kVentoySizeMiB = 196;
+constexpr qint64 kVentoySizeMiB = 187;
 
 // Upper bound on an untrusted GitHub releases/latest JSON body. A real response is a few
 // hundred KiB at most; anything past this cap is aborted/rejected rather than buffered and
@@ -224,20 +224,15 @@ DistroInfo archLinuxDistro() {
 // against before it is written to bootable media. Adding a verified per-release checksum URL
 // re-enables the entry; guessing one would defeat the check it is supposed to provide.
 //
-// Clonezilla Live is the one entry with no pinnable checksum. Verified against upstream:
-//   - the SourceForge release directory that serves the ISO
-//     (clonezilla_live_stable/{version}/) contains ONLY the .iso and .zip; CHECKSUMS.TXT and
-//     SHA256SUMS both 404 there;
-//   - the project's own mirror publishes CHECKSUMS.TXT/SHA256SUMS, but the path is not stable
-//     across a release's lifetime: the current release sits in clonezilla-live/stable/ (whose
-//     SHA256SUMS lists only that one version) and moves to clonezilla-live/old/{version}/ once
-//     superseded, and older per-version directories are pruned empty.
-// No single {version}-templated URL therefore addresses a given release for its whole life, so
-// this entry stays refused rather than carrying a URL that resolves for a while and then rots.
+// Clonezilla Live is a rolling entry, like Debian's. Verified against upstream: the project's own
+// mirror keeps only the current release in clonezilla-live/stable/, with a SHA256SUMS beside it
+// that lists exactly that release, and moves a release away once it is superseded. SourceForge's
+// release directory has no checksum file at all. So the current name is read from that SHA256SUMS,
+// and the ISO comes from the same directory the checksum describes.
 DistroInfo clonezillaDistro() {
     return {.id = "clonezilla",
             .name = "Clonezilla Live",
-            .version = "3.3.1-35",
+            .version = "3.3.3-37",
             .versionLabel = "Stable (Debian-based)",
             /*.description =*/
             .description =
@@ -245,20 +240,19 @@ DistroInfo clonezillaDistro() {
                 "for backup, migration, or mass deployment. Supports multicasting "
                 "for deploying to many machines simultaneously.",
             .category = DistroCategory::DiskTools,
-            .sourceType = DistroSourceType::SourceForge,
-            /*.downloadUrl =*/
+            .sourceType = DistroSourceType::DirectURL,
             .downloadUrl =
-                "https://sourceforge.net/projects/clonezilla/files/"
-                "clonezilla_live_stable/{version}/"
-                "clonezilla-live-{version}-amd64.iso/download",
-            .checksumUrl = {},  // See the note above: no lifetime-stable per-release URL
-            .checksumType = {},
+                "https://free.nchc.org.tw/clonezilla-live/stable/"
+                "clonezilla-live-{version}-amd64.iso",
+            .checksumUrl = "https://free.nchc.org.tw/clonezilla-live/stable/SHA256SUMS",
+            .checksumType = "sha256",
             .fileName = "clonezilla-live-{version}-amd64.iso",
             .approximateSize = sizeFromMiB(kClonezillaSizeMiB),
             .homepage = "https://clonezilla.org",
             .githubOwner = {},
             .githubRepo = {},
-            .githubAssetPattern = {}};
+            .githubAssetPattern = {},
+            .rollingFilenamePattern = R"(^clonezilla-live-[0-9][0-9.\-]*-amd64\.iso$)"};
 }
 
 DistroInfo gpartedDistro() {
@@ -299,8 +293,8 @@ DistroInfo gpartedDistro() {
 DistroInfo shredOsDistro() {
     return {.id = "shredos",
             .name = "ShredOS",
-            .version = "v2025.11_30_x86-64_0.41",
-            .versionLabel = "nwipe 0.41",
+            .version = "v2025.11_32_x86-64_0.43.1",
+            .versionLabel = "nwipe 0.43.1",
             /*.description =*/
             .description =
                 "Bootable secure disk erasure tool powered by nwipe. Wipes drives "
@@ -318,7 +312,8 @@ DistroInfo shredOsDistro() {
             .homepage = "https://github.com/PartialVolume/shredos.x86_64",
             .githubOwner = "PartialVolume",
             .githubRepo = "shredos.x86_64",
-            .githubAssetPattern = R"(shredos.*x86-64.*\.iso$)"};
+            // The full 64-bit ISO, not the _lite or _plus-partition builds a release also carries.
+            .githubAssetPattern = R"(^shredos-.*_x86-64_v[^_]+_[0-9]+\.iso$)"};
 }
 
 }  // namespace
@@ -435,7 +430,7 @@ void LinuxDistroCatalog::addDiskToolDistros() {
 void LinuxDistroCatalog::addUtilityDistros() {
     addDistro({.id = "ventoy",
                .name = "Ventoy LiveCD",
-               .version = "1.1.12",
+               .version = "1.1.18",
                .versionLabel = {},
                /*.description =*/
                .description = "Multi-boot USB solution. Install Ventoy to a USB drive, then "
@@ -445,12 +440,12 @@ void LinuxDistroCatalog::addUtilityDistros() {
                .category = Category::Utilities,
                .sourceType = SourceType::GitHubRelease,
                .downloadUrl = {},  // Resolved via GitHub Releases API
-               // Resolved from the release's .sha256 sidecar asset by cacheChecksumSidecar; a
-               // release that ships no sidecar has nothing to pin and the download is refused.
+               // Resolved from the release's sha256.txt by cacheChecksumSidecar; a release that
+               // ships no checksums has nothing to pin and the download is refused.
                .checksumUrl = {},
                .checksumType = "sha256",
                .fileName = "ventoy-{version}-livecd.iso",
-               .approximateSize = sizeFromMiB(kVentoySizeMiB),  // ~196 MB
+               .approximateSize = sizeFromMiB(kVentoySizeMiB),
                .homepage = "https://www.ventoy.net",
                .githubOwner = "ventoy",
                .githubRepo = "Ventoy",
@@ -483,7 +478,7 @@ QList<LinuxDistroCatalog::DistroInfo> LinuxDistroCatalog::distrosByCategory(
 
 QMap<LinuxDistroCatalog::Category, QString> LinuxDistroCatalog::categoryNames() {
     return {{Category::GeneralPurpose, "General Purpose"},
-            {Category::Security, "Security && Pen-Testing"},
+            {Category::Security, "Security & Pen-Testing"},
             {Category::SystemRecovery, "System Recovery"},
             {Category::DiskTools, "Disk Tools"},
             {Category::Utilities, "Utilities"}};
@@ -794,11 +789,15 @@ void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
     if (checksumType.isEmpty()) {
         return;
     }
+    // Either a sidecar named after the asset, or one file for the whole release ("sha256.txt", as
+    // Ventoy publishes). The verify step finds the asset's own line by name, so an entry for the
+    // wrong file can never be the one compared.
     const QString sidecarName = matchedName + "." + checksumType.toLower();
+    const QString releaseManifestName = checksumType.toLower() + ".txt";
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
         const QString name = asset["name"].toString();
-        if (name == sidecarName) {
+        if (name == sidecarName || name.compare(releaseManifestName, Qt::CaseInsensitive) == 0) {
             const QString url = asset["browser_download_url"].toString();
             // Reject a non-HTTPS or malformed sidecar URL rather than caching it.
             if (QUrl(url).scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0) {
