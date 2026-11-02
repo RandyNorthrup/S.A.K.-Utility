@@ -1108,6 +1108,30 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     menu.exec(m_item_list->viewport()->mapToGlobal(pos));
 }
 
+void EmailInspectorPanel::addFolderExportActions(QMenu& menu,
+                                                 const sak::PstFolder* folder,
+                                                 std::optional<uint64_t> folder_id) {
+    const QString container_class = (folder != nullptr) ? folder->container_class : QString();
+    if (container_class.startsWith(QLatin1String("IPF.Task"))) {
+        menu.addAction(tr("Export Tasks as CSV..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::CsvTasks, folder_id);
+        });
+        return;
+    }
+    if (container_class.startsWith(QLatin1String("IPF.StickyNote"))) {
+        menu.addAction(tr("Export Notes as Text..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::PlainTextNotes, folder_id);
+        });
+        return;
+    }
+    menu.addAction(tr("Export Folder as EML..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::Eml, folder_id);
+    });
+    menu.addAction(tr("Export Folder as CSV..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::CsvEmails, folder_id);
+    });
+}
+
 void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = m_folder_tree->itemAt(pos);
     if (item == nullptr) {
@@ -1122,12 +1146,9 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     const std::optional<uint64_t> folder_id = sak::decodeEmailViewId(item->data(0, Qt::UserRole));
 
     QMenu menu(this);
-    menu.addAction(tr("Export Folder as EML..."), this, [this, folder_id] {
-        exportFolderAs(sak::ExportFormat::Eml, folder_id);
-    });
-    menu.addAction(tr("Export Folder as CSV..."), this, [this, folder_id] {
-        exportFolderAs(sak::ExportFormat::CsvEmails, folder_id);
-    });
+    addFolderExportActions(menu,
+                           sak::findFolderByNodeId(m_cached_folder_tree, folder_id),
+                           folder_id);
     menu.addSeparator();
     // Whole-store export. The OST Converter produces full mailbox files (MBOX); turning an
     // entire store into per-message files belongs here, next to the per-folder exports.
@@ -1459,7 +1480,8 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
     if (result == QDialog::Accepted) {
         const uint64_t folder_id = dialog.navigateFolderId();
         const uint64_t message_id = dialog.navigateMessageId();
-        if (folder_id != 0 && message_id != 0) {
+        // In an MBOX both ids are legitimately 0: the one folder, and the first message.
+        if (m_mbox_active || (folder_id != 0 && message_id != 0)) {
             m_current_folder_id = folder_id;
             m_current_page = 0;
             m_current_total = 0;
@@ -1576,8 +1598,9 @@ void EmailInspectorPanel::onFileOpened(sak::PstFileInfo info) {
     m_search_edit->setEnabled(true);
     m_search_button->setEnabled(true);
     m_export_emails_button->setEnabled(true);
-    m_contacts_button->setEnabled(true);
-    m_calendar_button->setEnabled(true);
+    // An MBOX holds only mail; its controller announces itself as MBOX just before this.
+    m_contacts_button->setEnabled(!m_mbox_active);
+    m_calendar_button->setEnabled(!m_mbox_active);
     m_attachments_button->setEnabled(true);
     updateFileInfoBar(info);
 }
@@ -1610,6 +1633,7 @@ void EmailInspectorPanel::onFileClosed() {
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
     m_cached_folder_tree.clear();
+    m_mbox_active = false;
     m_batch_save.reset();
 
     m_close_button->setEnabled(false);
@@ -1881,6 +1905,12 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
     // paging path treats as "no folder selected"; m_mbox_active tells reloadCurrentPage
     // that 0 is a real, loadable folder here so clicking the Inbox loads messages.
     m_mbox_active = true;
+    // One folder holding everything, so the Attachments Browser and "Export ALL" see the same
+    // shape of mailbox whichever kind of file is open.
+    sak::PstFolder mailbox;
+    mailbox.display_name = tr("Inbox");
+    mailbox.content_count = message_count;
+    m_cached_folder_tree = {mailbox};
     m_folder_tree->clear();
     auto* root = new QTreeWidgetItem(m_folder_tree);
     root->setText(0, tr("Inbox (%1 messages)").arg(message_count));
@@ -1893,7 +1923,7 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
 void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total) {
     // Terminal handler for the MBOX item-list fetch: lift the loading overlay.
     m_item_empty_state->clearLoading();
-    if (m_showing_search_results) {
+    if (m_dialog_active || m_showing_search_results) {
         return;
     }
     m_item_list->setSortingEnabled(false);
@@ -2180,10 +2210,11 @@ int EmailInspectorPanel::folderSortOrder(const QString& name, const QString& /*c
 
 // static
 bool EmailInspectorPanel::isHiddenFolder(const QString& name, const QString& container_class) {
-    // One definition, shared with the "Export ALL Mail Folders" walk: if the tree hid a
-    // folder the export still visited, the technician would get calendar entries written
-    // out as .eml files.
-    return !sak::isMailFolder(name, container_class);
+    // Tasks and notes are browsed here like mail, with their own preview. Everything else that is
+    // not mail stays out: contacts and calendars have their own windows, and the mail definition
+    // is shared with the "Export ALL Mail Folders" walk, which must never visit these.
+    return !sak::isMailFolder(name, container_class) &&
+           !sak::isTaskOrNoteFolder(name, container_class);
 }
 
 void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) {
@@ -2695,7 +2726,8 @@ bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& /*item*/) {
 }
 
 void EmailInspectorPanel::applyPageSize() {
-    if (m_current_folder_id == 0) {
+    // Folder id 0 is "nothing selected" in a PST or OST, but it is an MBOX's one real folder.
+    if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
     }
     m_current_page = 0;

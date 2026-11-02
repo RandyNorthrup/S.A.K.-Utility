@@ -286,6 +286,7 @@ void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,
     }
     ++m_folders_loaded;
     if (m_folders_loaded >= m_folder_ids.size()) {
+        loadContactDetails();
         filterContacts(m_search_edit->text());
         QString status = tr("%1 contacts").arg(m_all_contacts.size());
         if (m_truncated) {
@@ -296,8 +297,21 @@ void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,
     }
 }
 
+void EmailContactsDialog::loadContactDetails() {
+    // Item reads run on this thread, one at a time, so each reply lands before the next request.
+    m_loading_contact_details = true;
+    for (const auto& contact : m_all_contacts) {
+        m_controller->loadItemDetail(contact.node_id);
+    }
+    m_loading_contact_details = false;
+}
+
 void EmailContactsDialog::onDetailLoaded(const sak::PstItemDetail& detail) {
-    if (detail.item_type == EmailItemType::Contact || detail.item_type == EmailItemType::DistList) {
+    if (detail.item_type != EmailItemType::Contact && detail.item_type != EmailItemType::DistList) {
+        return;
+    }
+    m_contact_details.insert(detail.node_id, detail);
+    if (!m_loading_contact_details) {
         displayContactDetail(detail);
     }
 }
@@ -325,9 +339,10 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     for (int idx = 0; idx < m_all_contacts.size(); ++idx) {
         const auto& contact = m_all_contacts.at(idx);
         if (!filter.isEmpty()) {
+            const sak::PstItemDetail detail = m_contact_details.value(contact.node_id);
             const bool match = contact.subject.toLower().contains(filter) ||
-                               contact.sender_name.toLower().contains(filter) ||
-                               contact.sender_email.toLower().contains(filter);
+                               detail.email_address.toLower().contains(filter) ||
+                               detail.company_name.toLower().contains(filter);
             if (!match) {
                 continue;
             }
@@ -341,9 +356,14 @@ void EmailContactsDialog::filterContacts(const QString& text) {
         auto* name_item = new QTableWidgetItem(contact.subject);
         name_item->setData(Qt::UserRole, QVariant::fromValue(contact.node_id));
         m_contact_table->setItem(row, ColName, name_item);
-        m_contact_table->setItem(row, ColEmail, new QTableWidgetItem(contact.sender_email));
-        m_contact_table->setItem(row, ColCompany, new QTableWidgetItem(contact.sender_name));
-        m_contact_table->setItem(row, ColPhone, new QTableWidgetItem());
+        // The list's one phone column shows the first number the contact has.
+        const sak::PstItemDetail detail = m_contact_details.value(contact.node_id);
+        const QString phone = !detail.business_phone.isEmpty() ? detail.business_phone
+                              : !detail.mobile_phone.isEmpty() ? detail.mobile_phone
+                                                               : detail.home_phone;
+        m_contact_table->setItem(row, ColEmail, new QTableWidgetItem(detail.email_address));
+        m_contact_table->setItem(row, ColCompany, new QTableWidgetItem(detail.company_name));
+        m_contact_table->setItem(row, ColPhone, new QTableWidgetItem(phone));
     }
     m_contact_table->setSortingEnabled(true);
     m_contact_table->setUpdatesEnabled(true);

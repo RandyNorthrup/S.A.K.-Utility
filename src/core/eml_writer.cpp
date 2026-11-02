@@ -187,15 +187,49 @@ void appendBodyPart(QByteArray& eml,
     eml.append("\r\n");
 }
 
+// What the source says about the attachment written under @p name, if anything.
+const PstAttachmentInfo* attachmentInfoFor(const PstItemDetail& item, const QString& name) {
+    for (const auto& att : item.attachments) {
+        if ((att.long_filename.isEmpty() ? att.filename : att.long_filename) == name) {
+            return &att;
+        }
+    }
+    return nullptr;
+}
+
+// A Content-ID is a token inside angle brackets; one with spaces or controls would break the
+// header.
+QByteArray usableContentId(const QString& content_id) {
+    QString id = content_id;
+    if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>'))) {
+        id = id.mid(1, id.size() - 2);
+    }
+    static const QRegularExpression kToken(QStringLiteral("^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.@-]+$"));
+    return kToken.match(id).hasMatch() ? id.toLatin1() : QByteArray();
+}
+
 void appendAttachmentParts(QByteArray& eml,
                            const QByteArray& boundary,
+                           const PstItemDetail& item,
                            const QVector<QPair<QString, QByteArray>>& attachments) {
     for (const auto& [name, data] : attachments) {
         const QByteArray safe_name = sanitizeQuotedParam(name).toUtf8();
+        const PstAttachmentInfo* info = attachmentInfoFor(item, name);
+        const QByteArray content_id = (info != nullptr) ? usableContentId(info->content_id)
+                                                        : QByteArray();
+        const QByteArray type = (info != nullptr && !info->mime_type.isEmpty())
+                                    ? sanitizeQuotedParam(info->mime_type).toUtf8()
+                                    : QByteArray("application/octet-stream");
         eml.append("--" + boundary + "\r\n");
-        eml.append("Content-Type: application/octet-stream; name=\"" + safe_name + "\"\r\n");
+        eml.append("Content-Type: " + type + "; name=\"" + safe_name + "\"\r\n");
         eml.append("Content-Transfer-Encoding: base64\r\n");
-        eml.append("Content-Disposition: attachment; filename=\"" + safe_name + "\"\r\n");
+        // An inline picture keeps its Content-ID, or the body's cid: reference finds nothing.
+        eml.append("Content-Disposition: ");
+        eml.append(content_id.isEmpty() ? "attachment" : "inline");
+        eml.append("; filename=\"" + safe_name + "\"\r\n");
+        if (!content_id.isEmpty()) {
+            eml.append("Content-ID: <" + content_id + ">\r\n");
+        }
         eml.append("\r\n");
         eml.append(base64Wrapped(data));  // ends with CRLF
     }
@@ -227,7 +261,7 @@ void appendAttachmentParts(QByteArray& eml,
         appendBodyPart(eml, boundary, "Content-Type: text/html; charset=utf-8", item.body_html);
     }
 
-    appendAttachmentParts(eml, boundary, attachments);
+    appendAttachmentParts(eml, boundary, item, attachments);
     eml.append("--" + boundary + "--\r\n");
     return true;
 }

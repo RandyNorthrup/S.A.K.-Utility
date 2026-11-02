@@ -1654,7 +1654,6 @@ void EmailCalendarDialog::onItemsLoaded(uint64_t /*folder_id*/,
         evt.item_type = item.item_type;
         evt.subject = item.subject;
         evt.sender_name = item.sender_name;
-        evt.start_time = item.date;
         m_all_events.append(std::move(evt));
     }
 
@@ -1662,6 +1661,16 @@ void EmailCalendarDialog::onItemsLoaded(uint64_t /*folder_id*/,
     if (m_folders_loaded < m_folder_ids.size()) {
         return;
     }
+
+    // An event's day is its start, which only its full record holds. The contents table's date is
+    // when the item arrived, so placing events by it put a meeting on the day its invitation was
+    // sent. Item reads run on this thread, so each reply lands before the next request.
+    rebuildDateIndex();
+    m_loading_event_details = true;
+    for (const auto& evt : QVector<CalendarEvent>(m_all_events)) {
+        m_controller->loadItemDetail(evt.node_id);
+    }
+    m_loading_event_details = false;
 
     rebuildDateIndex();
     rebuildOrganizerFilter();
@@ -1698,6 +1707,9 @@ void EmailCalendarDialog::onDetailLoaded(sak::PstItemDetail detail) {
         evt.start_time = detail.start_time;
     }
 
+    if (m_loading_event_details) {
+        return;
+    }
     rebuildDateIndex();
     refreshAllViews();
 

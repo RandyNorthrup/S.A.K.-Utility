@@ -241,6 +241,14 @@ QString attachmentDisplayName(const sak::PstAttachmentInfo& att, int att_idx) {
     return name.isEmpty() ? QStringLiteral("attachment_%1").arg(att_idx) : name;
 }
 
+/// Whether an inline picture belongs in this export. HTML, PDF and EML show the message as it was
+/// written, pictures included. Saved attachments and text have nowhere to put them, so there the
+/// config decides, and pulling out every logo and signature picture is not what is usually wanted.
+bool keepsInlineImages(const sak::EmailExportConfig& config) {
+    return config.format == sak::ExportFormat::Html || config.format == sak::ExportFormat::Pdf ||
+           config.format == sak::ExportFormat::Eml || !config.skip_inline_images;
+}
+
 /// Whether an attachment should be extracted given the skip-inline and filter config.
 bool passesAttachmentFilter(const sak::PstAttachmentInfo& att,
                             const sak::EmailExportConfig& config) {
@@ -969,8 +977,10 @@ bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
         return false;
     }
     bytes_written += writer.totalBytesWritten() - before;
-    if (!saveSidecarAttachments(
-            attachment_data, write_result.value(), bytes_written, flatten_attachments)) {
+    if (!saveSidecarAttachments(sak::attachmentsNotInBody(item, attachment_data),
+                                write_result.value(),
+                                bytes_written,
+                                flatten_attachments)) {
         // A sidecar attachment failed: remove the .pdf so no partial artifact (a
         // message advertising attachments that are not on disk) is left behind.
         QFile::remove(write_result.value());
@@ -1360,7 +1370,7 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectAttachmentData
 
     for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
         const auto& att = item.attachments.at(att_idx);
-        if (config.skip_inline_images && !att.content_id.isEmpty()) {
+        if (!keepsInlineImages(config) && !att.content_id.isEmpty()) {
             continue;
         }
         const QString name = attachmentDisplayName(att, att_idx);
@@ -1375,7 +1385,9 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectAttachmentData
             ++out.dropped;
             continue;
         }
-        out.data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+        // The name stays as the source gave it, because the writers match it to the attachment's
+        // Content-ID. Each writer sanitizes it where it becomes a file name.
+        out.data.append({name, data.value()});
     }
 
     return out;
@@ -1395,7 +1407,7 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectMboxAttachment
 
     for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
         const auto& att = item.attachments.at(att_idx);
-        if (config.skip_inline_images && !att.content_id.isEmpty()) {
+        if (!keepsInlineImages(config) && !att.content_id.isEmpty()) {
             continue;
         }
         const QString name = attachmentDisplayName(att, att_idx);
@@ -1409,7 +1421,7 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectMboxAttachment
             ++out.dropped;
             continue;
         }
-        out.data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+        out.data.append({name, data.value()});
     }
 
     return out;

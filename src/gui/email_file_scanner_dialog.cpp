@@ -8,11 +8,13 @@
 
 #include "sak/email_constants.h"
 #include "sak/layout_constants.h"
+#include "sak/mbox_parser.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QHBoxLayout>
@@ -78,6 +80,16 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
     for (const auto& path : paths) {
         const QDir dir(path);
         if (!dir.exists()) {
+            continue;
+        }
+        if (dir.dirName() == QLatin1String("Profiles") &&
+            dir.absolutePath().contains(QLatin1String("Thunderbird"))) {
+            for (const QString& mailbox : EmailFileScannerDialog::thunderbirdMailboxes(path)) {
+                const QFileInfo info(mailbox);
+                results.append(ScannedFile{.path = info.absoluteFilePath(),
+                                           .size_bytes = info.size(),
+                                           .type = QStringLiteral("MBOX")});
+            }
             continue;
         }
         harvest(dir);
@@ -338,6 +350,29 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
 // ============================================================================
 
 // static
+QStringList EmailFileScannerDialog::thunderbirdMailboxes(const QString& profiles_dir) {
+    QStringList mailboxes;
+    const auto profiles = QDir(profiles_dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const auto& profile : profiles) {
+        for (const auto* store : {"Mail", "ImapMail"}) {
+            QDirIterator files(profile.absoluteFilePath() + QLatin1Char('/') + QLatin1String(store),
+                               QDir::Files | QDir::Readable,
+                               QDirIterator::Subdirectories);
+            while (files.hasNext()) {
+                const QFileInfo file(files.next());
+                // Index files (.msf), filters (.dat) and settings all have extensions. An empty
+                // mailbox, which every new folder starts as, has nothing to open.
+                if (file.suffix().isEmpty() && file.size() > 0 &&
+                    MboxParser::looksLikeMailbox(file.absoluteFilePath())) {
+                    mailboxes.append(file.absoluteFilePath());
+                }
+            }
+        }
+    }
+    return mailboxes;
+}
+
+// static
 QStringList EmailFileScannerDialog::commonScanPaths() {
     QStringList paths;
     const QString home = QDir::homePath();
@@ -351,9 +386,6 @@ QStringList EmailFileScannerDialog::commonScanPaths() {
 
     // Thunderbird profile directory
     paths << home + QStringLiteral("/AppData/Roaming/Thunderbird/Profiles");
-
-    // Windows Mail / eM Client
-    paths << home + QStringLiteral("/AppData/Roaming/eM Client");
 
     // Common backup locations on every writable drive, the system drive included: the home
     // paths above cover the profile, not <drive>:/Backups (C: used to be skipped as if they did).

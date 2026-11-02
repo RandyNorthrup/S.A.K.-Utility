@@ -26,6 +26,7 @@ class QTableWidget;
 class QTimer;
 class QVBoxLayout;
 class EmailAttachmentsBrowserDialogTests;
+class EmailToolsViewsTests;
 
 namespace sak::ui {
 class ViewEmptyState;
@@ -51,6 +52,7 @@ struct AttachmentEntry {
 class EmailAttachmentsBrowserDialog : public QDialog {
     Q_OBJECT
     friend class ::EmailAttachmentsBrowserDialogTests;
+    friend class ::EmailToolsViewsTests;
 
 public:
     explicit EmailAttachmentsBrowserDialog(::EmailInspectorController* controller,
@@ -75,6 +77,8 @@ private Q_SLOTS:
     void onFolderItemsFailed(uint64_t folder_id, int offset, const QString& error);
     void onItemDetailLoaded(sak::PstItemDetail detail);
     void onItemDetailFailed(uint64_t item_id, const QString& error);
+    void onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total);
+    void onMboxMessageDetailLoaded(sak::MboxMessageDetail detail);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
                                   const QByteArray& content,

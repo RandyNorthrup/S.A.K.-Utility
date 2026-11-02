@@ -8,9 +8,12 @@
 #include "sak/error_codes.h"
 #include "sak/pdf_email_writer.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -21,6 +24,49 @@ class TestPdfEmailWriter : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // A PDF export left a blank where each inline picture had been. A picture the body shows must
+    // make the file bigger by about what it weighs, and stay out of the attachment list.
+    void drawsInlinePicturesIntoThePage() {
+        constexpr int kImageSide = 200;
+        constexpr qint64 kMinimumGrowth = 10'000;
+        QImage image(kImageSide, kImageSide, QImage::Format_RGB32);
+        for (int y = 0; y < kImageSide; ++y) {
+            for (int x = 0; x < kImageSide; ++x) {
+                image.setPixel(x, y, QRandomGenerator::global()->generate());
+            }
+        }
+        QByteArray png;
+        QBuffer buffer(&png);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(image.save(&buffer, "PNG"));
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Storefront");
+        item.sender_name = QStringLiteral("Marisol Quint");
+        item.body_html =
+            QStringLiteral("<html><body><p>See <img src=\"cid:front@x\"></p></body></html>");
+        sak::PstAttachmentInfo picture;
+        picture.long_filename = QStringLiteral("front.png");
+        picture.content_id = QStringLiteral("front@x");
+        item.attachments = {picture};
+
+        QTemporaryDir with_dir;
+        QVERIFY(with_dir.isValid());
+        sak::PdfEmailWriter with_writer(with_dir.path(), false, false);
+        const auto with_image =
+            with_writer.writeMessage(item, {{picture.long_filename, png}}, QString());
+        QVERIFY(with_image.has_value());
+
+        QTemporaryDir without_dir;
+        QVERIFY(without_dir.isValid());
+        sak::PdfEmailWriter without_writer(without_dir.path(), false, false);
+        const auto without_image = without_writer.writeMessage(item, {}, QString());
+        QVERIFY(without_image.has_value());
+
+        QVERIFY2(QFileInfo(*with_image).size() > QFileInfo(*without_image).size() + kMinimumGrowth,
+                 "the picture's bytes reached the PDF");
+    }
+
 
     // ====================================================================
     // Happy Path -- Plain text message to PDF

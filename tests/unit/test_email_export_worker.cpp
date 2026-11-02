@@ -148,7 +148,8 @@ void verifyInlineKeepArmAndHtmlFormatRow(MboxParser& parser) {
     keep_written.close();
     QVERIFY(keep_bytes.contains("logo.png"));
     QVERIFY(keep_bytes.contains("SW5saW5lTG9nbw"));
-    QCOMPARE(keep_bytes.count("Content-Disposition: attachment;"), 2);
+    QCOMPARE(keep_bytes.count("Content-Disposition: attachment;"), 1);
+    QCOMPARE(keep_bytes.count("Content-Disposition: inline;"), 1);
 
     // The label comes from kExportFormatNames, an ORDERED table, and every assertion above
     // matches its FIRST row -- coverage shows the row comparison never once returned false, so
@@ -207,8 +208,8 @@ void verifyHeadersOnPathCarriesEveryHeader(MboxParser& parser,
 
 // The attachment BYTES must actually reach the written file: with an empty attachment vector
 // EmlWriter takes the simple text/plain branch and every count assertion in the caller still
-// passes. The inline part (Content-ID set) must equally be EXCLUDED -- skip_inline_images
-// defaults true, and without that skip every signature logo and tracking pixel is re-embedded.
+// passes. The inline part (Content-ID set) travels too, marked inline with its Content-ID: without
+// them the message's HTML body would show a broken picture.
 void verifyEmbeddedAttachmentBytesAndInlineSkip(const QString& out_dir,
                                                 const QString& eml_name,
                                                 const sak::EmailExportResult& result) {
@@ -226,11 +227,9 @@ void verifyEmbeddedAttachmentBytesAndInlineSkip(const QString& out_dir,
     // total_bytes is the writer's own byte counter; cross-check it against the file.
     QCOMPARE(result.total_bytes, static_cast<qint64>(eml_bytes.size()));
 
-    // ...and the INLINE part (Content-ID set) was EXCLUDED. skip_inline_images defaults true,
-    // so collectMboxAttachmentData must drop it before EmlWriter ever sees it; without that
-    // skip, every signature logo and tracking pixel is re-embedded as a full attachment part.
-    QVERIFY(!eml_bytes.contains("logo.png"));
-    QVERIFY(!eml_bytes.contains("SW5saW5lTG9nbw"));
+    // ...and the INLINE part went in as what it is, not as one more attachment.
+    QVERIFY(eml_bytes.contains("Content-Disposition: inline; filename=\"logo.png\""));
+    QVERIFY(eml_bytes.contains("SW5saW5lTG9nbw"));
     QCOMPARE(eml_bytes.count("Content-Disposition: attachment;"), 1);
 }
 

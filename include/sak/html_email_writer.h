@@ -64,4 +64,20 @@ private:
     qint64 m_bytes_written = 0;
 };
 
+/// True when @p name is an inline picture the message body itself shows (it has a Content-ID and
+/// the HTML body refers to it). Such an image is part of the body, not a file the reader was sent:
+/// exports put it in the body and do not list it again as an attachment.
+[[nodiscard]] bool isInlineBodyImage(const PstItemDetail& item, const QString& name);
+
+/// @p body_html with each inline picture's cid: reference replaced by the image itself, as a
+/// data: URI. The result needs nothing outside the document.
+[[nodiscard]] QString embedInlineImagesInHtml(
+    const PstItemDetail& item,
+    QString body_html,
+    const QVector<QPair<QString, QByteArray>>& attachments);
+
+/// @p attachments without the inline pictures the body already shows.
+[[nodiscard]] QVector<QPair<QString, QByteArray>> attachmentsNotInBody(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
+
 }  // namespace sak

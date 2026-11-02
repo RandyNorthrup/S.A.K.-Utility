@@ -165,7 +165,14 @@ void EmailInspectorController::openFile(const QString& file_path) {
         sak::logInfo("Opening {} file: {}", is_ost ? "OST" : "PST", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_pst_parser->open(file_path);
-    } else if (suffix == QStringLiteral("mbox")) {
+    } else if (suffix == QStringLiteral("nst")) {
+        m_file_type = FileType::None;
+        setState(State::Idle);
+        Q_EMIT errorOccurred(QStringLiteral(
+            "NST files, Outlook's cache of Microsoft 365 group mail, are not supported"));
+    } else if (suffix == QStringLiteral("mbox") ||
+               (suffix.isEmpty() && MboxParser::looksLikeMailbox(file_path))) {
+        // Thunderbird's mailboxes have no extension, so those are recognised by their contents.
         m_file_type = FileType::Mbox;
         sak::logInfo("Opening MBOX file: {}", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
@@ -508,6 +515,9 @@ void EmailInspectorController::runTracked(std::function<void()> task) {
 }
 
 void EmailInspectorController::cancelOperation() {
+    // Stopping while a mailbox is still being counted abandons the open: it has no message list
+    // to show, and leaving it half-open would leave the panel believing nothing is loaded.
+    const bool abandon_mbox_open = (m_state == State::Opening && m_file_type == FileType::Mbox);
     m_pst_parser->cancel();
     m_mbox_parser->cancel();
     m_search_worker->cancel();
@@ -521,6 +531,10 @@ void EmailInspectorController::cancelOperation() {
     // them running inside objects about to be freed.
     m_tasks.waitForFinished();
     m_tasks.clearFutures();
+    if (abandon_mbox_open) {
+        m_mbox_parser->close();
+        m_file_type = FileType::None;
+    }
     m_folder_request_pending = false;
     m_detail_request_pending = false;
     setState(State::Idle);
@@ -597,18 +611,32 @@ void EmailInspectorController::connectPstSignals() {
 }
 
 void EmailInspectorController::connectMboxSignals() {
-    connect(
-        m_mbox_parser.get(), &MboxParser::fileOpened, this, [this](const QString& path, int count) {
-            sak::PstFileInfo info;
-            info.file_path = path;
-            info.display_name = QFileInfo(info.file_path).fileName();
-            info.total_items = count;
-            info.is_unicode = true;
-            m_cached_file_info = info;
-            Q_EMIT mboxOpened(count);
-            Q_EMIT fileOpened(info);
-            setState(State::Idle);
-        });
+    // Opening checks the file is a mailbox; counting its messages means reading all of it, which
+    // on a large mailbox is not something to do on the GUI thread. The state stays Opening until
+    // the count is in, and the file is announced only then, with the real number.
+    connect(m_mbox_parser.get(), &MboxParser::fileOpened, this, [this](const QString& path) {
+        m_cached_file_info = {};
+        m_cached_file_info.file_path = path;
+        runTracked([this]() { m_mbox_parser->indexMessages(); });
+    });
+
+    connect(m_mbox_parser.get(), &MboxParser::indexingComplete, this, [this](int count) {
+        if (m_state != State::Opening) {
+            return;
+        }
+        const QFileInfo file(m_cached_file_info.file_path);
+        sak::PstFileInfo info;
+        info.file_path = m_cached_file_info.file_path;
+        info.display_name = file.fileName();
+        info.file_size_bytes = file.size();
+        info.total_items = count;
+        info.is_unicode = true;
+        info.last_modified = file.lastModified();
+        m_cached_file_info = info;
+        Q_EMIT mboxOpened(count);
+        Q_EMIT fileOpened(info);
+        setState(State::Idle);
+    });
 
     connect(m_mbox_parser.get(),
             &MboxParser::messagesLoaded,
@@ -640,6 +668,11 @@ void EmailInspectorController::connectMboxSignals() {
 }
 
 void EmailInspectorController::handleParserError(const QString& error) {
+    if (m_state == State::Opening && m_file_type == FileType::Mbox) {
+        // The mailbox could not be read through: nothing can be listed from it.
+        m_mbox_parser->close();
+        m_file_type = FileType::None;
+    }
     if (m_state == State::LoadingFolderItems && m_folder_request_pending) {
         Q_EMIT folderItemsFailed(m_pending_folder_id, m_pending_folder_offset, error);
     } else if (m_state == State::LoadingItemDetail && m_detail_request_pending) {

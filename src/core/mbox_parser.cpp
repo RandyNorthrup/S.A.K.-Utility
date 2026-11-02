@@ -194,12 +194,15 @@ void MboxParser::open(const QString& file_path) {
     m_file.seek(0);
     m_is_open = true;
 
-    // Estimate message count from file size (rough average ~5KB per message)
-    constexpr qint64 kAvgMessageSize = 5120;
-    const int estimated = static_cast<int>(std::min(
-        m_file.size() / kAvgMessageSize, static_cast<qint64>(sak::email::kMaxSearchResults)));
+    Q_EMIT fileOpened(file_path);
+}
 
-    Q_EMIT fileOpened(file_path, estimated);
+bool MboxParser::looksLikeMailbox(const QString& file_path) {
+    QFile file(file_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    return isCompleteFromLine(file.readLine(kFromLineProbeBytes));
 }
 
 void MboxParser::close() {

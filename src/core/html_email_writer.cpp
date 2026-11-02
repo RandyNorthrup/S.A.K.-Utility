@@ -46,11 +46,6 @@ QString contentIdForAttachmentName(const PstItemDetail& item, const QString& nam
     return QString();
 }
 
-/// Sanitize the untrusted email HTML, then substitute any cid: inline-image
-/// references (by Content-ID, filename fallback) with embedded data URIs.
-QString embedInlineImages(const PstItemDetail& item,
-                          const QVector<QPair<QString, QByteArray>>& attachments);
-
 /// Escape HTML special characters
 QString escapeHtml(const QString& text) {
     QString escaped = text;
@@ -77,34 +72,6 @@ QString detectImageMime(const QByteArray& data) {
         return QStringLiteral("image/webp");
     }
     return QString();
-}
-
-QString embedInlineImages(const PstItemDetail& item,
-                          const QVector<QPair<QString, QByteArray>>& attachments) {
-    // Strip active content (script/handlers/js: URIs/framing tags) before writing;
-    // the page CSP is the hard backstop for anything that slips past.
-    QString body_html = sanitizeEmailBodyHtml(item.body_html);
-    for (const auto& [name, data] : attachments) {
-        const QString mime = detectImageMime(data);
-        if (mime.isEmpty()) {
-            continue;
-        }
-        const QString data_uri = QStringLiteral("data:") + mime + QStringLiteral(";base64,") +
-                                 QString::fromLatin1(data.toBase64());
-        // Primary: replace by the attachment's real Content-ID (how inline images are
-        // actually referenced); fall back to the filename for malformed messages.
-        const QString cid = contentIdForAttachmentName(item, name);
-        if (!cid.isEmpty()) {
-            body_html.replace(QStringLiteral("cid:") + cid, data_uri);
-        }
-        // An empty attachment name makes the key exactly "cid:", turning this into a
-        // replace-ALL that overwrites every other inline reference with this image;
-        // skip the filename fallback when there is no name to key on.
-        if (!name.isEmpty()) {
-            body_html.replace(QStringLiteral("cid:") + name, data_uri);
-        }
-    }
-    return body_html;
 }
 
 // Reject a subfolder_path that escapes the output directory (a ".." traversal or an
@@ -193,6 +160,49 @@ bool targetWithinRoot(const QString& output_dir, const QString& target_dir) {
 
 }  // namespace
 
+bool isInlineBodyImage(const PstItemDetail& item, const QString& name) {
+    const QString cid = contentIdForAttachmentName(item, name);
+    return !cid.isEmpty() && item.body_html.contains(QStringLiteral("cid:") + cid);
+}
+
+QString embedInlineImagesInHtml(const PstItemDetail& item,
+                                QString body_html,
+                                const QVector<QPair<QString, QByteArray>>& attachments) {
+    for (const auto& [name, data] : attachments) {
+        const QString mime = detectImageMime(data);
+        if (mime.isEmpty()) {
+            continue;
+        }
+        const QString data_uri = QStringLiteral("data:") + mime + QStringLiteral(";base64,") +
+                                 QString::fromLatin1(data.toBase64());
+        // Primary: replace by the attachment's real Content-ID (how inline images are
+        // actually referenced); fall back to the filename for malformed messages.
+        const QString cid = contentIdForAttachmentName(item, name);
+        if (!cid.isEmpty()) {
+            body_html.replace(QStringLiteral("cid:") + cid, data_uri);
+        }
+        // An empty attachment name makes the key exactly "cid:", turning this into a
+        // replace-ALL that overwrites every other inline reference with this image;
+        // skip the filename fallback when there is no name to key on.
+        if (!name.isEmpty()) {
+            body_html.replace(QStringLiteral("cid:") + name, data_uri);
+        }
+    }
+    return body_html;
+}
+
+QVector<QPair<QString, QByteArray>> attachmentsNotInBody(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
+    QVector<QPair<QString, QByteArray>> files;
+    files.reserve(attachments.size());
+    for (const auto& attachment : attachments) {
+        if (!isInlineBodyImage(item, attachment.first)) {
+            files.append(attachment);
+        }
+    }
+    return files;
+}
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -268,7 +278,7 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
         } while (QFile::exists(full_path));
     }
 
-    if (!saveFileAttachments(attachment_data, dir_path, filename)) {
+    if (!saveFileAttachments(attachmentsNotInBody(item, attachment_data), dir_path, filename)) {
         // A listed attachment failed to save. The HTML page enumerates every
         // attachment, so emitting it now would advertise files that are not on
         // disk; fail closed instead of reporting a partial message as success.
@@ -406,17 +416,20 @@ QString HtmlEmailWriter::buildHtmlPage(const PstItemDetail& item,
     // Body section
     ts << QStringLiteral("<div class=\"body\">\n");
     if (!item.body_html.isEmpty()) {
-        ts << embedInlineImages(item, attachments);
+        // Strip active content (script/handlers/js: URIs/framing tags) before writing; the page
+        // CSP is the hard backstop for anything that slips past.
+        ts << embedInlineImagesInHtml(item, sanitizeEmailBodyHtml(item.body_html), attachments);
     } else {
         ts << QStringLiteral("<pre>") << escapeHtml(item.body_plain) << QStringLiteral("</pre>\n");
     }
     ts << QStringLiteral("</div>\n");
 
     // Attachments list
-    if (!attachments.isEmpty()) {
+    const QVector<QPair<QString, QByteArray>> files = attachmentsNotInBody(item, attachments);
+    if (!files.isEmpty()) {
         ts << QStringLiteral("<div class=\"attachments\">\n");
         ts << QStringLiteral("<h3>Attachments</h3>\n");
-        for (const auto& [name, data] : attachments) {
+        for (const auto& [name, data] : files) {
             ts << QStringLiteral("<div class=\"att-item\">") << escapeHtml(name)
                << QStringLiteral(" (") << QString::number(data.size())
                << QStringLiteral(" bytes)</div>\n");

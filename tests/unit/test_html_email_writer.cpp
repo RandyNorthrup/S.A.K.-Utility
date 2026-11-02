@@ -21,6 +21,61 @@ class TestHtmlEmailWriter : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // An HTML export showed a blank where every inline picture had been.
+    void showsInlinePicturesInTheBodyAndDoesNotListThemAsFiles() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Storefront");
+        item.body_html = QStringLiteral("<p>See <img src=\"cid:front@x\"></p>");
+        sak::PstAttachmentInfo picture;
+        picture.long_filename = QStringLiteral("front.png");
+        picture.content_id = QStringLiteral("front@x");
+        sak::PstAttachmentInfo document;
+        document.long_filename = QStringLiteral("menu.pdf");
+        item.attachments = {picture, document};
+        const QByteArray png("\x89PNG\r\n\x1a\nbytes", 13);
+        const QVector<QPair<QString, QByteArray>> data{{QStringLiteral("front.png"), png},
+                                                       {QStringLiteral("menu.pdf"), "pdf"}};
+
+        const auto written = writer.writeMessage(item, data, QString());
+        QVERIFY(written.has_value());
+        QFile file(*written);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString page = QString::fromUtf8(file.readAll());
+        QVERIFY(page.contains(QStringLiteral("data:image/png;base64,")));
+        QVERIFY(!page.contains(QStringLiteral("cid:front@x")));
+        QVERIFY(page.contains(QStringLiteral("menu.pdf")));
+        QVERIFY2(!page.contains(QStringLiteral("front.png")),
+                 "the picture is in the body, not the list");
+
+        const QString files_dir = QFileInfo(*written).absolutePath() + QLatin1Char('/') +
+                                  QFileInfo(*written).completeBaseName() + QStringLiteral("_files");
+        QCOMPARE(QDir(files_dir).entryList(QDir::Files), QStringList{QStringLiteral("menu.pdf")});
+    }
+
+    // A Content-ID the body never uses is just an attachment; dropping it would lose the file.
+    void keepsAnAttachmentWithAContentIdTheBodyDoesNotUse() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Unused");
+        item.body_html = QStringLiteral("<p>No pictures here</p>");
+        sak::PstAttachmentInfo file_info;
+        file_info.long_filename = QStringLiteral("scan.png");
+        file_info.content_id = QStringLiteral("unused@x");
+        item.attachments = {file_info};
+        const auto written = writer.writeMessage(
+            item, {{QStringLiteral("scan.png"), QByteArray("\x89PNG", 4)}}, QString());
+        QVERIFY(written.has_value());
+        QFile file(*written);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(QString::fromUtf8(file.readAll()).contains(QStringLiteral("scan.png")));
+    }
+
 
     // ====================================================================
     // Happy Path -- Plain text message

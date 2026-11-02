@@ -37,8 +37,6 @@
 namespace sak {
 
 namespace {
-constexpr int kAttachMethodEmbeddedMessage = 5;
-constexpr int kAttachMethodOleObject = 6;
 
 // Size column: a plain QTableWidgetItem sorts on its DISPLAY string, so "9.0 KB" would sort
 // above "10.0 MB" and the column would lie about which attachment is biggest. Order on the
@@ -322,6 +320,14 @@ void EmailAttachmentsBrowserDialog::startScan() {
             this,
             &EmailAttachmentsBrowserDialog::onAttachmentContentFailed);
     connect(m_controller,
+            &::EmailInspectorController::mboxMessagesLoaded,
+            this,
+            &EmailAttachmentsBrowserDialog::onMboxMessagesLoaded);
+    connect(m_controller,
+            &::EmailInspectorController::mboxMessageDetailLoaded,
+            this,
+            &EmailAttachmentsBrowserDialog::onMboxMessageDetailLoaded);
+    connect(m_controller,
             &::EmailInspectorController::errorOccurred,
             this,
             &EmailAttachmentsBrowserDialog::onErrorOccurred);
@@ -420,11 +426,6 @@ void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t folder_id,
 
 void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail) {
     for (const auto& att : detail.attachments) {
-        // Skip embedded messages (method 5) and OLE objects (method 6)
-        if (att.attach_method == kAttachMethodEmbeddedMessage ||
-            att.attach_method == kAttachMethodOleObject) {
-            continue;
-        }
         AttachmentEntry entry;
         entry.message_node_id = detail.node_id;
         entry.source_folder_id = m_message_folder_map.value(detail.node_id, 0);
@@ -449,6 +450,33 @@ void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail
     }
 
     QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
+}
+
+// An MBOX is one folder of plain messages. Its rows take the same route as a PST's, so paging, the
+// has-attachments gate and the table all behave identically; the message index is the id.
+void EmailAttachmentsBrowserDialog::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages,
+                                                         int total) {
+    QVector<sak::PstItemSummary> items;
+    items.reserve(messages.size());
+    for (const auto& message : messages) {
+        sak::PstItemSummary item;
+        item.node_id = static_cast<uint64_t>(message.message_index);
+        item.has_attachments = message.has_attachments;
+        items.append(std::move(item));
+    }
+    const uint64_t folder_id =
+        m_folders_scanned < m_all_folder_ids.size() ? m_all_folder_ids[m_folders_scanned] : 0;
+    onFolderItemsLoaded(folder_id, std::move(items), total);
+}
+
+void EmailAttachmentsBrowserDialog::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
+    sak::PstItemDetail item;
+    item.node_id = static_cast<uint64_t>(detail.message_index);
+    item.subject = detail.subject;
+    item.sender_name = detail.from;
+    item.date = detail.date;
+    item.attachments = detail.attachments;
+    onItemDetailLoaded(std::move(item));
 }
 
 void EmailAttachmentsBrowserDialog::onFolderItemsFailed(uint64_t folder_id,

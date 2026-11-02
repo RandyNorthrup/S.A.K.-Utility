@@ -7,6 +7,7 @@
 #include "sak/pdf_email_writer.h"
 
 #include "sak/email_html_sanitizer.h"
+#include "sak/html_email_writer.h"
 #include "sak/report_style_constants.h"
 
 #include <QDateTime>
@@ -341,7 +342,9 @@ QString PdfEmailWriter::buildHtmlForPdf(const PstItemDetail& item,
     if (!item.body_html.isEmpty()) {
         // Strip active content from the untrusted body first; loadResource denial (above) is the
         // hard guarantee against local-file disclosure, this removes script/handlers as well.
-        QString body = sanitizeEmailBodyHtml(item.body_html);
+        // Inline pictures then become data: URIs, the one kind of image that denial lets through.
+        QString body =
+            embedInlineImagesInHtml(item, sanitizeEmailBodyHtml(item.body_html), attachments);
         // Strip outer html/head/body tags if present and use inner content
         const qsizetype body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
         if (body_start >= 0) {
@@ -361,9 +364,10 @@ QString PdfEmailWriter::buildHtmlForPdf(const PstItemDetail& item,
     }
 
     // Attachment list (names only -- not embedded in PDF)
-    if (!attachments.isEmpty()) {
+    const QVector<QPair<QString, QByteArray>> files = attachmentsNotInBody(item, attachments);
+    if (!files.isEmpty()) {
         html += QStringLiteral("<div class='att'><b>Attachments:</b><ul>");
-        for (const auto& att : attachments) {
+        for (const auto& att : files) {
             html += QStringLiteral("<li>") + att.first.toHtmlEscaped() + QStringLiteral("</li>");
         }
         html += QStringLiteral("</ul></div>");

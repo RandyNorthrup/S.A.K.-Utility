@@ -108,7 +108,7 @@ public:
         int message_index);
 
 Q_SIGNALS:
-    void fileOpened(QString path, int estimated_count);
+    void fileOpened(QString path);
     void indexingComplete(int total_messages);
     void messagesLoaded(QVector<sak::MboxMessage> messages, int total_count);
     void messageDetailLoaded(sak::MboxMessageDetail detail);
@@ -207,4 +207,9 @@ private:
 
     /// Check that a separator has both a valid shape and a complete line terminator.
     [[nodiscard]] static bool isCompleteFromLine(const QByteArray& line);
+
+public:
+    /// Whether a file begins like a mailbox. Thunderbird's mailboxes have no file extension, so
+    /// this is how they are told apart from everything else in its profile folders.
+    [[nodiscard]] static bool looksLikeMailbox(const QString& file_path);
 };

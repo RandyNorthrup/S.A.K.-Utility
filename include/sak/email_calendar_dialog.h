@@ -32,6 +32,8 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
+class EmailToolsViewsTests;
+
 namespace sak {
 
 // ============================================================================
@@ -79,6 +81,7 @@ class CalendarWeekDayView;
 /// busy status, view switching, mini-calendar navigation, and ICS/CSV export.
 class EmailCalendarDialog : public QDialog {
     Q_OBJECT
+    friend class ::EmailToolsViewsTests;
 
 public:
     /// Calendar view mode
@@ -238,6 +241,7 @@ private:
     QHash<uint64_t, int> m_node_index;       ///< node_id -> index into m_all_events
     int m_folders_loaded{0};
     bool m_load_truncated{false};  ///< a folder held more items than the per-folder display cap
+    bool m_loading_event_details{false};  ///< Reading every event's record; views wait until done
     int m_details_pending{0};
 };
 

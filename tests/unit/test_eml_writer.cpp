@@ -18,6 +18,35 @@ class TestEmlWriter : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // The body's cid: reference finds nothing unless the picture's part keeps its Content-ID.
+    void keepsAnInlinePictureAsInlineWithItsContentId() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Storefront");
+        item.body_html = QStringLiteral("<img src=\"cid:front@x\">");
+        sak::PstAttachmentInfo picture;
+        picture.long_filename = QStringLiteral("front.png");
+        picture.content_id = QStringLiteral("<front@x>");
+        picture.mime_type = QStringLiteral("image/png");
+        sak::PstAttachmentInfo document;
+        document.long_filename = QStringLiteral("menu.pdf");
+        item.attachments = {picture, document};
+        const auto written = writer.writeMessage(item,
+                                                 {{QStringLiteral("front.png"), "png"},
+                                                  {QStringLiteral("menu.pdf"), "pdf"}},
+                                                 QString());
+        QVERIFY(written.has_value());
+        QFile file(*written);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.contains("Content-Type: image/png; name=\"front.png\""));
+        QVERIFY(bytes.contains("Content-Disposition: inline; filename=\"front.png\""));
+        QVERIFY(bytes.contains("Content-ID: <front@x>"));
+        QVERIFY(bytes.contains("Content-Disposition: attachment; filename=\"menu.pdf\""));
+    }
+
 
     // ====================================================================
     // Happy Path -- Simple Plain-Text Message

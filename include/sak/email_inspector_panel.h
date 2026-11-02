@@ -20,7 +20,8 @@
 #include <optional>
 #include <type_traits>
 
-class EmailInspectorPanelTests;  // unit-test friend (global namespace)
+class EmailInspectorPanelTests;
+class EmailToolsViewsTests;  // unit-test friend (global namespace)
 class QCheckBox;
 class QComboBox;
 class QGroupBox;
@@ -60,6 +61,7 @@ class EmailInspectorPanel : public QWidget {
     Q_OBJECT
 
     friend class ::EmailInspectorPanelTests;
+    friend class ::EmailToolsViewsTests;
 
 public:
     explicit EmailInspectorPanel(QWidget* parent = nullptr);
@@ -196,6 +198,10 @@ private:
     /// per-message formats belong here, so this is where a technician turns an entire
     /// store into EML/HTML/Text/PDF/CSV without walking the tree folder by folder.
     void exportAllMailFoldersAs(sak::ExportFormat format);
+    /// The right-click export entries for a folder, by what it holds.
+    void addFolderExportActions(QMenu& menu,
+                                const sak::PstFolder* folder,
+                                std::optional<uint64_t> folder_id);
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);

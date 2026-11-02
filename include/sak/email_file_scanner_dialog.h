@@ -32,6 +32,10 @@ public:
     /// The path the user chose (empty if cancelled)
     [[nodiscard]] QString selectedFilePath() const;
 
+    /// Mailboxes under a Thunderbird Profiles folder. Thunderbird keeps each mailbox as a file with
+    /// no extension, in Mail or ImapMail account folders and in .sbd subfolders of those.
+    [[nodiscard]] static QStringList thunderbirdMailboxes(const QString& profiles_dir);
+
 private Q_SLOTS:
     void onScanClicked();
     void onOpenClicked();
