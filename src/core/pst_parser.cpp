@@ -1198,6 +1198,24 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readItemPropert
     return readPropertyContext(item_node_id);
 }
 
+namespace {
+
+/// A message's attachment sub-nodes in the order they were added. The map hashes its keys with a
+/// seed chosen per run, so walking it directly listed one message's attachments in a different
+/// order on each start of the app, and numbered them differently too.
+QVector<uint64_t> attachmentNodesInOrder(const QHash<uint64_t, sak::PstNode>& subnodes) {
+    QVector<uint64_t> ids;
+    for (auto it = subnodes.cbegin(); it != subnodes.cend(); ++it) {
+        if ((it.key() & kNidTypeMask) == sak::email::kNidTypeAttachment) {
+            ids.append(it.key());
+        }
+    }
+    std::ranges::sort(ids);
+    return ids;
+}
+
+}  // namespace
+
 std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
     const sak::PstNode& subnode) {
     HeapContext ctx;
@@ -1327,22 +1345,19 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentDataForNode(const
     }
 
     int found_count = 0;
-    for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        const uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
-        if (sub_type != sak::email::kNidTypeAttachment) {
-            continue;
-        }
+    for (const uint64_t attachment_nid : attachmentNodesInOrder(*subnodes)) {
+        const sak::PstNode& attachment_node = (*subnodes)[attachment_nid];
         // Use the SAME gate as readAttachments, which now FAILS CLOSED on an
         // unparsable attachment instead of compacting past it. The caller's index was
         // assigned there under this same gate, so failing here (rather than skipping)
         // keeps index i mapped to the same sub-node and never returns a different
         // attachment's bytes.
-        auto probe = readSingleAttachment(sub_it.value(), found_count);
+        auto probe = readSingleAttachment(attachment_node, found_count);
         if (!probe) {
             return std::unexpected(probe.error());
         }
         if (found_count == attachment_index) {
-            return extractAttachmentFromSubnode(sub_it.value());
+            return extractAttachmentFromSubnode(attachment_node);
         }
         ++found_count;
     }
@@ -3563,18 +3578,13 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     QVector<sak::PstAttachmentInfo> attachments;
     int att_index = 0;
 
-    for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        const uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
-        if (sub_type != sak::email::kNidTypeAttachment) {
-            continue;
-        }
-
+    for (const uint64_t attachment_nid : attachmentNodesInOrder(*subnodes)) {
         // Fail closed on an unparsable attachment sub-node rather than silently
         // dropping it: a compacted list would report fewer attachments than the
         // message actually carries yet look complete (data loss the caller cannot
         // detect). This matches readMessage, which propagates an attachment-read
         // failure instead of presenting a message as attachment-free.
-        auto att = readSingleAttachment(sub_it.value(), att_index);
+        auto att = readSingleAttachment((*subnodes)[attachment_nid], att_index);
         if (!att) {
             return std::unexpected(att.error());
         }

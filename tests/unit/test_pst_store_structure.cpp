@@ -415,6 +415,34 @@ private Q_SLOTS:
         QCOMPARE(*data, ole.data);
     }
 
+    // The list order once came from a hash seeded per run, so it changed each time the app started.
+    void listsAttachmentsInTheOrderTheyWereAdded() {
+        BuilderMessage msg = plainMessage(QStringLiteral("Many files"));
+        constexpr int kFiles = 12;
+        for (int i = 0; i < kFiles; ++i) {
+            BuilderAttachment file;
+            file.name = QStringLiteral("file%1.txt").arg(i);
+            file.data = file.name.toLatin1();
+            msg.attachments.append(file);
+        }
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages.append(msg);
+        PstParser parser;
+        parser.open(writeStore(PstStoreBuilder{}.build({inbox})));
+        const auto detail = onlyMessage(parser, QStringLiteral("Inbox"));
+        QVERIFY(detail.has_value());
+        QCOMPARE(detail->attachments.size(), kFiles);
+        for (int i = 0; i < kFiles; ++i) {
+            const auto& att = detail->attachments.at(i);
+            QCOMPARE(att.long_filename, QStringLiteral("file%1.txt").arg(i));
+            QCOMPARE(att.index, i);
+            const auto data = parser.readAttachmentData(detail->node_id, att.index);
+            QVERIFY(data.has_value());
+            QCOMPARE(*data, att.long_filename.toLatin1());
+        }
+    }
+
     void prefersTheSmtpAddressOverAnExchangePath() {
         BuilderMessage msg = plainMessage(QStringLiteral("From Exchange"));
         msg.sender_email = QStringLiteral("/O=ORG/OU=FIRST GROUP/CN=RECIPIENTS/CN=OWEN");
