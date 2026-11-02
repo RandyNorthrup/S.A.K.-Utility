@@ -20,6 +20,7 @@
 #include <optional>
 #include <type_traits>
 
+class EmailInspectorPanelTests;  // unit-test friend (global namespace)
 class QCheckBox;
 class QComboBox;
 class QGroupBox;
@@ -57,6 +58,8 @@ class LogToggleSwitch;
 /// panel (Content/Headers/Properties/Attachments) on bottom-right.
 class EmailInspectorPanel : public QWidget {
     Q_OBJECT
+
+    friend class ::EmailInspectorPanelTests;
 
 public:
     explicit EmailInspectorPanel(QWidget* parent = nullptr);
@@ -219,6 +222,17 @@ private:
     void applyPageSize();
     void reloadCurrentPage();
     void updatePageControls();
+
+    /// @brief What a panel search asks for: every field the worker can look in, in one folder
+    ///        (@p folder_scope is that folder's id; 0 searches the whole store).
+    [[nodiscard]] static sak::EmailSearchCriteria searchCriteria(const QString& query,
+                                                                 uint64_t folder_scope);
+    /// @brief Search in This Folder: ask what to look for, then search that folder only. The scope
+    ///        lasts for this one search, so the ribbon box always means the whole store.
+    void searchInFolder(std::optional<uint64_t> folder_id, const QString& folder_name);
+    /// @brief Start a search and turn the item list over to its results.
+    void startSearch(const QString& query, uint64_t folder_scope, const QString& scope_name);
+    void finishSearchResults(int total_hits);
     void addPreviewControlRow(QVBoxLayout* root_layout);
     [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
@@ -303,6 +317,9 @@ private:
 
     // -- State -----------------------------------------------------------
     bool m_dialog_active{false};
+    /// True while the item list shows search hits rather than a folder page.
+    bool m_showing_search_results{false};
+    QString m_search_scope_name;  ///< Folder the last search was limited to; empty = whole store
     /// True while an MBOX store is open. MBOX has a single synthetic root folder whose
     /// id is 0, and 0 is otherwise the "no folder selected" sentinel; this flag lets the
     /// paging path tell the two apart so clicking the MBOX Inbox actually loads messages.

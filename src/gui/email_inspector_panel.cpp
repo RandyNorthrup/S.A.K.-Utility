@@ -73,6 +73,10 @@ namespace sak {
 
 namespace {
 
+// EmailSearchCriteria::folder_scope_id: search the whole store.
+constexpr uint64_t kSearchAllFolders = 0;
+
+
 constexpr int kEmailHeaderCheckRadiusPx = ui::kCssRadiusSmallPx;
 constexpr int kEmailHeaderCheckTickPenWidth = ui::kCssBorderWidthAccentPx;
 constexpr int kEmailHeaderCheckTickX0 = 3;
@@ -1146,7 +1150,9 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     menu.addSeparator();
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
-    menu.addAction(tr("Search in This Folder..."), this, [this] { m_search_edit->setFocus(); });
+    menu.addAction(tr("Search in This Folder..."), this, [this, folder_id, name = item->text(0)] {
+        searchInFolder(folder_id, name);
+    });
     menu.addSeparator();
     menu.addAction(tr("Expand All Subfolders"), this, [item] {
         item->setExpanded(true);
@@ -1167,12 +1173,70 @@ void EmailInspectorPanel::onSearchClicked() {
     if (query.isEmpty()) {
         return;
     }
+    startSearch(query, kSearchAllFolders, QString());
+}
+
+sak::EmailSearchCriteria EmailInspectorPanel::searchCriteria(const QString& query,
+                                                             uint64_t folder_scope) {
     sak::EmailSearchCriteria criteria;
     criteria.query_text = query;
     criteria.search_subject = true;
     criteria.search_body = true;
     criteria.search_sender = true;
-    m_controller->startSearch(criteria);
+    criteria.search_recipients = true;
+    criteria.search_attachment_names = true;
+    criteria.folder_scope_id = folder_scope;
+    return criteria;
+}
+
+void EmailInspectorPanel::searchInFolder(std::optional<uint64_t> folder_id,
+                                         const QString& folder_name) {
+    if (!folder_id.has_value()) {
+        sak::logWarning("Search in This Folder: the folder row carries no id");
+        updateStatusBar(tr("This folder cannot be searched"));
+        return;
+    }
+    // Cancel returns an empty string, so this one check covers Cancel and a blank answer.
+    const QString query = QInputDialog::getText(this,
+                                                tr("Search in %1").arg(folder_name),
+                                                tr("Search for:"),
+                                                QLineEdit::Normal,
+                                                m_search_edit->text().trimmed())
+                              .trimmed();
+    if (query.isEmpty()) {
+        return;
+    }
+    startSearch(query, *folder_id, folder_name);
+}
+
+void EmailInspectorPanel::startSearch(const QString& query,
+                                      uint64_t folder_scope,
+                                      const QString& scope_name) {
+    m_controller->startSearch(searchCriteria(query, folder_scope));
+    // A refused search has already said why through errorOccurred; the list stays as it was.
+    if (m_controller->currentState() != EmailInspectorController::State::Searching) {
+        return;
+    }
+    m_showing_search_results = true;
+    m_search_scope_name = scope_name;
+    m_current_page = 0;
+    m_current_total = 0;
+    m_item_list->setSortingEnabled(false);
+    m_item_list->setRowCount(0);
+    m_item_empty_state->setEmptyText(tr("No matches"));
+    m_item_empty_state->setLoading(tr("Searching..."));
+    m_item_count_label->clear();
+    updatePageControls();
+}
+
+void EmailInspectorPanel::finishSearchResults(int total_hits) {
+    m_item_empty_state->clearLoading();
+    m_item_list->setSortingEnabled(true);
+    m_item_count_label->setText(
+        m_search_scope_name.isEmpty()
+            ? tr("%1 search result(s)").arg(total_hits)
+            : tr("%1 search result(s) in %2").arg(total_hits).arg(m_search_scope_name));
+    updateItemListHeaderCheckState();
 }
 
 std::optional<uint64_t> EmailInspectorPanel::itemIdForRow(int row) const {
@@ -1527,6 +1591,8 @@ void EmailInspectorPanel::onFileClosed() {
     m_folder_tree->clear();
     m_item_list->setRowCount(0);
     m_item_empty_state->clearLoading();
+    m_showing_search_results = false;
+    m_item_empty_state->setEmptyText(tr("Select a folder to list its items"));
     updateItemListHeaderCheckState();
     m_content_browser->clear();
     m_headers_browser->clear();
@@ -1565,7 +1631,7 @@ void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
     // Lift the loading overlay the moment the page arrives, before any early return, so a
     // fetch can never leave the item list stranded under a loading message.
     m_item_empty_state->clearLoading();
-    if (m_dialog_active) {
+    if (m_dialog_active || m_showing_search_results) {
         return;
     }
     m_current_items = items;
@@ -1704,15 +1770,38 @@ void EmailInspectorPanel::onAttachmentContentFailed(uint64_t message_id,
     finishAttachmentBatchIfComplete();
 }
 
-void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit /*hit*/) {
-    // Incrementally update result count in status bar
+void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit hit) {
+    if (!m_showing_search_results) {
+        return;
+    }
+    const QSignalBlocker blocker(m_item_list);
+    const int row = m_item_list->rowCount();
+    m_item_list->insertRow(row);
+    m_item_list->setItem(row,
+                         ColSelect,
+                         makeEmailSelectItem(hit.item_node_id, tr("Select email for export")));
+
+    auto* subject_cell = new QTableWidgetItem(hit.subject);
+    subject_cell->setData(Qt::UserRole, QVariant::fromValue(hit.item_node_id));
+    subject_cell->setToolTip(tr("Found in %1 (%2)").arg(hit.folder_path, hit.match_field));
+    m_item_list->setItem(row, ColSubject, subject_cell);
+
+    m_item_list->setItem(row, ColFrom, new QTableWidgetItem(hit.sender));
+    m_item_list->setItem(row, ColDate, new QTableWidgetItem(hit.date.toString(Qt::ISODate)));
+    m_item_list->setItem(row, ColSize, new QTableWidgetItem());
+
+    auto* type_cell = new QTableWidgetItem(itemTypeLabel(hit.item_type));
+    type_cell->setIcon(itemTypeQIcon(hit.item_type));
+    m_item_list->setItem(row, ColType, type_cell);
 }
 
 void EmailInspectorPanel::onSearchComplete(int total_hits) {
+    finishSearchResults(total_hits);
     updateStatusBar(tr("Search complete: %1 hits").arg(total_hits));
 }
 
 void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
+    finishSearchResults(partial_hits);
     // A user-initiated cancel is not a failure, but the results ARE partial -- show it in the
     // caution colour so it never reads as a clean "Search complete". The colour is applied
     // AFTER updateStatusBar because that method resets the label style to muted on every call.
@@ -1804,6 +1893,9 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
 void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total) {
     // Terminal handler for the MBOX item-list fetch: lift the loading overlay.
     m_item_empty_state->clearLoading();
+    if (m_showing_search_results) {
+        return;
+    }
     m_item_list->setSortingEnabled(false);
     m_item_list->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_item_list);
@@ -2616,6 +2708,12 @@ void EmailInspectorPanel::reloadCurrentPage() {
     // list can never load.
     if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
+    }
+    // Leaving the results for a folder, unless the search is still running: the controller then
+    // refuses this load, and the hits still on their way belong in the list.
+    if (m_controller->currentState() != EmailInspectorController::State::Searching) {
+        m_showing_search_results = false;
+        m_item_empty_state->setEmptyText(tr("Select a folder to list its items"));
     }
     m_item_empty_state->setLoading(tr("Loading folder contents..."));
     const int page_size = currentPageSize();

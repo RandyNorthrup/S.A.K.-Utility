@@ -5843,6 +5843,32 @@ add_test(NAME test_mbox_parser COMMAND test_mbox_parser
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_mbox_parser")
 
+# test_email_inspector_panel - search scope, the fields searched, and hits reaching the item list
+add_executable(test_email_inspector_panel
+    unit/test_email_inspector_panel.cpp
+    support/pst_fixture.h
+    ../resources/icons.qrc
+)
+set_target_properties(test_email_inspector_panel PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_inspector_panel PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_inspector_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_inspector_panel COMMAND test_email_inspector_panel
+         -o "${TEST_OUTPUT_DIR}/test_email_inspector_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform; the cases answer their own dialogs.
+set_tests_properties(test_email_inspector_panel PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_email_inspector_panel")
+
 # test_email_search_worker - criteria, cancel, search hit structure
 add_executable(test_email_search_worker
     unit/test_email_search_worker.cpp
