@@ -499,6 +499,11 @@ void QuickActionController::finishCurrent(const QuickAction::ExecutionResult& re
                                 .arg(result.bytes_processed)
                                 .arg(duration_sec)
                           : QStringLiteral("Execution failed: %1").arg(result.message));
+    // The action's own detail: per-drive results, backup paths, the CBS log path. Every panel shows
+    // runLog in its Log, so this is the one place that makes it reach all of them.
+    if (!result.log.trimmed().isEmpty()) {
+        logRun(run, QStringLiteral("Details:\n%1").arg(result.log.trimmed()));
+    }
     Q_EMIT runFinished(run, result, status);
     startNextQueued();
 }

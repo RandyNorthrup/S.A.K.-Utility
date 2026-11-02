@@ -137,6 +137,7 @@ private Q_SLOTS:
     // -- Per-run context ----------------------------------------
     void queuedRunsKeepTheirOwnOutputFolders();
     void eachRunNamesItsOwnerAndCarriesItsOwnResult();
+    void anActionsDetailReachesTheRunLog();
     void aRequestWhileAnotherRunsIsQueuedAndSaysSo();
     void refusedRequestsFinishAtOnce();
     void cancelRunsOfTouchesOnlyThatOwner();
@@ -255,6 +256,39 @@ void TestQuickActionController::queuedRunsKeepTheirOwnOutputFolders() {
     QVERIFY(QFile::exists(fileIn(assistant_folder, kInventoryReport)));
     QCOMPARE(finished.results.at(1).output_path, fileIn(panel_folder, kInventoryReport));
     QCOMPARE(finished.results.at(2).output_path, fileIn(assistant_folder, kInventoryReport));
+}
+
+namespace {
+class DetailedAction : public ControllerStubAction {
+public:
+    DetailedAction() : ControllerStubAction(QStringLiteral("Detailed")) {}
+    void execute() override {
+        setStatus(ActionStatus::Running);
+        ExecutionResult r;
+        r.success = true;
+        r.message = "Done";
+        r.log = "Drive C: No errors found\nDrive D: Errors found";
+        finishWithResult(r, ActionStatus::Success);
+    }
+};
+}  // namespace
+
+// The summary only says how many; which drive is in the detail. Every panel shows runLog in its
+// Log, and nothing else ever displayed result.log.
+void TestQuickActionController::anActionsDetailReachesTheRunLog() {
+    m_ctrl->registerAction(std::make_unique<DetailedAction>());
+    QSignalSpy logged(m_ctrl.get(), &QuickActionController::runLog);
+    FinishedRuns finished;
+    finished.watch(*m_ctrl);
+
+    m_ctrl->requestRun({QStringLiteral("Detailed"), QStringLiteral("diagnostics"), {}});
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kRunTimeoutMs);
+
+    QString lines;
+    for (const auto& entry : logged) {
+        lines += entry.at(1).toString() + QLatin1Char('\n');
+    }
+    QVERIFY2(lines.contains(QStringLiteral("Drive D: Errors found")), qPrintable(lines));
 }
 
 void TestQuickActionController::eachRunNamesItsOwnerAndCarriesItsOwnResult() {
