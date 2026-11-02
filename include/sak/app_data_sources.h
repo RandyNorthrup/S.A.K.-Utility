@@ -22,7 +22,8 @@
 namespace sak {
 
 /// Every source the wizard looks for. All are selected by default except SSH keys, which are
-/// secrets a person should choose to copy, not have copied because they clicked Scan.
+/// secrets a person should choose to copy, and Outlook's data files, which can be enormous and
+/// which the mail server still has.
 [[nodiscard]] QVector<AppDataSourceInfo> commonAppDataSources();
 
 /// The lower-case executable names that hold this source's files open while the program runs.

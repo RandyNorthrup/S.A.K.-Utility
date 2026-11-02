@@ -64,7 +64,9 @@ const std::array kCommonSources = std::to_array<CommonSource>({
     {"Vivaldi Profiles", "Browsers", "AppData/Local/Vivaldi/User Data", kVivaldi},
 
     {"Thunderbird Profiles", "Email", "AppData/Roaming/Thunderbird", kThunderbird},
-    {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", kOutlook},
+    // An OST is a copy of the mailbox the server still has, tied to this Outlook profile, and it
+    // can run to tens of gigabytes. Worth having only if someone asks.
+    {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", kOutlook, false},
     {"Outlook Signatures", "Email", "AppData/Roaming/Microsoft/Signatures", kOutlook},
 
     {"VS Code Settings", "Development", "AppData/Roaming/Code/User", kVsCode},

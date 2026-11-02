@@ -42,6 +42,8 @@ private Q_SLOTS:
         QTest::newRow("Favorites") << static_cast<int>(FolderType::Favorites) << "Favorites";
         QTest::newRow("StartMenu") << static_cast<int>(FolderType::StartMenu) << "StartMenu";
         QTest::newRow("Custom") << static_cast<int>(FolderType::Custom) << "Custom";
+        QTest::newRow("ApplicationData")
+            << static_cast<int>(FolderType::ApplicationData) << "ApplicationData";
     }
 
     void folderTypeRoundTrip() {

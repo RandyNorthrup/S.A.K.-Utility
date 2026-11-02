@@ -82,7 +82,11 @@ void AppDataSourcesTests::secretsAreOptIn() {
     const auto* ssh = findPath(sources, QStringLiteral(".ssh"));
     QVERIFY(ssh != nullptr);
     QVERIFY(!ssh->selected);
+    const auto* outlook_data = findPath(sources, QStringLiteral("AppData/Local/Microsoft/Outlook"));
+    QVERIFY(outlook_data != nullptr);
+    QVERIFY(!outlook_data->selected);
     QVERIFY(findPath(sources, kChrome)->selected);
+    QVERIFY(findPath(sources, QStringLiteral("AppData/Roaming/Microsoft/Signatures"))->selected);
 }
 
 void AppDataSourcesTests::runningProgramsNameTheirSources() {
@@ -92,6 +96,9 @@ void AppDataSourcesTests::runningProgramsNameTheirSources() {
     QCOMPARE(held, QStringList({QStringLiteral("Chrome Profiles")}));
 
     // Outlook holds two sources, and the new Outlook runs under a different name.
+    for (auto& source : sources) {
+        source.selected = true;
+    }
     const QStringList outlook = sak::appDataSourcesHeldOpen(sources, {QStringLiteral("olk.exe")});
     QCOMPARE(outlook,
              QStringList({QStringLiteral("Outlook Data"), QStringLiteral("Outlook Signatures")}));
