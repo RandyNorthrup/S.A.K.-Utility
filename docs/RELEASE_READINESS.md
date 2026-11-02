@@ -143,9 +143,10 @@ keeps their history.
      `advanced_search_controller`, `port_scanner` and `network_transfer_runner`.
    - FIXED (2d7de3b0): assistant app actions (`sak_app_action`) observe Stop and exit. Every
      async action and every quick action takes the caller's cancel route; see the AI package below.
-   - The AI tool handlers still reach panel state through `this`. Teardown is safe because
-     `AiAssistantPanel::release` keeps the whole panel alive until they drain; moving the handlers
-     onto shared state is open (AI package below says which state and why).
+   - FIXED (55492ced, 273e27f1, a99462a7): the AI tool handlers read the chat, access
+     mode and cancel token through `this`. They run on a per-call context now (AI package below).
+     Teardown still goes through `AiAssistantPanel::release`, which keeps the panel's long-lived
+     services alive until the handlers drain.
    - FIXED (c507b338): a Stop during a `run_powershell` command left the run at Cancelling after
      the command finished; `onBrokerFinished`/`onRequestFinished` now settle a pending stop.
    - The exit prompt's per-panel registrations are covered by review, not by a test each; the
@@ -268,23 +269,48 @@ Done:
   session's manifest could fail with "Could not commit manifest: Access is denied" (Windows
   refuses to replace a file another handle has open). The listing reads under the read lock;
   `test_ai_conversation_store` holds a manifest open in the read and renames the session.
+- AI tool handlers run on a per-call context (item 7, item 10 rest). `ai::AiToolCallContext` is
+  captured on the GUI thread when a call is dispatched (a chat tool, a workflow launch, a
+  sub-agent's tool) and owned by the call: the chat's id and a const store bound to that chat
+  (`ConversationStore::sessionSnapshot`), the access mode and its policy ceiling, the run's cancel
+  token, the user's request, and the lease `AiToolDispatcher` took for the dispatch. Every handler
+  reads those from it instead of from the panel. Another chat opened under a running call, or the
+  panel released under it, cannot redirect it: its artifacts land in the chat it ran for, its
+  result is dropped and its turn ends (`finishAsyncBuiltInToolCall`), its later prompts are
+  declined without being shown, and its command and memory records (which write the manifest, so
+  they stay on the panel's store) are dropped. Const is the design here: a store holding a stale
+  session record could otherwise undo a rename by writing the manifest. App-action staging is a
+  local of the call and the action's folder is per calling thread
+  (`AppActionService::OutputDirectoryScope`); it was a member every chat change replaced under a
+  running action. The panel's long-lived services stay on the panel: nothing replaces them while
+  it lives, and `release` keeps it alive until its tool work stops. Tests:
+  `sessionSwitchDuringToolKeepsItsWritesInItsOwnChat`,
+  `releaseDuringToolKeepsItsWritesInItsOwnChat`, the same two through the real `sak_app_action`
+  handler, `toolCallKeepsTheAccessModeItWasDispatchedWith`, `toolCallGatesDeclineOnceItsChatCloses`,
+  `toolCallRecordsDropOnceItsChatCloses`, `workflowPowerShellStopsOnItsCallsToken`,
+  `workflowAndSubagentToolsRunWithTheirLaunchContext`. Drilled guard by guard. 55492ced,
+  273e27f1, a99462a7, 015b44af
+- The delegate_subagent model-factory seam is out of production: the panel's
+  `m_delegateSubagentModelFactoryOverride` member is gone, and the tests set
+  `aiDelegateSubagentModelFactoryTestHook`, a function that exists only under `SAK_AI_TEST_HOOKS`
+  (a function rather than a member, so hooked and product objects agree on the class layout).
+  `test_release_binary_test_hooks` refuses its symbol in `sak_gui.lib`. 3c0d25cb
+- Proof for the two above and the dead-code removal below, at f4727896: full build, T2-label suite
+  278/278, dead-code gate (308 files), stage, archive, clean-extract portable smoke and startup
+  E2E, accessibility audit (unelevated), the ci.yml static gates. The readiness gate stops at the
+  certification state block in this worktree, which lacks the main checkout's external evidence.
 
 Open, each with why:
 
-- AI tool handlers still reach panel state through `this` (open item 7). The handlers run on the
-  async tool worker and read or write panel members directly: the app-action handler uses
-  `m_appActionRegistry`, `m_appActionService`, `m_appActionStagingDir` and
-  `m_conversationStore`; the gateway, download, session-search, package, offline-downloader,
-  skill and workflow handlers use their own members the same way. Nothing on the GUI thread
-  changes those members while a tool runs (a new or switched session is refused while the panel
-  is busy) and teardown stays safe via `AiAssistantPanel::release`, so the remaining risk is a
-  future GUI-thread write racing a handler. Removing it means giving each handler a shared,
-  thread-safe context instead of `this` -- a refactor across about ten handlers in the
-  13,000-line panel, larger than this package.
-- The panel's `m_delegateSubagentModelFactoryOverride` member is a test seam outside the
-  `*ForTesting` list: it is a data member, so moving it behind `SAK_AI_TEST_HOOKS` would change
-  `AiAssistantPanel`'s layout between hooked and product objects. It needs the factory made a
-  constructor/static seam first.
+- The context covers the tool handlers, not the run around them. A model response, a workflow
+  phase's transcript line and the broker's command result are persisted on the GUI thread into
+  whichever chat is open, so the refusal to switch chats while the panel is busy is still what
+  keeps those right. A running tool no longer depends on that refusal; the run's own records do.
+- An artifact whose full path would pass MAX_PATH is refused (found while testing this package):
+  `createAtomicStoreTempFile` opens its temp file by plain path, so a long install folder, chat
+  title and action id together fail with "Could not create artifact temporary file ... (Win32
+  error 3)". The call reports the error and the action's output is lost; nothing is written
+  elsewhere. A long-path prefix on the temp path is the likely fix.
 - The Defender actions and the elevated-helper heartbeat are unit-tested (result mapping, path
   rule, elevated task mapping, heartbeat protocol) but not run end to end here: a live run needs a
   UAC prompt and a real scan, which the T2 runners and this host's unattended lane cannot give.
@@ -689,13 +715,22 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
     `Unlock-BitLocker -MountPoint 'C:'` is an example line for the reader, not a path the app
     uses. The first two would be better read from GetWindowsDirectoryW; neither assumes C: when
     Windows reports its own location.
-- OPEN, found here (dead code, the approved class; not removed in this package): with
-  `scanAction` gone, nothing in the product calls `QuickAction::scan()` -- eight actions still
-  implement it, and their suites test it; and `quick_action_result_io` (result-file read/write,
-  status to/from string) has no product caller, only its own suite.
+- DONE (3c08e191, 28fee6ed), found here (dead code, the approved class). `QuickAction::scan()`:
+  no caller in `src` or `include`, directly, through `&Action::scan`, a connect or
+  `invokeMethod("scan")`; only `test_quick_action`'s stub called it. Removed from the interface and
+  the eight actions, with what only it fed (`ScanResult`, `lastScanResult`, `scanProgress`,
+  `scanComplete`, the `Scanning` and `Ready` statuses, `scanResultFor`). The scan logic `execute()`
+  uses stayed: volume detection, drive enumeration, the active-plan query. `quick_action_result_io`:
+  no includer outside its own suite, so it and the suite are gone.
 
 ### Open release infrastructure
 
+- Intermittent, cause unidentified: the full-history trufflehog scan in `scripts/scan_secrets.ps1`
+  exited 1 twice on 2026-11-01 with no finding and no "finished scanning" line, and passed on the
+  four runs after that with the same flags. It fails closed, so the cost is a repeated push or
+  readiness run, not a missed secret. Every run also logs "a detector ignored the context timeout"
+  for its PrivateKey detector on `tools/uup/aria2/libssh2-1.11.1.tar.xz`, passing or not; the two
+  are not shown to be related.
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
   meta-gate retirements, CTest labels, resource locks and parallel runs are in place
   (2026-10-24). Done 2026-10-24: `.github/workflows/ci.yml` runs T2 on every push to `dev` and
