@@ -33,7 +33,7 @@ inline constexpr qint64 kAdvancedSearchDefaultFileSizeBytes =
     static_cast<qint64>(kAdvancedSearchDefaultFileSizeMb) * kBytesPerMB;
 inline constexpr int kAdvancedSearchNetworkTimeoutSec = 5;
 inline constexpr int kAdvancedSearchPreviewFileSizeMb = 10;
-inline constexpr int kAdvancedSearchCacheSize = 50;
+
 
 // -- SearchMatch -------------------------------------------------------------
 
@@ -112,7 +112,7 @@ struct SearchPreferences {
     int max_results = 0;
     int max_preview_file_size_mb = kAdvancedSearchPreviewFileSizeMb;
     int max_search_file_size_mb = kAdvancedSearchDefaultFileSizeMb;
-    int max_cache_size = kAdvancedSearchCacheSize;
+
     int context_lines = kAdvancedSearchDefaultContextLines;
 };
 

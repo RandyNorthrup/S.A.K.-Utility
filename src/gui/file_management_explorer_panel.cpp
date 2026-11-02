@@ -228,7 +228,7 @@ QString targetBadge(const FileManagementTarget& target) {
     if (target.can_write_files && !target.local_file_system &&
         targetMatchesFileSystem(
             target, {QStringLiteral("apfs"), QStringLiteral("hfs+"), QStringLiteral("hfsx")})) {
-        return QStringLiteral("Write certified");
+        return QStringLiteral("Writable, validated");
     }
     if (target.read_only || !target.can_write_files) {
         return QStringLiteral("Read-only");
@@ -488,7 +488,7 @@ bool isRawImageTarget(const FileManagementTarget& target) {
            (!target.local_file_system && target.kind != FileManagementTargetKind::Partition);
 }
 
-bool isCertificationTarget(const FileManagementTarget& target) {
+bool isWritableMacDiskTarget(const FileManagementTarget& target) {
     return !target.local_file_system && target.can_write_files &&
            targetMatchesFileSystem(
                target, {QStringLiteral("apfs"), QStringLiteral("hfs+"), QStringLiteral("hfsx")});
@@ -498,7 +498,7 @@ QString sidebarIconKeyForTarget(const FileManagementTarget& target) {
     if (target.kind == FileManagementTargetKind::ImageFile) {
         return QStringLiteral("image-file");
     }
-    if (isCertificationTarget(target)) {
+    if (isWritableMacDiskTarget(target)) {
         return QStringLiteral("shield");
     }
     if (isLocalFsTarget(target) || isMountedVolumeTarget(target) || isPartitionTarget(target)) {
@@ -2195,7 +2195,7 @@ void FileManagementExplorerPanel::addSidebarSectionToggleMenu(QMenu* parent_menu
         std::pair{"partitions", QT_TR_NOOP("Disks and Partitions")},
         std::pair{"rawimages", QT_TR_NOOP("Raw Images")},
         std::pair{"recent", QT_TR_NOOP("Recent")},
-        std::pair{"certification", QT_TR_NOOP("Certification Targets")},
+        std::pair{"certification", QT_TR_NOOP("Writable Mac Disks")},
         std::pair{"tags", QT_TR_NOOP("Tags")},
     };
     for (const auto& [id, label] : kSections) {
@@ -2231,7 +2231,7 @@ void FileManagementExplorerPanel::appendVisibleSidebarSections() {
         appendSidebarTargetsById(tr("Recent"), m_recent_target_ids);
     }
     if (sidebarSectionVisible(QStringLiteral("certification"))) {
-        appendSidebarTargetsWhere(tr("Certification Targets"), &isCertificationTarget);
+        appendSidebarTargetsWhere(tr("Writable Mac Disks"), &isWritableMacDiskTarget);
     }
 
     appendTagRows();
@@ -3297,7 +3297,7 @@ bool FileManagementExplorerPanel::confirmTypedRawImport(const FileManagementTarg
     const QString typed = QInputDialog::getText(
         this,
         tr("Confirm Raw Import"),
-        tr("This imports %1 file(s) into raw media through the certified writer.\n"
+        tr("This imports %1 file(s) into raw media through the raw disk writer.\n"
            "Target: %2\nFile system: %3\nIdentity: %4\n\n"
            "Raw writes are irreversible. Type WRITE to continue:")
             .arg(QString::number(file_count),
@@ -3319,7 +3319,7 @@ bool FileManagementExplorerPanel::confirmTypedRawMove(const FileManagementTarget
     const QString typed = QInputDialog::getText(
         this,
         tr("Confirm Raw Move"),
-        tr("This moves %1 item(s) on raw media through the certified writer.\n"
+        tr("This moves %1 item(s) on raw media through the raw disk writer.\n"
            "Raw target: %2\nFile system: %3\nIdentity: %4\n\n"
            "The source entries are removed permanently. Type MOVE to continue:")
             .arg(QString::number(file_count),
@@ -6862,7 +6862,7 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
     if (!target.local_file_system) {
         safety.append(
             tr("Raw/non-native target: create, write, rename, and delete require "
-               "explicit confirmation and commit through the certified writers; "
+               "explicit confirmation and commit through the raw disk writers; "
                "browsing and reads stay non-destructive."));
     }
     if (!target.blockers.isEmpty()) {
@@ -6956,7 +6956,7 @@ void FileManagementExplorerPanel::appendEvidenceReportLinks(const FileManagement
         return;
     }
     evidence->append(QString());
-    evidence->append(tr("Live certification evidence:"));
+    evidence->append(tr("Saved test evidence for this disk:"));
     for (const QString& report : reports) {
         evidence->append(tr("- %1").arg(report));
     }

@@ -23,7 +23,9 @@
 namespace sak {
 
 namespace {
-constexpr DWORD kNetUserInfoDetailedLevel = 3;
+// Level 0 is names only, which is all the scan reads, and the level any account may ask for. The
+// profile path and SID each come from their own lookup.
+constexpr DWORD kNetUserInfoNamesLevel = 0;
 constexpr int kWindowsAccountBufferChars = 256;
 constexpr int kProfileSizeEstimateFileLimit = 1000;
 constexpr int kFolderSelectionFileLimit = 10'000;
@@ -49,8 +51,7 @@ QVector<UserProfile> WindowsUserScanner::scanUsers() {
 QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {
     QVector<UserProfile> profiles;
 
-    // enumerateWindowsUsers returns false only on a hard NetUserEnum failure (e.g. ERROR_ACCESS_
-    // DENIED without elevation -- the detailed USER_INFO_3 level needs admin). A drained-but-empty
+    // enumerateWindowsUsers returns false only on a hard NetUserEnum failure. A drained-but-empty
     // enumeration returns true: that is a genuine "no matching accounts", not a failed read.
     queryOk = enumerateWindowsUsers(profiles);
 
@@ -68,11 +69,11 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
     // more normal accounts than fit one MAX_PREFERRED_LENGTH buffer. The single-call version
     // accepted that status and scanned only the first page, silently dropping later users.
     do {
-        LPUSER_INFO_3 userInfo = nullptr;
+        LPUSER_INFO_0 userInfo = nullptr;
         DWORD entriesRead = 0;
         DWORD totalEntries = 0;
         status = NetUserEnum(nullptr,                // local computer
-                             kNetUserInfoDetailedLevel,
+                             kNetUserInfoNamesLevel,
                              FILTER_NORMAL_ACCOUNT,  // normal user accounts only
                              reinterpret_cast<LPBYTE*>(&userInfo),
                              MAX_PREFERRED_LENGTH,
@@ -91,7 +92,7 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
         }
         for (DWORD i = 0; i < entriesRead; ++i) {
             UserProfile profile;
-            profile.username = QString::fromWCharArray(userInfo[i].usri3_name);
+            profile.username = QString::fromWCharArray(userInfo[i].usri0_name);
             profile.profile_path = getProfilePath(profile.username);
             if (profile.profile_path.isEmpty() || !QDir(profile.profile_path).exists()) {
                 continue;

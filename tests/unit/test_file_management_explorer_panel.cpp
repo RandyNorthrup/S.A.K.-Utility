@@ -2203,7 +2203,7 @@ private Q_SLOTS:
         QVERIFY(labels.contains(QStringLiteral("Disks and Partitions")));
         QVERIFY(labels.contains(QStringLiteral("Raw Images")));
         QVERIFY(labels.contains(QStringLiteral("Recent")));
-        QVERIFY(labels.contains(QStringLiteral("Certification Targets")));
+        QVERIFY(labels.contains(QStringLiteral("Writable Mac Disks")));
     }
 
     void sidebarTargetRowsAreSingleLineWithTheDetailInTheTooltip() {

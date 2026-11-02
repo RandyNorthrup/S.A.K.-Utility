@@ -81,7 +81,7 @@ constexpr int kContextLinesMax = 10;
 constexpr int kMaxSearchResultsLimit = 1'000'000;
 constexpr int kPreviewSizeMaxMb = 500;
 constexpr int kSearchSizeMaxMb = 1000;
-constexpr int kSearchCacheMaxEntries = 1000;
+
 constexpr int kAdvancedSearchTargetBrowseMaxEntries = 10'000;
 constexpr int kSortMatchCountHigh = 2;
 constexpr int kSortMatchCountLow = 3;
@@ -281,7 +281,6 @@ struct PreferencesDialogUi {
     QSpinBox* preview_size_spin = nullptr;
     QSpinBox* search_size_spin = nullptr;
     QSpinBox* context_lines_spin = nullptr;
-    QSpinBox* cache_size_spin = nullptr;
 };
 
 PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferences& prefs) {
@@ -323,12 +322,6 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
     ui.context_lines_spin->setToolTip(QObject::tr("Default context lines before/after matches"));
     form->addRow(QObject::tr("Default context lines:"), ui.context_lines_spin);
 
-    ui.cache_size_spin = new QSpinBox(ui.dialog);
-    ui.cache_size_spin->setRange(1, kSearchCacheMaxEntries);
-    ui.cache_size_spin->setValue(prefs.max_cache_size);
-    ui.cache_size_spin->setToolTip(QObject::tr("Maximum LRU file cache entries"));
-    form->addRow(QObject::tr("Cache size:"), ui.cache_size_spin);
-
     layout->addLayout(form);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
@@ -347,7 +340,6 @@ SearchPreferences preferencesFromDialogUi(const PreferencesDialogUi& ui) {
     new_prefs.max_preview_file_size_mb = ui.preview_size_spin->value();
     new_prefs.max_search_file_size_mb = ui.search_size_spin->value();
     new_prefs.context_lines = ui.context_lines_spin->value();
-    new_prefs.max_cache_size = ui.cache_size_spin->value();
     return new_prefs;
 }
 

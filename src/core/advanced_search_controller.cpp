@@ -25,12 +25,12 @@ constexpr int kWorkerStopTimeoutMs = kTimeoutProcessShortMs;
 constexpr int kSearchStatusMessageMs = kTimerStatusDefaultMs;
 constexpr int kDefaultPreviewFileSizeMb = 10;
 constexpr int kDefaultSearchFileSizeMb = 50;
-constexpr int kDefaultCacheSize = 50;
+
 constexpr int kDefaultContextLines = 2;
 constexpr int kMinimumPreferenceValue = 1;
 constexpr int kMaximumPreviewFileSizeMb = 500;
 constexpr int kMaximumSearchFileSizeMb = 1000;
-constexpr int kMaximumCacheSize = 1000;
+
 constexpr int kMaximumContextLines = 10;
 constexpr int kMaxHistoryEntryLength = 2048;
 
@@ -305,8 +305,6 @@ void AdvancedSearchController::setPreferences(const SearchPreferences& prefs) {
     m_preferences.max_search_file_size_mb = std::clamp(m_preferences.max_search_file_size_mb,
                                                        kMinimumPreferenceValue,
                                                        kMaximumSearchFileSizeMb);
-    m_preferences.max_cache_size =
-        std::clamp(m_preferences.max_cache_size, kMinimumPreferenceValue, kMaximumCacheSize);
     m_preferences.context_lines = std::clamp(m_preferences.context_lines, 0, kMaximumContextLines);
     savePreferences();
 }
@@ -327,10 +325,6 @@ void AdvancedSearchController::loadPreferences() {
         cfg.getValue("advsearch/max_search_file_size_mb", kDefaultSearchFileSizeMb).toInt(),
         kMinimumPreferenceValue,
         kMaximumSearchFileSizeMb);
-    m_preferences.max_cache_size =
-        std::clamp(cfg.getValue("advsearch/cache_size", kDefaultCacheSize).toInt(),
-                   kMinimumPreferenceValue,
-                   kMaximumCacheSize);
     m_preferences.context_lines =
         std::clamp(cfg.getValue("advsearch/context_lines", kDefaultContextLines).toInt(),
                    0,
@@ -364,7 +358,7 @@ void AdvancedSearchController::savePreferences() {
     cfg.setValue("advsearch/max_results", m_preferences.max_results);
     cfg.setValue("advsearch/max_preview_file_size_mb", m_preferences.max_preview_file_size_mb);
     cfg.setValue("advsearch/max_search_file_size_mb", m_preferences.max_search_file_size_mb);
-    cfg.setValue("advsearch/cache_size", m_preferences.max_cache_size);
+
     cfg.setValue("advsearch/context_lines", m_preferences.context_lines);
     cfg.setValue("advsearch/search_history", m_search_history);
 

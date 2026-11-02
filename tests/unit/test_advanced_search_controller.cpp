@@ -316,7 +316,7 @@ void AdvancedSearchControllerTests::preferences_defaultValues() {
     QCOMPARE(prefs.max_results, 0);  // default: 0 == unlimited
     QVERIFY(prefs.max_preview_file_size_mb >= 1);
     QVERIFY(prefs.max_search_file_size_mb >= 1);
-    QVERIFY(prefs.max_cache_size >= 1);
+
     QCOMPARE(prefs.context_lines, 2);  // kDefaultContextLines
 }
 
@@ -327,7 +327,7 @@ void AdvancedSearchControllerTests::preferences_setAndGet() {
     newPrefs.max_results = 500;
     newPrefs.max_preview_file_size_mb = 25;
     newPrefs.max_search_file_size_mb = 100;
-    newPrefs.max_cache_size = 75;
+
     newPrefs.context_lines = 5;
 
     ctrl.setPreferences(newPrefs);
@@ -336,7 +336,7 @@ void AdvancedSearchControllerTests::preferences_setAndGet() {
     QCOMPARE(readBack.max_results, 500);
     QCOMPARE(readBack.max_preview_file_size_mb, 25);
     QCOMPARE(readBack.max_search_file_size_mb, 100);
-    QCOMPARE(readBack.max_cache_size, 75);
+
     QCOMPARE(readBack.context_lines, 5);
 }
 
@@ -348,7 +348,7 @@ void AdvancedSearchControllerTests::preferences_clampedValues() {
     newPrefs.max_results = 1'000'000;  // No clamp on this (0=unlimited)
     newPrefs.max_preview_file_size_mb = 999;
     newPrefs.max_search_file_size_mb = 999;
-    newPrefs.max_cache_size = 999;
+
     newPrefs.context_lines = 999;  // above the ceiling, so the clamp is actually exercised
 
     ctrl.setPreferences(newPrefs);
@@ -357,11 +357,11 @@ void AdvancedSearchControllerTests::preferences_clampedValues() {
     ctrl.loadPreferences();
     const auto prefs = ctrl.preferences();
 
-    // 999 preview clamps to the 500 ceiling; 999 search/cache are within their 1000 ceiling so they
-    // survive unchanged. `<=` would pass even if the clamp silently zeroed or mis-applied.
+    // 999 preview clamps to the 500 ceiling; 999 search is within its 1000 ceiling so it survives
+    // unchanged. `<=` would pass even if the clamp silently zeroed or mis-applied.
     QCOMPARE(prefs.max_preview_file_size_mb, 500);
     QCOMPARE(prefs.max_search_file_size_mb, 999);
-    QCOMPARE(prefs.max_cache_size, 999);
+
     QCOMPARE(prefs.context_lines, 10);  // 999 clamps to the kMaximumContextLines ceiling
 }
 

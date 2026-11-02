@@ -467,7 +467,7 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
 }
 
 void UserProfileBackupSmartFiltersPage::onResetToDefaults() {
-    m_filter.initializeDefaults();
+    m_filter = SmartFilter{};
     loadFilterSettings();
     updateSummary();
 }

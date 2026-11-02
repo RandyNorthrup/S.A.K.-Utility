@@ -28,6 +28,7 @@ private Q_SLOTS:
     void getDefaultFolderSelections_fixtureProfile();
     void getDefaultFolderSelections_invalidPath();
     void sumFolderFileSizes_sumsRealFiles();  // B10-31 per-folder sizing
+    void scanUsers_findsThisAccount();
 };
 
 void TestWindowsUserScanner::sumFolderFileSizes_sumsRealFiles() {
@@ -127,6 +128,20 @@ void TestWindowsUserScanner::getDefaultFolderSelections_invalidPath() {
     for (const auto& sel : selections) {
         QVERIFY2(sel.size_bytes == 0 && sel.file_count == 0, qPrintable(sel.display_name));
     }
+}
+
+// No test ran the scan itself. It must list accounts for whoever is running it, administrator or
+// not: it asks only for names, which any account may read.
+void TestWindowsUserScanner::scanUsers_findsThisAccount() {
+    WindowsUserScanner scanner;
+    bool query_ok = false;
+    const QVector<UserProfile> users = scanner.scanUsers(query_ok);
+    QVERIFY(query_ok);
+    const QString me = WindowsUserScanner::getCurrentUsername();
+    const bool found = std::ranges::any_of(users, [&me](const UserProfile& user) {
+        return user.username.compare(me, Qt::CaseInsensitive) == 0;
+    });
+    QVERIFY2(found, qPrintable(me));
 }
 
 QTEST_MAIN(TestWindowsUserScanner)

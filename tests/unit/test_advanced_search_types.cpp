@@ -285,7 +285,7 @@ void AdvancedSearchTypesTests::searchPreferences_defaultValues() {
     QCOMPARE(prefs.max_results, 0);
     QCOMPARE(prefs.max_preview_file_size_mb, 10);
     QCOMPARE(prefs.max_search_file_size_mb, 50);
-    QCOMPARE(prefs.max_cache_size, 50);
+
     QCOMPARE(prefs.context_lines, 2);
 }
 
@@ -426,7 +426,7 @@ void AdvancedSearchTypesTests::staticAsserts_copyConstructible() {
     source.max_results = 1000;
     source.max_preview_file_size_mb = 20;
     source.max_search_file_size_mb = 100;
-    source.max_cache_size = 75;
+
     source.context_lines = 7;
 
     sak::SearchPreferences target;
@@ -435,7 +435,7 @@ void AdvancedSearchTypesTests::staticAsserts_copyConstructible() {
     QCOMPARE(target.max_results, 1000);
     QCOMPARE(target.max_preview_file_size_mb, 20);
     QCOMPARE(target.max_search_file_size_mb, 100);
-    QCOMPARE(target.max_cache_size, 75);
+
     QCOMPARE(target.context_lines, 7);
 }
 

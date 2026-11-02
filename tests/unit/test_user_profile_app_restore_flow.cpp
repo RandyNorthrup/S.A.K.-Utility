@@ -722,6 +722,11 @@ void UserProfileAppRestoreFlowTests::filterBoxesReachTheRulesTheRunUses() {
 
     page->m_enableFolderSizeLimitCheck->setChecked(true);
     QVERIFY(wizard.getSmartFilter().enable_folder_size_limit);
+
+    // Reset means all of it, not just the lists.
+    page->onResetToDefaults();
+    QVERIFY(!wizard.getSmartFilter().enable_folder_size_limit);
+    QVERIFY(!page->m_enableFolderSizeLimitCheck->isChecked());
 }
 
 void UserProfileAppRestoreFlowTests::verifyBoxReachesTheRun() {
