@@ -186,6 +186,45 @@ private:
                                   kWaitMs);
     }
 
+    /// A message with a picture its body shows and a file it carries.
+    [[nodiscard]] static QByteArray storeWithInlinePicture() {
+        const QByteArray png("\x89PNG\r\n\x1a\nfixture bytes", 21);
+        BuilderMessage msg;
+        msg.subject = QStringLiteral("With picture");
+        msg.sender_email = QStringLiteral("a@example.test");
+        msg.date = QDateTime(QDate(2026, 3, 1), QTime(9, 0), QTimeZone::UTC);
+        msg.body_html = QStringLiteral("<p><img src=\"cid:logo@x\"></p>");
+        msg.attachments = {{QStringLiteral("logo.png"),
+                            QStringLiteral("image/png"),
+                            png,
+                            QStringLiteral("logo@x")},
+                           {QStringLiteral("menu.pdf"),
+                            QStringLiteral("application/pdf"),
+                            QByteArray("%PDF-"),
+                            {}}};
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.messages = {msg};
+        return PstStoreBuilder{}.build({inbox});
+    }
+
+    static void exportFirstFolder(PstParser& parser, sak::ExportFormat format, const QString& out) {
+        const sak::PstFolder* subtree = sak::findIpmSubtree(parser.folderTree());
+        QVERIFY(subtree != nullptr);
+        QVERIFY(QDir().mkpath(out));
+        sak::EmailExportConfig config;
+        config.format = format;
+        config.output_path = out;
+        config.has_folder = true;
+        config.folder_id = subtree->children.first().node_id;
+        EmailExportWorker worker;
+        QSignalSpy done(&worker, &EmailExportWorker::exportComplete);
+        worker.exportItems(&parser, config);
+        QCOMPARE(done.count(), 1);
+        const auto result = done.first().first().value<sak::EmailExportResult>();
+        QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QLatin1Char('|'))));
+    }
+
 private Q_SLOTS:
     void initTestCase() { QVERIFY(m_dir.isValid()); }
 
@@ -357,68 +396,101 @@ private Q_SLOTS:
     }
 
     // Inline pictures were skipped before any writer saw them, so an HTML or PDF export of a
-    // message showed blanks where its pictures were. Saved attachments and text still leave them
-    // out: a folder of every logo and signature is not what those are for.
-    void exportsCarryInlinePicturesWhereTheyCanBeShown() {
-        const QByteArray png("\x89PNG\r\n\x1a\nfixture bytes", 21);
-        BuilderMessage msg;
-        msg.subject = QStringLiteral("With picture");
-        msg.sender_email = QStringLiteral("a@example.test");
-        msg.date = QDateTime(QDate(2026, 3, 1), QTime(9, 0), QTimeZone::UTC);
-        msg.body_html = QStringLiteral("<p><img src=\"cid:logo@x\"></p>");
-        msg.attachments = {{QStringLiteral("logo.png"),
-                            QStringLiteral("image/png"),
-                            png,
-                            QStringLiteral("logo@x")},
-                           {QStringLiteral("menu.pdf"),
-                            QStringLiteral("application/pdf"),
-                            QByteArray("%PDF-"),
-                            {}}};
-        BuilderFolder inbox;
-        inbox.name = QStringLiteral("Inbox");
-        inbox.messages = {msg};
-        const QString path = writeFile(QStringLiteral(".pst"), PstStoreBuilder{}.build({inbox}));
+    // message showed blanks where its pictures were.
+    void htmlExportsCarryInlinePictures() {
         PstParser parser;
-        parser.open(path);
+        parser.open(writeFile(QStringLiteral(".pst"), storeWithInlinePicture()));
         QVERIFY(parser.isOpen());
-        const sak::PstFolder* subtree = sak::findIpmSubtree(parser.folderTree());
-        QVERIFY(subtree != nullptr);
-        const uint64_t folder_id = subtree->children.first().node_id;
-
-        const auto exportAs = [&](sak::ExportFormat format, const QString& out) {
-            QVERIFY(QDir().mkpath(out));
-            sak::EmailExportConfig config;
-            config.format = format;
-            config.output_path = out;
-            config.has_folder = true;
-            config.folder_id = folder_id;
-            EmailExportWorker worker;
-            QSignalSpy done(&worker, &EmailExportWorker::exportComplete);
-            worker.exportItems(&parser, config);
-            QCOMPARE(done.count(), 1);
-            const auto result = done.first().first().value<sak::EmailExportResult>();
-            QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QLatin1Char('|'))));
-        };
-
-        const QString html_out = m_dir.filePath(QStringLiteral("inline_html"));
-        exportAs(sak::ExportFormat::Html, html_out);
-        const QStringList pages = QDir(html_out).entryList({QStringLiteral("*.html")}, QDir::Files);
+        const QString out = m_dir.filePath(QStringLiteral("inline_html"));
+        exportFirstFolder(parser, sak::ExportFormat::Html, out);
+        const QStringList pages = QDir(out).entryList({QStringLiteral("*.html")}, QDir::Files);
         QCOMPARE(pages.size(), 1);
-        QFile page(html_out + QLatin1Char('/') + pages.first());
+        QFile page(out + QLatin1Char('/') + pages.first());
         QVERIFY(page.open(QIODevice::ReadOnly));
         const QString html = QString::fromUtf8(page.readAll());
         QVERIFY(html.contains(QStringLiteral("data:image/png;base64,")));
         QVERIFY(html.contains(QStringLiteral("menu.pdf")));
         QVERIFY(!html.contains(QStringLiteral("logo.png")));
+    }
 
+    // Saved attachments and text have nowhere to put a picture: a folder of every logo and
+    // signature is not what those are for.
+    void savedFilesLeaveInlinePicturesOut() {
+        PstParser parser;
+        parser.open(writeFile(QStringLiteral(".pst"), storeWithInlinePicture()));
+        QVERIFY(parser.isOpen());
+        const auto savedNames = [](const QString& dir) {
+            QDirIterator files(dir, QDir::Files, QDirIterator::Subdirectories);
+            QStringList names;
+            while (files.hasNext()) {
+                names.append(QFileInfo(files.next()).fileName());
+            }
+            return names;
+        };
         const QString saved_out = m_dir.filePath(QStringLiteral("inline_attachments"));
-        exportAs(sak::ExportFormat::Attachments, saved_out);
-        QDirIterator files(saved_out, QDir::Files, QDirIterator::Subdirectories);
-        QStringList saved;
-        while (files.hasNext()) {
-            saved.append(QFileInfo(files.next()).fileName());
-        }
-        QCOMPARE(saved, QStringList{QStringLiteral("menu.pdf")});
+        exportFirstFolder(parser, sak::ExportFormat::Attachments, saved_out);
+        QCOMPARE(savedNames(saved_out), QStringList{QStringLiteral("menu.pdf")});
+
+        const QString text_out = m_dir.filePath(QStringLiteral("inline_text"));
+        exportFirstFolder(parser, sak::ExportFormat::Text, text_out);
+        QCOMPARE(savedNames(text_out + QStringLiteral("/attachments")),
+                 QStringList{QStringLiteral("menu.pdf")});
+    }
+
+    // What the folder menu's task and note exports write, with the fields only the store's
+    // Name-to-ID map can supply.
+    void tasksExportTheirRealStatusAndNotesTheirText() {
+        BuilderMessage note;
+        note.message_class = QStringLiteral("IPM.StickyNote");
+        note.subject = QStringLiteral("Call back");
+        note.body_plain = QStringLiteral("Call the sign painter");
+        BuilderFolder notes;
+        notes.name = QStringLiteral("Notes");
+        notes.container_class = QStringLiteral("IPF.StickyNote");
+        notes.messages = {note};
+        const QString path = writeFile(QStringLiteral(".pst"),
+                                       PstStoreBuilder{}.build({tasksFolder(), notes}));
+        PstParser parser;
+        parser.open(path);
+        QVERIFY(parser.isOpen());
+        const sak::PstFolder* subtree = sak::findIpmSubtree(parser.folderTree());
+        QVERIFY(subtree != nullptr);
+        QCOMPARE(subtree->children.size(), 2);
+
+        const auto exportFolder =
+            [&](sak::ExportFormat format, uint64_t folder_id, const QString& out) {
+                QVERIFY(QDir().mkpath(out));
+                sak::EmailExportConfig config;
+                config.format = format;
+                config.output_path = out;
+                config.has_folder = true;
+                config.folder_id = folder_id;
+                EmailExportWorker worker;
+                QSignalSpy done(&worker, &EmailExportWorker::exportComplete);
+                worker.exportItems(&parser, config);
+                QCOMPARE(done.count(), 1);
+                const auto result = done.first().first().value<sak::EmailExportResult>();
+                QCOMPARE(result.items_exported, 1);
+                QVERIFY(result.errors.isEmpty());
+            };
+
+        const QString tasks_out = m_dir.filePath(QStringLiteral("tasks_csv"));
+        exportFolder(sak::ExportFormat::CsvTasks, subtree->children.at(0).node_id, tasks_out);
+        const QStringList csvs = QDir(tasks_out).entryList({QStringLiteral("*.csv")}, QDir::Files);
+        QCOMPARE(csvs.size(), 1);
+        QFile csv(tasks_out + QLatin1Char('/') + csvs.first());
+        QVERIFY(csv.open(QIODevice::ReadOnly));
+        const QByteArray csv_bytes = csv.readAll();
+        QVERIFY(csv_bytes.contains("Order flour"));
+        QVERIFY(csv_bytes.contains("In Progress"));
+
+        const QString notes_out = m_dir.filePath(QStringLiteral("notes_text"));
+        exportFolder(sak::ExportFormat::PlainTextNotes, subtree->children.at(1).node_id, notes_out);
+        const QStringList texts = QDir(notes_out).entryList({QStringLiteral("*.txt")}, QDir::Files);
+        QCOMPARE(texts.size(), 1);
+        QFile text(notes_out + QLatin1Char('/') + texts.first());
+        QVERIFY(text.open(QIODevice::ReadOnly));
+        QVERIFY(text.readAll().contains("Call the sign painter"));
     }
 
     void thunderbirdMailboxesAreFoundByWhatTheyAre() {
