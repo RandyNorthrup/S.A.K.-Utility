@@ -17,6 +17,7 @@ class TestChocolateyManager : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void searchAsksForMostPopularFirst();
     void construction_default();
     void construction_notInitialized();
     void result_defaults();
@@ -233,6 +234,26 @@ void TestChocolateyManager::searchPackage_negativeMaxResultsFailsClosed() {
     const auto result = manager.searchPackage(QStringLiteral("git"), -1);
     QVERIFY(!result.success);
     QCOMPARE(result.error_message, QStringLiteral("max_results must not be negative"));
+}
+
+// `choco search` sorts alphabetically unless told otherwise. A page of 50 for "git" ran out at
+// names starting "dev" without reaching git, so the search box could not find it.
+void TestChocolateyManager::searchAsksForMostPopularFirst() {
+    const QStringList args = sak::ChocolateyManager::searchArguments(QStringLiteral("git"), 50);
+    QCOMPARE(args.first(), QStringLiteral("search"));
+    QCOMPARE(args.at(1), QStringLiteral("git"));
+    QVERIFY(args.contains(QStringLiteral("--limit-output")));
+    const auto order = args.indexOf(QStringLiteral("--order-by"));
+    QVERIFY(order >= 0);
+    QCOMPARE(args.at(order + 1), QStringLiteral("Popularity"));
+    const auto page = args.indexOf(QStringLiteral("--page-size"));
+    QVERIFY(page >= 0);
+    QCOMPARE(args.at(page + 1), QStringLiteral("50"));
+
+    // No limit asked for: no page size, and the order still applies.
+    const QStringList unlimited = sak::ChocolateyManager::searchArguments(QStringLiteral("git"), 0);
+    QVERIFY(!unlimited.contains(QStringLiteral("--page-size")));
+    QVERIFY(unlimited.contains(QStringLiteral("--order-by")));
 }
 
 QTEST_MAIN(TestChocolateyManager)

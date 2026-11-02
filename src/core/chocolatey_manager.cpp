@@ -505,13 +505,7 @@ ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query,
 
     Q_EMIT searchStarted(query);
 
-    QStringList args = {"search", query, "--limit-output"};
-
-    if (max_results > 0) {
-        args << "--page-size" << QString::number(max_results);
-    }
-
-    Result result = executeChoco(args, kSearchTimeoutMs);
+    Result result = executeChoco(searchArguments(query, max_results), kSearchTimeoutMs);
 
     if (result.success) {
         auto packages = parseSearchResults(result.output);
@@ -519,6 +513,14 @@ ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query,
     }
 
     return result;
+}
+
+QStringList ChocolateyManager::searchArguments(const QString& query, int max_results) {
+    QStringList args = {"search", query, "--limit-output", "--order-by", "Popularity"};
+    if (max_results > 0) {
+        args << "--page-size" << QString::number(max_results);
+    }
+    return args;
 }
 
 std::vector<ChocolateyManager::PackageInfo> ChocolateyManager::parseSearchResults(

@@ -102,6 +102,11 @@ public:
     void setAutoConfirm(bool confirm);
     bool getAutoConfirm() const;
 
+    /// @brief The `choco search` arguments. Results come most popular first: the default order is
+    ///        alphabetical, so a page of 50 for "git" stops at names starting "dev" and never
+    ///        reaches git. Pure; unit-testable.
+    [[nodiscard]] static QStringList searchArguments(const QString& query, int max_results);
+
     /// @brief True iff @p package_name is a safe Chocolatey/NuGet package id: it
     ///        must START with an alphanumeric (so it can never be read as a CLI
     ///        option like "-force") and otherwise contain only [A-Za-z0-9._-].
