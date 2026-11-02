@@ -729,6 +729,11 @@ void DiagnosticController::aggregateSmartHealth() {
             m_report_data.warnings.append(QString("Drive %1 (%2): Warning health status")
                                               .arg(report.device_path, report.model));
         }
+        // No reading is not a good reading.
+        if (report.overall_health == SmartHealthStatus::Unknown &&
+            m_report_data.overall_status == DiagnosticStatus::AllPassed) {
+            m_report_data.overall_status = DiagnosticStatus::Warnings;
+        }
         m_report_data.warnings.append(report.warnings);
         m_report_data.recommendations.append(report.recommendations);
     }
@@ -739,6 +744,11 @@ void DiagnosticController::aggregateStressTest() {
         return;
     }
     const auto& stress = m_report_data.stress_test.value();
+    if (!stress.cpuTemperatureRead()) {
+        m_report_data.warnings.append(
+            "CPU temperature could not be read during the stress test, so the thermal limit "
+            "was not enforced");
+    }
     if (!stress.passed) {
         m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
         m_report_data.critical_issues.append(
@@ -758,6 +768,31 @@ void DiagnosticController::aggregateStressTest() {
             "Improve system cooling"
             " -- check thermal paste, fans, and airflow");
     }
+}
+
+QStringList DiagnosticController::stepsWithNoResult(const DiagnosticReportData& data) {
+    QStringList missing;
+    if (data.inventory.cpu.name.isEmpty()) {
+        missing << QStringLiteral("Hardware scan");
+    }
+    if (std::ranges::none_of(data.smart_reports, [](const SmartReport& report) {
+            return report.overall_health != SmartHealthStatus::Unknown;
+        })) {
+        missing << QStringLiteral("SMART analysis");
+    }
+    if (!data.cpu_benchmark.has_value()) {
+        missing << QStringLiteral("CPU benchmark");
+    }
+    if (!data.disk_benchmark.has_value()) {
+        missing << QStringLiteral("Disk benchmark");
+    }
+    if (!data.memory_benchmark.has_value()) {
+        missing << QStringLiteral("Memory benchmark");
+    }
+    if (!data.stress_test.has_value()) {
+        missing << QStringLiteral("Stress test");
+    }
+    return missing;
 }
 
 DiagnosticStatus DiagnosticController::statusWithStepFailures(DiagnosticStatus current,
@@ -785,8 +820,19 @@ void DiagnosticController::aggregateResults() {
         m_report_data.warnings.append(
             QString("%1 did not complete successfully -- results unavailable").arg(step));
     }
-    m_report_data.overall_status = statusWithStepFailures(m_report_data.overall_status,
-                                                          !m_suite_failures.isEmpty());
+    // "All tests passed" is a claim about all of them. A report of one scan, or of a run where no
+    // drive could be read, has not passed the rest; it has not looked at them.
+    const QStringList no_result = stepsWithNoResult(m_report_data);
+    for (const QString& step : no_result) {
+        if (!m_suite_failures.contains(step)) {
+            m_report_data.warnings.append(
+                QString("%1 has no result in this report -- it was not run or could not read "
+                        "anything")
+                    .arg(step));
+        }
+    }
+    m_report_data.overall_status = statusWithStepFailures(
+        m_report_data.overall_status, !m_suite_failures.isEmpty() || !no_result.isEmpty());
 
     constexpr double kBatteryWarningThreshold = 50.0;
     if (m_report_data.inventory.battery.present &&

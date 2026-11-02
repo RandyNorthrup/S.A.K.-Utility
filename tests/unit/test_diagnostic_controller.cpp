@@ -14,6 +14,10 @@ class DiagnosticControllerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void oneScanIsNotAllTestsPassed();
+    void drivesThatCouldNotBeReadAreNotAPass();
+    void everyStepPassingIsAllPassed();
+    void aStressRunWithNoSensorSaysSo();
     void initialState();
     void suiteStateEnum();
     void cancelCurrentResetsState();
@@ -267,6 +271,77 @@ void DiagnosticControllerTests::uniqueReportBaseName_neverCollides() {
     // pins prove distinctness AND the format/millisecond/counter placement the loose checks missed.
     QCOMPARE(a, QStringLiteral("C:/out/SAK_Diagnostic_20260730_120000_500_0"));
     QCOMPARE(b, QStringLiteral("C:/out/SAK_Diagnostic_20260730_120000_500_1"));
+}
+
+namespace {
+// Every step with a good result, which is the only thing "all tests passed" may mean.
+DiagnosticReportData everyStepPassed() {
+    DiagnosticReportData data;
+    data.inventory.cpu.name = QStringLiteral("Test CPU");
+    SmartReport drive;
+    drive.overall_health = SmartHealthStatus::Healthy;
+    data.smart_reports = {drive};
+    data.cpu_benchmark = CpuBenchmarkResult{};
+    data.disk_benchmark = DiskBenchmarkResult{};
+    data.memory_benchmark = MemoryBenchmarkResult{};
+    StressTestResult stress;
+    stress.passed = true;
+    stress.max_cpu_temp = 71.0;
+    data.stress_test = stress;
+    return data;
+}
+}  // namespace
+
+void DiagnosticControllerTests::oneScanIsNotAllTestsPassed() {
+    DiagnosticController controller;
+    controller.m_report_data = DiagnosticReportData{};
+    controller.m_report_data.inventory.cpu.name = QStringLiteral("Test CPU");
+    controller.aggregateResults();
+    QCOMPARE(controller.m_report_data.overall_status, DiagnosticStatus::Warnings);
+    const QString warnings = controller.m_report_data.warnings.join(QLatin1Char('\n'));
+    QVERIFY2(warnings.contains(QStringLiteral("CPU benchmark has no result")),
+             qPrintable(warnings));
+    QVERIFY2(!warnings.contains(QStringLiteral("Hardware scan")), qPrintable(warnings));
+}
+
+void DiagnosticControllerTests::drivesThatCouldNotBeReadAreNotAPass() {
+    DiagnosticController controller;
+    controller.m_report_data = everyStepPassed();
+    controller.m_report_data.smart_reports.first().overall_health = SmartHealthStatus::Unknown;
+    controller.aggregateResults();
+    QCOMPARE(controller.m_report_data.overall_status, DiagnosticStatus::Warnings);
+    const QString warnings = controller.m_report_data.warnings.join(QLatin1Char('\n'));
+    QVERIFY2(warnings.contains(QStringLiteral("SMART analysis has no result")),
+             qPrintable(warnings));
+
+    // One readable drive among unreadable ones is a SMART result, and the unreadable one still
+    // keeps the run from reading as a clean pass.
+    SmartReport readable;
+    readable.overall_health = SmartHealthStatus::Healthy;
+    controller.m_report_data.smart_reports.append(readable);
+    QVERIFY(!DiagnosticController::stepsWithNoResult(controller.m_report_data)
+                 .contains(QStringLiteral("SMART analysis")));
+    controller.aggregateResults();
+    QCOMPARE(controller.m_report_data.overall_status, DiagnosticStatus::Warnings);
+}
+
+void DiagnosticControllerTests::everyStepPassingIsAllPassed() {
+    DiagnosticController controller;
+    controller.m_report_data = everyStepPassed();
+    QCOMPARE(DiagnosticController::stepsWithNoResult(controller.m_report_data), QStringList());
+    controller.aggregateResults();
+    QCOMPARE(controller.m_report_data.overall_status, DiagnosticStatus::AllPassed);
+    QCOMPARE(controller.m_report_data.warnings, QStringList());
+}
+
+void DiagnosticControllerTests::aStressRunWithNoSensorSaysSo() {
+    DiagnosticController controller;
+    controller.m_report_data = everyStepPassed();
+    controller.m_report_data.stress_test->max_cpu_temp = 0.0;  // Nothing was ever read.
+    controller.aggregateResults();
+    const QString warnings = controller.m_report_data.warnings.join(QLatin1Char('\n'));
+    QVERIFY2(warnings.contains(QStringLiteral("thermal limit was not enforced")),
+             qPrintable(warnings));
 }
 
 QTEST_MAIN(DiagnosticControllerTests)

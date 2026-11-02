@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -363,7 +364,24 @@ struct StressTestResult {
     QString abort_reason;        ///< Empty if completed normally
     QDateTime start_time;
     QDateTime end_time;
+
+    /// @brief Whether any CPU temperature was read during the run. With no reading the thermal
+    ///        limit could not be enforced, and max_cpu_temp says nothing.
+    [[nodiscard]] bool cpuTemperatureRead() const { return max_cpu_temp > 0.0; }
 };
+
+// ============================================================================
+// Where Disk Tests Write
+// ============================================================================
+
+/// @brief The folder a disk benchmark or disk stress test writes its file to on @p drive_path.
+///        Creating a file in the root of the system drive needs administrator rights, so on the
+///        drive that holds the temp folder the test uses that folder: the same disk, and it works
+///        for a normal user. Any other drive uses its root.
+[[nodiscard]] inline QString diskTestFolder(const QString& drive_path) {
+    const QString temp = QDir::tempPath();
+    return drive_path.left(2).compare(temp.left(2), Qt::CaseInsensitive) == 0 ? temp : drive_path;
+}
 
 // ============================================================================
 // Thermal Monitoring Types

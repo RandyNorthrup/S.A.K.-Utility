@@ -17,6 +17,8 @@
 #include <atomic>
 #include <memory>
 
+class DiagnosticControllerTests;
+
 namespace sak {
 
 inline constexpr int kDefaultThermalMonitoringIntervalMs = kThermalReadoutPollIntervalMs;
@@ -166,6 +168,10 @@ public:
                                                   SuiteState current,
                                                   SuiteState completedStep);
 
+    /// @brief The steps with no result in @p data, by the names the suite reports them under. A
+    ///        drive report whose health could not be read is not a SMART result. Pure.
+    [[nodiscard]] static QStringList stepsWithNoResult(const DiagnosticReportData& data);
+
     /// @brief Downgrade an aggregate status when a suite step failed to run.
     /// @return @p current when no step failed; otherwise at least Warnings.
     /// @note Never upgrades (a CriticalIssues status stays critical). Ensures a
@@ -302,6 +308,8 @@ private:
                                                   const QString& formats) const;
 
     /// @brief Aggregate all data and determine overall status
+    friend class ::DiagnosticControllerTests;  // aggregates a part-run report with no real scan
+
     void aggregateResults();
     void aggregateSmartHealth();
     void aggregateStressTest();
