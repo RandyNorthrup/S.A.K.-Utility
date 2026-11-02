@@ -13,8 +13,6 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QHBoxLayout>
-#include <QInputDialog>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QStandardPaths>
@@ -182,26 +180,8 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     const PermissionMode perm_mode = wiz->permissionMode();
     const bool verify = wiz->verifyFiles();
     const bool create_backup = wiz->createBackup();
-
-    // An encrypted backup cannot be read without the password, and the worker refuses to
-    // start without one. Ask here, where the manifest is already known, rather than
-    // letting every file fail to decode.
-    QString password;
-    if (manifest.encrypted) {
-        bool accepted = false;
-        password = QInputDialog::getText(
-            this,
-            tr("Encrypted Backup"),
-            tr("This backup is encrypted.\nEnter the password used when it was created:"),
-            QLineEdit::Password,
-            QString(),
-            &accepted);
-        if (!accepted || password.isEmpty()) {
-            m_statusLabel->setText(tr("Restore not started"));
-            m_logText->append(tr("[ERROR] A password is required to restore this backup."));
-            return;
-        }
-    }
+    // Asked for and checked on the last step, while the person can still go back.
+    const QString password = wiz->password();
 
     auto* worker = new UserProfileRestoreWorker(this);
     // Track the worker so onCancelRestore() can actually reach it; a bare local

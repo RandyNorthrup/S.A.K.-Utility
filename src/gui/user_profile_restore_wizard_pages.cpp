@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_data_program_prompt.h"
 #include "sak/app_data_sources.h"
+#include "sak/backup_file_codec.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/elevation_gate.h"
 #include "sak/format_utils.h"
@@ -19,6 +21,7 @@
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -42,13 +45,6 @@ enum MappingColumn {
     KMappingColumnCount,
 };
 
-enum MergeColumn {
-    KMergeColumnSelect,
-    KMergeColumnFile,
-    KMergeColumnConflict,
-    KMergeColumnStatus,
-    KMergeColumnCount,
-};
 
 enum FolderColumn {
     KFolderColumnSelect,
@@ -87,10 +83,11 @@ void setMergeModeValue(QComboBox* mode_combo, MergeMode mode) {
     }
 }
 
-// Keep the merge mode consistent with the destination selection (R5-P11-17): the
-// "(Create New User)" entry (empty data) can only pair with CreateNewUser, and an
-// existing destination can only pair with a replace/merge mode. This overrides only an
-// incompatible mode, so it never blocks a legitimate manual Replace-vs-Merge choice.
+// Keep the merge mode consistent with the destination selection (R5-P11-17): the new-folder
+// entry (empty data) can only pair with CreateNewUser, and an existing destination can only pair
+// with a replace/merge mode. This overrides only an incompatible mode, so it never blocks a
+// legitimate manual Replace-vs-Merge choice. Picking an account lands on Merge, because Replace
+// overwrites that person's files and should be asked for.
 void syncMergeModeToDestination(QComboBox* dest_combo, QComboBox* mode_combo) {
     if ((dest_combo == nullptr) || (mode_combo == nullptr)) {
         return;
@@ -100,7 +97,7 @@ void syncMergeModeToDestination(QComboBox* dest_combo, QComboBox* mode_combo) {
     if (create_new) {
         setMergeModeValue(mode_combo, MergeMode::CreateNewUser);
     } else if (current_mode == MergeMode::CreateNewUser) {
-        setMergeModeValue(mode_combo, MergeMode::ReplaceDestination);
+        setMergeModeValue(mode_combo, MergeMode::MergeIntoDestination);
     }
 }
 
@@ -130,10 +127,13 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
-    auto* info_label =
-        new QLabel(tr("Map each user from the backup to a user on this system. "
-                      "You can map to an existing user (merge data) or create a new user."),
-                   this);
+    auto* info_label = new QLabel(
+        tr("Map each user from the backup to a user on this system. "
+           "<b>Merge Into Destination</b> follows the conflict rule on the last page for files "
+           "that are already there. <b>Replace Destination</b> overwrites them. Neither removes "
+           "other files. <b>New Folder Only</b> makes a folder under Users and does not create a "
+           "Windows account: create the account first if this person will sign in here."),
+        this);
     info_label->setWordWrap(true);
     layout->addWidget(info_label);
 
@@ -223,7 +223,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
 
         // Destination user combo
         auto* dest_combo = new QComboBox();
-        dest_combo->addItem(tr("(Create New User)"), QString());
+        dest_combo->addItem(tr("(New Folder, No Account)"), QString());
         for (const auto& dest_user : m_destinationUsers) {
             dest_combo->addItem(dest_user.username, dest_user.username);
         }
@@ -235,10 +235,10 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
                             static_cast<int>(MergeMode::ReplaceDestination));
         mode_combo->addItem(tr("Merge Into Destination"),
                             static_cast<int>(MergeMode::MergeIntoDestination));
-        mode_combo->addItem(tr("Create New User"), static_cast<int>(MergeMode::CreateNewUser));
+        mode_combo->addItem(tr("New Folder Only"), static_cast<int>(MergeMode::CreateNewUser));
         m_mappingTable->setCellWidget(row, KMappingColumnMergeMode, mode_combo);
 
-        // Destination defaults to "(Create New User)" (empty data), so start the merge mode on
+        // Destination defaults to the new-folder entry (empty data), so start the merge mode on
         // CreateNewUser to keep the dest/mode pair consistent for a plain click-through.
         syncMergeModeToDestination(dest_combo, mode_combo);
 
@@ -316,11 +316,12 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
         }
     }
 
-    m_summaryLabel->setText(tr("Summary: %1 of %2 users selected | %3 merges, %4 new users")
-                                .arg(selected_mappings)
-                                .arg(total_mappings)
-                                .arg(merges)
-                                .arg(new_users));
+    m_summaryLabel->setText(
+        tr("Summary: %1 of %2 users selected | %3 into accounts, %4 new folders")
+            .arg(selected_mappings)
+            .arg(total_mappings)
+            .arg(merges)
+            .arg(new_users));
 }
 
 UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
@@ -398,169 +399,9 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
             this,
             tr("Incompatible Merge Mode"),
             tr("Cannot restore '%1': its merge mode does not match its destination. Choose "
-               "'Create New User' for a new account, or Replace/Merge for an existing one.")
+               "'New Folder Only' for a new folder, or Replace/Merge for an existing account.")
                 .arg(mapping.source_username));
         return false;
-    }
-
-    wiz->setUserMappings(mappings);
-    return true;
-}
-
-// ============================================================================
-// Page 3: Merge Configuration
-// ============================================================================
-
-UserProfileRestoreMergeConfigPage::UserProfileRestoreMergeConfigPage(QWidget* parent)
-    : QWizardPage(parent) {
-    setTitle(tr("Merge Configuration"));
-    setSubTitle(tr("Configure how to merge data for each user"));
-
-    setupUi();
-}
-
-void UserProfileRestoreMergeConfigPage::setupUi() {
-    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* layout = new QVBoxLayout(this);
-
-    // Instructions
-    auto* info_label = new QLabel(
-        tr("For each user mapping, configure the merge behavior and conflict resolution."), this);
-    info_label->setWordWrap(true);
-    layout->addWidget(info_label);
-
-    // Merge table
-    m_mergeTable = new QTableWidget(0, KMergeColumnCount, this);
-    m_mergeTable->setHorizontalHeaderLabels(
-        {tr("Source -> Destination"), tr("Merge Mode"), tr("Conflict Resolution"), tr("Status")});
-    m_mergeTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    m_mergeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_mergeTable->verticalHeader()->setVisible(false);
-    layout->addWidget(m_mergeTable);
-    // Empty-only overlay (R5-G20-7): filled synchronously from prior-page mappings,
-    // so no loading state; parented to the table, which owns its lifetime.
-    new sak::ui::ViewEmptyState(m_mergeTable, tr("No user mappings to configure"));
-
-    // Summary
-    m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    layout->addWidget(m_summaryLabel);
-
-    // Connections
-    connect(m_mergeTable,
-            &QTableWidget::cellChanged,
-            this,
-            &UserProfileRestoreMergeConfigPage::onMergeSettingsChanged);
-}
-
-void UserProfileRestoreMergeConfigPage::initializePage() {
-    loadMergeTable();
-    updateSummary();
-}
-
-void UserProfileRestoreMergeConfigPage::loadMergeTable() {
-    Q_ASSERT(m_mergeTable);
-    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (wiz == nullptr) {
-        return;
-    }
-
-    const QVector<UserMapping> mappings = wiz->userMappings();
-
-    m_mergeTable->setRowCount(0);
-
-    for (const auto& mapping : mappings) {
-        const int row = m_mergeTable->rowCount();
-        m_mergeTable->insertRow(row);
-
-        // Mapping info
-        const QString mapping_text =
-            mapping.destination_username.isEmpty()
-                ? tr("%1 -> (New User)").arg(mapping.source_username)
-                : tr("%1 -> %2").arg(mapping.source_username, mapping.destination_username);
-
-        auto* mapping_item = new QTableWidgetItem(mapping_text);
-        mapping_item->setFlags(mapping_item->flags() & ~Qt::ItemIsEditable);
-        m_mergeTable->setItem(row, 0, mapping_item);
-
-        // Merge mode (read-only display)
-        auto* mode_item = new QTableWidgetItem(mergeModeToString(mapping.mode));
-        mode_item->setFlags(mode_item->flags() & ~Qt::ItemIsEditable);
-        m_mergeTable->setItem(row, 1, mode_item);
-
-        // Conflict resolution combo
-        auto* conflict_combo = new QComboBox();
-        conflict_combo->addItem(tr("Skip Duplicate"),
-                                static_cast<int>(ConflictResolution::SkipDuplicate));
-        conflict_combo->addItem(tr("Rename with Suffix"),
-                                static_cast<int>(ConflictResolution::RenameWithSuffix));
-        conflict_combo->addItem(tr("Keep Newer"), static_cast<int>(ConflictResolution::KeepNewer));
-        conflict_combo->addItem(tr("Keep Larger"),
-                                static_cast<int>(ConflictResolution::KeepLarger));
-        conflict_combo->addItem(tr("Prompt User"),
-                                static_cast<int>(ConflictResolution::PromptUser));
-        conflict_combo->setCurrentIndex(1);  // Default to RenameWithSuffix
-        m_mergeTable->setCellWidget(row, KMergeColumnConflict, conflict_combo);
-
-        // Status
-        auto* status_item = new QTableWidgetItem(tr("Ready"));
-        status_item->setFlags(status_item->flags() & ~Qt::ItemIsEditable);
-        m_mergeTable->setItem(row, KMergeColumnStatus, status_item);
-
-        // Connect signals
-        connect(conflict_combo,
-                QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this,
-                [this, row](int) { onMergeSettingsChanged(row, KMergeColumnConflict); });
-    }
-}
-
-void UserProfileRestoreMergeConfigPage::onMergeSettingsChanged(int, int) {
-    updateSummary();
-}
-
-void UserProfileRestoreMergeConfigPage::updateSummary() {
-    Q_ASSERT(m_summaryLabel);
-    Q_ASSERT(m_mergeTable);
-    int replace_count = 0;
-    int merge_count = 0;
-    int new_count = 0;
-
-    for (int row = 0; row < m_mergeTable->rowCount(); ++row) {
-        const QString mode_text = m_mergeTable->item(row, 1)->text();
-
-        if (mode_text.contains("Replace", Qt::CaseInsensitive)) {
-            replace_count++;
-        } else if (mode_text.contains("Merge", Qt::CaseInsensitive)) {
-            merge_count++;
-        } else if (mode_text.contains("New", Qt::CaseInsensitive)) {
-            new_count++;
-        }
-    }
-
-    m_summaryLabel->setText(tr("Operations: %1 replace, %2 merge, %3 new users")
-                                .arg(replace_count)
-                                .arg(merge_count)
-                                .arg(new_count));
-}
-
-bool UserProfileRestoreMergeConfigPage::validatePage() {
-    Q_ASSERT(m_mergeTable);
-    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (wiz == nullptr) {
-        return false;
-    }
-
-    // Update mappings with conflict resolution settings
-    QVector<UserMapping> mappings = wiz->userMappings();
-
-    for (int row = 0; row < m_mergeTable->rowCount() && row < mappings.size(); ++row) {
-        auto* conflict_combo =
-            qobject_cast<QComboBox*>(m_mergeTable->cellWidget(row, KMergeColumnConflict));
-        if (conflict_combo != nullptr) {
-            mappings[row].conflict_resolution =
-                static_cast<ConflictResolution>(conflict_combo->currentData().toInt());
-        }
     }
 
     wiz->setUserMappings(mappings);
@@ -1541,10 +1382,20 @@ void UserProfileRestoreEthernetPage::onSelectNone() {
 
 UserProfileRestorePermissionSettingsPage::UserProfileRestorePermissionSettingsPage(QWidget* parent)
     : QWizardPage(parent) {
-    setTitle(tr("Permission & Verification"));
-    setSubTitle(tr("Configure permission handling and verification options"));
+    setTitle(tr("Review and Start Restore"));
+    setSubTitle(
+        tr("Files start changing when you click Start Restore. There is no step after "
+           "this one."));
+    // The wizard's own way of saying this page is the point of no return: Next becomes the named
+    // action, and Back is gone once it is pressed.
+    setCommitPage(true);
+    setButtonText(QWizard::CommitButton, tr("Start Restore"));
 
     setupUi();
+}
+
+void UserProfileRestorePermissionSettingsPage::initializePage() {
+    updateSummary();
 }
 
 void UserProfileRestorePermissionSettingsPage::setupUi() {
@@ -1599,6 +1450,9 @@ void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVB
 
     // Options
     m_verifyCheckBox = new QCheckBox(tr("Verify file integrity after restore"), this);
+    m_verifyCheckBox->setToolTip(
+        tr("Checks each restored file against the backup, including compressed and encrypted "
+           "ones. If a file does not match, what was there before is put back."));
     m_verifyCheckBox->setChecked(true);
     layout->addWidget(m_verifyCheckBox);
 
@@ -1669,13 +1523,16 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
     }
 
     const QString summary = QString(
-                                "<b>Configuration Summary:</b><br>"
-                                "* Permission Mode: %1<br>"
-                                "* Conflict Resolution: %2<br>"
-                                "* Verify Integrity: %3<br>"
-                                "* Backup Existing: %4<br><br>"
-                                "%5")
-                                .arg(perm_mode,
+                                "<b>This restore will:</b><br>%1%2"
+                                "<br><b>Settings:</b><br>"
+                                "* Permission Mode: %3<br>"
+                                "* Conflict Resolution: %4<br>"
+                                "* Verify Integrity: %5<br>"
+                                "* Backup Existing: %6<br><br>"
+                                "%7")
+                                .arg(mappingSummary(),
+                                     selectionSummary(),
+                                     perm_mode,
                                      conflict_mode,
                                      m_verifyCheckBox->isChecked() ? tr("Yes") : tr("No"),
                                      m_createBackupCheckBox->isChecked() ? tr("Yes") : tr("No"),
@@ -1684,11 +1541,150 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
     m_summaryLabel->setText(summary);
 }
 
+QString UserProfileRestorePermissionSettingsPage::mappingSummary() const {
+    const auto* wiz = qobject_cast<const UserProfileRestoreWizard*>(wizard());
+    if (wiz == nullptr) {
+        return {};
+    }
+    QString lines;
+    for (const UserMapping& mapping : wiz->userMappings()) {
+        const QString source = mapping.source_username.toHtmlEscaped();
+        switch (mapping.mode) {
+        case MergeMode::ReplaceDestination:
+            lines += tr("* %1 to %2: <b>overwrite</b> files that are already there<br>")
+                         .arg(source, mapping.destination_username.toHtmlEscaped());
+            break;
+        case MergeMode::MergeIntoDestination:
+            lines += tr("* %1 to %2: files already there follow the conflict rule below<br>")
+                         .arg(source, mapping.destination_username.toHtmlEscaped());
+            break;
+        case MergeMode::CreateNewUser:
+            lines +=
+                tr("* %1: make a new folder under Users, with no Windows account<br>").arg(source);
+            break;
+        }
+    }
+    return lines;
+}
+
+QString UserProfileRestorePermissionSettingsPage::selectionSummary() const {
+    const auto* wiz = qobject_cast<const UserProfileRestoreWizard*>(wizard());
+    if (wiz == nullptr) {
+        return {};
+    }
+    QString lines;
+    const auto app_data = wiz->appDataSources();
+    const auto selected_app_data = std::ranges::count_if(
+        app_data, [](const AppDataSourceInfo& source) { return source.selected; });
+    if (selected_app_data > 0) {
+        lines += tr("* Application data (%1): replaces what is there, keeping each old file with "
+                    ".sakbak on the end of its name<br>")
+                     .arg(selected_app_data);
+    }
+    const auto wifi = wiz->wifiProfiles();
+    const auto selected_wifi = std::ranges::count_if(wifi, [](const WifiProfileInfo& profile) {
+        return profile.selected;
+    });
+    if (selected_wifi > 0) {
+        lines += tr("* WiFi networks (%1): added to this PC<br>").arg(selected_wifi);
+    }
+    const auto ethernet = wiz->ethernetConfigs();
+    const auto selected_ethernet = std::ranges::count_if(
+        ethernet, [](const EthernetConfigInfo& config) { return config.selected; });
+    if (selected_ethernet > 0) {
+        lines += tr("* Ethernet adapters (%1): settings changed, which can drop this PC's "
+                    "connection<br>")
+                     .arg(selected_ethernet);
+    }
+    return lines;
+}
+
+bool UserProfileRestorePermissionSettingsPage::permissionModeFitsDestinations(
+    const UserProfileRestoreWizard* wiz) {
+    const auto mode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    const auto mappings = wiz->userMappings();
+    const bool new_folder = std::ranges::any_of(mappings, [](const UserMapping& mapping) {
+        return mapping.destination_username.isEmpty();
+    });
+    if (mode != PermissionMode::AssignToDestination || !new_folder) {
+        return true;
+    }
+    sak::showWarningLogged(this,
+                           tr("No Account to Assign"),
+                           tr("Assign to Destination User needs a Windows account, and a new "
+                              "folder does not have one. Choose another Permission Mode, or go "
+                              "back and map this person to an account."));
+    return false;
+}
+
+bool UserProfileRestorePermissionSettingsPage::hasRightsForThisRestore(
+    const UserProfileRestoreWizard* wiz) {
+    if (ElevationManager::isElevated()) {
+        return true;
+    }
+    const auto wifi = wiz->wifiProfiles();
+    const auto ethernet = wiz->ethernetConfigs();
+    const bool network =
+        std::ranges::any_of(wifi, [](const WifiProfileInfo& p) { return p.selected; }) ||
+        std::ranges::any_of(ethernet, [](const EthernetConfigInfo& c) { return c.selected; });
+    const auto mappings = wiz->userMappings();
+    const QString self = WindowsUserScanner::getCurrentUsername();
+    const bool other_person = std::ranges::any_of(mappings, [&self](const UserMapping& mapping) {
+        return mapping.destination_username.compare(self, Qt::CaseInsensitive) != 0;
+    });
+    if (!network && !other_person) {
+        return true;
+    }
+    // Restarting loses this wizard, so saying No stays here to change the choices instead.
+    const auto gate = sak::showElevationGate(
+        this,
+        tr("This restore"),
+        tr("Changing network settings, and writing into another person's profile or a new folder "
+           "under Users, need administrator rights. Without them those parts fail. Choose No to "
+           "stay here and change your choices."));
+    return gate == sak::ElevationGateResult::AlreadyElevated;
+}
+
+bool UserProfileRestorePermissionSettingsPage::collectPassword(UserProfileRestoreWizard* wiz) {
+    const BackupManifest manifest = wiz->manifest();
+    if (!manifest.encrypted) {
+        return true;
+    }
+    bool accepted = false;
+    const QString password = QInputDialog::getText(
+        this,
+        tr("Encrypted Backup"),
+        tr("This backup is encrypted.\nEnter the password used when it was created:"),
+        QLineEdit::Password,
+        QString(),
+        &accepted);
+    if (!accepted || password.isEmpty()) {
+        return false;
+    }
+    if (!backupPasswordOpens(wiz->backupPath(), password)) {
+        sak::showWarningLogged(this,
+                               tr("Wrong Password"),
+                               tr("That password does not open this backup. Nothing was changed."));
+        return false;
+    }
+    wiz->setPassword(password);
+    return true;
+}
+
+bool UserProfileRestorePermissionSettingsPage::readyToStart(UserProfileRestoreWizard* wiz) {
+    return permissionModeFitsDestinations(wiz) && hasRightsForThisRestore(wiz) &&
+           askToCloseProgramsHolding(this, wiz->appDataSources()) && collectPassword(wiz);
+}
+
 bool UserProfileRestorePermissionSettingsPage::validatePage() {
     Q_ASSERT(m_permissionModeCombo);
     Q_ASSERT(m_conflictResolutionCombo);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (wiz == nullptr) {
+        return false;
+    }
+
+    if (!readyToStart(wiz)) {
         return false;
     }
 

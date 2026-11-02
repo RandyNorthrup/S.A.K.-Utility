@@ -46,7 +46,7 @@ namespace sak {
 namespace {
 constexpr int kRestoreProgressFileInterval = 100;
 constexpr qint64 kRestoreProgressByteInterval = kRestoreProgressFileInterval * kBytesPerMB;
-constexpr int kRestoreConflictMaxAttempts = 1000;
+
 constexpr int kNetshTimeoutMs = 30'000;
 constexpr int kHexBase = 16;  // base for the random staging-token suffix
 constexpr unsigned long kAdapterEnumInitialBytes = 15'000;
@@ -497,6 +497,7 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     // destination, else the source (a same-name restore). Consumed by
     // copyFileWithConflictResolution -> applyPermissions (B7-21).
     m_currentDestUser = effectiveDestUser(mapping);
+    m_replacingExistingFiles = mapping.mode == MergeMode::ReplaceDestination;
 
     if (!restoreUserFolders(mapping, *sourceUser, sourcePath, destProfilePath)) {
         return false;  // Cancelled mid-user.
@@ -607,7 +608,8 @@ bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
         Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
         return false;
     }
-    Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
+    Q_EMIT logMessage(tr("Created folder %1. This is not a Windows account.").arg(destProfilePath),
+                      false);
     return true;
 }
 
@@ -897,6 +899,10 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
     if (m_restoringAppData) {
         return true;
     }
+    if (m_replacingExistingFiles) {
+        Q_EMIT logMessage(tr("Replacing existing file: %1").arg(destInfo.fileName()), false);
+        return true;
+    }
     switch (m_conflictMode) {
     case ConflictResolution::SkipDuplicate:
         Q_EMIT logMessage(tr("Skipping existing file: %1").arg(destInfo.fileName()), false);
@@ -930,9 +936,6 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
         }
         Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
         return true;
-
-    case ConflictResolution::PromptUser:
-        return applyRenameTarget(resolveConflict(finalDestPath), destInfo, finalDestPath);
     }
     // Unknown/out-of-range conflict mode: fail closed rather than overwrite the
     // original with finalDestPath left pointing at the existing destination.
@@ -1212,29 +1215,6 @@ bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath,
     return false;
 }
 
-QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
-    // Generate unique filename by adding suffix
-    const QFileInfo destInfo(destPath);
-    const QString baseName = destInfo.completeBaseName();
-    const QString extension = destInfo.suffix();
-    const QString dirPath = destInfo.absolutePath();
-
-    int counter = 1;
-    QString newPath;
-    do {
-        newPath = QString("%1/%2_restored%3%4")
-                      .arg(dirPath,
-                           baseName,
-                           QString::number(counter++),
-                           extension.isEmpty() ? "" : "." + extension);
-    } while (QFileInfo::exists(newPath) && counter < kRestoreConflictMaxAttempts);
-
-    // Exhausted: return empty so the caller fails closed rather than overwriting.
-    if (QFileInfo::exists(newPath)) {
-        return {};
-    }
-    return newPath;
-}
 
 // ============================================================================
 // Network restore (WiFi / Ethernet) + AppData source filtering

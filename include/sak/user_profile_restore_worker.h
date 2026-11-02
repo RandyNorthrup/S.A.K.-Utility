@@ -227,7 +227,7 @@ private:
                              const QFileInfo& destInfo,
                              qint64 size,
                              QString& finalDestPath);
-    QString generateConflictRenamePath(const QFileInfo& destInfo);
+    [[nodiscard]] QString generateConflictRenamePath(const QFileInfo& destInfo);
     /// @brief Accept a rename candidate into finalDestPath, or fail closed (count an
     ///        error, return false) when the candidate is empty (rename exhausted).
     bool applyRenameTarget(const QString& candidate,
@@ -265,7 +265,6 @@ private:
     [[nodiscard]] qint64 originalBackupFileSize(const QString& source, qint64 storedSize) const;
     /// @brief SHA-256 a file's contents into @p outDigest; false if it cannot be read
     static bool hashFile(const QString& filePath, QByteArray& outDigest);
-    QString resolveConflict(const QString& destPath);
     /// @param profileRelativeDir Path of @p destDir relative to the profile root
     ///        (e.g. "AppData/Local/Google"), used to honor the AppData page's
     ///        per-source selection: entries under an unchecked source are skipped.
@@ -313,6 +312,9 @@ private:
     QVector<FolderRestoreChoice> m_folderChoices;
     /// True while restoring a source from the Application Data page; see resolveFileConflict.
     bool m_restoringAppData{false};
+    /// Replace Destination for the mapping in progress: files the backup also has are overwritten
+    /// and the conflict rule does not apply. Set per mapping.
+    bool m_replacingExistingFiles{false};
     /// Effective destination username of the mapping currently being restored, set
     /// at the top of restoreUser(). Passed to applyPermissions so
     /// PermissionMode::AssignToDestination actually assigns ownership to the target

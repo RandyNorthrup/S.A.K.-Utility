@@ -6,14 +6,18 @@
 ///        backup page, installed_apps.json on disk, restore page, list handed to Chocolatey.
 
 #include "sak/app_data_program_prompt.h"
+#include "sak/backup_file_codec.h"
 #include "sak/elevation_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
+#include "sak/windows_user_scanner.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFile>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -96,6 +100,12 @@ private Q_SLOTS:
     void restoreFolderPageLeavesAppDataToItsOwnPage();
     void restoreFolderPageRecordsTheChoiceWithoutTouchingTheManifest();
     void runningProgramStopsTheBackupUntilAnswered();
+    void pickingAnAccountLandsOnMergeNotReplace();
+    void restoreStartsOnlyFromItsNamedLastStep();
+    void lastStepSaysWhatHappensToExistingFiles();
+    void lastStepRefusesAWrongPassword();
+    void lastStepRefusesToAssignToAFolderWithNoAccount();
+    void lastStepAsksForAdministratorForNetworkSettings();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -429,6 +439,197 @@ void UserProfileAppRestoreFlowTests::runningProgramStopsTheBackupUntilAnswered()
 
     running.kill();
     QVERIFY(running.waitForFinished());
+}
+
+// Replace overwrites someone's files, so it is something to ask for, not what picking an account
+// does on its own. It used to be exactly that, and Auto-Map picks accounts for every matching row.
+void UserProfileAppRestoreFlowTests::pickingAnAccountLandsOnMergeNotReplace() {
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    sak::BackupManifest manifest;
+    manifest.users = {user};
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreUserMappingPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+
+    auto* destination = qobject_cast<QComboBox*>(page->m_mappingTable->cellWidget(0, 3));
+    auto* mode = qobject_cast<QComboBox*>(page->m_mappingTable->cellWidget(0, 4));
+    QVERIFY(destination != nullptr && mode != nullptr);
+    QCOMPARE(static_cast<sak::MergeMode>(mode->currentData().toInt()),
+             sak::MergeMode::CreateNewUser);
+
+    destination->addItem(QStringLiteral("Pat"), QStringLiteral("Pat"));
+    destination->setCurrentIndex(destination->count() - 1);
+    QCOMPARE(static_cast<sak::MergeMode>(mode->currentData().toInt()),
+             sak::MergeMode::MergeIntoDestination);
+}
+
+// Next on the last settings page used to start the restore with no warning at all.
+void UserProfileAppRestoreFlowTests::restoreStartsOnlyFromItsNamedLastStep() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    auto* last_step = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    auto* execute = restore_wizard.findChild<sak::UserProfileRestoreExecutePage*>();
+    QVERIFY(last_step != nullptr && execute != nullptr);
+    QVERIFY(last_step->isCommitPage());
+    QCOMPARE(last_step->buttonText(QWizard::CommitButton), QStringLiteral("Start Restore"));
+
+    // No other page may lead straight into the run.
+    const QList<int> ids = restore_wizard.pageIds();
+    QCOMPARE(restore_wizard.page(ids.at(ids.size() - 2)), static_cast<QWizardPage*>(last_step));
+    QCOMPARE(restore_wizard.page(ids.last()), static_cast<QWizardPage*>(execute));
+}
+
+void UserProfileAppRestoreFlowTests::lastStepSaysWhatHappensToExistingFiles() {
+    sak::UserMapping replace;
+    replace.source_username = QStringLiteral("Pat");
+    replace.destination_username = QStringLiteral("Pat");
+    replace.mode = sak::MergeMode::ReplaceDestination;
+    sak::UserMapping merge;
+    merge.source_username = QStringLiteral("Sam");
+    merge.destination_username = QStringLiteral("Sam");
+    merge.mode = sak::MergeMode::MergeIntoDestination;
+    sak::UserMapping new_folder;
+    new_folder.source_username = QStringLiteral("Alex");
+    new_folder.mode = sak::MergeMode::CreateNewUser;
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setUserMappings({replace, merge, new_folder});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+
+    const QString summary = page->m_summaryLabel->text();
+    QVERIFY2(summary.contains(QStringLiteral("<b>overwrite</b>")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("follow the conflict rule")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("no Windows account")), qPrintable(summary));
+}
+
+void UserProfileAppRestoreFlowTests::lastStepRefusesAWrongPassword() {
+    QTemporaryDir backup_dir;
+    QVERIFY(backup_dir.isValid());
+    const QString source = backup_dir.filePath(QStringLiteral("source.txt"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(4096, 'x'));
+    file.close();
+    QVERIFY(QDir(backup_dir.path()).mkpath(QStringLiteral("Pat")));
+    sak::BackupCodecOptions codec;
+    codec.encrypt = true;
+    codec.password = QStringLiteral("right password");
+    QVERIFY(
+        sak::writeBackupFile(source, backup_dir.filePath(QStringLiteral("Pat/stored.txt")), codec)
+            .has_value());
+
+    sak::UserMapping mapping;
+    mapping.source_username = QStringLiteral("Pat");
+    mapping.destination_username = sak::WindowsUserScanner::getCurrentUsername();
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
+
+    sak::BackupManifest manifest;
+    manifest.encrypted = true;
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    restore_wizard.setBackupPath(backup_dir.path());
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+
+    QString typed = QStringLiteral("not it");
+    QString warning;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    connect(&poll, &QTimer::timeout, this, [&typed, &warning]() {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* input = qobject_cast<QInputDialog*>(modal)) {
+            input->setTextValue(typed);
+            input->accept();
+        } else if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            warning = box->text();
+            box->accept();
+        }
+    });
+    poll.start();
+
+    QVERIFY(!page->validatePage());
+    QVERIFY2(warning.contains(QStringLiteral("does not open this backup")), qPrintable(warning));
+    QVERIFY(restore_wizard.password().isEmpty());
+
+    typed = QStringLiteral("right password");
+    QVERIFY(page->validatePage());
+    QCOMPARE(restore_wizard.password(), typed);
+}
+
+// Every file would otherwise fail one by one: there is no account to look up.
+void UserProfileAppRestoreFlowTests::lastStepRefusesToAssignToAFolderWithNoAccount() {
+    sak::UserMapping mapping;
+    mapping.source_username = QStringLiteral("Pat");
+    mapping.mode = sak::MergeMode::CreateNewUser;
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    page->m_permissionModeCombo->setCurrentIndex(page->m_permissionModeCombo->findData(
+        static_cast<int>(sak::PermissionMode::AssignToDestination)));
+
+    QString warning;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    connect(&poll, &QTimer::timeout, this, [&warning]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            warning = box->text();
+            box->accept();
+        }
+    });
+    poll.start();
+
+    QVERIFY(!page->validatePage());
+    QVERIFY2(warning.contains(QStringLiteral("needs a Windows account")), qPrintable(warning));
+}
+
+// netsh refuses these without administrator rights, one failure at a time, after the files are
+// already restored. Better to ask on the step where the person can still change their mind.
+void UserProfileAppRestoreFlowTests::lastStepAsksForAdministratorForNetworkSettings() {
+    sak::WifiProfileInfo wifi;
+    wifi.profile_name = QStringLiteral("Home");
+    wifi.selected = true;
+    sak::UserMapping mapping;
+    mapping.source_username = QStringLiteral("Pat");
+    mapping.destination_username = sak::WindowsUserScanner::getCurrentUsername();
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+
+    QString question;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    connect(&poll, &QTimer::timeout, this, [&question]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            question = box->text();
+            box->button(QMessageBox::No)->click();
+        }
+    });
+    poll.start();
+
+    // Nothing here needs the rights: restoring into your own account, no network settings.
+    QVERIFY(page->validatePage());
+    QVERIFY(question.isEmpty());
+
+    restore_wizard.setWifiProfiles({wifi});
+    const bool elevated = sak::ElevationManager::isElevated();
+    QCOMPARE(page->validatePage(), elevated);
+    QCOMPARE(question.contains(QStringLiteral("administrator")), !elevated);
+
+    // Unticked in the wizard: no longer anything to ask about.
+    question.clear();
+    wifi.selected = false;
+    restore_wizard.setWifiProfiles({wifi});
+    QVERIFY(page->validatePage());
+    QVERIFY(question.isEmpty());
 }
 
 QTEST_MAIN(UserProfileAppRestoreFlowTests)

@@ -33,6 +33,7 @@ class ViewEmptyState;
 namespace sak {
 
 class WindowsUserScanner;
+class UserProfileRestoreWizard;
 class UserProfileRestoreWorker;
 class ChocolateyManager;
 
@@ -74,6 +75,7 @@ private Q_SLOTS:
  */
 class UserProfileRestoreUserMappingPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreUserMappingPage(QWidget* parent = nullptr);
@@ -99,30 +101,6 @@ private:
 private Q_SLOTS:
     void onAutoMap();
     void onMappingChanged(int row, int column);
-};
-
-/**
- * @brief Page 3: Merge configuration for each mapping
- */
-class UserProfileRestoreMergeConfigPage : public QWizardPage {
-    Q_OBJECT
-
-public:
-    explicit UserProfileRestoreMergeConfigPage(QWidget* parent = nullptr);
-
-    void initializePage() override;
-    bool validatePage() override;
-
-private:
-    void setupUi();
-    void loadMergeTable();
-    void updateSummary();
-
-    QTableWidget* m_mergeTable;
-    QLabel* m_summaryLabel;
-
-private Q_SLOTS:
-    void onMergeSettingsChanged(int row, int column);
 };
 
 /**
@@ -331,10 +309,12 @@ private:
  */
 class UserProfileRestorePermissionSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestorePermissionSettingsPage(QWidget* parent = nullptr);
 
+    void initializePage() override;
     bool validatePage() override;
 
 private:
@@ -342,6 +322,15 @@ private:
     /// @brief Build verify/backup options, summary label, and signal connections
     void setupUi_optionsAndConnections(QVBoxLayout* layout);
     void updateSummary();
+    /// @brief One line per person, saying what happens to the files already in place.
+    [[nodiscard]] QString mappingSummary() const;
+    /// @brief The other things this restore will change, with their counts.
+    [[nodiscard]] QString selectionSummary() const;
+    /// @brief Everything checked before Start Restore commits. Stays on the page if any says no.
+    [[nodiscard]] bool readyToStart(UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool permissionModeFitsDestinations(const UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool hasRightsForThisRestore(const UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool collectPassword(UserProfileRestoreWizard* wiz);
 
     QComboBox* m_permissionModeCombo;
     QComboBox* m_conflictResolutionCombo;
@@ -438,6 +427,9 @@ public:
     bool createBackup() const { return m_createBackup; }
     void setCreateBackup(bool backup) { m_createBackup = backup; }
 
+    QString password() const { return m_password; }
+    void setPassword(const QString& password) { m_password = password; }
+
     QVector<WifiProfileInfo> wifiProfiles() const { return m_wifiProfiles; }
     void setWifiProfiles(const QVector<WifiProfileInfo>& profiles) { m_wifiProfiles = profiles; }
 
@@ -468,6 +460,7 @@ private:
     PermissionMode m_permissionMode;
     bool m_verifyFiles;
     bool m_createBackup;
+    QString m_password;
 };
 
 }  // namespace sak

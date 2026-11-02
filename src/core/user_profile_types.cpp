@@ -549,29 +549,13 @@ QString permissionModeToString(PermissionMode mode) {
 QString mergeModeToString(MergeMode mode) {
     switch (mode) {
     case MergeMode::ReplaceDestination:
-        return "Replace";
+        return QStringLiteral("Replace Destination");
     case MergeMode::MergeIntoDestination:
-        return "Merge";
+        return QStringLiteral("Merge Into Destination");
     case MergeMode::CreateNewUser:
-        return "Create New";
+        return QStringLiteral("New Folder Only");
     }
-    return "Replace";
-}
-
-QString conflictResolutionToString(ConflictResolution mode) {
-    switch (mode) {
-    case ConflictResolution::SkipDuplicate:
-        return "Skip";
-    case ConflictResolution::RenameWithSuffix:
-        return "Rename";
-    case ConflictResolution::KeepNewer:
-        return "Keep Newer";
-    case ConflictResolution::KeepLarger:
-        return "Keep Larger";
-    case ConflictResolution::PromptUser:
-        return "Ask Me";
-    }
-    return "Rename";
+    return QStringLiteral("Merge Into Destination");
 }
 
 QJsonObject WifiProfileInfo::toJson() const {

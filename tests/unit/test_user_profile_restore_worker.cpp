@@ -62,7 +62,6 @@ static sak::UserMapping makeMapping(const QString& srcUser, const QString& dstUs
     m.source_username = srcUser;
     m.destination_username = dstUser.isEmpty() ? srcUser : dstUser;
     m.mode = sak::MergeMode::CreateNewUser;
-    m.conflict_resolution = sak::ConflictResolution::SkipDuplicate;
     m.selected = true;
     return m;
 }
@@ -160,7 +159,8 @@ private Q_SLOTS:
     void conflictRenameWithSuffix();
     void conflictKeepNewer();
     void conflictKeepLarger();
-    void conflictPromptUserAutoRenames();
+    void replaceDestinationOverwritesWhereMergeFollowsTheRule();
+    void replaceDestinationLeavesOtherFilesAlone();
 
     // ---- Cancellation ----
     void cancelBeforeRestoreEmitsCancel();
@@ -970,57 +970,96 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger() {
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
+// The two modes used to run the same code. The same existing file under the same conflict rule must
+// come out differently: Merge keeps it because the rule says so, Replace overwrites it regardless.
+void UserProfileRestoreWorkerTests::replaceDestinationOverwritesWhereMergeFollowsTheRule() {
+    for (const sak::MergeMode mode :
+         {sak::MergeMode::MergeIntoDestination, sak::MergeMode::ReplaceDestination}) {
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        createBackupTree(backupDir,
+                         QStringLiteral("MUser"),
+                         {QStringLiteral("Documents/notes.txt")},
+                         "from-backup");
+
+        QTemporaryDir destDir;
+        QVERIFY(destDir.isValid());
+        qputenv("SystemDrive", destDir.path().toLocal8Bit());
+        const QString destFile = destDir.path() + "/Users/MUser/Documents/notes.txt";
+        QVERIFY(writeFile(destFile, "already-there"));
+
+        auto folder = makeFolder(sak::FolderType::Documents,
+                                 QStringLiteral("Documents"),
+                                 QStringLiteral("Documents"),
+                                 11,
+                                 1);
+        auto manifest = buildManifest(QStringLiteral("MUser"), {folder});
+        auto mapping = makeMapping(QStringLiteral("MUser"));
+        mapping.mode = mode;
+
+        sak::UserProfileRestoreWorker worker;
+        QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+        QVERIFY(completeSpy.isValid());
+        worker.startRestore(backupDir.path(),
+                            manifest,
+                            {mapping},
+                            {sak::ConflictResolution::SkipDuplicate,
+                             sak::PermissionMode::PreserveOriginal,
+                             false,
+                             false,
+                             {}});
+        QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
+        QCOMPARE(completeSpy.first().at(0).toBool(), true);
+
+        QFile result(destFile);
+        QVERIFY(result.open(QIODevice::ReadOnly));
+        QCOMPARE(result.readAll(),
+                 mode == sak::MergeMode::ReplaceDestination ? QByteArray("from-backup")
+                                                            : QByteArray("already-there"));
+    }
+}
+
+// "Replace" must not read as "wipe". A file the backup does not have is the destination's own.
+void UserProfileRestoreWorkerTests::replaceDestinationLeavesOtherFilesAlone() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     createBackupTree(backupDir,
-                     QStringLiteral("PUser"),
+                     QStringLiteral("RPUser"),
                      {QStringLiteral("Documents/notes.txt")},
-                     "backup-notes");
+                     "from-backup");
 
     QTemporaryDir destDir;
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
-
-    const QString destBase = destDir.path() + "/Users/PUser/Documents/";
-    QVERIFY(writeFile(destBase + "notes.txt", "existing-notes"));
+    const QString other = destDir.path() + "/Users/RPUser/Documents/only-here.txt";
+    QVERIFY(writeFile(other, "not in the backup"));
 
     auto folder = makeFolder(sak::FolderType::Documents,
                              QStringLiteral("Documents"),
                              QStringLiteral("Documents"),
-                             12,
+                             11,
                              1);
-    auto manifest = buildManifest(QStringLiteral("PUser"), {folder});
-    auto mapping = makeMapping(QStringLiteral("PUser"));
-    mapping.mode = sak::MergeMode::MergeIntoDestination;
+    auto manifest = buildManifest(QStringLiteral("RPUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("RPUser"));
+    mapping.mode = sak::MergeMode::ReplaceDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
-
     worker.startRestore(backupDir.path(),
                         manifest,
                         {mapping},
-                        {sak::ConflictResolution::PromptUser,
+                        {sak::ConflictResolution::SkipDuplicate,
                          sak::PermissionMode::PreserveOriginal,
                          false,
                          false,
                          {}});
-
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
-    // Original untouched.
-    QFile orig(destBase + "notes.txt");
-    QVERIFY(orig.open(QIODevice::ReadOnly));
-    QCOMPARE(orig.readAll(), QByteArray("existing-notes"));
-
-    // Auto-renamed copy should use _restored1 suffix.
-    const QString renamed = destBase + "notes_restored1.txt";
-    QVERIFY2(QFile::exists(renamed), qPrintable("Expected: " + renamed));
-    QFile renamedFile(renamed);
-    QVERIFY(renamedFile.open(QIODevice::ReadOnly));
-    QCOMPARE(renamedFile.readAll(), QByteArray("backup-notes"));
+    QFile survivor(other);
+    QVERIFY(survivor.open(QIODevice::ReadOnly));
+    QCOMPARE(survivor.readAll(), QByteArray("not in the backup"));
 }
 
 // ===========================================================================

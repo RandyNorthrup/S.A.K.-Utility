@@ -33,7 +33,7 @@ QString restoreWelcomeInfoHtml() {
                 "<b>User Mapping</b>: Map backup users to destination users"),
             QCoreApplication::translate(
                 "UserProfileRestoreWelcomePage",
-                "<b>Merge Options</b>: Choose how to handle existing files"),
+                "<b>Existing Files</b>: Choose how to handle files already there"),
             QCoreApplication::translate("UserProfileRestoreWelcomePage",
                                         "<b>Folder Selection</b>: Select which folders to restore"),
             QCoreApplication::translate(
@@ -231,7 +231,6 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     // Add pages
     addPage(new UserProfileRestoreWelcomePage(this));
     addPage(new UserProfileRestoreUserMappingPage(this));
-    addPage(new UserProfileRestoreMergeConfigPage(this));
     addPage(new UserProfileRestoreFolderSelectionPage(this));
     addPage(new UserProfileRestoreAppDataPage(this));
     addPage(new UserProfileRestoreAppRestorePage(this));

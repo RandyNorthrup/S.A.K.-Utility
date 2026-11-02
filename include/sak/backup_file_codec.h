@@ -120,6 +120,10 @@ enum class BackupContainerKind {
     Encrypted,  ///< Container whose payload needs a password.
 };
 
+/// @brief True unless the first encrypted file under @p backup_root refuses @p password. Lets the
+/// wizard catch a mistyped password before a restore starts, rather than every file failing.
+[[nodiscard]] bool backupPasswordOpens(const QString& backup_root, const QString& password);
+
 /// @brief Classify @p path by its magic alone - no password, no payload read.
 ///
 /// This is deliberately the ONLY metadata readable without the password: everything that

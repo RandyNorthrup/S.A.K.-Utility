@@ -48,6 +48,7 @@ private Q_SLOTS:
     void decodeDigestRefusesADamagedContainer();
     void originalSizeIsReadWithoutDecoding_data();
     void originalSizeIsReadWithoutDecoding();
+    void passwordCheckFindsTheFirstEncryptedFile();
 
 private:
     QString sourcePath() const;
@@ -557,6 +558,28 @@ void BackupFileCodecTests::originalSizeIsReadWithoutDecoding() {
     QCOMPARE(*size, static_cast<qint64>(original.size()));
 
     QVERIFY(!sak::backupFileOriginalSize(sourcePath(), options.password).has_value());
+}
+
+void BackupFileCodecTests::passwordCheckFindsTheFirstEncryptedFile() {
+    const QDir dir(m_dir.path());
+    const QString tree = dir.filePath(QStringLiteral("backup"));
+    QVERIFY(QDir().mkpath(tree + QStringLiteral("/Pat/Documents")));
+    QVERIFY(QFile(tree + QStringLiteral("/manifest.json")).open(QIODevice::WriteOnly));
+
+    // Nothing encrypted yet, so any password is as good as none.
+    QVERIFY(sak::backupPasswordOpens(tree, QStringLiteral("anything")));
+
+    writeSource(randomish(5000));
+    sak::BackupCodecOptions options;
+    options.encrypt = true;
+    options.password = QStringLiteral("codec_pw");
+    QVERIFY(sak::writeBackupFile(
+                sourcePath(), tree + QStringLiteral("/Pat/Documents/report.docx"), options)
+                .has_value());
+
+    QVERIFY(sak::backupPasswordOpens(tree, options.password));
+    QVERIFY(!sak::backupPasswordOpens(tree, QStringLiteral("not the password")));
+    QVERIFY(QDir(tree).removeRecursively());
 }
 
 QTEST_GUILESS_MAIN(BackupFileCodecTests)

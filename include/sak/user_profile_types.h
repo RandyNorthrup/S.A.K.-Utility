@@ -55,9 +55,9 @@ enum class PermissionMode {
  * @brief User mapping modes for restore
  */
 enum class MergeMode {
-    ReplaceDestination,    // Overwrite destination user's files
-    MergeIntoDestination,  // Combine files with conflict resolution
-    CreateNewUser          // Create new user profile
+    ReplaceDestination,    // Files the backup also has are overwritten; other files stay
+    MergeIntoDestination,  // Files the backup also has follow the conflict rule
+    CreateNewUser          // A new folder under Users; no Windows account is created
 };
 
 /**
@@ -67,8 +67,7 @@ enum class ConflictResolution {
     SkipDuplicate,     // Don't copy if file exists
     RenameWithSuffix,  // Add _username suffix
     KeepNewer,         // Compare timestamps
-    KeepLarger,        // Compare file sizes
-    PromptUser         // Ask for each conflict
+    KeepLarger         // Compare file sizes
 };
 
 /**
@@ -350,13 +349,9 @@ struct UserMapping {
     QString destination_username;
     QString destination_sid;  // Empty if creating new user
     MergeMode mode;
-    ConflictResolution conflict_resolution;
-    bool selected;  // Include in restore?
+    bool selected;            // Include in restore?
 
-    UserMapping()
-        : mode(MergeMode::ReplaceDestination)
-        , conflict_resolution(ConflictResolution::RenameWithSuffix)
-        , selected(true) {}
+    UserMapping() : mode(MergeMode::MergeIntoDestination), selected(true) {}
 };
 
 /**
@@ -389,6 +384,5 @@ QString folderTypeToString(FolderType type);
 FolderType stringToFolderType(const QString& str);
 QString permissionModeToString(PermissionMode mode);
 QString mergeModeToString(MergeMode mode);
-QString conflictResolutionToString(ConflictResolution mode);
 
 }  // namespace sak

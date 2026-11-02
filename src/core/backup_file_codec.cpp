@@ -13,6 +13,7 @@
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDateTime>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 
@@ -681,6 +682,17 @@ auto decodeBackupFileDigest(const QString& source_path,
     return BackupCodecResult{.plain_bytes = ctx.plain_bytes,
                              .stored_bytes = QFileInfo(source_path).size(),
                              .plain_sha256 = ctx.plain_hash.result()};
+}
+
+bool backupPasswordOpens(const QString& backup_root, const QString& password) {
+    QDirIterator it(backup_root, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        if (backupContainerKind(path) == BackupContainerKind::Encrypted) {
+            return backupFileOriginalSize(path, password).has_value();
+        }
+    }
+    return true;
 }
 
 auto backupFileOriginalSize(const QString& source_path, const QString& password)
