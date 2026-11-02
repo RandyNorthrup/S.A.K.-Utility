@@ -4502,6 +4502,26 @@ add_test(NAME test_user_profile_restore_worker COMMAND test_user_profile_restore
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_user_profile_restore_worker")
 
+# test_user_profile_round_trip - a real backup restored by the real restore worker
+add_executable(test_user_profile_round_trip
+    unit/test_user_profile_round_trip.cpp
+)
+set_target_properties(test_user_profile_round_trip PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_round_trip PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_round_trip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_round_trip COMMAND test_user_profile_round_trip
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_round_trip.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_profile_round_trip")
+
 # test_windows_usb_creator - Input validation, BUG-09 disk number injection (TST-07)
 add_executable(test_windows_usb_creator
     unit/test_windows_usb_creator.cpp

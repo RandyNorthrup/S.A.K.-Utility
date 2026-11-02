@@ -10,7 +10,9 @@
 #include "sak/encryption.h"
 #include "sak/logger.h"
 
+#include <QCryptographicHash>
 #include <QDataStream>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 
@@ -282,13 +284,30 @@ auto pushChunk(ZlibStream* deflater, ContainerSink* sink, const QByteArray& chun
     return sink->writeBody(compressed);
 }
 
+/// @brief Give @p path the modified time @p modified. Conflict rules and the person looking at
+/// the restored file both read this, and a container written today would otherwise say today.
+/// A failure is reported but does not fail the copy: the content is intact.
+void stampModifiedTime(const QString& path, const QDateTime& modified) {
+    QFile file(path);
+    if (!modified.isValid() || !file.open(QIODevice::ReadWrite) ||
+        !file.setFileTime(modified, QFileDevice::FileModificationTime)) {
+        logWarning("Backup codec: could not set the modified time of {}", path.toStdString());
+    }
+}
+
+/// @brief What was read from the original, for the result a caller checks against.
+struct PlainTally {
+    qint64 bytes{0};
+    QCryptographicHash sha256{QCryptographicHash::Sha256};
+};
+
 /// @brief Read @p source to end, pushing each chunk through the optional compressor into
 /// @p sink and flushing the compressor at the end.
 auto copyThroughCodec(QFile* source,
                       ZlibStream* deflater,
                       ContainerSink* sink,
                       const std::function<bool()>& cancelled,
-                      qint64* plain_bytes) -> std::expected<void, error_code> {
+                      PlainTally* tally) -> std::expected<void, error_code> {
     QByteArray chunk(kBackupCodecChunkBytes, 0);
     while (!source->atEnd()) {
         if (cancelRequested(cancelled)) {
@@ -299,7 +318,8 @@ auto copyThroughCodec(QFile* source,
             logError("Backup codec: read failed on {}", source->fileName().toStdString());
             return std::unexpected(error_code::read_error);
         }
-        *plain_bytes += read;
+        tally->bytes += read;
+        tally->sha256.addData(QByteArrayView(chunk.constData(), read));
         if (auto pushed = pushChunk(deflater, sink, QByteArray(chunk.constData(), read), false);
             !pushed.has_value()) {
             return pushed;
@@ -370,8 +390,8 @@ auto writeBackupFile(const QString& source_path,
         return std::unexpected(header.error());
     }
 
-    qint64 plain_bytes = 0;
-    if (auto copied = copyThroughCodec(&source, deflater.get(), &sink, cancelled, &plain_bytes);
+    PlainTally tally;
+    if (auto copied = copyThroughCodec(&source, deflater.get(), &sink, cancelled, &tally);
         !copied.has_value()) {
         sink.discard();
         return std::unexpected(copied.error());
@@ -380,7 +400,10 @@ auto writeBackupFile(const QString& source_path,
         sink.discard();
         return std::unexpected(closed.error());
     }
-    return BackupCodecResult{.plain_bytes = plain_bytes, .stored_bytes = sink.bytesWritten()};
+    stampModifiedTime(dest_path, QFileInfo(source_path).lastModified());
+    return BackupCodecResult{.plain_bytes = tally.bytes,
+                             .stored_bytes = sink.bytesWritten(),
+                             .plain_sha256 = tally.sha256.result()};
 }
 
 namespace {
@@ -388,7 +411,7 @@ namespace {
 /// @brief Decoding state shared by the two read paths.
 struct ReadContext {
     QFile* source{nullptr};
-    QFile* staged{nullptr};
+    QFile* staged{nullptr};  // null when only the digest is wanted
     std::unique_ptr<StreamDecryptor> decryptor;
     std::unique_ptr<ZlibStream> inflater;
     QByteArray header_pending;  // buffers the inner header out of the plaintext stream
@@ -396,6 +419,7 @@ struct ReadContext {
     bool compressed{false};
     qint64 original_size{0};
     qint64 plain_bytes{0};
+    QCryptographicHash plain_hash{QCryptographicHash::Sha256};
 };
 
 /// @brief Accumulate the leading inner header out of the plaintext stream. On the call
@@ -449,11 +473,12 @@ auto consumePlaintext(ReadContext* ctx, const QByteArray& plain)
     if (out.isEmpty()) {
         return {};
     }
-    if (ctx->staged->write(out) != out.size()) {
+    if (ctx->staged != nullptr && ctx->staged->write(out) != out.size()) {
         logError("Backup codec: short write while restoring");
         return std::unexpected(error_code::write_error);
     }
     ctx->plain_bytes += out.size();
+    ctx->plain_hash.addData(out);
     return {};
 }
 
@@ -624,8 +649,73 @@ auto readBackupFile(const QString& source_path,
     if (auto published = publishRestored(staged_path, dest_path); !published.has_value()) {
         return fail(published.error());
     }
+    stampModifiedTime(dest_path, QFileInfo(source_path).lastModified());
     return BackupCodecResult{.plain_bytes = ctx.plain_bytes,
-                             .stored_bytes = QFileInfo(source_path).size()};
+                             .stored_bytes = QFileInfo(source_path).size(),
+                             .plain_sha256 = ctx.plain_hash.result()};
+}
+
+auto decodeBackupFileDigest(const QString& source_path,
+                            const QString& password,
+                            const std::function<bool()>& cancelled)
+    -> std::expected<BackupCodecResult, error_code> {
+    const BackupContainerKind kind = backupContainerKind(source_path);
+    if (kind == BackupContainerKind::None) {
+        logError("Backup codec: {} is not a backup container", source_path.toStdString());
+        return std::unexpected(error_code::invalid_format);
+    }
+    QFile source(source_path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        return std::unexpected(error_code::read_error);
+    }
+    source.seek(kMagicBytes);
+
+    ReadContext ctx;
+    ctx.source = &source;
+    if (auto decoded = decodeBody(&ctx, kind, password, cancelled); !decoded.has_value()) {
+        return std::unexpected(decoded.error());
+    }
+    if (auto verified = verifyDecoded(ctx); !verified.has_value()) {
+        return std::unexpected(verified.error());
+    }
+    return BackupCodecResult{.plain_bytes = ctx.plain_bytes,
+                             .stored_bytes = QFileInfo(source_path).size(),
+                             .plain_sha256 = ctx.plain_hash.result()};
+}
+
+auto backupFileOriginalSize(const QString& source_path, const QString& password)
+    -> std::expected<qint64, error_code> {
+    const BackupContainerKind kind = backupContainerKind(source_path);
+    if (kind == BackupContainerKind::None) {
+        return std::unexpected(error_code::invalid_format);
+    }
+    QFile source(source_path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        return std::unexpected(error_code::read_error);
+    }
+    source.seek(kMagicBytes);
+
+    QByteArray header;
+    if (kind == BackupContainerKind::Plain) {
+        header = source.read(kInnerHeaderBytes);
+    } else {
+        auto decryptor = StreamDecryptor::create(password,
+                                                 source.read(StreamDecryptor::headerSize()));
+        if (!decryptor.has_value()) {
+            return std::unexpected(decryptor.error());
+        }
+        auto plain = decryptor.value()->update(source.read(kBackupCodecChunkBytes));
+        if (!plain.has_value()) {
+            return std::unexpected(plain.error());
+        }
+        header = plain.value().left(kInnerHeaderBytes);
+    }
+    bool compressed = false;
+    qint64 original_size = 0;
+    if (!parseInnerHeader(header, &compressed, &original_size)) {
+        return std::unexpected(error_code::invalid_format);
+    }
+    return original_size;
 }
 
 }  // namespace sak

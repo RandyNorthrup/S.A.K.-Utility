@@ -165,33 +165,48 @@ QString makeRestoreTempPath(const QString& finalDestPath, const QString& tag) {
 // The original is moved aside by RENAME (never deleted) before the replacement is
 // swapped in, and restored if the swap fails, so no failure can lose the original
 // destination. On a successful swap the moved-aside original is NOT deleted here but
-// returned via `movedAsideOriginal`; the caller finalizes it (finalizeMovedAsideOriginal)
+// returned in `restored`; the caller finalizes it (finalizeMovedAsideOriginal)
 // only after applyPermissions+verifyFile pass, restoring it if they fail. When
 // backupExisting is set, the original is also preserved to a `.sakbak` recovery copy.
 // Put the backup payload at `target`. A verbatim copy stays a copy; a codec container is
 // decoded (decompressed and/or decrypted). readBackupFile stages and verifies before it
 // publishes, so a wrong password or a corrupted container leaves no file at `target` --
-// which keeps the replace-by-rename logic below correct either way.
+// which keeps the replace-by-rename logic below correct either way. A decoded file reports
+// the digest of its original content in `plainDigest`; a verbatim copy leaves it empty, and its
+// digest comes from the stored file itself (see verifyRestoredFile).
 bool materializeBackupPayload(const QString& source,
                               const QString& target,
-                              const QString& password) {
+                              const QString& password,
+                              QByteArray& plainDigest) {
+    plainDigest.clear();
     if (backupContainerKind(source) == BackupContainerKind::None) {
         return QFile::copy(source, target);
     }
-    return readBackupFile(source, target, password).has_value();
+    const auto decoded = readBackupFile(source, target, password);
+    if (!decoded.has_value()) {
+        return false;
+    }
+    plainDigest = decoded->plain_sha256;
+    return true;
 }
+
+/// What copyFileReplacingExisting hands back for the permission and verify steps that follow it.
+struct RestoredPayload {
+    QString moved_aside_original;
+    QByteArray plain_digest;
+};
 
 bool copyFileReplacingExisting(const QString& source,
                                const QString& finalDestPath,
                                bool backupExisting,
                                const QString& password,
-                               QString& movedAsideOriginal) {
+                               RestoredPayload& restored) {
     if (!QFileInfo::exists(finalDestPath)) {
-        return materializeBackupPayload(source, finalDestPath, password);
+        return materializeBackupPayload(source, finalDestPath, password, restored.plain_digest);
     }
     const QString tempPath = makeRestoreTempPath(finalDestPath, QStringLiteral("restore"));
     QFile::remove(tempPath);
-    if (!materializeBackupPayload(source, tempPath, password)) {
+    if (!materializeBackupPayload(source, tempPath, password, restored.plain_digest)) {
         return false;
     }
     if (backupExisting && !createRestoreRecoveryCopy(finalDestPath)) {
@@ -228,7 +243,7 @@ bool copyFileReplacingExisting(const QString& source,
     // only after applyPermissions+verifyFile pass, and restores it on their failure
     // (finalizeMovedAsideOriginal). Removing it here would destroy the original before
     // the copy is proven good on a verify/permission failure.
-    movedAsideOriginal = oldPath;
+    restored.moved_aside_original = oldPath;
     return true;
 }
 
@@ -484,11 +499,12 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         return false;  // Cancelled mid-user.
     }
 
-    // Post-restore integrity re-check (fail closed): verifyFile only proves each copied file
-    // matched a RE-READ of the source, so a source swapped between pre-restore validation and
-    // the copy would pass. Re-hashing the source tree against the sealed manifest digest here
-    // binds the restored payload to the digest transitively (source==manifest at T0 AND at T2,
-    // dest==source per-file => dest==sealed). Only runs when verification was requested.
+    // Post-restore integrity re-check (fail closed): verifyFile only proves each restored file
+    // matched a re-read of the source or what its container decoded to, so a source swapped between
+    // pre-restore validation and the copy would pass. Re-hashing the stored tree against the sealed
+    // manifest digest here binds the restored payload to the digest transitively (stored==manifest
+    // at T0 AND at T2, dest==stored per-file => dest==sealed). Only runs when verification was
+    // requested.
     if (m_verify && !verifyUserPayloadChecksum(*sourceUser)) {
         Q_EMIT logMessage(
             tr("Post-restore payload integrity check failed: %1").arg(mapping.source_username),
@@ -762,14 +778,31 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     // the safety option is on, the pre-restore file is saved to `.sakbak` first.
     // A displaced original is moved aside (not deleted) and returned so it can be
     // restored below if the permission/verify steps fail.
-    QString movedAsideOriginal;
-    if (!copyFileReplacingExisting(
-            source, finalDestPath, m_createBackup, m_password, movedAsideOriginal)) {
+    RestoredPayload restored;
+    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup, m_password, restored)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
     }
 
+    if (!settleRestoredFile(
+            source, finalDestPath, restored.moved_aside_original, restored.plain_digest)) {
+        m_filesErrored++;
+        return false;
+    }
+
+    // Update progress. The file on disk, not the entry in the backup: a compressed entry is smaller
+    // than what was restored, and an encrypted one a little larger.
+    m_filesRestored++;
+    updateProgress(QFileInfo(finalDestPath).size());
+
+    return true;
+}
+
+bool UserProfileRestoreWorker::settleRestoredFile(const QString& source,
+                                                  const QString& finalDestPath,
+                                                  const QString& movedAsideOriginal,
+                                                  const QByteArray& plainDigest) {
     // Apply permissions based on mode. Pass the current mapping's destination user
     // so AssignToDestination assigns ownership instead of always stripping (B7-21).
     // Fail CLOSED: a file whose ownership/ACL could not be set is NOT a clean restore.
@@ -780,7 +813,7 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 
     // Verify file content against the source if requested. A verification failure
     // means the copied bytes differ or are unreadable -> count it as an error.
-    const bool verifyOk = !m_verify || verifyFile(source, finalDestPath);
+    const bool verifyOk = !m_verify || verifyFile(source, finalDestPath, plainDigest);
     if (!verifyOk) {
         Q_EMIT logMessage(tr("Error: File verification failed: %1").arg(finalDestPath), true);
     }
@@ -789,16 +822,16 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     // that copyFileReplacingExisting moved aside so a failure never destroys it.
     const bool restored = permsOk && verifyOk;
     finalizeMovedAsideOriginal(finalDestPath, movedAsideOriginal, restored);
-    if (!restored) {
-        m_filesErrored++;
-        return false;
+    return restored;
+}
+
+qint64 UserProfileRestoreWorker::originalBackupFileSize(const QString& source,
+                                                        qint64 storedSize) const {
+    if (backupContainerKind(source) == BackupContainerKind::None) {
+        return storedSize;
     }
-
-    // Update progress
-    m_filesRestored++;
-    updateProgress(size);
-
-    return true;
+    const auto recorded = backupFileOriginalSize(source, m_password);
+    return recorded.value_or(storedSize);
 }
 
 QString UserProfileRestoreWorker::generateConflictRenamePath(const QFileInfo& destInfo) {
@@ -850,7 +883,9 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
         return true;
 
     case ConflictResolution::KeepLarger:
-        if (destInfo.size() >= size) {
+        // The original's size, not the stored entry's: compression shrinks one and encryption
+        // grows it, so comparing the entry would pick the wrong file in either direction.
+        if (destInfo.size() >= originalBackupFileSize(source, size)) {
             Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()),
                               false);
             m_filesSkipped++;
@@ -1103,29 +1138,40 @@ bool UserProfileRestoreWorker::hashFile(const QString& filePath, QByteArray& out
     return true;
 }
 
-bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath, const QString& filePath) {
-    // Empty paths fail the exists()/isReadable() check below; see restoreFolder.
+UserProfileRestoreWorker::RestoredFileCheck UserProfileRestoreWorker::verifyRestoredFile(
+    const QString& sourcePath, const QString& filePath, const QByteArray& plainDigest) {
     const QFileInfo fileInfo(filePath);
-
     if (!fileInfo.exists() || !fileInfo.isReadable()) {
-        Q_EMIT logMessage(tr("Verification failed - file missing or unreadable: %1").arg(filePath),
-                          true);
-        return false;
+        return RestoredFileCheck::Unreadable;
     }
 
-    // Re-hash the copied file and the source and require an exact match, so a
-    // truncated or corrupted copy is caught post-write (not just readability).
-    QByteArray sourceDigest;
-    QByteArray destDigest;
-    if (!hashFile(sourcePath, sourceDigest) || !hashFile(filePath, destDigest)) {
-        Q_EMIT logMessage(tr("Verification failed - could not hash file: %1").arg(filePath), true);
-        return false;
+    // A decoded file has nothing byte-for-byte to compare with: the stored file is a container,
+    // so hashing it can only ever disagree. Compare with what the decoder produced instead, which
+    // the container's own tag or checksum has already tied to the original. A verbatim copy has no
+    // decoder, and its source really is the same bytes.
+    QByteArray expected = plainDigest;
+    QByteArray actual;
+    if ((expected.isEmpty() && !hashFile(sourcePath, expected)) || !hashFile(filePath, actual)) {
+        return RestoredFileCheck::Unreadable;
     }
-    if (sourceDigest != destDigest) {
+    return expected == actual ? RestoredFileCheck::Matches : RestoredFileCheck::Differs;
+}
+
+bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath,
+                                          const QString& filePath,
+                                          const QByteArray& plainDigest) {
+    switch (verifyRestoredFile(sourcePath, filePath, plainDigest)) {
+    case RestoredFileCheck::Matches:
+        return true;
+    case RestoredFileCheck::Differs:
         Q_EMIT logMessage(tr("Verification failed - content mismatch: %1").arg(filePath), true);
         return false;
+    case RestoredFileCheck::Unreadable:
+        break;
     }
-    return true;
+    Q_EMIT logMessage(tr("Verification failed - file missing or unreadable: %1").arg(filePath),
+                      true);
+    return false;
 }
 
 QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {

@@ -109,6 +109,21 @@ public:
     [[nodiscard]] static bool isAppDataPathExcluded(const QString& profileRelativePath,
                                                     const QVector<AppDataSourceInfo>& sources);
 
+    /// What a check of one restored file found.
+    enum class RestoredFileCheck {
+        Matches,
+        Differs,
+        Unreadable
+    };
+
+    /// Compare the restored @p filePath with what it should hold: @p plainDigest (the SHA-256 the
+    /// decoder reported for a compressed or encrypted entry), or for a verbatim copy, when that is
+    /// empty, the stored @p sourcePath itself. Exposed for unit testing, because a restore run
+    /// cannot damage a file between writing and checking it.
+    [[nodiscard]] static RestoredFileCheck verifyRestoredFile(const QString& sourcePath,
+                                                              const QString& filePath,
+                                                              const QByteArray& plainDigest);
+
     /// Resolve the System32-qualified netsh.exe path to defeat cwd search-order
     /// hijack. Returns empty (caller fails closed) when %SystemRoot% is unset.
     /// Exposed for unit testing.
@@ -191,6 +206,12 @@ private:
                        const QString& sourcePath,
                        const QString& destPath);
     bool copyFileWithConflictResolution(const QString& source, const QString& dest, qint64 size);
+    /// @brief Set permissions on a restored file and verify it. Keeps a replaced original only if
+    ///        either step fails, in which case it goes back in place.
+    bool settleRestoredFile(const QString& source,
+                            const QString& finalDestPath,
+                            const QString& movedAsideOriginal,
+                            const QByteArray& plainDigest);
     /// @brief Resolve file conflict according to m_conflictMode
     /// @return true if copy should proceed, false if file was skipped
     bool resolveFileConflict(const QString& source,
@@ -226,9 +247,13 @@ private:
     /// @brief Add one folder's byte/file totals with saturating overflow guards
     void accumulateFolderTotals(const FolderSelection& folder, qint64& totalSize);
     void updateProgress(qint64 bytesAdded);
-    /// @brief Verify a restored file against its source: existence, readability, and
-    ///        an exact SHA-256 content match (fail closed on any mismatch).
-    bool verifyFile(const QString& sourcePath, const QString& filePath);
+    /// @brief Verify a restored file (see verifyRestoredFile) and report a failure in the log.
+    bool verifyFile(const QString& sourcePath,
+                    const QString& filePath,
+                    const QByteArray& plainDigest);
+    /// @brief The size of the original behind a stored entry. Falls back to @p storedSize when a
+    ///        container's header cannot be read; decoding it will fail and report that.
+    [[nodiscard]] qint64 originalBackupFileSize(const QString& source, qint64 storedSize) const;
     /// @brief SHA-256 a file's contents into @p outDigest; false if it cannot be read
     static bool hashFile(const QString& filePath, QByteArray& outDigest);
     QString resolveConflict(const QString& destPath);

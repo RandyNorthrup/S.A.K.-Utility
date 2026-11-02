@@ -8,6 +8,7 @@
 #include "sak/error_codes.h"
 
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
@@ -41,6 +42,12 @@ private Q_SLOTS:
     void restoreOfNonContainer_refused();
 
     void cancelDuringWrite_removesPartialFile();
+
+    void digestsAreOfTheOriginalContent_data();
+    void digestsAreOfTheOriginalContent();
+    void decodeDigestRefusesADamagedContainer();
+    void originalSizeIsReadWithoutDecoding_data();
+    void originalSizeIsReadWithoutDecoding();
 
 private:
     QString sourcePath() const;
@@ -475,6 +482,81 @@ void BackupFileCodecTests::cancelDuringWrite_removesPartialFile() {
     QVERIFY2(!written.has_value(), "a cancelled write must report failure, not partial success");
     QCOMPARE(written.error(), sak::error_code::operation_cancelled);
     QVERIFY2(!QFile::exists(storedPath()), "a cancelled write must not leave a truncated file");
+}
+
+void BackupFileCodecTests::digestsAreOfTheOriginalContent_data() {
+    QTest::addColumn<bool>("compress");
+    QTest::addColumn<bool>("encrypt");
+    QTest::newRow("compressed") << true << false;
+    QTest::newRow("encrypted") << false << true;
+    QTest::newRow("both") << true << true;
+}
+
+// Writing, decoding and decoding without output must all report the digest of the ORIGINAL bytes:
+// a restore compares a decoded file with this, and the container itself would never match it.
+void BackupFileCodecTests::digestsAreOfTheOriginalContent() {
+    QFETCH(bool, compress);
+    QFETCH(bool, encrypt);
+    const QByteArray original = randomish(5000);
+    const QByteArray expected = QCryptographicHash::hash(original, QCryptographicHash::Sha256);
+    writeSource(original);
+
+    sak::BackupCodecOptions options;
+    options.compress = compress;
+    options.encrypt = encrypt;
+    options.password = QStringLiteral("codec_pw");
+    const auto written = sak::writeBackupFile(sourcePath(), storedPath(), options);
+    QVERIFY(written.has_value());
+    QCOMPARE(written->plain_sha256, expected);
+
+    const auto restored = sak::readBackupFile(storedPath(), restoredPath(), options.password);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->plain_sha256, expected);
+
+    const auto decoded = sak::decodeBackupFileDigest(storedPath(), options.password);
+    QVERIFY(decoded.has_value());
+    QCOMPARE(decoded->plain_sha256, expected);
+    QCOMPARE(decoded->plain_bytes, static_cast<qint64>(original.size()));
+}
+
+void BackupFileCodecTests::decodeDigestRefusesADamagedContainer() {
+    writeSource(randomish(5000));
+    sak::BackupCodecOptions options;
+    options.encrypt = true;
+    options.password = QStringLiteral("codec_pw");
+    QVERIFY(sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+
+    QByteArray stored = fileBytes(storedPath());
+    stored[stored.size() / 2] = static_cast<char>(stored.at(stored.size() / 2) ^ 0x5A);
+    QFile file(storedPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(stored), static_cast<qint64>(stored.size()));
+    file.close();
+
+    QVERIFY(!sak::decodeBackupFileDigest(storedPath(), options.password).has_value());
+}
+
+void BackupFileCodecTests::originalSizeIsReadWithoutDecoding_data() {
+    digestsAreOfTheOriginalContent_data();
+}
+
+void BackupFileCodecTests::originalSizeIsReadWithoutDecoding() {
+    QFETCH(bool, compress);
+    QFETCH(bool, encrypt);
+    const QByteArray original = repetitive(70'000);
+    writeSource(original);
+
+    sak::BackupCodecOptions options;
+    options.compress = compress;
+    options.encrypt = encrypt;
+    options.password = QStringLiteral("codec_pw");
+    QVERIFY(sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+
+    const auto size = sak::backupFileOriginalSize(storedPath(), options.password);
+    QVERIFY(size.has_value());
+    QCOMPARE(*size, static_cast<qint64>(original.size()));
+
+    QVERIFY(!sak::backupFileOriginalSize(sourcePath(), options.password).has_value());
 }
 
 QTEST_GUILESS_MAIN(BackupFileCodecTests)

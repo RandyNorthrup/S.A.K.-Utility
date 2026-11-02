@@ -41,6 +41,7 @@
 
 #include "error_codes.h"
 
+#include <QByteArray>
 #include <QString>
 
 #include <expected>
@@ -69,6 +70,10 @@ struct BackupCodecOptions {
 struct BackupCodecResult {
     qint64 plain_bytes{0};   ///< Size of the original file content.
     qint64 stored_bytes{0};  ///< Size actually written, including container overhead.
+
+    /// SHA-256 of the original file content. A container cannot be compared with the file it
+    /// holds byte for byte, so this is what a caller checks a decoded or stored file against.
+    QByteArray plain_sha256;
 };
 
 /// @brief Write @p source_path to @p dest_path applying the requested transforms.
@@ -86,12 +91,28 @@ struct BackupCodecResult {
 ///
 /// A container that is not encrypted decodes with an empty @p password. Plaintext is
 /// staged beside the destination and only renamed into place after the tag verifies, so an
-/// unauthenticated payload never appears under the final name.
+/// unauthenticated payload never appears under the final name. The restored file takes the
+/// container's modified time, which writeBackupFile() set from the original.
 [[nodiscard]] auto readBackupFile(const QString& source_path,
                                   const QString& dest_path,
                                   const QString& password,
                                   const std::function<bool()>& cancelled = {})
     -> std::expected<BackupCodecResult, error_code>;
+
+/// @brief Decode a container all the way through without writing anything, so a stored file can
+/// be checked against the original right after it is written.
+[[nodiscard]] auto decodeBackupFileDigest(const QString& source_path,
+                                          const QString& password,
+                                          const std::function<bool()>& cancelled = {})
+    -> std::expected<BackupCodecResult, error_code>;
+
+/// @brief The original size a container records, read without decoding its payload.
+///
+/// For deciding between a stored file and one already on disk, where a container's own size is
+/// the wrong number. An encrypted container needs @p password, and the value is not authenticated
+/// until the container is decoded in full, which still happens before anything is replaced.
+[[nodiscard]] auto backupFileOriginalSize(const QString& source_path, const QString& password)
+    -> std::expected<qint64, error_code>;
 
 enum class BackupContainerKind {
     None,       ///< A verbatim copy: no container, restore by plain copy.
