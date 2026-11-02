@@ -202,7 +202,8 @@ const PstAttachmentInfo* attachmentInfoFor(const PstItemDetail& item, const QStr
 QByteArray usableContentId(const QString& content_id) {
     QString id = content_id;
     if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>'))) {
-        id = id.mid(1, id.size() - 2);
+        constexpr qsizetype kAngleBracketPairLength = 2;
+        id = id.mid(1, id.size() - kAngleBracketPairLength);
     }
     static const QRegularExpression kToken(QStringLiteral("^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.@-]+$"));
     return kToken.match(id).hasMatch() ? id.toLatin1() : QByteArray();

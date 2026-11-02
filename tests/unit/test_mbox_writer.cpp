@@ -395,15 +395,13 @@ private Q_SLOTS:
         const QByteArray content = file.readAll();
         // The injected CRLF was collapsed, so no forged "From " separator line appears.
         QVERIFY(!content.contains("\nFrom attacker@evil.com"));
-        // Pin what the sanitizer actually produced: the CR and the LF each collapse to one space
-        // (mbox_writer.cpp sanitizeHeaderValue, applied to the sender in formatMboxEntry), so the
-        // injected text stays INSIDE the single envelope line and the addr-spec token is still
-        // "a@test.com". The negative check alone is green for a sanitizer that DROPS the CR/LF
-        // (fabricating "a@test.comFrom"), for one that truncates the sender away, and for a From_
-        // line escaped into ">From" -- and it never proves the file holds exactly ONE record.
+        // A sender holding spaces, which this one does once its CR and LF collapse, cannot go on
+        // the separator line, so that line carries the unknown-sender marker and none of the text.
         QCOMPARE(content.left(content.indexOf('\n')),
-                 QByteArray("From a@test.com  From attacker@evil.com Mon Jan  1 00:00:00 2000 "
-                            "Wed Jan 01 00:00:00 2025"));
+                 QByteArray("From - Wed Jan 01 00:00:00 2025"));
+        // The From: header keeps it, as one line, so it still cannot forge anything.
+        QVERIFY(content.contains(
+            "From: a@test.com  From attacker@evil.com Mon Jan  1 00:00:00 2000\r\n"));
         QCOMPARE(content.count("\nFrom "), 0);
     }
 

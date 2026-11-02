@@ -437,6 +437,52 @@ capture VM is held:
   checksum files, but not through the dialog.
 - Disk benchmark and disk stress on C: unelevated: must run, and leave nothing behind.
 
+### Email tools and application management fixes (2026-11-02)
+
+The wiki writer's Email Tools and Application Management list, and the VM agent's MBOX count, on
+`dev`. Tested against five of the owner's real mail files as well as generated stores. The real files
+stay on this machine and nothing derived from them is in the repository; only the anonymous counts
+below are. An independent reader, libpff, was used to check the folder and message counts.
+
+| File | Folders | Messages, app and libpff | Attachments read | Search | Converted to MBOX | Failed | MBOX count matches |
+|---|---|---|---|---|---|---|---|
+| PST-1, 1.1 GB, Unicode, compressible | 34 | 16,886 both, per folder | 5,160 of 5,160 | 10,000 hits (the limit), 50 of 50 opened | 16,209 | 0 | yes |
+| OST-1, 64 MB, Unicode 4K | 57 | 1,316 both, per folder | 37 of 37 | 757 hits, 50 of 50 opened | 774 | 0 | yes |
+| OST-2, 111 MB, Unicode 4K | 61 | 1,395 both, per folder | 5,069 of 5,069 | 535 hits, 50 of 50 opened | 1,287 | 0 | yes |
+| NST-1, 16 MB | 24 | 0 both | none | not run | refused | n/a | n/a |
+| ICS-1 | n/a | n/a | n/a | n/a | refused | n/a | n/a |
+
+PST-1 converted in about 30 s with a peak of 127 MB of memory. Before these fixes the app listed
+14,350 of its 16,886 messages, and with only the reader fixed 1,114 of the 16,886 still failed to
+convert. Each row's Converted plus the items left out as not mail equals its Messages. OST and PST behave the same. NST
+is refused by decision: it is built like an OST and the one real NST held no messages, so reading mail
+from one is unproven. ICS is not an input anywhere; the app only writes it.
+
+Decisions the owner may overrule:
+
+1. **NST refused outright.** Accepting it as an OST would be one line, but nothing has shown that it
+   reads mail correctly.
+2. **The converter covers mail folders only**, the same set as Email Inspector's tree. Items in other
+   folders are counted in the result, not converted. On OST-1 that left out 5 emails in system folders.
+3. **A message with no sender is written with `-` as the MBOX sender**, Thunderbird's own marker, and
+   no From header. A message never sent uses the store's last-saved time on the separator line only.
+4. **Tasks and notes were made browsable** rather than removing the promise from the header.
+5. **A CISA finding is dropped only on NVD proof.** At most 20 findings per scan get NVD detail, so a
+   patched app can still be listed beyond that.
+
+Not covered by a test:
+
+- The scan loop's call into the CISA version check needs the network. The check itself is tested.
+- The header and About text for the Vulnerability Scanner, and the Advanced scan label, are text.
+- The GUI handlers for the real right-click export of tasks and notes end in a folder dialog. The menu
+  entries are tested, and the CSV and text exports are not driven through the panel.
+- Attendees are not read, so the calendar and its ICS export carry none. A repeating event appears once.
+- The Stop button during MBOX counting is not driven by a test.
+- Moving a real mailbox file into Thunderbird or Outlook: every count here is by this app's reader and
+  a line scan, not an importing client.
+- Outlook has not opened the sample PST. libpff opens it but lists only the root folder; the app reads
+  all of it, which is what the screenshots need.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

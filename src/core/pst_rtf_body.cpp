@@ -43,6 +43,7 @@ constexpr int kReferenceOffsetShift = 4;
 constexpr int kReferenceLengthMask = 0x0F;
 constexpr int kReferenceMinLength = 2;
 constexpr int kByteBits = 8;
+constexpr uint32_t kByteMask = 0xFFU;
 constexpr int kReferenceBytes = 2;
 
 uint32_t rtfCrc(const QByteArray& data, int offset) {
@@ -59,7 +60,7 @@ uint32_t rtfCrc(const QByteArray& data, int offset) {
     }();
     uint32_t crc = 0;
     for (qsizetype i = offset; i < data.size(); ++i) {
-        crc = kTable[(crc ^ static_cast<uint8_t>(data.at(i))) & 0xFFU] ^ (crc >> kByteBits);
+        crc = kTable[(crc ^ static_cast<uint8_t>(data.at(i))) & kByteMask] ^ (crc >> kByteBits);
     }
     return crc;
 }

@@ -8,6 +8,39 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Email Inspector now reads a whole Outlook file** - Tested on real archives, the reader hid every
+  folder behind a block reference with a reserved bit set, which Outlook does write. On a 1.1 GB PST
+  that was its two largest folders and about one message in seven. Those messages now list and open.
+- **Calendar, tasks and contacts show their real details** - Events now go on the day they happen,
+  with their end time and location, instead of the day the invitation arrived. Tasks show their real
+  status and due date. The Address Book shows each contact's email, company and phone.
+- **Tasks and notes can be browsed and exported** - Their folders appear in the Email Inspector tree.
+  Right-click to export tasks as CSV or notes as text. The header always promised this.
+- **Messages with only an RTF body now show their text** - This covers most calendar items, which
+  previewed blank and could not be converted.
+- **Attached emails are saved as real .eml files** - An email attached to another email, and an
+  embedded object, used to come out as four meaningless bytes under the attachment's name.
+- **MBOX mailboxes show their real count and size** - A six-message mailbox read as 65 messages and
+  0 B. Contacts and Calendar stay off for an MBOX, Per page works, and the Attachments Browser finds
+  its attachments. Scan finds Thunderbird's mailboxes, which have no file extension, and they open.
+- **HTML, PDF and EML exports keep a message's pictures** - Inline pictures were dropped, leaving
+  blanks. They now stay in the message and are not repeated as attachments.
+- **The OST Converter converts a real mailbox cleanly** - It now converts the folders Email Inspector
+  lists as mail. Contacts, calendar items, tasks, notes and system folders are left out and counted,
+  not reported as failures. Unsent drafts convert. A partly failed file now reads Failed instead of
+  Complete. Deep recovery works on its own. The date filter includes the whole end day. The Skip
+  corrupt blocks box and the Items column are gone, because neither did anything useful.
+- **NST files are refused with a clear message** - Both the Inspector and the converter say so. The
+  converter used to accept one and report Complete with nothing in it.
+- **A failed vulnerability feed no longer reads as a clean scan** - The status says Incomplete and
+  Details lists the sources. A CISA match is dropped when NVD proves the installed version is not
+  affected. The header now says what each button checks, since Scan Installed Apps never used GitHub
+  or OSV.
+- **Thin Bundles install from the app** - Install from Bundle demanded a packages folder that a Thin
+  Bundle never has. The bundle's README also names the real place to install from.
+- **Add to Batch Queue works** - It now ticks the program, which is what Batch reads. The scan level no
+  longer mentions shell extensions, which the scanner does not look for.
+
 - **GZ, BZ2 and XZ images really flash** - Every one of them was refused with "its uncompressed
   size could not be determined". The app now reads the compressed file all the way through before
   it touches the drive, which finds the real size and can take a few minutes on a large image. A

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 
 namespace sak::pst {
 
@@ -136,7 +137,7 @@ QHash<uint16_t, NamedPropertyKey> parseNameIdMap(const QByteArray& guid_stream,
             continue;
         }
         const uint16_t prop_index = qFromLittleEndian<uint16_t>(entry + kEntryIndexFieldOffset);
-        if (prop_index > 0xFFFF - kFirstNamedPropertyId) {
+        if (prop_index > std::numeric_limits<uint16_t>::max() - kFirstNamedPropertyId) {
             continue;
         }
         const auto prop_id = static_cast<uint16_t>(kFirstNamedPropertyId + prop_index);

@@ -119,8 +119,8 @@ private Q_SLOTS:
         QCOMPARE(sak::ost::ColFile, 0);
         QCOMPARE(sak::ost::ColSize, 1);
         QCOMPARE(sak::ost::ColStatus, 2);
-        QCOMPARE(sak::ost::ColProgress, 4);
-        QCOMPARE(sak::ost::ColCount, 5);
+        QCOMPARE(sak::ost::ColProgress, 3);
+        QCOMPARE(sak::ost::ColCount, 4);
     }
 
     // ====================================================================
