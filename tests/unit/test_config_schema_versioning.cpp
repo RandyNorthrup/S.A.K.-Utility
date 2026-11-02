@@ -280,7 +280,8 @@ void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealth
     // other case in this file leans on cleanup()'s reset to hand back a well-formed store, so
     // the whole file would stay green. Read with no getter-side default so a dropped key cannot
     // be masked by the getter's own fallback.
-    QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/buffer_size")).toInt(), 4096);
+    QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/buffer_size")).toInt(),
+             sak::kImageFlasherDefaultBufferMb);
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/validation_mode")).toString(),
              QStringLiteral("full"));
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/max_concurrent_writes")).toInt(), 1);
