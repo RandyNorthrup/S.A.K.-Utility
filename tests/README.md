@@ -40,7 +40,7 @@ Every registered test carries exactly one tier label (set in the label block at 
 | Label | Tier | What it holds |
 |---|---|---|
 | `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs, the release-binary scan for partition/filesystem test hooks and the retired SAK_DEV_SOURCE_TREE override |
-| `release-tooling` | T2 | Startup budget and runtime-DLL audit regressions |
+| `release-tooling` | T2 | Startup budget, runtime-DLL audit and signature publisher regressions |
 | `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier, run-folder retention fences |
 | `cert` | T2 | Apple filesystem capability matrix gate (JSON only) |
 | `tooling-extended` | T4 | Process-capture ownership/deadline/output/stdin/environment scopes, false-green harness, portable staging and archive recovery |
@@ -256,6 +256,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_single_instance_app | `scripts/test_single_instance_app.ps1`, `sak_utility` | The real app: a second launch on the same data folder exits 0 without starting and says the app is already running while the first stays up; a launch with --elevated-relaunch neither starts nor exits until the first instance ends, then completes its startup smoke |
 | test_screenshot_settings_action | `ScreenshotSettingsAction` | Report seams; only a Settings window this run opened is closed, found by EnumWindows, with no taskkill/tasklist/fixed sleeps |
 | test_backup_bitlocker_keys_action | `BackupBitlockerKeysAction` | Key-gate, backup-location screening, and refusal of a destination on a BitLocker volume whose key is in the backup |
+| test_verify_authenticode_signatures | `scripts/verify_authenticode_signatures.ps1` | The publisher pin on real signed binaries; bundled tools keep their vendor's signature |
 | test_stage_portable_release | `scripts/stage_portable_release.ps1` | Portable staging contract, including that the package ships no portable.ini |
 | test_drive_unmounter | `drive_unmounter` | Volume unmount, lock/unlock |
 | test_flash_types | `flash_types` | Flash operation data structures |

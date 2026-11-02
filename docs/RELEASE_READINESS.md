@@ -1405,7 +1405,9 @@ Required before a release candidate is published:
 - QRC resource verification passes.
 - Portable package smoke passes from a clean extracted folder.
 - Startup E2E smoke passes from the packaged folder.
-- All packaged `.exe` and `.dll` files have valid Authenticode signatures.
+- All packaged `.exe` and `.dll` files have valid Authenticode signatures, and the first-party
+  `sak_*` binaries are signed by exactly `CN=Randy Northrup, O=Randy Northrup`, the publisher
+  sakutility.com names. Bundled third-party tools keep their vendor's signature.
 - `SHA256SUMS.txt` is regenerated after signing.
 
 Use:

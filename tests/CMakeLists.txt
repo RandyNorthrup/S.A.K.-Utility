@@ -6592,6 +6592,11 @@ add_test(NAME test_run_folder_retention_windows_powershell
 set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
                      PROPERTIES TIMEOUT 60)
 
+add_test(NAME test_verify_authenticode_signatures
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_verify_authenticode_signatures.ps1")
+set_tests_properties(test_verify_authenticode_signatures PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_stage_portable_release
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
@@ -6717,7 +6722,8 @@ set(_sak_labels_product
     test_partition_image_volume_lock_selected_mbr_unpinned_guid
     test_partition_image_volume_lock_offline_whole_disk
     test_partition_image_volume_lock_offline_selected_partition)
-set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies)
+set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies
+    test_verify_authenticode_signatures)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
     test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
