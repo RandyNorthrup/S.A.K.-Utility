@@ -340,6 +340,44 @@ code first, and each fix landed with its own test and drills.
   the list handed to Chocolatey, because a real install changes the machine it runs on. To prove on
   the VM smoke.
 
+### Backup, restore and file management fixes (2026-11-01)
+
+Found by wiki writers reading the code, then confirmed by running it. Each landed with a test that
+goes red without the fix. `test_user_profile_round_trip` runs a real backup through the backup
+worker and restores it through the restore worker, which nothing did before.
+
+- FIXED, data-loss class: the Application Data step copied nothing. Sources are now folders of the
+  run, and the manifest records what was stored. Backups from older versions say they hold no copy.
+- FIXED, crash: the restore wizard crashed on Select Folders for any backup with a folder ticked.
+  `wholeRestoreWizardRunsOnARealBackup` now walks every page on a real backup.
+- FIXED, data-loss class: restore verification failed every compressed or encrypted file and rolled
+  back overwrites. Reproduced on real backups of each kind before the fix.
+- FIXED: unticking a folder at restore invalidated the manifest checksum, so the restore refused the
+  backup as damaged.
+- FIXED: Replace and Merge were one code path. Replace overwrites, Merge follows the rule, neither
+  removes a file the backup lacks. DESIGN DECISION: Replace does not delete, because a restore that
+  removes a person's other files is a data-loss risk the label does not clearly promise.
+- DESIGN DECISION: application data always replaces what is there, keeping each old file as
+  `.sakbak`. Its files stand together, and a renamed `Bookmarks` is a restore that did nothing.
+- FIXED, security: BitLocker Key Backup wrote plaintext keys to FAT32 and exFAT, and said the
+  folder was restricted. Set-Acl reports success there and stores nothing (confirmed on an exFAT
+  drive: the script printed SUCCESS and the folder stayed open to Everyone). The location is now
+  refused by file system, and the script reads the result back. The read-back has no automated
+  test, because no CI runner has an exFAT drive; it was run by hand on one, with the result recorded
+  in the commit. DESIGN DECISION: refused rather than allowed with a warning, because the action's
+  stated rule is that keys are never written under a permissive ACL. The owner may prefer to allow
+  it after a warning, since many USB drives are exFAT.
+- FIXED: path::string() throws on a character outside the system code page. That ended organizer
+  and duplicate runs, and made the restore path guard refuse a whole backup. These paths now use
+  UTF-8 (pathAsUtf8), with a real round trip per backup kind.
+- Wrong on inspection: the wiki writers' "Scan Users without admin may find no accounts". NetUserEnum
+  level 3 returned all 11 accounts here without elevation. The scan now asks for level 0 regardless,
+  because the names are all it reads.
+- INCOMPLETE: none of this has run against a real running browser, or on a real second PC. Locking is
+  tested with an exclusive file handle, and the running-program prompt with a renamed process. To
+  prove on the VM smoke: back up a real Chrome and Firefox profile, restore on another account, and
+  open the bookmarks. Saved passwords are expected not to work there; that is Windows, not the app.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

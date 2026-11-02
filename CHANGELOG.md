@@ -8,6 +8,72 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Backups really hold application data** - The backup wizard's Application Data step recorded
+  your choices and copied nothing, so browser profiles were not saved. They are now: each source
+  you leave ticked is copied, compressed and encrypted like any other folder, and comes back on
+  restore. Outlook signatures are on the list. Caches are left out, and sizes show what will
+  really be stored. Saved browser passwords and sign-ins are protected by Windows for the old
+  account and usually do not work elsewhere, so the page says to export them first. Both wizards
+  ask you to close a program that holds this data open. A file still locked is named in the log,
+  and the backup says it did not copy everything. A backup from an older version says it holds no
+  copy instead of offering one. SSH keys are now something you tick yourself.
+
+- **Restore wizard no longer crashes** - It crashed on the Select Folders page, on any backup with
+  a folder ticked. Unticking a folder there also made the restore refuse the backup as damaged.
+
+- **Restore verification works on compressed and encrypted backups** - It failed every file on
+  these backups and put back what it had just replaced, so the restore reported failure. It is on
+  by default. Keep Newer and Keep Larger also read the wrong date and size on these backups, and a
+  restored file now keeps its original date.
+
+- **Replace Destination and Merge Into Destination differ** - They did the same thing. Replace now
+  overwrites files that are already there, and Merge follows your conflict setting. Neither removes
+  a file the backup does not have. Picking an account now starts on Merge.
+
+- **A restore has a last step** - It used to start on Next. The last page now lists what will
+  happen to each person's files, and the button reads Start Restore. Anything that could stop the
+  restore is settled there: the password (a wrong one is refused before anything changes),
+  administrator rights, and programs left running. The Merge Configuration page is gone: its only
+  control did nothing, and neither did Prompt User. The conflict setting on the last page is the
+  one that works.
+
+- **"Create New User" says what it does** - It makes a folder and no Windows account, so it now
+  reads New Folder, No Account.
+
+- **Backup wizard controls that did nothing now work** - Verify files after backup checks each
+  stored file against its original, using SHA-256 rather than the MD5 the label promised. Warn if
+  folder exceeds warns in the log. The three Exclude boxes on Smart Filters really keep or drop
+  those files. The Next button no longer keeps saying Skip on pages with nothing to skip.
+
+- **Backup destination starts empty** - The suggested folder was inside your own profile, which the
+  same page refused. Browse now adds a dated folder inside the one you choose. A custom folder
+  outside the profile is refused when you add it, not when the backup runs.
+
+- **BitLocker Key Backup refuses FAT32 and exFAT** - Those drives cannot limit who reads a file, yet
+  the permission step reported success and the keys were written open to anyone, with a log saying
+  they were restricted. It now stops before writing and says why, and its prompt no longer suggests
+  any USB drive. Its refusals now say the reason in the log rather than only that it refused.
+
+- **File Organizer does what its buttons say** - Organize Files moved nothing until a setting was
+  turned off, and Preview turned it back on. Now Preview previews and Organize Files organizes. A
+  file that will not move no longer stops the others, and the result lists what moved and what did
+  not.
+
+- **Names in any alphabet** - A folder, a file or a person whose name uses characters outside the
+  PC's language setting stopped File Organizer and Duplicate Finder with an error, and made the
+  restore wizard refuse the whole backup as invalid. These now work.
+
+- **Duplicate Finder shows every group** - It showed ten groups and file names without folders. It
+  now lists every group with full paths, most wasted space first, up to 2,000 groups.
+
+- **Advanced Search** - The Cache size setting did nothing and is gone.
+
+- **File Explorer labels** - "Write certified" and "Certification Targets" now read "Writable,
+  validated" and "Writable Mac Disks". Nothing about what the app can write changed.
+
+- **Scan Users asks for less** - It requested account details it never read, which Windows can
+  refuse without administrator rights. It now asks only for names.
+
 - **Restore can reinstall applications** - The backup's installed-application scan now records a
   Chocolatey package for the applications it recognizes, and the restore wizard's Restore
   Applications page offers those installs. Before, every row said "(no match)". Recognition uses a
