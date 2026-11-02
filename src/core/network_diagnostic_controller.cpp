@@ -482,12 +482,10 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
     connect(m_bandwidthTester.get(),
             &BandwidthTester::testComplete,
             this,
-            [this](BandwidthTestResult result) {
+            [this](const BandwidthTestResult& result) {
                 m_cachedBandwidth = result;
                 Q_EMIT bandwidthComplete(result);
-                Q_EMIT logOutput(QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
-                                     .arg(result.downloadMbps, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(result.uploadMbps, 0, 'f', kNetworkMetricPrecision));
+                Q_EMIT logOutput(iperfLogLine(result));
                 removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
@@ -495,23 +493,61 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
             this,
             [this](double dl, double ul, double latency) {
                 Q_EMIT httpSpeedComplete(dl, ul, latency);
-                // A negative latency means the probe could not measure one. Say so rather
-                // than printing it as a number: it used to arrive here coerced to 0.0 and
-                // was logged as "latency 0.0 ms", which reads as an ideal connection.
-                const QString latencyText = latency < 0.0
-                                                ? QStringLiteral("unknown")
-                                                : QStringLiteral("%1 ms").arg(latency, 0, 'f', 1);
-                Q_EMIT logOutput(QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, "
-                                                "latency %3")
-                                     .arg(dl, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(ul, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(latencyText));
+                Q_EMIT logOutput(httpSpeedLogLine(dl, ul, latency));
                 removeOperation(State::RunningBandwidthTest);
             });
+    // Connected to the public signal so a speed test's numbers reach the report by the same route
+    // they reach the panel. Without this the report listed a finished test as not run.
+    connect(this,
+            &NetworkDiagnosticController::httpSpeedComplete,
+            this,
+            &NetworkDiagnosticController::cacheHttpSpeedResult);
     connect(m_bandwidthTester.get(),
             &BandwidthTester::errorOccurred,
             this,
             &NetworkDiagnosticController::errorOccurred);
+}
+
+QString NetworkDiagnosticController::iperfLogLine(const BandwidthTestResult& result) {
+    // A stopped or failed run completes with an empty result. Never log that as a speed.
+    if (!result.hasMeasurement()) {
+        return QStringLiteral("Bandwidth test ended without a result");
+    }
+    return QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
+        .arg(result.downloadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(result.uploadMbps, 0, 'f', kNetworkMetricPrecision);
+}
+
+QString NetworkDiagnosticController::httpSpeedLogLine(double downloadMbps,
+                                                      double uploadMbps,
+                                                      double latencyMs) {
+    // A stopped or failed run completes with zeros. Never log those as a speed.
+    if (downloadMbps <= 0.0 && uploadMbps <= 0.0) {
+        return QStringLiteral("HTTP speed test ended without a result");
+    }
+    // A negative latency means the probe could not measure one. Say so rather than printing it as
+    // a number: it used to arrive here coerced to 0.0 and was logged as "latency 0.0 ms", which
+    // reads as an ideal connection.
+    const QString latency_text = latencyMs < 0.0
+                                     ? QStringLiteral("unknown")
+                                     : QStringLiteral("%1 ms").arg(latencyMs, 0, 'f', 1);
+    return QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, latency %3")
+        .arg(downloadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(uploadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(latency_text);
+}
+
+void NetworkDiagnosticController::cacheHttpSpeedResult(double downloadMbps,
+                                                       double uploadMbps,
+                                                       double latencyMs) {
+    BandwidthTestResult result;
+    result.mode = BandwidthTestResult::TestMode::WanHttp;
+    result.target = QString::fromLatin1(BandwidthTester::kHttpSpeedTestHost);
+    result.downloadMbps = downloadMbps;
+    result.uploadMbps = uploadMbps;
+    result.latencyMs = latencyMs;
+    result.timestamp = QDateTime::currentDateTime();
+    m_cachedBandwidth = result;
 }
 
 void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
@@ -1477,7 +1513,7 @@ void NetworkDiagnosticController::populateAdvancedReportSections(
     QSet<NetworkDiagnosticReportGenerator::Section>& sections) {
     using S = NetworkDiagnosticReportGenerator::Section;
 
-    if (m_cachedBandwidth.downloadMbps > 0 || m_cachedBandwidth.uploadMbps > 0) {
+    if (m_cachedBandwidth.hasMeasurement()) {
         sections.insert(S::BandwidthResults);
         m_reportGenerator->setBandwidthData(m_cachedBandwidth);
     }
@@ -1567,7 +1603,7 @@ void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterN
 
     if (m_ethernetConfigManager->saveToFile(snapshot, filePath)) {
         Q_EMIT ethernetBackupComplete(filePath);
-        Q_EMIT statusMessage(QStringLiteral("Ethernet settings backed up to: %1").arg(filePath),
+        Q_EMIT statusMessage(QStringLiteral("Adapter settings backed up to: %1").arg(filePath),
                              sak::kTimerStatusDefaultMs);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to save backup to: %1").arg(filePath));
@@ -1595,7 +1631,7 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
     Q_EMIT ethernetRestoreComplete(success);
 
     if (success) {
-        Q_EMIT statusMessage(QStringLiteral("Ethernet settings restored successfully"),
+        Q_EMIT statusMessage(QStringLiteral("Adapter settings restored successfully"),
                              sak::kTimerStatusDefaultMs);
     } else {
         Q_EMIT statusMessage(QStringLiteral(

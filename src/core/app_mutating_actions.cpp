@@ -2696,7 +2696,7 @@ QJsonObject setAdapterDhcpParamsSchema() {
 }
 
 // Resolve the model-supplied adapter name against the system's OWN adapter list (case-insensitive
-// exact match). listEthernetAdapters() returns every "dedicated" adapter netsh reports -- which
+// exact match). listEthernetAdapters() returns every adapter Get-NetAdapter reports -- which
 // includes Wi-Fi and other non-loopback adapters, NOT wired-only -- so this op is honestly a
 // per-adapter DHCP reset, not Ethernet-exclusive. Returns the authoritative system spelling, or
 // empty. This is the anti-injection barrier: only a real, system-sourced name ever reaches netsh,

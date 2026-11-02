@@ -186,6 +186,13 @@ public:
     /// @brief List available Ethernet adapter names
     [[nodiscard]] QStringList listEthernetAdapters() const;
 
+    /// @brief What the Log says about a finished iPerf3 test. Pure.
+    [[nodiscard]] static QString iperfLogLine(const BandwidthTestResult& result);
+    /// @brief What the Log says about a finished HTTP speed test. Pure.
+    [[nodiscard]] static QString httpSpeedLogLine(double downloadMbps,
+                                                  double uploadMbps,
+                                                  double latencyMs);
+
     // -- Report --
     void generateReport(const QString& outputPath,
                         const QString& format,
@@ -249,6 +256,9 @@ private:
     ///        m_attemptedOps). Subtracting the with-data sections yields the attempted-but-
     ///        empty set the report renders as an explicit "not run" marker.
     [[nodiscard]] QSet<NetworkDiagnosticReportGenerator::Section> attemptedReportSections() const;
+
+    /// @brief Keep a finished HTTP speed test's numbers for the report.
+    void cacheHttpSpeedResult(double downloadMbps, double uploadMbps, double latencyMs);
 
     State m_state = State::Idle;  ///< Legacy: first active op or Idle
     QSet<State> m_activeOps;      ///< Currently running operations

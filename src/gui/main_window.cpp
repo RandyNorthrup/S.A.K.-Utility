@@ -179,7 +179,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Network Management</div>
     <ul>
         <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, network share browser, and HTML or JSON reports</li>
-        <li><b>Network Adapters</b> &mdash; Adapter inspector with ethernet configuration backup and restore across machines, plus one-click Reset Network Settings</li>
+        <li><b>Network Adapters</b> &mdash; Adapter inspector with configuration backup and restore across machines, plus one-click Reset Network Settings</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
 </div>
@@ -1191,7 +1191,7 @@ void MainWindow::createNetworkManagementPanel() {
             {.icon = ":/icons/icons/icons8-network-card.svg",
              .title = "Network Adapters",
              .subtitle = "View and manage network adapter configurations, "
-                         "backup and restore Ethernet settings"},
+                         "backup and restore adapter settings"},
             {.icon = ":/icons/icons/panel_wifi.svg",
              .title = "WiFi Manager",
              .subtitle = "Manage, share, and deploy Wi-Fi network profiles"},

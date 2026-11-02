@@ -122,7 +122,6 @@ constexpr int kDecimalPrecisionOne = 1;
 constexpr int kDecimalPrecisionTwo = 2;
 constexpr double kMtrLossWarningPercentF = 5.0;
 constexpr double kBitsPerByteF = 8.0;
-constexpr int kMinimumBridgeAdapterCount = 2;
 constexpr int kFirewallFilterOutboundIndex = 2;
 constexpr int kFirewallFilterBlockIndex = 2;
 
@@ -333,18 +332,24 @@ void NetworkDiagnosticPanel::setupUi() {
 
 void NetworkDiagnosticPanel::setupKeyboardShortcuts() {
     Q_ASSERT(m_controller);
-    auto* refresh_shortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
-    refresh_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(
-        refresh_shortcut, &QShortcut::activated, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+    // The adapter section leaves this widget for its own outer tab (adapterWidget()), so a shortcut
+    // on the panel alone never fires while it has the focus.
+    for (QWidget* section : {static_cast<QWidget*>(this), m_adapterWidget}) {
+        auto* refresh_shortcut = new QShortcut(QKeySequence(Qt::Key_F5), section);
+        refresh_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(refresh_shortcut,
+                &QShortcut::activated,
+                this,
+                &NetworkDiagnosticPanel::onRefreshAdapters);
 
-    auto* cancel_shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    cancel_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(cancel_shortcut, &QShortcut::activated, this, [this]() {
-        if (m_controller->currentState() != NetworkDiagnosticController::State::Idle) {
-            m_controller->cancel();
-        }
-    });
+        auto* cancel_shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), section);
+        cancel_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(cancel_shortcut, &QShortcut::activated, this, [this]() {
+            if (m_controller->currentState() != NetworkDiagnosticController::State::Idle) {
+                m_controller->cancel();
+            }
+        });
+    }
 }
 
 // -- Adapter Section -----------------------------------------------------
@@ -394,10 +399,10 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
     m_backupEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_backupEthernetBtn->setToolTip(
-        tr("Backup selected Ethernet adapter IP/DNS settings to a JSON file "
+        tr("Backup selected adapter IP/DNS settings to a JSON file "
            "for restoration on this or another PC"));
     setAccessible(m_backupEthernetBtn,
-                  tr("Backup Ethernet settings"),
+                  tr("Backup adapter settings"),
                   tr("Save selected adapter's IP configuration to a portable JSON file"));
     m_backupEthernetBtn->setEnabled(false);
     toolbar->addWidget(m_backupEthernetBtn);
@@ -405,10 +410,10 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), parent);
     m_restoreEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
-        tr("Restore Ethernet adapter settings from a previously saved "
+        tr("Restore adapter settings from a previously saved "
            "JSON backup file -- works across PCs"));
     setAccessible(m_restoreEthernetBtn,
-                  tr("Restore Ethernet settings"),
+                  tr("Restore adapter settings"),
                   tr("Load and apply adapter IP configuration from a backup JSON file"));
     toolbar->addWidget(m_restoreEthernetBtn);
 
@@ -883,7 +888,7 @@ void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layo
 
     m_dnsFlushBtn = new QPushButton(tr("Flush Cache"), widget);
     m_dnsFlushBtn->setStyleSheet(ui::kDangerButtonStyle);
-    m_dnsFlushBtn->setToolTip(tr("Flush the local DNS resolver cache (requires admin)"));
+    m_dnsFlushBtn->setToolTip(tr("Flush the local DNS resolver cache"));
     setAccessible(m_dnsFlushBtn, tr("Flush DNS cache"));
     btn_row->addWidget(m_dnsFlushBtn);
 
@@ -1966,9 +1971,9 @@ void NetworkDiagnosticPanel::connectControllerBandwidthSignals() {
     connect(m_controller.get(),
             &NetworkDiagnosticController::bandwidthProgress,
             this,
-            [this](double current_mbps, double elapsed_sec, double total_sec) {
-                m_bwResultLabel->setText(QStringLiteral("Running: %1 Mbps (%2/%3 s)")
-                                             .arg(current_mbps, 0, 'f', 1)
+            [this](double, double elapsed_sec, double total_sec) {
+                // iPerf3 only reports its speed at the end, so a run in progress shows its time.
+                m_bwResultLabel->setText(QStringLiteral("Running: %1/%2 s")
                                              .arg(elapsed_sec, 0, 'f', 0)
                                              .arg(total_sec, 0, 'f', 0));
             });
@@ -2083,7 +2088,7 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
             [this](QString path) {
                 sak::showInformationLogged(this,
                                            tr("Backup Complete"),
-                                           tr("Ethernet settings backed up to:\n%1\n\n"
+                                           tr("Adapter settings backed up to:\n%1\n\n"
                                               "This file can be used to restore settings on this "
                                               "or another PC.")
                                                .arg(path));
@@ -2095,11 +2100,11 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
                 if (success) {
                     sak::showInformationLogged(this,
                                                tr("Restore Complete"),
-                                               tr("Ethernet settings restored successfully.\n\n"
+                                               tr("Adapter settings restored successfully.\n\n"
                                                   "The adapter may take a moment to apply the new "
                                                   "configuration."));
                 } else {
-                    sak::logWarning("Ethernet settings restore incomplete");
+                    sak::logWarning("Adapter settings restore incomplete");
                     sak::showWarningLogged(this,
                                            tr("Restore Incomplete"),
                                            tr("Some settings could not be restored.\n"
@@ -2321,8 +2326,8 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
 
     const QString file_path =
         QFileDialog::getSaveFileName(this,
-                                     tr("Save Ethernet Settings Backup"),
-                                     QStringLiteral("%1_ethernet_backup.json").arg(adapter.name),
+                                     tr("Save Adapter Settings Backup"),
+                                     QStringLiteral("%1_settings_backup.json").arg(adapter.name),
                                      tr("JSON Files (*.json);;All Files (*.*)"));
 
     if (file_path.isEmpty()) {
@@ -2335,7 +2340,7 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
 void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
     Q_ASSERT(m_controller);
     QString file_path = QFileDialog::getOpenFileName(this,
-                                                     tr("Open Ethernet Settings Backup"),
+                                                     tr("Open Adapter Settings Backup"),
                                                      QString(),
                                                      tr("JSON Files (*.json);;All Files (*.*)"));
 
@@ -2346,10 +2351,10 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
     // Let user choose target adapter
     QStringList adapters = m_controller->listEthernetAdapters();
     if (adapters.isEmpty()) {
-        sak::logWarning("No Ethernet adapters found for settings restore");
+        sak::logWarning("No network adapters found for settings restore");
         sak::showWarningLogged(this,
                                tr("No Adapters"),
-                               tr("No Ethernet adapters found on this system."));
+                               tr("No network adapters found on this system."));
         return;
     }
 
@@ -2364,8 +2369,8 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
         dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
 
         auto* layout = new QVBoxLayout(&dialog);
-        layout->addWidget(new QLabel(
-            tr("Select the Ethernet adapter to apply the backup settings to:"), &dialog));
+        layout->addWidget(
+            new QLabel(tr("Select the adapter to apply the backup settings to:"), &dialog));
 
         auto* adapter_combo = new QComboBox(&dialog);
         for (const auto& name : adapters) {
@@ -2422,23 +2427,6 @@ const NetworkAdapterInfo* NetworkDiagnosticPanel::selectedAdapter() const {
     return &m_adapters[data_idx];
 }
 
-QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() const {
-    Q_ASSERT(m_adapterTable);
-    QVector<const NetworkAdapterInfo*> result;
-    const auto selected_rows = m_adapterTable->selectionModel()->selectedRows();
-    for (const auto& index : selected_rows) {
-        const auto* name_item = m_adapterTable->item(index.row(), 0);
-        if (name_item == nullptr) {
-            continue;
-        }
-        const int data_idx = name_item->data(Qt::UserRole).toInt();
-        if (data_idx >= 0 && data_idx < m_adapters.size()) {
-            result.append(&m_adapters[data_idx]);
-        }
-    }
-    return result;
-}
-
 void NetworkDiagnosticPanel::launchAdapterWork(
     std::function<sak::AdapterAdminOutcome()> work,
     std::function<void(const sak::AdapterAdminOutcome&)> report) {
@@ -2463,25 +2451,8 @@ void NetworkDiagnosticPanel::launchAdapterWork(
     m_pending_command_futures.append(future);
 }
 
-namespace {
-bool areBridgeable(const QVector<const NetworkAdapterInfo*>& adapters) {
-    if (adapters.size() <= 1) {
-        return false;
-    }
-    for (const auto* sel : adapters) {
-        const auto& sel_type = sel->adapterType;
-        if (sel_type == QStringLiteral("Loopback") || sel_type == QStringLiteral("VPN")) {
-            return false;
-        }
-    }
-    return true;
-}
-}  // namespace
-
-void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
-    QMenu& menu,
-    const NetworkAdapterInfo& adapter,
-    const QVector<const NetworkAdapterInfo*>& selected) {
+void NetworkDiagnosticPanel::addTypeSpecificMenuItems(QMenu& menu,
+                                                      const NetworkAdapterInfo& adapter) {
     const auto& type = adapter.adapterType;
     const bool is_loopback = (type == QStringLiteral("Loopback"));
     const bool is_vpn = (type == QStringLiteral("VPN"));
@@ -2522,20 +2493,13 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
     menu.addAction(tr("Copy Configuration"), this, &NetworkDiagnosticPanel::onCopyAdapterConfig);
     menu.addSeparator();
 
-    if (is_ethernet) {
+    if (is_ip_configurable) {
         menu.addAction(tr("Backup Settings..."),
                        this,
                        &NetworkDiagnosticPanel::onBackupEthernetSettings);
         menu.addAction(tr("Restore Settings..."),
                        this,
                        &NetworkDiagnosticPanel::onRestoreEthernetSettings);
-        menu.addSeparator();
-    }
-
-    if (areBridgeable(selected)) {
-        menu.addAction(tr("Bridge Connections"),
-                       this,
-                       &NetworkDiagnosticPanel::onBridgeConnections);
         menu.addSeparator();
     }
 
@@ -2552,14 +2516,13 @@ void NetworkDiagnosticPanel::showAdapterContextMenu(const QPoint& pos) {
         return;
     }
 
-    const auto selected = selectedAdapters();
     QMenu menu(this);
 
     menu.addAction(tr("Status..."), this, &NetworkDiagnosticPanel::onAdapterStatus);
     menu.addAction(tr("Properties"), this, &NetworkDiagnosticPanel::onAdapterProperties);
     menu.addSeparator();
 
-    addTypeSpecificMenuItems(menu, *adapter, selected);
+    addTypeSpecificMenuItems(menu, *adapter);
 
     menu.exec(m_adapterTable->viewport()->mapToGlobal(pos));
 }
@@ -2849,36 +2812,56 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
         });
 }
 
+AdapterDiagnosePlan adapterDiagnosePlan(const QString& adapter_type, bool msdt_present) {
+    AdapterDiagnosePlan plan;
+    if (!msdt_present) {
+        plan.use_settings = true;
+        plan.settings_page = QStringLiteral("ms-settings:troubleshoot");
+        return plan;
+    }
+    if (adapter_type == QStringLiteral("Bluetooth")) {
+        plan.diagnostic_id = QStringLiteral("DeviceDiagnostic");
+    } else if (adapter_type == QStringLiteral("VPN")) {
+        plan.diagnostic_id = QStringLiteral("NetworkDiagnosticsWeb");
+    } else {
+        plan.diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
+    }
+    return plan;
+}
+
 void NetworkDiagnosticPanel::onAdapterDiagnose() {
     const auto* adapter = selectedAdapter();
     if (adapter == nullptr) {
         return;
     }
 
-    // Use the appropriate troubleshooter for the adapter type
+    // System32-qualified msdt.exe, never left to CreateProcess to search PATH/CWD for. Windows is
+    // retiring it, so where it is gone the same help lives under Settings, and the person is told.
     const auto& type = adapter->adapterType;
-    QString diagnostic_id;
-    if (type == QStringLiteral("Bluetooth")) {
-        diagnostic_id = QStringLiteral("DeviceDiagnostic");
-    } else if (type == QStringLiteral("VPN")) {
-        diagnostic_id = QStringLiteral("NetworkDiagnosticsWeb");
-    } else {
-        diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
-    }
-
-    // System32-qualified msdt.exe; unresolvable (or absent on newer Windows) -> report the
-    // failure rather than let CreateProcess search PATH/CWD for the name.
-    if (!sak::startDetachedSystem32Tool(QStringLiteral("msdt.exe"),
-                                        {QStringLiteral("/id"), diagnostic_id})) {
-        Q_EMIT logOutput(tr("[ERROR] Could not launch the Windows network troubleshooter"));
+    const QString msdt = sak::system32Path(QStringLiteral("msdt.exe"));
+    const AdapterDiagnosePlan plan = adapterDiagnosePlan(type,
+                                                         !msdt.isEmpty() && QFile::exists(msdt));
+    const bool launched =
+        plan.use_settings
+            ? sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {plan.settings_page})
+            : sak::startDetachedSystem32Tool(QStringLiteral("msdt.exe"),
+                                             {QStringLiteral("/id"), plan.diagnostic_id});
+    if (!launched) {
+        const QString failure =
+            tr("Could not open a Windows troubleshooter for '%1'").arg(adapter->name);
+        Q_EMIT logOutput(QStringLiteral("[ERROR] %1").arg(failure));
+        Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
         return;
     }
-    Q_EMIT statusMessage(tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name),
-                         sak::kTimerStatusMessageMs);
-    Q_EMIT logOutput(tr("Launched %1 diagnostics for '%2'").arg(type, adapter->name));
-    sak::logInfo("Launched diagnostics ({}) for adapter '{}'",
-                 diagnostic_id.toStdString(),
-                 adapter->name.toStdString());
+    const QString opened =
+        plan.use_settings
+            ? tr("This Windows has no adapter troubleshooter. Opened Settings, Troubleshoot.")
+            : tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name);
+    Q_EMIT statusMessage(opened, sak::kTimerStatusMessageMs);
+    Q_EMIT logOutput(opened);
+    sak::logInfo("Diagnose for adapter '{}': {}",
+                 adapter->name.toStdString(),
+                 opened.toStdString());
 }
 
 bool NetworkDiagnosticPanel::promptForNewAdapterName(const QString& current_name,
@@ -3013,44 +2996,6 @@ void NetworkDiagnosticPanel::onViewBluetoothDevices() {
     Q_EMIT logOutput(tr("Opened Bluetooth devices settings"));
     Q_EMIT statusMessage(tr("Opened Bluetooth devices settings"), sak::kTimerStatusMessageMs);
     sak::logInfo("Opened Bluetooth devices settings");
-}
-
-void NetworkDiagnosticPanel::onBridgeConnections() {
-    const auto selected = selectedAdapters();
-    if (selected.size() < kMinimumBridgeAdapterCount) {
-        sak::showInformationLogged(this,
-                                   tr("Bridge Connections"),
-                                   tr("Select two or more adapters to create a network bridge."));
-        return;
-    }
-
-    QStringList adapter_names;
-    for (const auto* sel : selected) {
-        adapter_names << sel->name;
-    }
-
-    auto confirm = sak::showQuestionLogged(this,
-                                           tr("Bridge Connections"),
-                                           tr("Bridge the following adapters?\n\n%1\n\n"
-                                              "This will open Network Connections where you can "
-                                              "select these adapters and bridge them.")
-                                               .arg(adapter_names.join(QStringLiteral("\n"))),
-                                           QMessageBox::Yes | QMessageBox::No,
-                                           QMessageBox::No);
-    if (confirm != QMessageBox::Yes) {
-        return;
-    }
-
-    if (!sak::startDetachedSystem32Tool(QStringLiteral("control.exe"),
-                                        {QStringLiteral("ncpa.cpl")})) {
-        Q_EMIT logOutput(tr("[ERROR] Could not launch Network Connections"));
-        return;
-    }
-    Q_EMIT logOutput(tr("Bridge requested for: %1").arg(adapter_names.join(QStringLiteral(", "))));
-    Q_EMIT statusMessage(
-        tr("Opened Network Connections for bridging %1 adapters").arg(selected.size()),
-        sak::kTimerStatusDefaultMs);
-    sak::logInfo("Bridge connection requested for {} adapters", std::to_string(selected.size()));
 }
 
 // -- IP Configuration Actions --------------------------------------------
@@ -4066,7 +4011,7 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
     }
 
     m_bwResultLabel->setText(tr("Running bandwidth test..."));
-    m_bwTestBtn->setEnabled(false);
+    setBandwidthRunButtons(false);
     m_bwStopBtn->setEnabled(true);
 
     m_controller->runBandwidthTest({.server_addr = server,
@@ -4077,11 +4022,18 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
                                     .udp = false});  // TCP mode
 }
 
+void NetworkDiagnosticPanel::setBandwidthRunButtons(bool enabled) {
+    // iPerf3 and the HTTP speed test share one worker, and the controller refuses to start one
+    // while the other runs, so neither can be offered until the running one has finished.
+    m_bwTestBtn->setEnabled(enabled);
+    m_httpSpeedBtn->setEnabled(enabled);
+}
+
 void NetworkDiagnosticPanel::onStopBandwidthTest() {
     Q_ASSERT(m_controller);
-    m_controller->cancel();
-    m_bwTestBtn->setEnabled(true);
+    // The run buttons come back when the worker has really stopped (resetToolButtons).
     m_bwStopBtn->setEnabled(false);
+    m_controller->cancel();
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {
@@ -4093,7 +4045,7 @@ void NetworkDiagnosticPanel::onStopIperfServer() {
 }
 
 void NetworkDiagnosticPanel::onRunHttpSpeedTest() {
-    m_httpSpeedBtn->setEnabled(false);
+    setBandwidthRunButtons(false);
     m_httpSpeedStopBtn->setEnabled(true);
     m_httpSpeedLabel->setText(tr("Running HTTP speed test..."));
     m_controller->runHttpSpeedTest();
@@ -4101,17 +4053,22 @@ void NetworkDiagnosticPanel::onRunHttpSpeedTest() {
 
 void NetworkDiagnosticPanel::onStopHttpSpeedTest() {
     Q_ASSERT(m_controller);
-    m_controller->cancel();
-    m_httpSpeedBtn->setEnabled(true);
+    // The run buttons come back when the worker has really stopped (resetToolButtons).
     m_httpSpeedStopBtn->setEnabled(false);
+    m_controller->cancel();
 }
 
 void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
     Q_ASSERT(m_bwTestBtn);
     Q_ASSERT(m_bwResultLabel);
-    m_bwTestBtn->setEnabled(true);
+    setBandwidthRunButtons(true);
     m_bwStopBtn->setEnabled(false);
 
+    // A stopped or failed run completes with an empty result: there is nothing to show as a speed.
+    if (!result.hasMeasurement()) {
+        m_bwResultLabel->setText(noBandwidthResultText());
+        return;
+    }
     m_bwResultLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps<br>"
                                             "<b>Jitter:</b> %3 ms | <b>Packet Loss:</b> %4% | "
                                             "<b>Retransmits:</b> %5")
@@ -4123,14 +4080,27 @@ void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
 }
 
 void NetworkDiagnosticPanel::onHttpSpeedComplete(double down, double up, double latency) {
-    m_httpSpeedBtn->setEnabled(true);
+    setBandwidthRunButtons(true);
     m_httpSpeedStopBtn->setEnabled(false);
 
+    // A stopped or failed run completes with zeros, which are not a measured speed.
+    if (down <= 0.0 && up <= 0.0) {
+        m_httpSpeedLabel->setText(noBandwidthResultText());
+        return;
+    }
+    // A negative latency means the probe could not measure one.
+    const QString latency_text =
+        latency < 0.0 ? tr("unknown")
+                      : QStringLiteral("%1 ms").arg(latency, 0, 'f', kDecimalPrecisionOne);
     m_httpSpeedLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps | "
-                                             "<b>Latency:</b> %3 ms")
+                                             "<b>Latency:</b> %3")
                                   .arg(down, 0, 'f', kDecimalPrecisionTwo)
                                   .arg(up, 0, 'f', kDecimalPrecisionTwo)
-                                  .arg(latency, 0, 'f', kDecimalPrecisionOne));
+                                  .arg(latency_text));
+}
+
+QString NetworkDiagnosticPanel::noBandwidthResultText() const {
+    return tr("No result. The test was stopped or could not finish.");
 }
 
 // -- WiFi --
@@ -4629,12 +4599,11 @@ void NetworkDiagnosticPanel::resetToolButtons(int finished_state) {
 
     switch (state) {
     case S::RunningBandwidthTest:
-        m_bwTestBtn->setEnabled(true);
+        // Only the buttons. This runs right after the completion handlers have written the
+        // result, and the result is what the person ran the test to read.
+        setBandwidthRunButtons(true);
         m_bwStopBtn->setEnabled(false);
-        m_httpSpeedBtn->setEnabled(true);
         m_httpSpeedStopBtn->setEnabled(false);
-        m_bwResultLabel->clear();
-        m_httpSpeedLabel->clear();
         break;
     case S::ScanningWiFi:
         m_wifiScanBtn->setEnabled(true);
@@ -4827,7 +4796,8 @@ void NetworkDiagnosticPanel::onResetNetworkClicked() {
 void NetworkDiagnosticPanel::onResetNetworkFinished(const QuickAction::ExecutionResult& result) {
     m_resetNetworkBtn->setEnabled(true);
     m_resetNetworkBtn->setText(tr("Reset Network"));
-    const QString msg = result.success ? tr("Network settings reset successfully")
+    // On success the action's own message is the point: it says when a reboot is required.
+    const QString msg = result.success ? result.message
                                        : QString("Reset failed: %1").arg(result.message);
     Q_EMIT logOutput(msg);
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);

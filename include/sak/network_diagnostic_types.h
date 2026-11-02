@@ -282,6 +282,12 @@ struct BandwidthTestResult {
     double downloadMbps = 0.0;
     double uploadMbps = 0.0;
 
+    /// @brief A stopped or failed run completes with an empty result; only a real one has a speed.
+    [[nodiscard]] bool hasMeasurement() const { return downloadMbps > 0.0 || uploadMbps > 0.0; }
+
+    // HTTP speed test specific. Negative means the probe could not measure one.
+    double latencyMs = -1.0;
+
     // iPerf3 specific
     double tcpWindowSize = 0.0;
     double retransmissions = 0.0;

@@ -132,6 +132,9 @@ public:
     /// @brief List available Ethernet adapter names for backup
     [[nodiscard]] QStringList listEthernetAdapters();
 
+    /// @brief The names in the JSON array listEthernetAdapters reads. Empty for anything else.
+    [[nodiscard]] static QStringList adapterNamesFromJson(const QString& json);
+
     /// @brief Select @p adapterName out of a Get-NetIPConfiguration JSON scan and map it into a
     ///        snapshot. Language-neutral, unlike the netsh label scrape it replaced.
     [[nodiscard]] static EthernetConfigSnapshot snapshotFromNetIpConfig(const QString& json,

@@ -48,6 +48,7 @@ private Q_SLOTS:
     void html_dnsRecordType_htmlEscaped();
     void html_section_portScanResults();
     void html_section_bandwidthResults();
+    void html_section_httpSpeedTest();
     void html_section_wifiAnalysis();
     void html_section_firewallAudit();
     void html_section_connectionMonitor();
@@ -275,6 +276,33 @@ void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
     // not catch a precision or unit-formatting regression.
     QVERIFY(html.contains(QStringLiteral("500.50")));
     QVERIFY(html.contains(QStringLiteral("100.20")));
+    QVERIFY(html.contains(QStringLiteral("Jitter: 0.00 ms")));
+    QVERIFY(!html.contains(QStringLiteral("Latency:")));
+}
+
+// An HTTP speed test measures latency and no jitter or loss, so the report must not print zeros
+// for what it never measured.
+void NetworkDiagnosticReportTests::html_section_httpSpeedTest() {
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::BandwidthResults});
+
+    BandwidthTestResult bw;
+    bw.mode = BandwidthTestResult::TestMode::WanHttp;
+    bw.downloadMbps = 171.31;
+    bw.uploadMbps = 26.98;
+    bw.latencyMs = 227.0;
+    gen.setBandwidthData(bw);
+
+    QString html = gen.toHtml();
+    QVERIFY(html.contains(QStringLiteral("Latency: 227.00 ms")));
+    QVERIFY(!html.contains(QStringLiteral("Jitter")));
+    QVERIFY(!html.contains(QStringLiteral("Packet Loss")));
+
+    bw.latencyMs = -1.0;
+    gen.setBandwidthData(bw);
+    html = gen.toHtml();
+    QVERIFY(html.contains(QStringLiteral("Latency: unknown")));
+    QVERIFY(!html.contains(QStringLiteral("-1.00")));
 }
 
 void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {

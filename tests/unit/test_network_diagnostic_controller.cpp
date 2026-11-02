@@ -6,7 +6,11 @@
 
 #include "sak/network_diagnostic_controller.h"
 
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -23,6 +27,9 @@ private Q_SLOTS:
     void iperfServer_notRunningInitially();
     void lanTransferServer_notRunningInitially();
     void generateReport_unknownFormat_failsClosed();
+    void generateReport_includesAFinishedHttpSpeedTest();
+    void generateReport_omitsAStoppedHttpSpeedTest();
+    void logLines_neverStateASpeedThatWasNotMeasured();
     void runLanTransferTest_durationOverMax_failsClosed();
     void runLanTransferTest_blockSizeOverMax_failsClosed();
     void continuousWiFiScan_firstScanRunsOffTheGuiThread();
@@ -82,6 +89,72 @@ void TestNetworkDiagnosticController::generateReport_unknownFormat_failsClosed()
     QCOMPARE(done.count(), 0);
     QVERIFY(!controller.hasActiveOperations());
     QCOMPARE(controller.currentState(), NetworkDiagnosticController::State::Idle);
+}
+
+namespace {
+constexpr int kReportTimeoutMs = 30'000;
+
+QJsonObject bandwidthSectionOf(NetworkDiagnosticController& controller, const QString& path) {
+    QSignalSpy done(&controller, &NetworkDiagnosticController::reportGenerated);
+    controller.generateReport(path, QStringLiteral("json"), QString(), QString(), QString());
+    if (!done.wait(kReportTimeoutMs)) {
+        return {};
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QJsonDocument::fromJson(file.readAll())
+        .object()
+        .value(QStringLiteral("bandwidth"))
+        .toObject();
+}
+}  // namespace
+
+// The report listed a finished speed test as not run: only iPerf3's result was ever kept for it.
+void TestNetworkDiagnosticController::generateReport_includesAFinishedHttpSpeedTest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    NetworkDiagnosticController controller;
+
+    Q_EMIT controller.httpSpeedComplete(171.31, 26.98, 227.0);
+
+    const QJsonObject bandwidth = bandwidthSectionOf(controller,
+                                                     dir.filePath(QStringLiteral("report.json")));
+    QCOMPARE(bandwidth.value(QStringLiteral("mode")).toString(), QStringLiteral("wan-http"));
+    QCOMPARE(bandwidth.value(QStringLiteral("target")).toString(),
+             QStringLiteral("speed.cloudflare.com"));
+    QCOMPARE(bandwidth.value(QStringLiteral("downloadMbps")).toDouble(), 171.31);
+    QCOMPARE(bandwidth.value(QStringLiteral("uploadMbps")).toDouble(), 26.98);
+    QCOMPARE(bandwidth.value(QStringLiteral("latencyMs")).toDouble(), 227.0);
+}
+
+// Stop and failure both complete with zeros, which must never reach a report as a measured speed.
+void TestNetworkDiagnosticController::generateReport_omitsAStoppedHttpSpeedTest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    NetworkDiagnosticController controller;
+
+    Q_EMIT controller.httpSpeedComplete(0.0, 0.0, 0.0);
+
+    QVERIFY(bandwidthSectionOf(controller, dir.filePath(QStringLiteral("report.json"))).isEmpty());
+}
+
+void TestNetworkDiagnosticController::logLines_neverStateASpeedThatWasNotMeasured() {
+    using C = NetworkDiagnosticController;
+    QCOMPARE(C::httpSpeedLogLine(171.31, 26.98, 227.0),
+             QStringLiteral("HTTP speed test: DL 171.31 Mbps, UL 26.98 Mbps, latency 227.0 ms"));
+    QCOMPARE(C::httpSpeedLogLine(171.31, 26.98, -1.0),
+             QStringLiteral("HTTP speed test: DL 171.31 Mbps, UL 26.98 Mbps, latency unknown"));
+    QCOMPARE(C::httpSpeedLogLine(0.0, 0.0, 0.0),
+             QStringLiteral("HTTP speed test ended without a result"));
+
+    BandwidthTestResult result;
+    QCOMPARE(C::iperfLogLine(result), QStringLiteral("Bandwidth test ended without a result"));
+    result.downloadMbps = 940.25;
+    result.uploadMbps = 912.5;
+    QCOMPARE(C::iperfLogLine(result),
+             QStringLiteral("Bandwidth test: DL 940.25 Mbps, UL 912.50 Mbps"));
 }
 
 void TestNetworkDiagnosticController::runLanTransferTest_durationOverMax_failsClosed() {

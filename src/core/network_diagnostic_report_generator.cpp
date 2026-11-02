@@ -363,21 +363,33 @@ QString NetworkDiagnosticReportGenerator::buildBandwidthSection() const {
     QString html;
     html += QStringLiteral("<h2>Bandwidth Test Results</h2>\n");
 
-    const auto modeStr = (m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3)
-                             ? QStringLiteral("LAN (iPerf3)")
-                             : QStringLiteral("WAN (HTTP)");
+    const bool is_lan = m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3;
+    const auto modeStr = is_lan ? QStringLiteral("LAN (iPerf3)") : QStringLiteral("WAN (HTTP)");
+
+    // An HTTP speed test measures no jitter or loss: it reports its latency instead, and printing
+    // the iPerf3 fields for it would state zeros nothing measured.
+    QString detail;
+    if (is_lan) {
+        detail = QStringLiteral("Jitter: %1 ms | Packet Loss: %2%")
+                     .arg(m_bandwidthResult.jitterMs, 0, 'f', kReportMetricPrecision)
+                     .arg(m_bandwidthResult.packetLossPercent, 0, 'f', kReportMetricPrecision);
+    } else if (m_bandwidthResult.latencyMs < 0.0) {
+        detail = QStringLiteral("Latency: unknown");
+    } else {
+        detail = QStringLiteral("Latency: %1 ms")
+                     .arg(m_bandwidthResult.latencyMs, 0, 'f', kReportMetricPrecision);
+    }
 
     html += QStringLiteral(
                 "<div class=\"stat-box\">"
                 "Mode: %1 | Target: %2<br>"
                 "Download: <b>%3 Mbps</b> | Upload: <b>%4 Mbps</b><br>"
-                "Jitter: %5 ms | Packet Loss: %6%"
+                "%5"
                 "</div>\n")
                 .arg(modeStr, m_bandwidthResult.target.toHtmlEscaped())
                 .arg(m_bandwidthResult.downloadMbps, 0, 'f', kReportMetricPrecision)
                 .arg(m_bandwidthResult.uploadMbps, 0, 'f', kReportMetricPrecision)
-                .arg(m_bandwidthResult.jitterMs, 0, 'f', kReportMetricPrecision)
-                .arg(m_bandwidthResult.packetLossPercent, 0, 'f', kReportMetricPrecision);
+                .arg(detail);
 
     return html;
 }
@@ -811,10 +823,20 @@ void NetworkDiagnosticReportGenerator::appendPortScanResultsJson(QJsonObject& ro
 
 void NetworkDiagnosticReportGenerator::appendBandwidthResultsJson(QJsonObject& root) const {
     QJsonObject bw;
+    bw[QStringLiteral("target")] = m_bandwidthResult.target;
     bw[QStringLiteral("downloadMbps")] = m_bandwidthResult.downloadMbps;
     bw[QStringLiteral("uploadMbps")] = m_bandwidthResult.uploadMbps;
-    bw[QStringLiteral("jitterMs")] = m_bandwidthResult.jitterMs;
-    bw[QStringLiteral("packetLoss")] = m_bandwidthResult.packetLossPercent;
+    if (m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3) {
+        bw[QStringLiteral("mode")] = QStringLiteral("lan-iperf3");
+        bw[QStringLiteral("jitterMs")] = m_bandwidthResult.jitterMs;
+        bw[QStringLiteral("packetLoss")] = m_bandwidthResult.packetLossPercent;
+    } else {
+        bw[QStringLiteral("mode")] = QStringLiteral("wan-http");
+        // Null, not a number, when the probe could not measure a latency.
+        bw[QStringLiteral("latencyMs")] = m_bandwidthResult.latencyMs < 0.0
+                                              ? QJsonValue()
+                                              : QJsonValue(m_bandwidthResult.latencyMs);
+    }
     root[QStringLiteral("bandwidth")] = bw;
 }
 

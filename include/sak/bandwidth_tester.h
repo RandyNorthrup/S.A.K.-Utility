@@ -28,6 +28,9 @@ class BandwidthTester : public QObject {
     Q_OBJECT
 
 public:
+    /// The public server the HTTP speed test measures against.
+    static constexpr auto kHttpSpeedTestHost = "speed.cloudflare.com";
+
     struct IperfConfig {
         QString serverAddress;
         uint16_t port = netdiag::kDefaultIperfPort;

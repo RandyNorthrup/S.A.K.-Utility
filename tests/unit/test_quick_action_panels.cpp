@@ -381,9 +381,10 @@ void QuickActionPanelTests::networkResetConfirmsThenRunsElevatedAndRestoresTheBu
         QStringList{QString::fromLatin1(sak::quick_action_elevation::kResetNetworkTaskId)},
         kRunTimeoutMs);
 
+    // What the action said reaches the status bar: its real message ends in REBOOT REQUIRED, and
+    // the panel used to replace it with a fixed line that left that out.
     m_system->hold.store(false);
-    QTRY_VERIFY_WITH_TIMEOUT(texts(status).contains(
-                                 QStringLiteral("Network settings reset successfully")),
+    QTRY_VERIFY_WITH_TIMEOUT(texts(status).contains(QStringLiteral("fake elevated ok")),
                              kRunTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(reset->isEnabled(), kRunTimeoutMs);
     QCOMPARE(reset->text(), QStringLiteral("Reset Network"));
@@ -452,9 +453,8 @@ void QuickActionPanelTests::eachPanelReactsOnlyToItsOwnRuns() {
     answerNextQuestion(QMessageBox::Yes, &asked);
     reset->click();
     QVERIFY(asked);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        texts(network_status).contains(QStringLiteral("Network settings reset successfully")),
-        kRunTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(texts(network_status).contains(QStringLiteral("fake elevated ok")),
+                             kRunTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(reset->isEnabled(), kRunTimeoutMs);
 
     power->click();

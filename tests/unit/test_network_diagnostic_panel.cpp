@@ -15,9 +15,12 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTimer>
@@ -31,6 +34,8 @@ constexpr int kAdapterScanTimeoutMs = 30'000;
 constexpr int kDialogPollMs = 20;
 constexpr int kDialogTimeoutMs = 30'000;
 constexpr int kReportTimeoutMs = 30'000;
+// A refused loopback connection or a missing tool ends at once; this bounds a slow test machine.
+constexpr int kIperfRefusedTimeoutMs = 30'000;
 
 QPushButton* reportButton(const QWidget& panel) {
     const auto buttons = panel.findChildren<QPushButton*>();
@@ -126,6 +131,57 @@ bool waitForStartupScan(sak::NetworkDiagnosticPanel& panel) {
     return controller->canGenerateReport();
 }
 
+QPushButton* buttonLabelled(const QWidget& panel, const QString& text) {
+    const auto buttons = panel.findChildren<QPushButton*>();
+    for (QPushButton* button : buttons) {
+        if (button->text() == text) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+/// Every label on the panel whose text holds @p fragment.
+QStringList labelsHolding(const QWidget& panel, const QString& fragment) {
+    QStringList texts;
+    const auto labels = panel.findChildren<QLabel*>();
+    for (const QLabel* label : labels) {
+        if (label->text().contains(fragment)) {
+            texts << label->text();
+        }
+    }
+    return texts;
+}
+
+/// The order the controller reports a finished test in: the result, then the operation's end.
+void finishSpeedTest(sak::NetworkDiagnosticController& controller,
+                     double down,
+                     double up,
+                     double latency) {
+    Q_EMIT controller.httpSpeedComplete(down, up, latency);
+    Q_EMIT controller.operationFinished(
+        static_cast<int>(sak::NetworkDiagnosticController::State::RunningBandwidthTest));
+}
+
+void finishIperfTest(sak::NetworkDiagnosticController& controller,
+                     const sak::BandwidthTestResult& result) {
+    Q_EMIT controller.bandwidthComplete(result);
+    Q_EMIT controller.operationFinished(
+        static_cast<int>(sak::NetworkDiagnosticController::State::RunningBandwidthTest));
+}
+
+/// Types into iPerf3's server box, the first box the panel names that way.
+bool setIperfServer(const QWidget& panel, const QString& address) {
+    const auto edits = panel.findChildren<QLineEdit*>();
+    for (QLineEdit* edit : edits) {
+        if (edit->accessibleName() == QStringLiteral("iPerf3 server address")) {
+            edit->setText(address);
+            return true;
+        }
+    }
+    return false;
+}
+
 QByteArray readAll(const QString& path) {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
@@ -144,6 +200,18 @@ private Q_SLOTS:
     void generateReportWritesJsonWhenThePathSaysJson();
     void generateReportAddsTheExtensionItWasNotGiven();
     void generateReportWaitsForARunningDiagnostic();
+    void speedTestResultStaysOnScreenAfterTheRunEnds();
+    void speedTestSaysSoWhenItCouldNotMeasureLatency();
+    void stoppedSpeedTestShowsNoResultRatherThanZeros();
+    void iperfResultStaysOnScreenAfterTheRunEnds();
+    void stoppedIperfTestShowsNoResultRatherThanZeros();
+    void onlyOneBandwidthTestCanBeStartedAtATime();
+    void stoppingKeepsRunButtonsOffUntilTheWorkerHasStopped();
+    void runButtonsComeBackWhenTheOperationEndsWithoutAResult();
+    void refreshKeyWorksOnTheAdaptersTab();
+    void diagnoseOpensSettingsWhereWindowsHasNoTroubleshooter();
+    void flushCacheDoesNotClaimItNeedsAnAdministrator();
+    void backupAndRestoreDoNotPromiseEthernetOnly();
 
 private:
     static void runReportFlow(const QString& report_path, QByteArray* written);
@@ -276,6 +344,233 @@ void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     button->click();
     QVERIFY(driver.saw_message_box);
     QVERIFY(!driver.details_answered);
+}
+
+// Seen on a VM: the log held DL 171.31 Mbps, UL 26.98 Mbps, latency 227.0 ms and the screen was
+// blank, because the operation's end cleared the label the result had just been written to.
+void NetworkDiagnosticPanelTests::speedTestResultStaysOnScreenAfterTheRunEnds() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+
+    finishSpeedTest(*controller, 171.31, 26.98, 227.0);
+
+    const QStringList shown = labelsHolding(panel, QStringLiteral("171.31"));
+    QCOMPARE(shown.size(), 1);
+    QVERIFY(shown.first().contains(QStringLiteral("26.98")));
+    QVERIFY(shown.first().contains(QStringLiteral("227.0 ms")));
+}
+
+void NetworkDiagnosticPanelTests::speedTestSaysSoWhenItCouldNotMeasureLatency() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+
+    finishSpeedTest(*controller, 171.31, 26.98, -1.0);
+
+    const QStringList shown = labelsHolding(panel, QStringLiteral("171.31"));
+    QCOMPARE(shown.size(), 1);
+    QVERIFY(shown.first().contains(QStringLiteral("unknown")));
+    QVERIFY2(!shown.first().contains(QStringLiteral("-1")), qPrintable(shown.first()));
+}
+
+void NetworkDiagnosticPanelTests::stoppedSpeedTestShowsNoResultRatherThanZeros() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+
+    finishSpeedTest(*controller, 0.0, 0.0, 0.0);
+
+    QCOMPARE(labelsHolding(panel, QStringLiteral("No result")).size(), 1);
+    QVERIFY(labelsHolding(panel, QStringLiteral("0.00 Mbps")).isEmpty());
+}
+
+void NetworkDiagnosticPanelTests::iperfResultStaysOnScreenAfterTheRunEnds() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+
+    sak::BandwidthTestResult result;
+    result.target = QStringLiteral("192.0.2.10");
+    result.downloadMbps = 940.25;
+    result.uploadMbps = 912.5;
+    finishIperfTest(*controller, result);
+
+    const QStringList shown = labelsHolding(panel, QStringLiteral("940.25"));
+    QCOMPARE(shown.size(), 1);
+    QVERIFY(shown.first().contains(QStringLiteral("912.50")));
+}
+
+void NetworkDiagnosticPanelTests::stoppedIperfTestShowsNoResultRatherThanZeros() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+
+    finishIperfTest(*controller, sak::BandwidthTestResult{});
+
+    QCOMPARE(labelsHolding(panel, QStringLiteral("No result")).size(), 1);
+    QVERIFY(labelsHolding(panel, QStringLiteral("0.00 Mbps")).isEmpty());
+}
+
+// Both tests share one worker and the controller refuses a second, so offering the other one left
+// its label saying "Running..." for a run that never started. Loopback, where nothing listens:
+// iPerf3 is refused at once (or is not bundled beside the test), with no traffic off this PC.
+void NetworkDiagnosticPanelTests::onlyOneBandwidthTestCanBeStartedAtATime() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QPushButton* speed = buttonLabelled(panel, QStringLiteral("Run Speed Test"));
+    QPushButton* iperf = buttonLabelled(panel, QStringLiteral("Run Test"));
+    QVERIFY(speed != nullptr);
+    QVERIFY(iperf != nullptr);
+    QVERIFY(setIperfServer(panel, QStringLiteral("127.0.0.1")));
+
+    iperf->click();
+    QVERIFY(!speed->isEnabled());
+    QVERIFY(!iperf->isEnabled());
+
+    QTRY_VERIFY_WITH_TIMEOUT(speed->isEnabled() && iperf->isEnabled(), kIperfRefusedTimeoutMs);
+    QCOMPARE(labelsHolding(panel, QStringLiteral("No result")).size(), 1);
+    QVERIFY(labelsHolding(panel, QStringLiteral("Running")).isEmpty());
+}
+
+// Stop used to hand the run buttons back while the worker was still unwinding, and starting again
+// in that window was refused with its label left saying "Running...".
+void NetworkDiagnosticPanelTests::stoppingKeepsRunButtonsOffUntilTheWorkerHasStopped() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QPushButton* speed = buttonLabelled(panel, QStringLiteral("Run Speed Test"));
+    QPushButton* iperf = buttonLabelled(panel, QStringLiteral("Run Test"));
+    QVERIFY(speed != nullptr);
+    QVERIFY(iperf != nullptr);
+    QVERIFY(setIperfServer(panel, QStringLiteral("127.0.0.1")));
+    QList<QPushButton*> stops;
+    const auto buttons = panel.findChildren<QPushButton*>();
+    for (QPushButton* button : buttons) {
+        if (button->text() == QStringLiteral("Stop") && button->isEnabled()) {
+            stops << button;
+        }
+    }
+
+    iperf->click();
+    QPushButton* stop = nullptr;
+    for (QPushButton* button : buttons) {
+        if (button->text() == QStringLiteral("Stop") && button->isEnabled() &&
+            !stops.contains(button)) {
+            stop = button;
+        }
+    }
+    QVERIFY2(stop != nullptr, "the run should have enabled its own Stop button");
+
+    stop->click();
+    QVERIFY(!stop->isEnabled());
+    QVERIFY2(!speed->isEnabled() && !iperf->isEnabled(),
+             "the worker is still stopping, so no run can start yet");
+
+    QTRY_VERIFY_WITH_TIMEOUT(speed->isEnabled() && iperf->isEnabled(), kIperfRefusedTimeoutMs);
+    QVERIFY(!stop->isEnabled());
+}
+
+// A worker that ends without reporting anything must not strand the buttons: the operation's end
+// is what hands them back, whatever came before it.
+void NetworkDiagnosticPanelTests::runButtonsComeBackWhenTheOperationEndsWithoutAResult() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QPushButton* speed = buttonLabelled(panel, QStringLiteral("Run Speed Test"));
+    QPushButton* iperf = buttonLabelled(panel, QStringLiteral("Run Test"));
+    QVERIFY(speed != nullptr);
+    QVERIFY(iperf != nullptr);
+    QVERIFY(setIperfServer(panel, QStringLiteral("127.0.0.1")));
+    iperf->click();
+    QVERIFY(!speed->isEnabled() && !iperf->isEnabled());
+
+    Q_EMIT controller->operationFinished(
+        static_cast<int>(sak::NetworkDiagnosticController::State::RunningBandwidthTest));
+    QVERIFY(speed->isEnabled() && iperf->isEnabled());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->isOperationActive(
+                                 sak::NetworkDiagnosticController::State::RunningBandwidthTest),
+                             kIperfRefusedTimeoutMs);
+}
+
+// MainWindow moves the adapter section out into a tab of its own, which took it out from under the
+// panel's shortcuts. Placed the same way here, with a real key press.
+void NetworkDiagnosticPanelTests::refreshKeyWorksOnTheAdaptersTab() {
+    sak::QuickActionController quick_actions;
+    QTabWidget tabs;
+    auto* panel = new sak::NetworkDiagnosticPanel(quick_actions);
+    tabs.addTab(panel, QStringLiteral("Network Diagnostics"));
+    tabs.addTab(panel->adapterWidget(), QStringLiteral("Network Adapters"));
+    auto* controller = panel->findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(waitForStartupScan(*panel));
+
+    tabs.setCurrentWidget(panel->adapterWidget());
+    tabs.show();
+    QVERIFY(QTest::qWaitForWindowActive(&tabs));
+    auto* table = panel->adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->setFocus();
+    QTRY_VERIFY(table->hasFocus());
+
+    QSignalSpy scans(controller, &sak::NetworkDiagnosticController::adaptersScanComplete);
+    QTest::keyClick(table, Qt::Key_F5);
+    QTRY_COMPARE_WITH_TIMEOUT(scans.count(), 1, kAdapterScanTimeoutMs);
+}
+
+void NetworkDiagnosticPanelTests::diagnoseOpensSettingsWhereWindowsHasNoTroubleshooter() {
+    const sak::AdapterDiagnosePlan gone = sak::adapterDiagnosePlan(QStringLiteral("Ethernet"),
+                                                                   false);
+    QVERIFY(gone.use_settings);
+    QCOMPARE(gone.settings_page, QStringLiteral("ms-settings:troubleshoot"));
+    QVERIFY(gone.diagnostic_id.isEmpty());
+
+    const auto idFor = [](const char* type) {
+        const auto plan = sak::adapterDiagnosePlan(QString::fromLatin1(type), true);
+        return plan.use_settings ? QString() : plan.diagnostic_id;
+    };
+    QCOMPARE(idFor("Ethernet"), QStringLiteral("NetworkDiagnosticsNetworkAdapter"));
+    QCOMPARE(idFor("WiFi"), QStringLiteral("NetworkDiagnosticsNetworkAdapter"));
+    QCOMPARE(idFor("Bluetooth"), QStringLiteral("DeviceDiagnostic"));
+    QCOMPARE(idFor("VPN"), QStringLiteral("NetworkDiagnosticsWeb"));
+}
+
+// DnsFlushResolverCache needs no elevation, and nothing in the path asks for it.
+void NetworkDiagnosticPanelTests::flushCacheDoesNotClaimItNeedsAnAdministrator() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QPushButton* flush = buttonLabelled(panel, QStringLiteral("Flush Cache"));
+    QVERIFY(flush != nullptr);
+    QVERIFY2(!flush->toolTip().contains(QStringLiteral("admin"), Qt::CaseInsensitive),
+             qPrintable(flush->toolTip()));
+}
+
+// Capture and restore work on any adapter, and the list they offer holds Wi-Fi too.
+void NetworkDiagnosticPanelTests::backupAndRestoreDoNotPromiseEthernetOnly() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    for (const QString& label :
+         {QStringLiteral("Backup Settings"), QStringLiteral("Restore Settings")}) {
+        QPushButton* button = nullptr;
+        const auto buttons = panel.adapterWidget()->findChildren<QPushButton*>();
+        for (QPushButton* candidate : buttons) {
+            if (candidate->text() == label) {
+                button = candidate;
+            }
+        }
+        QVERIFY2(button != nullptr, qPrintable(label));
+        for (const QString& text :
+             {button->toolTip(), button->accessibleName(), button->accessibleDescription()}) {
+            QVERIFY2(!text.contains(QStringLiteral("Ethernet"), Qt::CaseInsensitive),
+                     qPrintable(text));
+        }
+    }
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

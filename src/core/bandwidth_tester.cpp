@@ -628,16 +628,17 @@ void BandwidthTester::runHttpSpeedTest() {
     // the expected payload, but bounded so a server returning more aborts.
     constexpr qint64 kDownloadResponseCap = kDownloadBytes + 1'048'576;
 
+    const QString host = QString::fromLatin1(kHttpSpeedTestHost);
     const QString downloadUrl =
-        QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
-    const QString uploadUrl = QStringLiteral("https://speed.cloudflare.com/__up");
+        QStringLiteral("https://%1/__down?bytes=%2").arg(host).arg(kDownloadBytes);
+    const QString uploadUrl = QStringLiteral("https://%1/__up").arg(host);
 
     // measureHttpHeadLatencyMs returns a negative value when it could not measure at all.
     // That sentinel is passed through unchanged: it used to be coerced to 0.0, which the
     // controller then logged as "latency 0.0 ms" -- presenting a measurement that failed
     // as a perfect one. Consumers must test for a negative value and say "unknown".
     const double latencyMs = measureHttpHeadLatencyMs(
-        QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), kCloudflareLatencyTimeoutMs);
+        QStringLiteral("https://%1/__down?bytes=0").arg(host), kCloudflareLatencyTimeoutMs);
 
     if (m_cancelled.load()) {
         Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);

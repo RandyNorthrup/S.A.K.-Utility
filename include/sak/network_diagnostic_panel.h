@@ -49,6 +49,16 @@ class ViewEmptyState;
 /// Sub-tabbed interface with adapter inspector (always visible),
 /// diagnostic tool tabs (Ping, Traceroute, MTR, DNS, Port Scan,
 /// Bandwidth, WiFi, Connections, Firewall, Shares), and a Generate Report action.
+/// @brief What Diagnose opens for an adapter: its Windows troubleshooter, or the Settings page
+///        that replaces it where msdt.exe has been removed from Windows. Pure.
+struct AdapterDiagnosePlan {
+    bool use_settings{false};
+    QString settings_page;
+    QString diagnostic_id;
+};
+[[nodiscard]] AdapterDiagnosePlan adapterDiagnosePlan(const QString& adapter_type,
+                                                      bool msdt_present);
+
 class NetworkDiagnosticPanel : public QWidget {
     Q_OBJECT
 
@@ -101,7 +111,6 @@ private Q_SLOTS:
     void onRenewDhcpLease();
     void onOpenAdapterSettings();
     void onViewBluetoothDevices();
-    void onBridgeConnections();
 
     // Ping
     void onStartPing();
@@ -182,6 +191,8 @@ private Q_SLOTS:
     // Button reset helpers for onOperationFinished
     void resetDiagnosticButtons(int finished_state);
     void resetToolButtons(int finished_state);
+    void setBandwidthRunButtons(bool enabled);
+    [[nodiscard]] QString noBandwidthResultText() const;
 
     // Report
     void onGenerateReportClicked();
@@ -262,7 +273,6 @@ private:
 
     // -- Adapter context menu helpers --
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
-    [[nodiscard]] QVector<const NetworkAdapterInfo*> selectedAdapters() const;
     // Runs ONE adapter operation from sak/network_adapter_admin.h on a worker thread and reports
     // its outcome back on the GUI thread. This panel supplies the thread, the confirmation dialogs
     // and the reporting; it does not build or run the command. Per the owner's R5-IDX-19b ruling
@@ -270,9 +280,7 @@ private:
     // it used to carry had already drifted apart from the ones the assistant drives.
     void launchAdapterWork(std::function<sak::AdapterAdminOutcome()> work,
                            std::function<void(const sak::AdapterAdminOutcome&)> report);
-    void addTypeSpecificMenuItems(QMenu& menu,
-                                  const NetworkAdapterInfo& adapter,
-                                  const QVector<const NetworkAdapterInfo*>& selected);
+    void addTypeSpecificMenuItems(QMenu& menu, const NetworkAdapterInfo& adapter);
     void buildIpConfigSubmenu(QMenu& parent, const NetworkAdapterInfo& adapter);
     void populateStatusTree(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
     void populateStatusIpv4(QTreeWidget* tree, const NetworkAdapterInfo& adapter);

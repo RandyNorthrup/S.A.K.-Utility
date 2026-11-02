@@ -36,8 +36,12 @@ namespace {
 // slower than the single netsh call it replaced. Bounded, not unbounded: a scan that never
 // returns must still fail the capture rather than hang the caller.
 constexpr int kAdapterScanTimeoutMs = 30'000;
-constexpr int kAdapterTypeCaptureGroup = 3;
-constexpr int kAdapterNameCaptureGroup = 4;
+// The adapter names and nothing else, as JSON so a name with any characters comes back whole.
+// -InputObject keeps it an array for one adapter, which piping would unwrap to a bare string.
+constexpr auto kAdapterNamesPowerShell =
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+    "ConvertTo-Json -Compress -InputObject @(Get-NetAdapter -ErrorAction Stop | "
+    "Sort-Object -Property Name | ForEach-Object { $_.Name })";
 
 // 4 MiB. An Ethernet config backup is a few hundred bytes; a larger file is not a trusted backup
 // and must be rejected before it is read into memory (self-DoS guard).
@@ -388,45 +392,23 @@ bool EthernetConfigManager::setDnsServers(const QString& adapterName,
 }
 
 QStringList EthernetConfigManager::listEthernetAdapters() {
-    QStringList adapters;
+    // netsh prints this table in the system language, so reading its words found no adapters at
+    // all on non-English Windows. Get-NetAdapter's names are the same names netsh takes, on any
+    // language, and it lists disabled adapters too, which enabling one needs. Fails with the error
+    // already reported through errorOccurred, so an empty list here can also mean the scan failed.
+    return adapterNamesFromJson(runPowerShellCapture(QString::fromLatin1(kAdapterNamesPowerShell)));
+}
 
-    const QString output = runNetsh({"interface", "show", "interface"});
-    if (output.isEmpty()) {
-        return adapters;
-    }
-
-    // Parse netsh output: columns are Admin State, State, Type, Interface Name
-    // Skip header lines (first 3 lines typically)
-    const auto lines = output.split('\n', Qt::SkipEmptyParts);
-    bool pastHeader = false;
-
-    for (const auto& line : lines) {
-        // Detect separator line (dashes)
-        if (line.contains("---")) {
-            pastHeader = true;
-            continue;
-        }
-        if (!pastHeader) {
-            continue;
-        }
-
-        // Parse columns -- name is the last field, may contain spaces
-        // Format: "Enabled  Connected  Dedicated  Ethernet"
-        static const QRegularExpression kAdapterLineRe(
-            R"(^\s*(Enabled|Disabled)\s+(Connected|Disconnected|Not Present)\s+(\S+)\s+(.+)$)");
-
-        auto match = kAdapterLineRe.match(line.trimmed());
-        if (match.hasMatch()) {
-            const QString adapterType = match.captured(kAdapterTypeCaptureGroup);
-            const QString adapterName = match.captured(kAdapterNameCaptureGroup).trimmed();
-            // Include Dedicated (Ethernet) adapters
-            if (adapterType == "Dedicated") {
-                adapters.append(adapterName);
-            }
+QStringList EthernetConfigManager::adapterNamesFromJson(const QString& json) {
+    QStringList names;
+    const QJsonArray entries = QJsonDocument::fromJson(json.toUtf8()).array();
+    for (const QJsonValue& entry : entries) {
+        const QString name = entry.toString().trimmed();
+        if (!name.isEmpty()) {
+            names.append(name);
         }
     }
-
-    return adapters;
+    return names;
 }
 
 // -- Private -----------------------------------------------------------------

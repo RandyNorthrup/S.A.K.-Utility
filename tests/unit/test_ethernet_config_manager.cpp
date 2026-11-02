@@ -26,6 +26,9 @@ private Q_SLOTS:
 
     // -- Locale-independent capture (R5-G23-4) ---------------------
     void snapshotFromNetIpConfig_isLocaleIndependent();
+    void adapterNamesFromJson_readsAnyLanguageAndAnyCount();
+    void adapterNamesFromJson_refusesWhatIsNotAList();
+    void listEthernetAdapters_readsThisPcsAdapters();
 
     // -- EthernetConfigSnapshot ------------------------------------
     void snapshot_defaults();
@@ -51,6 +54,41 @@ private Q_SLOTS:
 // ===================================================================
 // Construction
 // ===================================================================
+
+// The netsh table this replaced found nothing on non-English Windows, where its words are
+// "Aktiviert", "Verbunden", "Dediziert". Get-NetAdapter gives names and no words to read.
+void TestEthernetConfigManager::adapterNamesFromJson_readsAnyLanguageAndAnyCount() {
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[\"Ethernet\"]")),
+             QStringList{QStringLiteral("Ethernet")});
+    const QString german = QStringLiteral("Ethernet-Verbindung 2");
+    const QString wifi = QStringLiteral("WLAN");
+    const QString japanese = QString::fromUtf8("\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D");
+    const QString json = QStringLiteral("[\"%1\",\"%2\",\"%3\"]").arg(german, wifi, japanese);
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(json),
+             (QStringList{german, wifi, japanese}));
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[]")).isEmpty());
+}
+
+void TestEthernetConfigManager::adapterNamesFromJson_refusesWhatIsNotAList() {
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QString()).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("not json")).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("{\"a\":1}")).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[1,\"\"]")).isEmpty());
+}
+
+// The real read-only query. Every machine this runs on has at least one adapter, and the script's
+// names are what the restore path and the assistant's adapter actions match against.
+void TestEthernetConfigManager::listEthernetAdapters_readsThisPcsAdapters() {
+    EthernetConfigManager manager;
+    QSignalSpy errors(&manager, &EthernetConfigManager::errorOccurred);
+    const QStringList names = manager.listEthernetAdapters();
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
+    QVERIFY(!names.isEmpty());
+    QStringList sorted = names;
+    sorted.sort(Qt::CaseInsensitive);
+    QCOMPARE(names, sorted);
+}
 
 void TestEthernetConfigManager::snapshotFromNetIpConfig_isLocaleIndependent() {
     // R5-G23-4 (locale). captureSettings used to run `netsh interface ip show config` and match
