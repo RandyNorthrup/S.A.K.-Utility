@@ -19,6 +19,41 @@ namespace sak {
 namespace {
 // Streaming read size for directory-tree hashing (B7-13).
 constexpr qint64 kDirHashChunkBytes = 64 * 1024;
+
+// The groups behind the Smart Filters page's tick boxes. Everything else in the default lists
+// always applies.
+const QStringList& cacheFolderNames() {
+    static const QStringList names = {
+        "Cache", "GPUCache", "Code Cache", "Service Worker", "Session Storage", "WebCache"};
+    return names;
+}
+
+const QStringList& temporaryFolderNames() {
+    static const QStringList names = {"Temp", "temp"};
+    return names;
+}
+
+const QStringList& temporaryFilePatterns() {
+    static const QStringList patterns = {
+        ".*\\.tmp$", ".*\\.temp$", ".*\\.cache$", ".*~$", ".*\\.crdownload$", ".*\\.part$"};
+    return patterns;
+}
+
+const QStringList& lockFilePatterns() {
+    static const QStringList patterns = {".*\\.lock$", ".*\\.lck$"};
+    return patterns;
+}
+
+void removeAllOf(QStringList& list, const QStringList& entries) {
+    for (const QString& entry : entries) {
+        list.removeAll(entry);
+    }
+}
+
+bool containsAllOf(const QStringList& list, const QStringList& entries) {
+    return std::ranges::all_of(entries,
+                               [&list](const QString& entry) { return list.contains(entry); });
+}
 }  // namespace
 
 // Helper function to safely convert JSON number to qint64
@@ -101,6 +136,33 @@ void SmartFilter::initializeDefaults() {
         "__pycache__",
         "Packages"  // UWP apps
     };
+
+    exclude_cache_paths = true;
+}
+
+void SmartFilter::setExclusionGroups(bool cache, bool temporary, bool lock_files) {
+    const SmartFilter defaults;
+    exclude_patterns = defaults.exclude_patterns;
+    exclude_folders = defaults.exclude_folders;
+    exclude_cache_paths = cache;
+    if (!cache) {
+        removeAllOf(exclude_folders, cacheFolderNames());
+    }
+    if (!temporary) {
+        removeAllOf(exclude_folders, temporaryFolderNames());
+        removeAllOf(exclude_patterns, temporaryFilePatterns());
+    }
+    if (!lock_files) {
+        removeAllOf(exclude_patterns, lockFilePatterns());
+    }
+}
+
+bool SmartFilter::excludesTemporaryFiles() const {
+    return containsAllOf(exclude_patterns, temporaryFilePatterns());
+}
+
+bool SmartFilter::excludesLockFiles() const {
+    return containsAllOf(exclude_patterns, lockFilePatterns());
 }
 
 SmartFilter SmartFilter::forApplicationData() const {
@@ -120,6 +182,9 @@ QJsonObject SmartFilter::toJson() const {
     obj["exclude_patterns"] = QJsonArray::fromStringList(exclude_patterns);
     obj["exclude_folders"] = QJsonArray::fromStringList(exclude_folders);
     obj["dangerous_files"] = QJsonArray::fromStringList(dangerous_files);
+    if (!exclude_cache_paths) {
+        obj["exclude_cache_paths"] = false;
+    }
     return obj;
 }
 
@@ -135,6 +200,7 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
         qint64FromJson(json, "max_single_file_size", filter.max_single_file_size_bytes);
     filter.max_folder_size_bytes =
         qint64FromJson(json, "max_folder_size", filter.max_folder_size_bytes);
+    filter.exclude_cache_paths = json.value("exclude_cache_paths").toBool(true);
 
     auto arrayToStringList = [](const QJsonArray& arr) {
         QStringList list;

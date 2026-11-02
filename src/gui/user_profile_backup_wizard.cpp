@@ -84,6 +84,19 @@ PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     }
 }
 
+void UserProfileBackupWizard::initializePage(int id) {
+    // A page's own initializePage may turn this into Skip. Starting from Next here is what stops
+    // one page's Skip carrying over onto the next page, which has nothing to skip.
+    setButtonText(QWizard::NextButton, tr("Next >"));
+    QWizard::initializePage(id);
+}
+
+bool UserProfileBackupWizard::verifyAfterBackup() const {
+    const auto* settings =
+        qobject_cast<const UserProfileBackupSettingsPage*>(page(Page_BackupSettings));
+    return settings != nullptr && settings->verifyEnabled();
+}
+
 BackupCodecOptions UserProfileBackupWizard::getCodecOptions() const {
     BackupCodecOptions options;
     const auto* settings =

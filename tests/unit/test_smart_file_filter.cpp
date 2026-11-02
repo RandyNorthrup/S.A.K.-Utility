@@ -16,6 +16,10 @@ class SmartFileFilterTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void exclusionGroups_defaultsMatchTheDefaultRules();
+    void exclusionGroups_eachTakesOnlyItsOwnRules();
+    void exclusionGroups_cacheOffKeepsCachePaths();
+    void exclusionGroups_cacheFlagSurvivesJsonAndAnOldManifestStillMatches();
     void initTestCase();
 
     // Constructor
@@ -568,6 +572,79 @@ void SmartFileFilterTests::setRules_updatesFiltering() {
     noFolders.exclude_folders.clear();
     filter.setRules(noFolders);
     QVERIFY(!filter.shouldExcludeFolder(nodeModules, m_profilePath));
+}
+
+void SmartFileFilterTests::exclusionGroups_defaultsMatchTheDefaultRules() {
+    const sak::SmartFilter defaults;
+    QVERIFY(defaults.excludesCache());
+    QVERIFY(defaults.excludesTemporaryFiles());
+    QVERIFY(defaults.excludesLockFiles());
+
+    sak::SmartFilter rules;
+    rules.setExclusionGroups(true, true, true);
+    QCOMPARE(rules.exclude_patterns, defaults.exclude_patterns);
+    QCOMPARE(rules.exclude_folders, defaults.exclude_folders);
+    QCOMPARE(rules.toJson(), defaults.toJson());
+}
+
+void SmartFileFilterTests::exclusionGroups_eachTakesOnlyItsOwnRules() {
+    sak::SmartFilter rules;
+    rules.setExclusionGroups(false, true, true);
+    QVERIFY(!rules.excludesCache());
+    QVERIFY(rules.excludesTemporaryFiles());
+    QVERIFY(rules.excludesLockFiles());
+    QVERIFY(!rules.exclude_folders.contains(QStringLiteral("Cache")));
+    QVERIFY(rules.exclude_folders.contains(QStringLiteral("node_modules")));
+
+    rules.setExclusionGroups(true, false, true);
+    QVERIFY(rules.excludesCache());
+    QVERIFY(!rules.excludesTemporaryFiles());
+    QVERIFY(rules.excludesLockFiles());
+    QVERIFY(!rules.exclude_folders.contains(QStringLiteral("Temp")));
+    QVERIFY(rules.exclude_folders.contains(QStringLiteral("Cache")));
+
+    rules.setExclusionGroups(true, true, false);
+    QVERIFY(rules.excludesTemporaryFiles());
+    QVERIFY(!rules.excludesLockFiles());
+    QVERIFY(rules.exclude_patterns.contains(QStringLiteral("desktop\\.ini$")));
+
+    // A box ticked again brings its rules back.
+    rules.setExclusionGroups(true, true, true);
+    QVERIFY(rules.excludesLockFiles());
+}
+
+// A cache folder is caught by the name lists and by a path check. Unticking the box has to turn
+// off both, or the box does nothing for a path that contains "\cache\".
+void SmartFileFilterTests::exclusionGroups_cacheOffKeepsCachePaths() {
+    // A folder inside the cache: the path check only matches a cache folder with something below
+    // it.
+    const QString dir = m_tempDir.filePath("groups/App/Cache/Sub");
+    QVERIFY(QDir().mkpath(dir));
+    QFile file(dir + "/entry.bin");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+    const QFileInfo info(file.fileName());
+
+    sak::SmartFilter rules;
+    QVERIFY(sak::SmartFileFilter(rules).shouldExcludeFile(info, m_profilePath));
+    QVERIFY(sak::SmartFileFilter(rules).shouldExcludeFolder(QFileInfo(dir), m_profilePath));
+
+    rules.setExclusionGroups(false, true, true);
+    QVERIFY(!sak::SmartFileFilter(rules).shouldExcludeFile(info, m_profilePath));
+    QVERIFY(!sak::SmartFileFilter(rules).shouldExcludeFolder(QFileInfo(dir), m_profilePath));
+}
+
+// The key appears only when the box is off. A key always written would change the checksum of
+// every manifest saved before it existed, and the restore would refuse those as damaged.
+void SmartFileFilterTests::exclusionGroups_cacheFlagSurvivesJsonAndAnOldManifestStillMatches() {
+    const sak::SmartFilter defaults;
+    QVERIFY(!defaults.toJson().contains(QStringLiteral("exclude_cache_paths")));
+    QVERIFY(sak::SmartFilter::fromJson(defaults.toJson()).exclude_cache_paths);
+
+    sak::SmartFilter off;
+    off.setExclusionGroups(false, true, true);
+    QVERIFY(!sak::SmartFilter::fromJson(off.toJson()).exclude_cache_paths);
 }
 
 QTEST_GUILESS_MAIN(SmartFileFilterTests)

@@ -46,6 +46,11 @@ public:
     /// @brief Commit the working copy to the caller's profile (OK only)
     void accept() override;
 
+    /// @brief @p folder_path relative to @p profile_path, or empty when it is not inside it. A
+    /// backup stores each file by where it sits in the profile, so anywhere else has no place.
+    [[nodiscard]] static QString pathInsideProfile(const QString& profile_path,
+                                                   const QString& folder_path);
+
 private Q_SLOTS:
     void onSelectAll();
     void onSelectNone();

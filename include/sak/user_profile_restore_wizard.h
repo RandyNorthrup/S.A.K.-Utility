@@ -347,6 +347,7 @@ private Q_SLOTS:
  */
 class UserProfileRestoreExecutePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreExecutePage(QWidget* parent = nullptr);

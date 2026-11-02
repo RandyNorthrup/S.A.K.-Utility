@@ -31,6 +31,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QProcess>
+#include <QSignalBlocker>
 #include <QtConcurrent>
 #include <QTextEdit>
 #include <QTimer>
@@ -437,6 +438,16 @@ void UserProfileBackupSmartFiltersPage::initializePage() {
 void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     Q_ASSERT(m_enableFileSizeLimitCheck);
     Q_ASSERT(m_enableFolderSizeLimitCheck);
+    // Every control below reports a change back into m_filter, and a half-loaded page would write
+    // its old values over the rules it is still reading.
+    const QSignalBlocker file_limit_blocker(m_enableFileSizeLimitCheck);
+    const QSignalBlocker file_size_blocker(m_maxFileSizeSpinBox);
+    const QSignalBlocker folder_limit_blocker(m_enableFolderSizeLimitCheck);
+    const QSignalBlocker folder_size_blocker(m_maxFolderSizeSpinBox);
+    const QSignalBlocker cache_blocker(m_excludeCacheCheck);
+    const QSignalBlocker temp_blocker(m_excludeTempCheck);
+    const QSignalBlocker lock_blocker(m_excludeLockCheck);
+
     // Load enable flags
     m_enableFileSizeLimitCheck->setChecked(m_filter.enable_file_size_limit);
     m_enableFolderSizeLimitCheck->setChecked(m_filter.enable_folder_size_limit);
@@ -450,34 +461,9 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     m_maxFolderSizeSpinBox->setValue(static_cast<int>(folder_size_gb));
     m_maxFolderSizeSpinBox->setEnabled(m_filter.enable_folder_size_limit);
 
-    // Enable checkboxes based on whether the filter category has any rules defined
-    const bool has_cache_rules = !m_filter.exclude_folders.isEmpty();
-    const bool has_temp_rules = !m_filter.exclude_patterns.isEmpty();
-    const bool has_lock_rules = !m_filter.dangerous_files.isEmpty();
-
-    m_excludeCacheCheck->setEnabled(has_cache_rules);
-    m_excludeCacheCheck->setChecked(has_cache_rules);
-    if (!has_cache_rules) {
-        m_excludeCacheCheck->setToolTip(tr("No cache exclusion rules defined"));
-    } else {
-        m_excludeCacheCheck->setToolTip(QString());
-    }
-
-    m_excludeTempCheck->setEnabled(has_temp_rules);
-    m_excludeTempCheck->setChecked(has_temp_rules);
-    if (!has_temp_rules) {
-        m_excludeTempCheck->setToolTip(tr("No temporary file exclusion patterns defined"));
-    } else {
-        m_excludeTempCheck->setToolTip(QString());
-    }
-
-    m_excludeLockCheck->setEnabled(has_lock_rules);
-    m_excludeLockCheck->setChecked(has_lock_rules);
-    if (!has_lock_rules) {
-        m_excludeLockCheck->setToolTip(tr("No dangerous file rules defined"));
-    } else {
-        m_excludeLockCheck->setToolTip(QString());
-    }
+    m_excludeCacheCheck->setChecked(m_filter.excludesCache());
+    m_excludeTempCheck->setChecked(m_filter.excludesTemporaryFiles());
+    m_excludeLockCheck->setChecked(m_filter.excludesLockFiles());
 }
 
 void UserProfileBackupSmartFiltersPage::onResetToDefaults() {
@@ -558,6 +544,9 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
                                           sak::kBytesPerMB;
     m_filter.max_folder_size_bytes = static_cast<qint64>(m_maxFolderSizeSpinBox->value()) *
                                      sak::kBytesPerGB;
+    m_filter.setExclusionGroups(m_excludeCacheCheck->isChecked(),
+                                m_excludeTempCheck->isChecked(),
+                                m_excludeLockCheck->isChecked());
 
     // Count total exclusions
     const int exclusion_count = static_cast<int>(m_filter.dangerous_files.size() +
@@ -691,6 +680,10 @@ int UserProfileBackupSettingsPage::compressionLevel() const {
                                                 : sak::kBackupDefaultCompressionLevel;
 }
 
+bool UserProfileBackupSettingsPage::verifyEnabled() const {
+    return (m_verifyCheck != nullptr) && m_verifyCheck->isChecked();
+}
+
 bool UserProfileBackupSettingsPage::encryptionEnabled() const {
     return (m_encryptCheck != nullptr) && m_encryptCheck->isChecked();
 }
@@ -747,7 +740,8 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
     auto* perm_explain_label = new QLabel(
         tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
            "<b>Preserve:</b> Keeps original permissions (may cause errors). "
-           "<b>Assign Standard:</b> Sets full control for destination user."),
+           "<b>Assign to Destination:</b> Changes nothing now, for the restore wizard to give "
+           "the files to the person you choose there."),
         this);
     perm_explain_label->setWordWrap(true);
     perm_explain_label->setStyleSheet(
@@ -757,8 +751,13 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
 
 void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* layout) {
     // Verification
-    m_verifyCheck = new QCheckBox(tr("Verify files after backup (MD5 checksums)"), this);
+    m_verifyCheck = new QCheckBox(tr("Verify files after backup (SHA-256 checksums)"), this);
+    m_verifyCheck->setToolTip(
+        tr("Reads each stored file back and compares it with the original. This takes longer, and "
+           "a file that changes during the backup is reported."));
     m_verifyCheck->setChecked(true);
+    connect(
+        m_verifyCheck, &QCheckBox::toggled, this, &UserProfileBackupSettingsPage::updateSummary);
     layout->addWidget(m_verifyCheck);
 
     layout->addStretch();
@@ -789,10 +788,8 @@ void UserProfileBackupSettingsPage::setupUi() {
 }
 
 void UserProfileBackupSettingsPage::initializePage() {
-    // Suggest default backup location
-    const QString default_path = QDir::homePath() + "/UserProfileBackup_" +
-                                 QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    m_destinationEdit->setText(default_path);
+    // No suggested folder. A backup belongs on another drive, and the one place the app could
+    // suggest without guessing, the home folder, is refused for anyone backing up themselves.
     updateSummary();
 }
 
@@ -879,7 +876,9 @@ void UserProfileBackupSettingsPage::onBrowseDestination() {
                                                               ? QDir::homePath()
                                                               : m_destinationEdit->text());
     if (!dir.isEmpty()) {
-        m_destinationEdit->setText(dir);
+        m_destinationEdit->setText(QDir(dir).filePath(
+            QStringLiteral("UserProfileBackup_") +
+            QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
     }
 }
 

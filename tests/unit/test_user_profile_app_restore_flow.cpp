@@ -10,7 +10,9 @@
 #include "sak/elevation_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/per_user_customization_dialog.h"
 #include "sak/user_profile_backup_wizard.h"
+#include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/windows_user_scanner.h"
 
@@ -24,6 +26,8 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -79,6 +83,49 @@ QStringList packagesOf(const QVector<sak::RestoreAppInfo>& apps) {
     return packages;
 }
 
+const QString kWalkAppData = QStringLiteral("AppData/Roaming/Test Program");
+
+/// A real backup through the real worker, with one folder and one application data source.
+bool makeWalkBackup(const QString& profile_path, const QString& backup_path) {
+    const QDir profile(profile_path);
+    if (!profile.mkpath(QStringLiteral("Documents")) || !profile.mkpath(kWalkAppData)) {
+        return false;
+    }
+    for (const QString& relative :
+         {QStringLiteral("Documents/report.txt"), kWalkAppData + QStringLiteral("/settings.ini")}) {
+        QFile file(profile.filePath(relative));
+        if (!file.open(QIODevice::WriteOnly) || file.write("content") <= 0) {
+            return false;
+        }
+    }
+
+    sak::FolderSelection documents;
+    documents.type = sak::FolderType::Documents;
+    documents.display_name = QStringLiteral("Documents");
+    documents.relative_path = QStringLiteral("Documents");
+    documents.selected = true;
+    sak::UserProfile user;
+    user.username = QStringLiteral("sakwizardwalkuser");
+    user.profile_path = profile_path;
+    user.is_selected = true;
+    user.folder_selections = {documents};
+    sak::AppDataSourceInfo source;
+    source.name = QStringLiteral("Test Program");
+    source.category = QStringLiteral("Test");
+    source.relative_path = kWalkAppData;
+    source.selected = true;
+    sak::BackupManifest to_save;
+    to_save.app_data_sources = {source};
+
+    sak::UserProfileBackupWorker worker;
+    QSignalSpy done(&worker, &sak::UserProfileBackupWorker::backupComplete);
+    sak::UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = sak::PermissionMode::PreserveOriginal;
+    worker.startBackup(to_save, {user}, backup_path, sak::SmartFilter{}, options);
+    const bool finished = QTest::qWaitFor([&done]() { return done.count() == 1; }, 30'000);
+    return finished && worker.wait(30'000) && done.first().at(0).toBool();
+}
+
 bool writeInstalledAppsSidecar(const QString& directory, const QJsonArray& apps) {
     QFile file(directory + QStringLiteral("/installed_apps.json"));
     return file.open(QIODevice::WriteOnly) && file.write(QJsonDocument(apps).toJson()) > 0;
@@ -106,6 +153,15 @@ private Q_SLOTS:
     void lastStepRefusesAWrongPassword();
     void lastStepRefusesToAssignToAFolderWithNoAccount();
     void lastStepAsksForAdministratorForNetworkSettings();
+    void filterBoxesReachTheRulesTheRunUses();
+    void verifyBoxReachesTheRun();
+    void destinationStartsEmpty();
+    void skipDoesNotCarryOntoThePageAfter();
+    void customFolderMustBeInsideTheProfile();
+    void executePageRunsWhatTheWizardChose();
+    void executePageShowsWhatWentWrong();
+    void wholeRestoreWizardRunsOnARealBackup();
+    void backupWizardWalksToItsLastPage();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -630,6 +686,216 @@ void UserProfileAppRestoreFlowTests::lastStepAsksForAdministratorForNetworkSetti
     restore_wizard.setWifiProfiles({wifi});
     QVERIFY(page->validatePage());
     QVERIFY(question.isEmpty());
+}
+
+void UserProfileAppRestoreFlowTests::filterBoxesReachTheRulesTheRunUses() {
+    sak::UserProfileBackupWizard wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupSmartFiltersPage*>(
+        wizard.page(sak::UserProfileBackupWizard::Page_SmartFilters));
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QVERIFY(page->m_excludeCacheCheck->isChecked());
+    QVERIFY(page->m_excludeTempCheck->isChecked());
+    QVERIFY(page->m_excludeLockCheck->isChecked());
+    QVERIFY(wizard.getSmartFilter().excludesCache());
+
+    page->m_excludeCacheCheck->setChecked(false);
+    QVERIFY(!wizard.getSmartFilter().excludesCache());
+    QVERIFY(wizard.getSmartFilter().excludesTemporaryFiles());
+
+    page->m_excludeTempCheck->setChecked(false);
+    QVERIFY(!wizard.getSmartFilter().excludesTemporaryFiles());
+    QVERIFY(wizard.getSmartFilter().excludesLockFiles());
+
+    page->m_excludeLockCheck->setChecked(false);
+    QVERIFY(!wizard.getSmartFilter().excludesLockFiles());
+
+    // Back and forward again must show what was chosen, not reset it.
+    page->initializePage();
+    QVERIFY(!page->m_excludeCacheCheck->isChecked());
+    QVERIFY(!page->m_excludeTempCheck->isChecked());
+    QVERIFY(!page->m_excludeLockCheck->isChecked());
+
+    page->onResetToDefaults();
+    QVERIFY(page->m_excludeCacheCheck->isChecked());
+    QVERIFY(wizard.getSmartFilter().excludesCache());
+
+    page->m_enableFolderSizeLimitCheck->setChecked(true);
+    QVERIFY(wizard.getSmartFilter().enable_folder_size_limit);
+}
+
+void UserProfileAppRestoreFlowTests::verifyBoxReachesTheRun() {
+    sak::UserProfileBackupWizard wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupSettingsPage*>(
+        wizard.page(sak::UserProfileBackupWizard::Page_BackupSettings));
+    QVERIFY(page != nullptr);
+    QVERIFY(wizard.verifyAfterBackup());
+    page->m_verifyCheck->setChecked(false);
+    QVERIFY(!wizard.verifyAfterBackup());
+    QVERIFY2(page->m_verifyCheck->text().contains(QStringLiteral("SHA-256")),
+             qPrintable(page->m_verifyCheck->text()));
+}
+
+// The suggested folder was inside the home folder, which the same page then refused for anyone
+// backing up their own account.
+void UserProfileAppRestoreFlowTests::destinationStartsEmpty() {
+    sak::UserProfileBackupWizard wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupSettingsPage*>(
+        wizard.page(sak::UserProfileBackupWizard::Page_BackupSettings));
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QVERIFY(page->m_destinationEdit->text().isEmpty());
+}
+
+// Skip was never reset, so it stayed on the button through pages with nothing to skip.
+void UserProfileAppRestoreFlowTests::skipDoesNotCarryOntoThePageAfter() {
+    sak::UserProfileBackupWizard wizard;
+    wizard.setStartId(sak::UserProfileBackupWizard::Page_AppData);
+    wizard.restart();
+    QCOMPARE(wizard.currentId(), static_cast<int>(sak::UserProfileBackupWizard::Page_AppData));
+    QCOMPARE(wizard.buttonText(QWizard::NextButton), QStringLiteral("Skip >"));
+
+    wizard.next();
+    QCOMPARE(wizard.currentId(), static_cast<int>(sak::UserProfileBackupWizard::Page_SmartFilters));
+    QCOMPARE(wizard.buttonText(QWizard::NextButton), QStringLiteral("Next >"));
+
+    // A page with its own Skip still shows it.
+    wizard.next();
+    QCOMPARE(wizard.currentId(),
+             static_cast<int>(sak::UserProfileBackupWizard::Page_KnownNetworks));
+    QCOMPARE(wizard.buttonText(QWizard::NextButton), QStringLiteral("Skip >"));
+}
+
+void UserProfileAppRestoreFlowTests::customFolderMustBeInsideTheProfile() {
+    using Dialog = sak::PerUserCustomizationDialog;
+    const QString profile = QStringLiteral("C:/Users/Pat");
+    QCOMPARE(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Pat/Projects/Site")),
+             QStringLiteral("Projects/Site"));
+    QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("D:/Work")).isEmpty());
+    QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Sam/Documents")).isEmpty());
+    QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Pat")).isEmpty());
+}
+
+// The whole backup path as the wizard drives it: what the pages chose reaches the worker.
+void UserProfileAppRestoreFlowTests::executePageRunsWhatTheWizardChose() {
+    QTemporaryDir profile;
+    QTemporaryDir destination;
+    QVERIFY(profile.isValid() && destination.isValid());
+    const QString app_data = QStringLiteral("AppData/Roaming/Test Program");
+    const QString file_inside = app_data + QStringLiteral("/settings.ini");
+    QVERIFY(QDir(profile.path()).mkpath(app_data));
+    QFile file(profile.filePath(file_inside));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("setting=1");
+    file.close();
+
+    sak::UserProfile user;
+    user.username = QStringLiteral("Pat");
+    user.profile_path = profile.path();
+    user.is_selected = true;
+
+    sak::AppDataSourceInfo source;
+    source.name = QStringLiteral("Test Program");
+    source.relative_path = app_data;
+    source.selected = true;
+
+    sak::UserProfileBackupWizard wizard;
+    wizard.setAppDataSources({source});
+    sak::BackupManifest manifest;
+    const QString backup_path = destination.filePath(QStringLiteral("backup"));
+    auto* page = new sak::UserProfileBackupExecutePage(manifest, {user}, backup_path, &wizard);
+    wizard.setPage(sak::UserProfileBackupWizard::Page_Execute, page);
+
+    page->onStartBackup();
+    QTRY_VERIFY_WITH_TIMEOUT(page->isComplete(), 30'000);
+    QVERIFY2(QFile::exists(backup_path + QStringLiteral("/Pat/") + file_inside),
+             qPrintable(page->m_logEdit->toPlainText()));
+    QVERIFY2(page->m_logEdit->toPlainText().contains(
+                 QStringLiteral("Checked 1 stored file(s) against their originals")),
+             qPrintable(page->m_logEdit->toPlainText()));
+
+    const auto stored = sak::BackupManifest::loadFromFile(backup_path + "/manifest.json");
+    QCOMPARE(stored.users.size(), 1);
+    QCOMPARE(stored.users.first().backed_up_folders.size(), 1);
+    QCOMPARE(stored.users.first().backed_up_folders.first().type, sak::FolderType::ApplicationData);
+}
+
+// "Backup failed!" said nothing, and was also what a backup missing one locked file got.
+void UserProfileAppRestoreFlowTests::executePageShowsWhatWentWrong() {
+    sak::BackupManifest manifest;
+    sak::UserProfileBackupExecutePage page(manifest, {}, QString());
+    page.onBackupComplete(false,
+                          QStringLiteral("Backup finished, but not everything was copied.\n"
+                                         "Files copied: 3"));
+    QCOMPARE(page.m_statusLabel->text(),
+             QStringLiteral("Backup finished, but not everything was copied."));
+    page.onBackupComplete(true, QStringLiteral("Backup complete!\nFiles copied: 3"));
+    QCOMPARE(page.m_statusLabel->text(), QStringLiteral("Backup completed successfully!"));
+}
+
+// The Select Folders crash sat on the only route through this wizard and no test walked it. Every
+// page opens here in order, on a real backup, and then the page that does the work runs.
+void UserProfileAppRestoreFlowTests::wholeRestoreWizardRunsOnARealBackup() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QTemporaryDir system_drive;
+    QVERIFY(profile.isValid() && backup.isValid() && system_drive.isValid());
+    const QByteArray saved_drive = qgetenv("SystemDrive");
+    qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+    const auto restore_drive =
+        qScopeGuard([&saved_drive]() { qputenv("SystemDrive", saved_drive); });
+
+    QVERIFY2(makeWalkBackup(profile.path(), backup.path()), "the backup for this walk failed");
+
+    sak::UserProfileRestoreWizard wizard;
+    wizard.restart();
+    auto* backup_path = wizard.currentPage()->findChild<QLineEdit*>();
+    QVERIFY(backup_path != nullptr);
+    backup_path->setText(backup.path());
+
+    const QList<int> ids = wizard.pageIds();
+    while (wizard.currentId() != ids.at(ids.size() - 2)) {
+        const int before = wizard.currentId();
+        wizard.next();
+        QVERIFY2(wizard.currentId() != before, qPrintable(wizard.currentPage()->title()));
+    }
+    QCOMPARE(wizard.currentPage()->title(), QStringLiteral("Review and Start Restore"));
+    QCOMPARE(wizard.backupPath(), backup.path());
+    QCOMPARE(wizard.userMappings().size(), 1);
+    QCOMPARE(wizard.folderChoices().size(), 1);
+    QCOMPARE(wizard.appDataSources().size(), 1);
+
+    // Start Restore's own checks are covered above, and this account has no rights to pass them
+    // with a new folder. The run is what is left.
+    auto* last = qobject_cast<sak::UserProfileRestorePermissionSettingsPage*>(wizard.currentPage());
+    QVERIFY(last != nullptr);
+    auto* execute = wizard.findChild<sak::UserProfileRestoreExecutePage*>();
+    QVERIFY(execute != nullptr);
+    wizard.setPermissionMode(sak::PermissionMode::PreserveOriginal);
+    execute->onStartRestore();
+    QTRY_VERIFY_WITH_TIMEOUT(execute->isComplete(), 30'000);
+    QVERIFY2(execute->m_restoreSuccess, qPrintable(execute->m_logText->toPlainText()));
+
+    const QDir landed(system_drive.filePath(QStringLiteral("Users/sakwizardwalkuser")));
+    QVERIFY(QFile::exists(landed.filePath(QStringLiteral("Documents/report.txt"))));
+    QVERIFY(QFile::exists(landed.filePath(kWalkAppData + QStringLiteral("/settings.ini"))));
+}
+
+void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    sak::UserProfileBackupWizard wizard;
+    wizard.restart();
+    while (wizard.currentId() != sak::UserProfileBackupWizard::Page_BackupSettings) {
+        const int before = wizard.currentId();
+        wizard.next();
+        QVERIFY2(wizard.currentId() != before, qPrintable(wizard.currentPage()->title()));
+    }
+    auto* settings = qobject_cast<sak::UserProfileBackupSettingsPage*>(wizard.currentPage());
+    QVERIFY(settings != nullptr);
+    settings->m_destinationEdit->setText(destination.filePath(QStringLiteral("backup")));
+    wizard.next();
+    QCOMPARE(wizard.currentId(), static_cast<int>(sak::UserProfileBackupWizard::Page_Execute));
 }
 
 QTEST_MAIN(UserProfileAppRestoreFlowTests)

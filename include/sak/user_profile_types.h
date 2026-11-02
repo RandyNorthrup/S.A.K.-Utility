@@ -136,6 +136,9 @@ struct SmartFilter {
     QStringList exclude_patterns;
     QStringList exclude_folders;
     QStringList dangerous_files;  // NTUSER.DAT, etc.
+    /// Also leave out anything under a folder named like a cache, wherever it sits. Written to
+    /// JSON only when off, so a manifest from before this existed still matches its checksum.
+    bool exclude_cache_paths{true};
 
     SmartFilter()
         : enable_file_size_limit(false)    // Optional by default
@@ -146,6 +149,14 @@ struct SmartFilter {
     }
 
     void initializeDefaults();
+
+    /// The Smart Filters page's three tick boxes. Each puts one group of rules in or out of the
+    /// lists above, so what View Full List shows and what the run does stay the same thing.
+    void setExclusionGroups(bool cache, bool temporary, bool lock_files);
+    [[nodiscard]] bool excludesCache() const { return exclude_cache_paths; }
+    [[nodiscard]] bool excludesTemporaryFiles() const;
+    [[nodiscard]] bool excludesLockFiles() const;
+
     QJsonObject toJson() const;
     static SmartFilter fromJson(const QJsonObject& json);
 

@@ -53,6 +53,10 @@ public:
         /// the worker refuses the run rather than writing plaintext (see startBackup).
         bool encrypt{false};
         QString password;
+
+        /// Check each stored file against its original right after writing it. A file that does
+        /// not match is reported and the run does not read as clean.
+        bool verify{false};
     };
 
     /**
@@ -81,6 +85,15 @@ public:
 
     /// @brief Check if current process can read the given path
     [[nodiscard]] static bool canReadPath(const QString& path);
+
+    /// @brief True when @p stored_path holds what @p source_path holds. A stored container is
+    /// decoded with @p password, and compared with @p plain_sha256, the digest of what was read
+    /// from the original as it was written. A verbatim copy is compared with the original. Exposed
+    /// for unit testing, because a run cannot damage a file between writing and checking it.
+    [[nodiscard]] static bool storedFileMatches(const QString& source_path,
+                                                const QString& stored_path,
+                                                const QByteArray& plain_sha256,
+                                                const QString& password);
 
     /// @brief True when another program has @p path open in a way that refuses even a shared read,
     /// as a running browser does with some of its databases.
@@ -184,7 +197,14 @@ private:
 
     /// @brief Write one file to the backup: a verbatim copy, or a codec container when
     /// compression or encryption is on. The single point where the transform is applied.
-    bool storeFile(const QString& sourcePath, const QString& destPath);
+    /// @param plainSha256 Set for a container to the digest of what it was given.
+    bool storeFile(const QString& sourcePath, const QString& destPath, QByteArray& plainSha256);
+    /// @brief The optional check after storeFile. A failure is reported and counted.
+    bool verifyStoredFile(const QString& sourcePath,
+                          const QString& destPath,
+                          const QByteArray& plainSha256);
+    /// @brief Report each selected folder over the size the person asked to be warned about.
+    void warnAboutLargeFolders();
 
     bool applyPermissions(const QString& filePath);
 
@@ -224,6 +244,8 @@ private:
     PermissionMode m_permissionMode{PermissionMode::StripAll};
     /// Empty of both transforms means a verbatim copy, which is the default path.
     BackupCodecOptions m_codec;
+    bool m_verify{false};
+    int m_filesVerified{0};
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

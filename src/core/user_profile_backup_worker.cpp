@@ -6,9 +6,11 @@
 #include "sak/app_data_sources.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/elevation_manager.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/thread_custody.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
@@ -248,6 +250,8 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_codec.compression_level = options.compression_level;
     m_codec.encrypt = options.encrypt;
     m_codec.password = options.password;
+    m_verify = options.verify;
+    m_filesVerified = 0;
     m_manifest.compressed = options.compress;
     m_manifest.encrypted = options.encrypt;
 
@@ -312,6 +316,8 @@ void UserProfileBackupWorker::run() {
                                'f',
                                kBackupSizeDisplayPrecision),
                       false);
+
+    warnAboutLargeFolders();
 
     // Check disk space
     if (!checkDiskSpace()) {
@@ -400,6 +406,29 @@ void UserProfileBackupWorker::prepareForFolder(const UserProfile& user,
                          });
 }
 
+void UserProfileBackupWorker::warnAboutLargeFolders() {
+    if (!m_smartFilter.enable_folder_size_limit) {
+        return;
+    }
+    const QString limit = formatBytes(m_smartFilter.max_folder_size_bytes);
+    for (const UserProfile& user : m_users) {
+        if (!user.is_selected) {
+            continue;
+        }
+        for (const FolderSelection& folder : user.folder_selections) {
+            if (folder.selected && folder.size_bytes > m_smartFilter.max_folder_size_bytes) {
+                Q_EMIT logMessage(tr("%1 for %2 is about %3, over the %4 you set. It will still "
+                                     "be backed up.")
+                                      .arg(folder.display_name,
+                                           user.username,
+                                           formatBytes(folder.size_bytes),
+                                           limit),
+                                  true);
+            }
+        }
+    }
+}
+
 void UserProfileBackupWorker::backupAllUsers() {
     // An empty list simply iterates zero times; see startBackup.
     for (const auto& user : m_users) {
@@ -467,6 +496,10 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
+    if (m_verify) {
+        Q_EMIT logMessage(
+            tr("Checked %1 stored file(s) against their originals").arg(m_filesVerified), false);
+    }
     Q_EMIT backupComplete(success, summary, m_manifest);
 }
 
@@ -753,7 +786,12 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
         return false;
     }
 
-    if (!storeFile(sourcePath, destPath)) {
+    QByteArray plainSha256;
+    if (!storeFile(sourcePath, destPath, plainSha256)) {
+        m_filesErrored++;
+        return false;
+    }
+    if (m_verify && !verifyStoredFile(sourcePath, destPath, plainSha256)) {
         m_filesErrored++;
         return false;
     }
@@ -771,7 +809,40 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     return true;
 }
 
-bool UserProfileBackupWorker::storeFile(const QString& sourcePath, const QString& destPath) {
+bool UserProfileBackupWorker::storedFileMatches(const QString& source_path,
+                                                const QString& stored_path,
+                                                const QByteArray& plain_sha256,
+                                                const QString& password) {
+    if (!plain_sha256.isEmpty()) {
+        const auto decoded = sak::decodeBackupFileDigest(stored_path, password);
+        return decoded.has_value() && decoded->plain_sha256 == plain_sha256;
+    }
+    const auto digest = [](const QString& path) -> QByteArray {
+        QFile file(path);
+        QCryptographicHash hasher(QCryptographicHash::Sha256);
+        return file.open(QIODevice::ReadOnly) && hasher.addData(&file) ? hasher.result()
+                                                                       : QByteArray();
+    };
+    const QByteArray source_digest = digest(source_path);
+    return !source_digest.isEmpty() && source_digest == digest(stored_path);
+}
+
+bool UserProfileBackupWorker::verifyStoredFile(const QString& sourcePath,
+                                               const QString& destPath,
+                                               const QByteArray& plainSha256) {
+    if (storedFileMatches(sourcePath, destPath, plainSha256, m_codec.password)) {
+        ++m_filesVerified;
+        return true;
+    }
+    // A program still writing to the file gets here too, which is as much a problem for a backup
+    // as a bad copy is.
+    Q_EMIT logMessage(tr("Stored copy does not match the original: %1").arg(sourcePath), true);
+    return false;
+}
+
+bool UserProfileBackupWorker::storeFile(const QString& sourcePath,
+                                        const QString& destPath,
+                                        QByteArray& plainSha256) {
     if (m_codec.isPassThrough()) {
         if (QFile::copy(sourcePath, destPath)) {
             return true;
@@ -789,6 +860,7 @@ bool UserProfileBackupWorker::storeFile(const QString& sourcePath, const QString
         return m_cancelled.load();
     });
     if (written.has_value()) {
+        plainSha256 = written->plain_sha256;
         return true;
     }
     if (written.error() == sak::error_code::operation_cancelled) {

@@ -8,6 +8,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/user_profile_backup_worker.h"
 #include "sak/widget_helpers.h"
 
 #include <QDir>
@@ -344,6 +345,14 @@ void PerUserCustomizationDialog::onSelectRecommended() {
     updateSummary();
 }
 
+QString PerUserCustomizationDialog::pathInsideProfile(const QString& profile_path,
+                                                      const QString& folder_path) {
+    const QString relative = QDir(profile_path).relativeFilePath(folder_path);
+    return relative != QStringLiteral(".") && UserProfileBackupWorker::isSafeRelativePath(relative)
+               ? relative
+               : QString();
+}
+
 void PerUserCustomizationDialog::onAddCustomFolder() {
     const QString folder_path = QFileDialog::getExistingDirectory(
         this,
@@ -355,9 +364,17 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
         return;
     }
 
-    // Make path relative to profile path if possible
-    const QDir profile_dir(m_profile.profile_path);
-    QString relative_path = profile_dir.relativeFilePath(folder_path);
+    const QString relative_path = pathInsideProfile(m_profile.profile_path, folder_path);
+    if (relative_path.isEmpty()) {
+        sak::logWarning("Custom folder outside the profile refused: {}", folder_path.toStdString());
+        sak::showWarningLogged(this,
+                               tr("Folder Outside This Profile"),
+                               tr("%1 is not inside %2's profile folder, so it cannot be added. "
+                                  "A backup stores each person's files by where they sit in their "
+                                  "profile.")
+                                   .arg(QDir::toNativeSeparators(folder_path), m_profile.username));
+        return;
+    }
 
     // Check if already exists
     const bool duplicate = std::ranges::any_of(m_profile.folder_selections,

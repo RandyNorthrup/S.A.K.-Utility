@@ -116,7 +116,7 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
     }
 
     // 5. Check if in cache directory
-    if (isInCacheDirectory(absolutePath)) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(absolutePath)) {
         return true;
     }
 
@@ -140,7 +140,7 @@ bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
     }
 
     // Exclude cache directories
-    if (isInCacheDirectory(absolutePath)) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(absolutePath)) {
         return true;
     }
 
@@ -231,7 +231,7 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
         return QString("Matches exclusion pattern: %1").arg(fileName);
     }
 
-    if (isInCacheDirectory(fileInfo.absoluteFilePath())) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(fileInfo.absoluteFilePath())) {
         return "Located in cache directory";
     }
 

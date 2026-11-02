@@ -97,6 +97,9 @@ public:
      */
     [[nodiscard]] BackupCodecOptions getCodecOptions() const;
 
+    /// @brief Whether the settings page asks for each stored file to be checked after writing.
+    [[nodiscard]] bool verifyAfterBackup() const;
+
     /** @brief Get/set installed apps selected for backup */
     QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
     void setInstalledApps(const QVector<InstalledAppInfo>& apps) { m_installedApps = apps; }
@@ -116,6 +119,9 @@ public:
     void setAppDataSources(const QVector<AppDataSourceInfo>& sources) {
         m_appDataSources = sources;
     }
+
+protected:
+    void initializePage(int id) override;
 
 private:
     BackupManifest m_manifest;
@@ -264,6 +270,7 @@ private:
  */
 class UserProfileBackupSmartFiltersPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupSmartFiltersPage(SmartFilter& filter, QWidget* parent = nullptr);
@@ -379,6 +386,7 @@ private:
  */
 class UserProfileBackupSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupSettingsPage(BackupManifest& manifest, QWidget* parent = nullptr);
@@ -392,6 +400,7 @@ public:
     [[nodiscard]] int compressionLevel() const;
     [[nodiscard]] bool encryptionEnabled() const;
     [[nodiscard]] QString encryptionPassword() const;
+    [[nodiscard]] bool verifyEnabled() const;
 
 private Q_SLOTS:
     void onBrowseDestination();

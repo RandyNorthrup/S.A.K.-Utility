@@ -93,13 +93,15 @@ struct RunResult {
     bool success{false};
     QString message;
     QStringList warnings;
+    QStringList notes;
 };
 
 /// Run a backup with @p options, then read the manifest back from disk, as a later restore does.
 RunResult runBackup(const sak::UserProfile& user,
                     const QString& destination,
                     const UserProfileBackupWorker::BackupOptions& options,
-                    const QVector<sak::AppDataSourceInfo>& app_data = {}) {
+                    const QVector<sak::AppDataSourceInfo>& app_data = {},
+                    const sak::SmartFilter& filter = sak::SmartFilter{}) {
     if (!QDir().mkpath(destination)) {
         return {};
     }
@@ -108,7 +110,7 @@ RunResult runBackup(const sak::UserProfile& user,
     QSignalSpy log(&worker, &UserProfileBackupWorker::logMessage);
     BackupManifest manifest;
     manifest.app_data_sources = app_data;
-    worker.startBackup(manifest, {user}, destination, sak::SmartFilter{}, options);
+    worker.startBackup(manifest, {user}, destination, filter, options);
     const bool finished = QTest::qWaitFor([&complete]() { return complete.count() == 1; },
                                           kWorkerTimeoutMs);
     worker.wait(kWorkerTimeoutMs);
@@ -119,9 +121,7 @@ RunResult runBackup(const sak::UserProfile& user,
         result.message = complete.first().at(1).toString();
     }
     for (const auto& entry : log) {
-        if (entry.at(1).toBool()) {
-            result.warnings.append(entry.at(0).toString());
-        }
+        (entry.at(1).toBool() ? result.warnings : result.notes).append(entry.at(0).toString());
     }
     return result;
 }
@@ -261,6 +261,15 @@ private Q_SLOTS:
 
     // The wizard's own defaults, which every other case here avoids.
     void defaultPermissionsRoundTrip();
+
+    // Controls on the backup wizard that used to change nothing.
+    void verifyAfterBackupChecksEveryStoredFile_data();
+    void verifyAfterBackupChecksEveryStoredFile();
+    void verifyOffChecksNothing();
+    void storedFileCheckCatchesADamagedCopy();
+    void folderOverTheLimitIsWarnedAboutAndStillCopied();
+    void excludeBoxesKeepOrDropTheirFiles_data();
+    void excludeBoxesKeepOrDropTheirFiles();
 
 private:
     QByteArray m_saved_system_drive;
@@ -875,6 +884,142 @@ void UserProfileRoundTripTests::defaultPermissionsRoundTrip() {
     QCOMPARE(readFile(
                  QDir(profileUnder(system_drive)).filePath(QStringLiteral("Documents/report.txt"))),
              content);
+}
+
+void UserProfileRoundTripTests::verifyAfterBackupChecksEveryStoredFile_data() {
+    verifiedRestoreRoundTrips_data();
+}
+
+void UserProfileRoundTripTests::verifyAfterBackupChecksEveryStoredFile() {
+    QFETCH(bool, compress);
+    QFETCH(bool, encrypt);
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    QVERIFY(writeFile(profile.filePath(QStringLiteral("Documents/one.txt")), documentContent()));
+    QVERIFY(writeFile(profile.filePath(QStringLiteral("Documents/two.txt")), documentContent()));
+
+    auto options = backupOptions(compress, encrypt);
+    options.verify = true;
+    const RunResult backed_up = runBackup(sourceProfile(profile.path()), backup.path(), options);
+    QVERIFY2(backed_up.completed && backed_up.success,
+             qPrintable(backed_up.message + QLatin1Char('\n') + backed_up.warnings.join('\n')));
+    QVERIFY2(backed_up.notes.contains(QStringLiteral("Checked 2 stored file(s) against their "
+                                                     "originals")),
+             qPrintable(backed_up.notes.join('\n')));
+}
+
+void UserProfileRoundTripTests::verifyOffChecksNothing() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    QVERIFY(writeFile(profile.filePath(QStringLiteral("Documents/one.txt")), documentContent()));
+
+    const RunResult backed_up =
+        runBackup(sourceProfile(profile.path()), backup.path(), backupOptions(false, false));
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+    for (const QString& note : backed_up.notes) {
+        QVERIFY2(!note.startsWith(QStringLiteral("Checked")), qPrintable(note));
+    }
+}
+
+// A run cannot damage a file between writing and checking it, so the check is tested directly:
+// what the option promises is that a copy differing from its original is caught.
+void UserProfileRoundTripTests::storedFileCheckCatchesADamagedCopy() {
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    const QByteArray content = documentContent();
+    const QString original = work.filePath(QStringLiteral("original.txt"));
+    const QString stored = work.filePath(QStringLiteral("stored.txt"));
+    QVERIFY(writeFile(original, content));
+
+    QVERIFY(writeFile(stored, content));
+    QVERIFY(UserProfileBackupWorker::storedFileMatches(original, stored, {}, {}));
+    QVERIFY(writeFile(stored, content + "damaged"));
+    QVERIFY(!UserProfileBackupWorker::storedFileMatches(original, stored, {}, {}));
+
+    sak::BackupCodecOptions codec;
+    codec.compress = true;
+    const QString container = work.filePath(QStringLiteral("container.sak"));
+    const auto written = sak::writeBackupFile(original, container, codec);
+    QVERIFY(written.has_value());
+    QVERIFY(
+        UserProfileBackupWorker::storedFileMatches(original, container, written->plain_sha256, {}));
+    // Decodes cleanly, but holds something else.
+    QVERIFY(!UserProfileBackupWorker::storedFileMatches(
+        original, container, QCryptographicHash::hash("other", QCryptographicHash::Sha256), {}));
+    QByteArray damaged = readFile(container);
+    damaged[damaged.size() - 8] = static_cast<char>(damaged.at(damaged.size() - 8) ^ 0x5A);
+    QVERIFY(writeFile(container, damaged));
+    QVERIFY(!UserProfileBackupWorker::storedFileMatches(
+        original, container, written->plain_sha256, {}));
+}
+
+void UserProfileRoundTripTests::folderOverTheLimitIsWarnedAboutAndStillCopied() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    QVERIFY(writeFile(profile.filePath(QStringLiteral("Documents/one.txt")), documentContent()));
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.folder_selections.first().size_bytes = 2048;
+    sak::SmartFilter filter;
+    filter.max_folder_size_bytes = 1024;
+
+    const QString warning = QStringLiteral(
+        "Documents for sakroundtripuser is about 2.0 KB, over the 1.0 KB you set. It will still "
+        "be backed up.");
+
+    const RunResult off = runBackup(
+        user, backup.filePath(QStringLiteral("off")), backupOptions(false, false), {}, filter);
+    QVERIFY2(off.completed && off.success, qPrintable(off.message));
+    QVERIFY(!off.warnings.contains(warning));
+
+    filter.enable_folder_size_limit = true;
+    const RunResult on = runBackup(
+        user, backup.filePath(QStringLiteral("on")), backupOptions(false, false), {}, filter);
+    QVERIFY2(on.completed && on.success, qPrintable(on.message));
+    QVERIFY2(on.warnings.contains(warning), qPrintable(on.warnings.join('\n')));
+    QVERIFY(QFile::exists(
+        backup.filePath(QStringLiteral("on/") + kUser + QStringLiteral("/Documents/one.txt"))));
+}
+
+void UserProfileRoundTripTests::excludeBoxesKeepOrDropTheirFiles_data() {
+    QTest::addColumn<bool>("cache");
+    QTest::addColumn<bool>("temporary");
+    QTest::addColumn<bool>("lock_files");
+    QTest::newRow("all on") << true << true << true;
+    QTest::newRow("cache off") << false << true << true;
+    QTest::newRow("temporary off") << true << false << true;
+    QTest::newRow("lock files off") << true << true << false;
+}
+
+void UserProfileRoundTripTests::excludeBoxesKeepOrDropTheirFiles() {
+    QFETCH(bool, cache);
+    QFETCH(bool, temporary);
+    QFETCH(bool, lock_files);
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    const QString cache_file = QStringLiteral("Documents/App/Cache/entry.bin");
+    const QString temp_file = QStringLiteral("Documents/draft.tmp");
+    const QString lock_file = QStringLiteral("Documents/db.lock");
+    const QString kept = QStringLiteral("Documents/report.txt");
+    for (const QString& path : {cache_file, temp_file, lock_file, kept}) {
+        QVERIFY(writeFile(profile.filePath(path), documentContent()));
+    }
+
+    sak::SmartFilter filter;
+    filter.setExclusionGroups(cache, temporary, lock_files);
+    const RunResult backed_up = runBackup(
+        sourceProfile(profile.path()), backup.path(), backupOptions(false, false), {}, filter);
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+
+    const QDir stored(backup.filePath(kUser));
+    QVERIFY(QFile::exists(stored.filePath(kept)));
+    QCOMPARE(QFile::exists(stored.filePath(cache_file)), !cache);
+    QCOMPARE(QFile::exists(stored.filePath(temp_file)), !temporary);
+    QCOMPARE(QFile::exists(stored.filePath(lock_file)), !lock_files);
 }
 
 QTEST_GUILESS_MAIN(UserProfileRoundTripTests)

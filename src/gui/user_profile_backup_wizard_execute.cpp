@@ -449,6 +449,7 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
         backup_options.compression_level = codec.compression_level;
         backup_options.encrypt = codec.encrypt;
         backup_options.password = codec.password;
+        backup_options.verify = wiz->verifyAfterBackup();
     }
     worker->startBackup(m_manifest, m_users, m_destinationPath, smart_filter, backup_options);
 
