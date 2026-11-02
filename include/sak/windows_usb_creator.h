@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <functional>
+#include <optional>
 
 namespace sak {
 struct ProcessResult;
@@ -85,6 +86,10 @@ public:
     ///        rescue ISO routed here has its drive erased before the missing file is noticed. This
     ///        only lists the image, so a large file costs a fraction of a second.
     [[nodiscard]] static InstallImageCheck checkInstallImage(const QString& isoPath);
+#ifdef SAK_CORE_TEST_HOOKS
+    /// @brief Test-only: make checkInstallImage answer this, as it does with its tool missing.
+    static void setInstallImageCheckForTesting(std::optional<InstallImageCheck> answer);
+#endif  // SAK_CORE_TEST_HOOKS
     /// @brief checkInstallImage with the 7z to use named, so a test can run the real tool.
     [[nodiscard]] static InstallImageCheck checkInstallImageWith(const QString& isoPath,
                                                                  const QString& sevenZipPath);

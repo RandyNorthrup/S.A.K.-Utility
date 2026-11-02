@@ -6,6 +6,8 @@
 
 #include "sak/disk_benchmark_worker.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QtTest/QtTest>
 
 #include <type_traits>
@@ -27,6 +29,7 @@ class TestDiskBenchmarkWorker : public QObject {
 private Q_SLOTS:
     void construction_default();
     void construction_isWorkerBase();
+    void aSystemDriveRunWritesToTheTempFolder();
     void config_defaults();
     void config_setConfig();
     void config_fieldAssignment();
@@ -367,6 +370,23 @@ void TestDiskBenchmarkWorker::effectiveBlockBytes_acceptsInRangeAndAligns() {
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(64, 4, 64), static_cast<size_t>(64 * 1024));
     // A non-sector-aligned in-range request (5 KiB = 5120 B) rounds up to 8192.
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(5, 4, 64), static_cast<size_t>(8192));
+}
+
+// Writing to the root of the Windows drive needs an administrator, so a run on that drive uses the
+// temp folder. An empty file is all this creates.
+void TestDiskBenchmarkWorker::aSystemDriveRunWritesToTheTempFolder() {
+    const QString temp = QDir::tempPath();
+    sak::DiskBenchmarkConfig config;
+    config.drive_path = temp.left(2) + QStringLiteral("\\");
+    config.test_file_size_mb = 0;
+    sak::DiskBenchmarkWorker worker;
+    worker.setConfig(config);
+
+    const QString path = worker.claimTestFileForTesting();
+
+    QVERIFY(!path.isEmpty());
+    QCOMPARE(QFileInfo(path).absolutePath(), temp);
+    QVERIFY(!QFileInfo::exists(path));
 }
 
 QTEST_MAIN(TestDiskBenchmarkWorker)

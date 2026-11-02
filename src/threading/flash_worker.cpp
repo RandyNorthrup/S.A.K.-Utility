@@ -758,6 +758,31 @@ bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytes_read, qint64
     return true;
 }
 
+#ifdef SAK_CORE_TEST_HOOKS
+bool FlashWorker::writeToFileForTesting(const QString& file_path) {
+    if (!m_imageSource || !m_imageSource->open()) {
+        return false;
+    }
+    m_totalBytes = m_imageSource->size();
+    m_deviceHandle = CreateFileW(reinterpret_cast<LPCWSTR>(file_path.utf16()),
+                                 GENERIC_READ | GENERIC_WRITE,
+                                 0,
+                                 nullptr,
+                                 CREATE_ALWAYS,
+                                 FILE_ATTRIBUTE_NORMAL,
+                                 nullptr);
+    return m_deviceHandle != INVALID_HANDLE_VALUE && writeImage();
+}
+
+sak::ValidationResult FlashWorker::verifySampleOfFileForTesting() {
+    return verifySample();
+}
+
+void FlashWorker::closeFileForTesting() {
+    closeDevice();
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
 bool FlashWorker::readStaysWithinImage(qint64 written, qint64 incoming, qint64 total) {
     return written <= total && incoming <= total - written;
 }

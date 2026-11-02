@@ -62,6 +62,7 @@ private Q_SLOTS:
     void testCompressedImageIsMeasuredBeforeAnyDiskIsTouched();
     void testCorruptCompressedImageStopsBeforeAnyDiskIsTouched();
     void testCancelDuringMeasurementEndsTheRun();
+    void testDestroyingDuringMeasurementWaitsForIt();
 
 private:
     std::unique_ptr<FlashCoordinator> m_coord;
@@ -149,6 +150,28 @@ void TestFlashCoordinator::testCorruptCompressedImageStopsBeforeAnyDiskIsTouched
     // The failed run let go of the image and of the claim, so a new run can start.
     QVERIFY(!m_coord->m_imageSource);
     QVERIFY(m_coord->beginFlashClaim());
+}
+
+// The decode runs on a pool thread holding a pointer to the coordinator, and nothing else can stop
+// it, so the destructor has to wait for it to be over.
+void TestFlashCoordinator::testDestroyingDuringMeasurementWaitsForIt() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeImage(dir,
+                                    QStringLiteral("image.img.gz"),
+                                    sak_test::gzipCompress(QByteArray(256 * 1024 * 1024, 'z')));
+    const QStringList targets{kNoSuchDrive};
+
+    auto coordinator = std::make_unique<FlashCoordinator>();
+    QVERIFY(coordinator->beginFlashClaim());
+    coordinator->resetRunState(targets);
+    QVERIFY(coordinator->openImageAndContinue(path, targets));
+    const QFuture<sak::CompressedImageMeasurement> measurement = coordinator->m_measureFuture;
+    QVERIFY2(!measurement.isFinished(), "256 MB cannot have decoded yet, so this proves nothing");
+
+    coordinator.reset();
+
+    QVERIFY(measurement.isFinished());
 }
 
 void TestFlashCoordinator::testCancelDuringMeasurementEndsTheRun() {

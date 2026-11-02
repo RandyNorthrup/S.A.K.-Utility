@@ -181,6 +181,15 @@ public:
     ///        approved its size, and writing on could run toward the end of the drive. Pure.
     [[nodiscard]] static bool readStaysWithinImage(qint64 written, qint64 incoming, qint64 total);
 
+#ifdef SAK_CORE_TEST_HOOKS
+    /// @brief Test-only: run the real write loop with an ordinary file as the device.
+    [[nodiscard]] bool writeToFileForTesting(const QString& file_path);
+    /// @brief Test-only: run sample verification against that file.
+    [[nodiscard]] sak::ValidationResult verifySampleOfFileForTesting();
+    /// @brief Test-only: let go of that file so it can be read.
+    void closeFileForTesting();
+#endif  // SAK_CORE_TEST_HOOKS
+
     /// @brief Zero-pad a buffer up to a whole multiple of the device sector size
     /// @param buffer Buffer to pad in place (grown to the padded size)
     /// @param bytes_read In/out valid byte count; set to the padded size on success

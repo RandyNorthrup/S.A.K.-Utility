@@ -15,6 +15,7 @@
 #include <QElapsedTimer>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <future>
@@ -239,6 +240,20 @@ std::expected<void, sak::error_code> validateStressConfig(const StressTestConfig
 // ============================================================================
 // Construction
 // ============================================================================
+
+#ifdef SAK_CORE_TEST_HOOKS
+QString StressTestWorker::stressFilePathForTesting(const QString& drive) {
+    HANDLE handle = openExclusiveStressFile(drive);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    std::array<wchar_t, MAX_PATH> buffer{};
+    const DWORD length = GetFinalPathNameByHandleW(
+        handle, buffer.data(), static_cast<DWORD>(buffer.size()), FILE_NAME_NORMALIZED);
+    CloseHandle(handle);  // FILE_FLAG_DELETE_ON_CLOSE removes it
+    return QString::fromWCharArray(buffer.data(), static_cast<int>(length));
+}
+#endif  // SAK_CORE_TEST_HOOKS
 
 StressTestWorker::StressTestWorker(QObject* parent) : WorkerBase(parent) {}
 

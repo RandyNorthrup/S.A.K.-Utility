@@ -51,6 +51,11 @@ private Q_SLOTS:
 
     // Cancel
     void cancel_beforeAnalysisIsSafe();
+
+    // A drive smartctl cannot read
+    void unreadableDrive_keepsARowAndSaysWhy();
+    void unreadableDrive_withNoReasonStillSaysSo();
+    void readableDrive_isNotMarkedUnreadable();
 };
 
 namespace {
@@ -450,6 +455,58 @@ void SmartDiskAnalyzerTests::cancel_beforeAnalysisIsSafe() {
     analyzer.cancel();
     analyzer.cancel();  // idempotent
     QVERIFY(analyzer.reports().isEmpty());
+}
+
+namespace {
+/// Stands in for smartctl, so no tool touches a real drive.
+class ScriptedSmartAnalyzer : public sak::SmartDiskAnalyzer {
+public:
+    QString failure;
+    QByteArray output;
+
+protected:
+    QByteArray runSmartctl(uint32_t) override {
+        m_last_read_failure = failure;
+        return output;
+    }
+};
+}  // namespace
+
+// Left out, an unreadable drive looks like no drive at all, and with none readable the table is
+// simply empty.
+void SmartDiskAnalyzerTests::unreadableDrive_keepsARowAndSaysWhy() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.failure = QStringLiteral("Reading it needs administrator rights.");
+    QSignalSpy analyzed(&analyzer, &sak::SmartDiskAnalyzer::driveAnalyzed);
+
+    analyzer.analyzeDrive(7);
+
+    QCOMPARE(analyzed.count(), 1);
+    QCOMPARE(analyzer.reports().size(), 1);
+    const sak::SmartReport& report = analyzer.reports().first();
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive7"));
+    QCOMPARE(report.model, QStringLiteral("PhysicalDrive7"));
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+    QCOMPARE(report.warnings,
+             QStringList{QStringLiteral("PhysicalDrive7: Reading it needs "
+                                        "administrator rights.")});
+}
+
+void SmartDiskAnalyzerTests::unreadableDrive_withNoReasonStillSaysSo() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.analyzeDrive(2);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().warnings,
+             QStringList{QStringLiteral("PhysicalDrive2: SMART data could not be read.")});
+}
+
+void SmartDiskAnalyzerTests::readableDrive_isNotMarkedUnreadable() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.output = QByteArrayLiteral(R"({"model_name":"Disk","smart_status":{"passed":true}})");
+    analyzer.analyzeDrive(3);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().model, QStringLiteral("Disk"));
+    QVERIFY(analyzer.reports().first().overall_health != sak::SmartHealthStatus::Unknown);
 }
 
 QTEST_GUILESS_MAIN(SmartDiskAnalyzerTests)

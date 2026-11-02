@@ -114,17 +114,18 @@ Q_SIGNALS:
     /// @param message Description of the error
     void errorOccurred(const QString& message);
 
+protected:
+    /// @brief Run smartctl and capture JSON output for a specific drive
+    /// @param disk_number Physical drive number
+    /// @return Raw JSON output from smartctl, or empty QByteArray on failure
+    [[nodiscard]] virtual QByteArray runSmartctl(uint32_t disk_number);
+    /// Why the last runSmartctl on this drive returned nothing, for the drive's report.
+    QString m_last_read_failure;
+
 private:
     /// @brief Resolve the path to the bundled smartctl executable
     /// @return Absolute path to smartctl.exe, or empty string if not found
     [[nodiscard]] static QString resolveSmartctlPath();
-
-    /// @brief Run smartctl and capture JSON output for a specific drive
-    /// @param disk_number Physical drive number
-    /// @return Raw JSON output from smartctl, or empty QByteArray on failure
-    [[nodiscard]] QByteArray runSmartctl(uint32_t disk_number);
-    /// Why the last runSmartctl on this drive returned nothing, for the drive's report.
-    QString m_last_read_failure;
 
     /// @brief Parse smartctl JSON output into a SmartReport
     /// @param json_data Raw JSON bytes

@@ -93,6 +93,13 @@ protected:
     /// @return Success or error code
     auto execute() -> std::expected<void, sak::error_code> override;
 
+#ifdef SAK_CORE_TEST_HOOKS
+public:
+    /// @brief Test-only: open the file a disk stress run writes to, let it delete itself, and say
+    ///        where it was. Nothing is written to it.
+    [[nodiscard]] static QString stressFilePathForTesting(const QString& drive);
+#endif  // SAK_CORE_TEST_HOOKS
+
 private:
     /// @brief Launch the stress threads, run the monitor loop, and join every child.
     /// @return Success, or internal_error if launching or running the threads threw.

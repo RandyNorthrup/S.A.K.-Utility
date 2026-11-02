@@ -18,10 +18,13 @@
 #include "sak/flash_worker.h"
 
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 
@@ -67,6 +70,52 @@ private:
     bool m_open;
     qint64 m_fakeSize = 1024 * 1024;  // 1 MiB
 };
+
+/// A source that makes up its bytes from their position, so nothing large sits in memory, and
+/// records every seek. It can also report one size and hold more, as a file replaced after its
+/// size was approved does.
+class PatternImageSource : public ImageSource {
+public:
+    PatternImageSource(qint64 reported_size, qint64 actual_size, QList<qint64>* seeks)
+        : m_reported_size(reported_size), m_actual_size(actual_size), m_seeks(seeks) {}
+
+    bool open() override {
+        m_open = true;
+        m_position = 0;
+        return true;
+    }
+    void close() override { m_open = false; }
+    bool isOpen() const override { return m_open; }
+    qint64 read(char* data, qint64 maxSize) override {
+        const qint64 count = std::min(maxSize, m_actual_size - m_position);
+        for (qint64 i = 0; i < count; ++i) {
+            data[i] = static_cast<char>((m_position + i) / 7);
+        }
+        m_position += count;
+        return count;
+    }
+    qint64 size() const override { return m_reported_size; }
+    qint64 position() const override { return m_position; }
+    bool seek(qint64 pos) override {
+        if (m_seeks != nullptr) {
+            m_seeks->append(pos);
+        }
+        m_position = pos;
+        return true;
+    }
+    bool atEnd() const override { return m_position >= m_actual_size; }
+    sak::ImageMetadata metadata() const override { return {}; }
+    QString calculateChecksum() override { return {}; }
+
+private:
+    qint64 m_reported_size;
+    qint64 m_actual_size;
+    qint64 m_position = 0;
+    QList<qint64>* m_seeks;
+    bool m_open = false;
+};
+
+constexpr qint64 kMiB = 1024 * 1024;
 
 // ===========================================================================
 // Test class
@@ -127,6 +176,9 @@ private Q_SLOTS:
     void alignUpToSectorSizeRejectsBogusSectorSize();
     void alignUpToSectorSizeRejectsOverflow();
     void readStaysWithinImageBoundary();
+    void writeLoopWritesAnImageThatStaysInItsSize();
+    void writeLoopStopsAtTheSizeThatWasApproved();
+    void sampleVerificationAsksForItsBlocksInOrder();
     void imageFitsDeviceUnderAndExact();
     void imageFitsDeviceRejectsOversize();
     void imageFitsDeviceRejectsUnknownCapacity();
@@ -544,6 +596,61 @@ void FlashWorkerTests::validationModeFromSetting_rejectsUnknown() {
 }
 
 // ===========================================================================
+
+void FlashWorkerTests::writeLoopWritesAnImageThatStaysInItsSize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("target.bin"));
+    FlashWorker worker(std::make_unique<PatternImageSource>(3 * kMiB, 3 * kMiB, nullptr),
+                       QStringLiteral("\\\\.\\PhysicalDrive1023"));
+    worker.setVerificationEnabled(false);
+    worker.setBufferSize(kMiB);
+
+    QVERIFY(worker.writeToFileForTesting(target));
+    worker.closeFileForTesting();
+
+    QCOMPARE(QFileInfo(target).size(), 3 * kMiB);
+}
+
+// A size can come from an earlier pass over a compressed image, so a source that has grown since
+// must stop at what was approved, not run on toward the end of the drive.
+void FlashWorkerTests::writeLoopStopsAtTheSizeThatWasApproved() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("target.bin"));
+    const qint64 approved = 5 * kMiB / 2;
+    FlashWorker worker(std::make_unique<PatternImageSource>(approved, 8 * kMiB, nullptr),
+                       QStringLiteral("\\\\.\\PhysicalDrive1023"));
+    worker.setVerificationEnabled(false);
+    worker.setBufferSize(kMiB);
+
+    QVERIFY(!worker.writeToFileForTesting(target));
+    worker.closeFileForTesting();
+
+    QCOMPARE(QFileInfo(target).size(), 2 * kMiB);
+}
+
+// A compressed source can only read forward: out of order, each block behind the last would mean
+// decoding the stream again from its start.
+void FlashWorkerTests::sampleVerificationAsksForItsBlocksInOrder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("target.bin"));
+    QList<qint64> seeks;
+    const qint64 size = 64 * kMiB;
+    FlashWorker worker(std::make_unique<PatternImageSource>(size, size, &seeks),
+                       QStringLiteral("\\\\.\\PhysicalDrive1023"));
+    worker.setVerificationEnabled(false);
+    worker.setBufferSize(kMiB);
+    QVERIFY(worker.writeToFileForTesting(target));
+
+    const sak::ValidationResult result = worker.verifySampleOfFileForTesting();
+    worker.closeFileForTesting();
+
+    QVERIFY2(result.passed, qPrintable(result.errors.join(QLatin1Char(' '))));
+    QVERIFY2(seeks.size() >= 2, "too few blocks to say anything about their order");
+    QVERIFY2(std::ranges::is_sorted(seeks), "a block was asked for behind the one before it");
+}
 
 QTEST_MAIN(FlashWorkerTests)
 #include "test_flash_worker.moc"

@@ -17,6 +17,7 @@
 #include <memory>
 
 // Forward declarations
+class ImageFlasherPanelTests;
 class DriveScanner;
 class FlashCoordinator;
 class WindowsISODownloader;
@@ -59,6 +60,7 @@ class LogToggleSwitch;
  */
 class ImageFlasherPanel : public QWidget {
     Q_OBJECT
+    friend class ::ImageFlasherPanelTests;
 
 public:
     explicit ImageFlasherPanel(QWidget* parent = nullptr);

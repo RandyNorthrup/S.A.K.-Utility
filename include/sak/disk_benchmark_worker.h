@@ -90,6 +90,13 @@ protected:
     /// @return Success or error code
     auto execute() -> std::expected<void, sak::error_code> override;
 
+#ifdef SAK_CORE_TEST_HOOKS
+public:
+    /// @brief Test-only: claim the test file the way a run does, remove it again, and say where it
+    ///        was. With a zero test size nothing is written to it.
+    [[nodiscard]] QString claimTestFileForTesting();
+#endif  // SAK_CORE_TEST_HOOKS
+
 private:
     /// @brief Create the test file with random data
     /// @return true if file was created successfully

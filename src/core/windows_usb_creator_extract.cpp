@@ -969,7 +969,22 @@ bool WindowsUSBCreator::listingHasInstallImage(const QString& listing) {
     return kInstallImage.match(listing).hasMatch();
 }
 
+#ifdef SAK_CORE_TEST_HOOKS
+namespace {
+std::optional<WindowsUSBCreator::InstallImageCheck> g_install_image_check_for_testing;
+}  // namespace
+
+void WindowsUSBCreator::setInstallImageCheckForTesting(std::optional<InstallImageCheck> answer) {
+    g_install_image_check_for_testing = answer;
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
 WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImage(const QString& isoPath) {
+#ifdef SAK_CORE_TEST_HOOKS
+    if (g_install_image_check_for_testing.has_value()) {
+        return *g_install_image_check_for_testing;
+    }
+#endif  // SAK_CORE_TEST_HOOKS
     const QString appDir = QCoreApplication::applicationDirPath();
     const QString sevenZipPath = appDir + "/tools/chocolatey/tools/7z.exe";
     if (!isSafeBundledExecutable(sevenZipPath, appDir)) {

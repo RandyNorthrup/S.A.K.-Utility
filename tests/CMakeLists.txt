@@ -970,6 +970,8 @@ message(STATUS "Added unit test: test_cpu_benchmark_worker")
 # test_disk_benchmark_worker - construction, config, result defaults
 add_executable(test_disk_benchmark_worker
     unit/test_disk_benchmark_worker.cpp
+    # With SAK_CORE_TEST_HOOKS: the suite checks where a run's test file goes.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/disk_benchmark_worker.cpp
 )
 set_target_properties(test_disk_benchmark_worker PROPERTIES
     AUTOMOC ON
@@ -982,6 +984,7 @@ target_link_libraries(test_disk_benchmark_worker PRIVATE
 target_include_directories(test_disk_benchmark_worker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_disk_benchmark_worker PRIVATE SAK_CORE_TEST_HOOKS)
 add_test(NAME test_disk_benchmark_worker COMMAND test_disk_benchmark_worker
          -o "${TEST_OUTPUT_DIR}/test_disk_benchmark_worker.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -1010,6 +1013,8 @@ message(STATUS "Added unit test: test_memory_benchmark_worker")
 # test_stress_test_worker - construction, config, result defaults
 add_executable(test_stress_test_worker
     unit/test_stress_test_worker.cpp
+    # With SAK_CORE_TEST_HOOKS: the suite checks where a disk stress run's file goes.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/stress_test_worker.cpp
 )
 set_target_properties(test_stress_test_worker PROPERTIES
     AUTOMOC ON
@@ -1022,6 +1027,7 @@ target_link_libraries(test_stress_test_worker PRIVATE
 target_include_directories(test_stress_test_worker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_stress_test_worker PRIVATE SAK_CORE_TEST_HOOKS)
 add_test(NAME test_stress_test_worker COMMAND test_stress_test_worker
          -o "${TEST_OUTPUT_DIR}/test_stress_test_worker.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -4171,6 +4177,9 @@ message(STATUS "Added unit test: test_flash_types")
 add_executable(test_image_flasher_panel
     unit/test_image_flasher_panel.cpp
     ../resources/icons.qrc
+    # With SAK_CORE_TEST_HOOKS: the suite can make the install-image check fail, as it does with
+    # the bundled 7-Zip missing, which a build tree that has 7-Zip cannot otherwise reach.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_usb_creator_extract.cpp
 )
 set_target_properties(test_image_flasher_panel PROPERTIES
     AUTOMOC ON
@@ -4185,6 +4194,7 @@ target_link_libraries(test_image_flasher_panel PRIVATE
 target_include_directories(test_image_flasher_panel PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_image_flasher_panel PRIVATE SAK_CORE_TEST_HOOKS)
 add_test(NAME test_image_flasher_panel COMMAND test_image_flasher_panel
          -o "${TEST_OUTPUT_DIR}/test_image_flasher_panel.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -4590,6 +4600,9 @@ message(STATUS "Added unit test: test_windows_usb_creator")
 # test_flash_worker - Structs, validation, early-exit paths, cancellation (TST-09)
 add_executable(test_flash_worker
     unit/test_flash_worker.cpp
+    # Compiled here with SAK_CORE_TEST_HOOKS, which lets the suite run the real write and
+    # verification loops against an ordinary file.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/threading/flash_worker.cpp
 )
 set_target_properties(test_flash_worker PROPERTIES
     AUTOMOC ON
@@ -4601,6 +4614,7 @@ target_link_libraries(test_flash_worker PRIVATE
 )
 target_compile_definitions(test_flash_worker PRIVATE
     QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    SAK_CORE_TEST_HOOKS
 )
 target_include_directories(test_flash_worker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include

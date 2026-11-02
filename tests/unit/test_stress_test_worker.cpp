@@ -6,6 +6,8 @@
 
 #include "sak/stress_test_worker.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QtTest/QtTest>
 
 #include <cmath>
@@ -27,6 +29,7 @@ class TestStressTestWorker : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void aSystemDriveRunWritesToTheTempFolder();
     void construction_default();
     void construction_isWorkerBase();
     void construction_nonCopyable();
@@ -346,6 +349,20 @@ void TestStressTestWorker::execute_invalidMemoryPercent_failsClosed() {
         QCOMPARE(static_cast<int>(disk_result.error()),
                  static_cast<int>(sak::error_code::invalid_argument));
     }
+}
+
+// Writing to the root of the Windows drive needs an administrator, so a run on that drive uses the
+// temp folder. Nothing is written, and the file deletes itself.
+void TestStressTestWorker::aSystemDriveRunWritesToTheTempFolder() {
+    const QString temp = QDir::tempPath();
+    const QString path =
+        sak::StressTestWorker::stressFilePathForTesting(temp.left(2) + QStringLiteral("\\"));
+
+    QVERIFY(!path.isEmpty());
+    // GetFinalPathNameByHandle names it with the \\?\ prefix and the canonical folder.
+    const QString folder = QFileInfo(path.mid(4)).absolutePath();
+    QCOMPARE(QFileInfo(folder).canonicalFilePath().toLower(),
+             QFileInfo(temp).canonicalFilePath().toLower());
 }
 
 QTEST_MAIN(TestStressTestWorker)

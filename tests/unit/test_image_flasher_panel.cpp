@@ -21,8 +21,10 @@
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/windows_iso_downloader.h"
+#include "sak/windows_usb_creator.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -53,6 +55,29 @@ constexpr auto kFakeDevicePath = "\\\\.\\PhysicalDrive99";
 /// The Step 1 -> Step 2 navigation button. Every assertion in this file watched the Flash
 /// button only, so the Next gate -- which decides whether a user can reach drive selection at
 /// all -- had no coverage in either direction.
+/// Answers any message box that opens while it is alive, and keeps what the box said. Goes away
+/// with the test, so nothing is left running to answer a later test's dialog.
+class ModalAnswerer {
+public:
+    QString seen;
+
+    ModalAnswerer() {
+        m_timer.setInterval(kModalPollIntervalMs);
+        QObject::connect(&m_timer, &QTimer::timeout, &m_timer, [this]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                if (seen.isEmpty()) {
+                    seen = box->text();
+                }
+                box->accept();
+            }
+        });
+        m_timer.start();
+    }
+
+private:
+    QTimer m_timer;
+};
+
 QPushButton* findNextButton(QWidget* panel) {
     const auto buttons = panel->findChildren<QPushButton*>();
     for (QPushButton* button : buttons) {
@@ -90,6 +115,9 @@ private Q_SLOTS:
     void aBuiltIsoIsNotAnnouncedTwice();
     void shredOsStillGetsASaveLocation();
     void aWicImageIsNotCalledWindowsImaging();
+    void anImageThatCannotBeLookedInsideStopsTheFlash();
+    void aDriveThatChangedSaysToReselectIt();
+    void categoryListShowsOneAmpersand();
 
 private:
     QPushButton* flashButton() const;
@@ -128,9 +156,55 @@ void ImageFlasherPanelTests::aRefusalBeforeWritingSaysNothingWasWritten() {
 void ImageFlasherPanelTests::aBuiltIsoIsNotAnnouncedTwice() {
     auto* downloader = m_panel->findChild<WindowsISODownloader*>();
     QVERIFY(downloader != nullptr);
+    // Answers a dialog if one opens, so a second announcement fails this test rather than leaving
+    // the suite stuck in a modal loop until Qt's watchdog kills the whole run.
+    ModalAnswerer announced;
     Q_EMIT downloader->downloadComplete(QStringLiteral("C:/does-not-exist.iso"), 1);
-    QTest::qWait(0);
-    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QTest::qWait(2 * kModalPollIntervalMs);
+    QVERIFY2(announced.seen.isEmpty(), qPrintable(announced.seen));
+}
+
+// If the bundled 7-Zip cannot run, nothing is known about the image, and guessing the wrong writer
+// erases the drive and then fails. Nothing further may be asked or started.
+void ImageFlasherPanelTests::anImageThatCannotBeLookedInsideStopsTheFlash() {
+    const QString image = writeImage("payload.img", QByteArray(4096, '\x5A'));
+    QVERIFY(m_panel->loadImageFile(image));
+    WindowsUSBCreator::setInstallImageCheckForTesting(WindowsUSBCreator::InstallImageCheck::Failed);
+    const auto reset = qScopeGuard([]() { WindowsUSBCreator::setInstallImageCheckForTesting({}); });
+    ModalAnswerer told;
+
+    bool is_windows_iso = true;
+    QVERIFY(!m_panel->decideImageWriter(&is_windows_iso));
+
+    QVERIFY2(told.seen.contains(QStringLiteral("Could not look inside")), qPrintable(told.seen));
+    QVERIFY2(told.seen.contains(QStringLiteral("nothing was changed")), qPrintable(told.seen));
+}
+
+// A row this suite planted is on no scan, so it reads as changed. There is no Rescan button.
+void ImageFlasherPanelTests::aDriveThatChangedSaysToReselectIt() {
+    const QString image = writeImage("payload.img", QByteArray(4096, '\x5A'));
+    QVERIFY(m_panel->loadImageFile(image));
+    selectOneDrive();
+    QVERIFY(flashButton()->isEnabled());
+    ModalAnswerer told;
+
+    QVERIFY(!m_panel->confirmSelectionStillValid());
+
+    QVERIFY2(told.seen.contains(QStringLiteral("Reselect the target")), qPrintable(told.seen));
+    QVERIFY2(!told.seen.contains(QStringLiteral("Rescan")), qPrintable(told.seen));
+}
+
+// A combo box shows text as it is, so a doubled ampersand there was shown doubled.
+void ImageFlasherPanelTests::categoryListShowsOneAmpersand() {
+    LinuxISODownloader downloader;
+    LinuxISODownloadDialog dialog(&downloader);
+    auto* categories = dialog.findChild<QComboBox*>();
+    QVERIFY(categories != nullptr);
+    QVERIFY(categories->findText(QStringLiteral("Security & Pen-Testing")) >= 0);
+    for (int row = 0; row < categories->count(); ++row) {
+        QVERIFY2(!categories->itemText(row).contains(QStringLiteral("&&")),
+                 qPrintable(categories->itemText(row)));
+    }
 }
 
 // .wic is the raw disk image OpenEmbedded's wic tool produces. It has nothing to do with Windows.

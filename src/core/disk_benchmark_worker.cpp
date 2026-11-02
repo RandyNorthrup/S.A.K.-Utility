@@ -659,6 +659,18 @@ bool DiskBenchmarkWorker::createTestFile() {
     return true;
 }
 
+#ifdef SAK_CORE_TEST_HOOKS
+QString DiskBenchmarkWorker::claimTestFileForTesting() {
+    m_seq_block_bytes = kSectorAlignment;
+    if (!createTestFile()) {
+        return {};
+    }
+    const QString path = testFilePath();
+    cleanupTestFile();
+    return path;
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
 void DiskBenchmarkWorker::cleanupTestFile() {
     const QString path = testFilePath();
     if (path.isEmpty()) {
