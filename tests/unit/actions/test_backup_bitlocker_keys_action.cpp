@@ -11,6 +11,7 @@
 
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QStorageInfo>
 #include <QtTest/QtTest>
 
 using sak::BackupBitlockerKeysAction;
@@ -48,6 +49,8 @@ private Q_SLOTS:
     // receives plaintext recovery keys, so it is canonicalized + policy-screened.
     void screenBackupLocation_refusesUnsafeDestinations();
     void screenBackupLocation_canonicalizesAcceptedLocation();
+    void fileSystemRefusal_namesTheDriveAndTheFix();
+    void screenBackupLocation_refusesAnAttachedDriveThatKeepsNoPermissions();
     // Recovery-password accounting used by the gate and per-volume file writer.
     void recoveryPasswordHelpers_countAndDetect();
     // Enum formatters the recovery document depends on.
@@ -594,6 +597,35 @@ void BackupBitlockerKeysActionTests::sameVolumeRefusal_keepsKeysOffTheVolumesThe
     QVERIFY(!Action::sameVolumeRefusal(QStringLiteral("c:/Keys/archive"), volumes).isEmpty());
     QVERIFY(Action::sameVolumeRefusal(QStringLiteral("E:/keys"), volumes).isEmpty());
     QVERIFY(Action::sameVolumeRefusal(QStringLiteral("D:/keys"), volumes).isEmpty());
+}
+
+void BackupBitlockerKeysActionTests::fileSystemRefusal_namesTheDriveAndTheFix() {
+    QVERIFY(Action::fileSystemRefusal(QStringLiteral("E:/Keys"), QStringLiteral("NTFS"), true)
+                .isEmpty());
+
+    const QString refusal =
+        Action::fileSystemRefusal(QStringLiteral("E:/Keys"), QStringLiteral("exFAT"), false);
+    QVERIFY2(refusal.contains(QStringLiteral("E:\\Keys")), qPrintable(refusal));
+    QVERIFY2(refusal.contains(QStringLiteral("exFAT")), qPrintable(refusal));
+    QVERIFY2(refusal.contains(QStringLiteral("NTFS")), qPrintable(refusal));
+}
+
+// The rule above decides on what it is told. This asks Windows about whatever is attached, so on a
+// machine with a FAT32 or exFAT drive it proves the whole check; on one without, it has nothing to
+// visit and the rule's own test stands alone.
+void BackupBitlockerKeysActionTests::
+    screenBackupLocation_refusesAnAttachedDriveThatKeepsNoPermissions() {
+    for (const QStorageInfo& volume : QStorageInfo::mountedVolumes()) {
+        const QString file_system = QString::fromLatin1(volume.fileSystemType());
+        if (file_system.compare(QStringLiteral("exFAT"), Qt::CaseInsensitive) != 0 &&
+            !file_system.startsWith(QStringLiteral("FAT"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        QString reason;
+        const QString location = volume.rootPath() + QStringLiteral("BitLockerKeys");
+        QVERIFY(Action::screenBackupLocation(location, reason).isEmpty());
+        QVERIFY2(reason.contains(file_system), qPrintable(reason));
+    }
 }
 
 QTEST_GUILESS_MAIN(BackupBitlockerKeysActionTests)

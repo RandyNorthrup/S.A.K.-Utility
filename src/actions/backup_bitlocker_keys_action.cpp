@@ -98,6 +98,35 @@ static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
 /// @brief Win32 drive type of @p path's "X:\" root, or 0 (DRIVE_UNKNOWN) when the path
 ///        has no drive-letter root or the platform has no such concept. GetDriveTypeW
 ///        answers from the local mount table, so it does not itself touch the share.
+struct RootFileSystem {
+    QString name;
+    bool keeps_permissions{true};
+};
+
+/// What the drive holding @p path is formatted as. A drive that cannot be asked, one not there yet
+/// for instance, reads as fine here: creating the folder on it fails next, and says so.
+[[nodiscard]] RootFileSystem rootFileSystem(const QString& path) {
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
+    if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
+        return {};
+    }
+    constexpr DWORD kFileSystemNameChars = 64;
+    wchar_t name[kFileSystemNameChars] = {};
+    DWORD flags = 0;
+    if (GetVolumeInformationW(root.toStdWString().c_str(),
+                              nullptr,
+                              0,
+                              nullptr,
+                              nullptr,
+                              &flags,
+                              name,
+                              kFileSystemNameChars) == 0) {
+        return {};
+    }
+    return {QString::fromWCharArray(name), (flags & FILE_PERSISTENT_ACLS) != 0};
+}
+
 [[nodiscard]] unsigned int rootDriveType(const QString& path) {
     const QString root =
         QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
@@ -181,6 +210,12 @@ try {
     $acl.AddAccessRule($systemRule)
 
     Set-Acl -LiteralPath $path -AclObject $acl
+
+    # Read it back. On exFAT and FAT32 Set-Acl reports nothing and stores nothing, and the folder
+    # stays open to everyone, so a quiet Set-Acl proves nothing.
+    if (-not (Get-Acl -LiteralPath $path).AreAccessRulesProtected) {
+        throw 'The permissions did not stay on this folder.'
+    }
 
     # Apply same ACL to all child items
     Get-ChildItem -LiteralPath $path -Recurse -Force | ForEach-Object {
@@ -802,11 +837,24 @@ QString BackupBitlockerKeysAction::sameVolumeRefusal(const QString& location,
         return QStringLiteral(
                    "The backup location %1 is on BitLocker volume %2:, whose recovery key is in "
                    "this backup. If that volume is ever locked, its key would be locked with it. "
-                   "Choose a folder on another drive, such as a USB drive.")
+                   "Choose a folder on another drive formatted as NTFS.")
             .arg(QDir::toNativeSeparators(canonical))
             .arg(letter);
     }
     return {};
+}
+
+QString BackupBitlockerKeysAction::fileSystemRefusal(const QString& location,
+                                                     const QString& file_system,
+                                                     bool keeps_permissions) {
+    if (keeps_permissions) {
+        return {};
+    }
+    return QStringLiteral(
+               "%1 is on a drive formatted as %2, which cannot limit who reads a file, and "
+               "recovery keys are saved as readable text. Choose a folder on a drive formatted "
+               "as NTFS.")
+        .arg(QDir::toNativeSeparators(location), file_system);
 }
 
 QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_location,
@@ -848,6 +896,11 @@ QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_locat
                   canonical;
         return {};
     }
+    const RootFileSystem file_system = rootFileSystem(canonical);
+    refusal = fileSystemRefusal(canonical, file_system.name, file_system.keeps_permissions);
+    if (!refusal.isEmpty()) {
+        return {};
+    }
     return canonical;
 }
 
@@ -862,12 +915,13 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
     QString refusal;
     const QString location = screenBackupLocation(outputFolder(), refusal);
     if (location.isEmpty()) {
-        emitFailedResult("Refused the BitLocker backup location", refusal, start_time);
+        // The reason itself is the message: it is what the panel shows, and the fix is in it.
+        emitFailedResult(refusal, refusal, start_time);
         return false;
     }
     const QString same_volume = sameVolumeRefusal(location, m_volumes);
     if (!same_volume.isEmpty()) {
-        emitFailedResult("Refused the BitLocker backup location", same_volume, start_time);
+        emitFailedResult(same_volume, same_volume, start_time);
         return false;
     }
 

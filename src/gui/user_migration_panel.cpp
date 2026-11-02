@@ -329,8 +329,8 @@ QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_
         // folder on a BitLocker volume whose key it is backing up.
         const QString destination = QFileDialog::getExistingDirectory(
             this,
-            tr("Choose where to save the BitLocker recovery keys (use another drive, such as a "
-               "USB drive)"),
+            tr("Choose where to save the BitLocker recovery keys (use another drive formatted as "
+               "NTFS)"),
             QString(),
             QFileDialog::ShowDirsOnly);
         if (destination.isEmpty()) {

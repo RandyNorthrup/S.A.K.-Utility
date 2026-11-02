@@ -235,6 +235,12 @@ private:
     /// @param refusal      Out: the human-readable reason when the location is refused.
     /// @return The canonical absolute location, or an EMPTY string when refused (fail
     ///         closed -- the caller must not create or write anything).
+    /// @brief Why a folder on a drive of this kind cannot hold plaintext keys, or empty if it can.
+    /// Pure, so the rule can be tested on a machine with no FAT32 or exFAT drive attached.
+    [[nodiscard]] static QString fileSystemRefusal(const QString& location,
+                                                   const QString& file_system,
+                                                   bool keeps_permissions);
+
     [[nodiscard]] static QString screenBackupLocation(const QString& raw_location,
                                                       QString& refusal);
 
