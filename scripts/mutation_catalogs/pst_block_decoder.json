@@ -23,16 +23,16 @@
     {
       "id": "block-trailer-sig-check-inverted",
       "file": "src/core/pst_parser.cpp",
-      "find": "msPstComputeSig(file_offset, bid) != readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)",
-      "replace": "msPstComputeSig(file_offset, bid) == readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)",
+      "find": "if (msPstComputeSig(file_offset, trailer_bid) !=\n        readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {",
+      "replace": "if (msPstComputeSig(file_offset, trailer_bid) ==\n        readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {",
       "expect": "killed",
       "why": "ComputeSig(offset,bid) must EQUAL the trailer wSig; inverting the guard fails every authentic block so open() cannot read the root PC"
     },
     {
       "id": "block-trailer-bid-check-inverted",
       "file": "src/core/pst_parser.cpp",
-      "find": "trailer_bid != bid",
-      "replace": "trailer_bid == bid",
+      "find": "(trailer_bid & ~kBidReservedBit) != bid",
+      "replace": "(trailer_bid & ~kBidReservedBit) == bid",
       "expect": "killed",
       "why": "the trailer's own bid must EQUAL the BBT bid; inverting the guard fails every authentic block (open reads the root PC block and fails closed)"
     },

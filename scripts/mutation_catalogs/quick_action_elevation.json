@@ -31,8 +31,8 @@
     {
       "id": "bitlocker-empty-destination-uses-legacy-default",
       "file": "src/core/quick_action_controller.cpp",
-      "find": "    const QString backup_location = configured_backup_location.trimmed();",
-      "replace": "    const QString backup_location = configured_backup_location.trimmed().isEmpty() ? QStringLiteral(\"C:/SAK_Backups\") : configured_backup_location.trimmed();",
+      "find": "    const QString backup_location = output_folder.trimmed();",
+      "replace": "    const QString backup_location = output_folder.trimmed().isEmpty() ? QStringLiteral(\"C:/SAK_Backups\") : output_folder.trimmed();",
       "expect": "killed",
       "why": "testBitLockerPayloadHasNoDefaultDestination requires missing session provenance to remain an empty payload that the elevated helper refuses."
     }

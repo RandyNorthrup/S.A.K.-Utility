@@ -110,12 +110,14 @@ jobs:
         "CONFIGURE EXIT: $configureExit"
         exit $configureExit
 
-    # Every target: release readiness runs the certifier and HFS tool self-tests, which need the
-    # certifier executables, not only the app.
+    # What ships and what release readiness runs: the app and everything it stages, the browser
+    # extension package, and the certifier its filesystem self-tests drive. Not the test executables:
+    # this workflow runs none of them, and the whole tree takes about 90 minutes and 17 GB on one
+    # runner against this job's 180 minutes.
     - name: Build
       shell: pwsh
       run: |
-        cmake --build build --config Release --parallel
+        cmake --build build --config Release --parallel --target sak_utility sak_stage_browser_crx partition_filesystem_probe_certifier
         $buildExit = $LASTEXITCODE
         "BUILD EXIT: $buildExit"
         exit $buildExit

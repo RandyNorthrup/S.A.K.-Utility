@@ -6,19 +6,19 @@
   "mutants": [
     {
       "id": "app-action-output-restores-appdata-fallback",
-      "file": "src/gui/ai_assistant_panel.cpp",
-      "find": "    QString backup_dir;",
-      "replace": "    QString backup_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral(\"/app_actions\");",
+      "file": "src/core/app_action_service.cpp",
+      "find": "        return by_thread.value(QThread::currentThreadId());",
+      "replace": "        return by_thread.value(QThread::currentThreadId(), QStringLiteral(\"C:/SAK_Backups/app_actions\"));",
       "expect": "killed",
-      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires no-session output to stay empty instead of escaping to an AppData fallback, and requires active-session output to use private staging rather than the managed artifact tree."
+      "why": "appActionStagingBelongsToTheCallNotTheSession requires the service to hold no output directory between calls, so nothing can write to a shared folder outside a call's private staging."
     },
     {
-      "id": "existing-service-is-not-retargeted",
+      "id": "call-is-not-given-its-private-staging",
       "file": "src/gui/ai_assistant_panel.cpp",
-      "find": "        m_appActionService->setOutputDirectory(backup_dir);",
-      "replace": "        m_appActionService->setOutputDirectory(QString());",
+      "find": "            output_directory.emplace(*m_appActionService, staging->path());",
+      "replace": "            output_directory.emplace(*m_appActionService, QString());",
       "expect": "killed",
-      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires a new session and a renamed session to retarget the existing service to a fresh private staging directory."
+      "why": "appActionStagingBelongsToTheCallNotTheSession requires each call's action to see its own fresh private staging directory, one per call and never the session's artifact root."
     },
     {
       "id": "staged-artifact-reparse-refusal-disabled",

@@ -23,8 +23,8 @@
     {
       "id": "display-text-selects-access-policy",
       "file": "src/gui/ai_assistant_panel.cpp",
-      "find": "    const QVariant mode_value = m_accessModeCombo->currentData();",
-      "replace": "    const QVariant mode_value = m_accessModeCombo->currentText() == QStringLiteral(\"Unattended Full Access\") ? static_cast<int>(ai::AiAccessMode::UnattendedFullAccess) : static_cast<int>(ai::AiAccessMode::ChatAndResearch);",
+      "find": "                                    : m_accessModeCombo->currentData();",
+      "replace": "                                    : (m_accessModeCombo->currentText() == QStringLiteral(\"Unattended Full Access\") ? QVariant(static_cast<int>(ai::AiAccessMode::UnattendedFullAccess)) : m_accessModeCombo->currentData());",
       "expect": "killed",
       "why": "accessModePolicyUsesTypedValueNotDisplayText changes localized display labels and requires item data, not text, to choose the trusted policy."
     },
