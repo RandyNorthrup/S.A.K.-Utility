@@ -8,6 +8,27 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Non-English subjects in an MBOX** - Email Inspector read an MBOX's encoded headers as they stand in
+  the file, so a subject or sender in another language showed as `=?UTF-8?B?...?=` and a search for the
+  real words missed it. Subjects, senders, recipients and attachment names now show and search as their
+  real text, in any character set Windows knows. A header that cannot be decoded shows as it is in the
+  file. The raw headers view still shows the file's own text.
+- **A large MBOX opens far faster** - Counting the messages in a 1.8 GB mailbox took over five minutes,
+  because each line of the file set aside 100 MB to read into. It now takes about six seconds.
+- **Has attachments in an MBOX** - The tooltip in the message list called nearly all mail attached,
+  because it went by the headers alone. It now looks at the parts of the message, and agrees with what
+  opening the message lists. The Has attachment filter uses the same answer.
+- **Attachments and pictures in exported mail** - The MBOX and EML writers marked any attachment with a
+  Content-ID as inline, which real stores give to ordinary files, so a mail program could hide it. An
+  attachment is inline only when the message's HTML shows it.
+- **All-day events on the right day** - Outlook stores an all-day event as midnight where it was made,
+  in UTC, so an event made east of UTC with no time zone stored showed the day before and exported as a
+  timed event. All-day events now show on their own date in the Calendar window, the item view, CSV and
+  searches, and always export to ICS as a date.
+- **Screen readers read status text** - Many status lines and captions told a screen reader their
+  purpose in place of what they said: it heard "Access mode status" and not the status. They now read
+  their text, with the purpose as their description. Pictures keep a name and gained a description.
+  Controls in the dialogs that had no name for a screen reader now have one.
 - **Email search filters** - Email Inspector's search has a Filters button, with From and To dates,
   Has attachment, and a type of item: Email, Calendar, Contact, Task, Note or Journal. They start off,
   and a search with none set works as before. They apply to the search box and to Search in This

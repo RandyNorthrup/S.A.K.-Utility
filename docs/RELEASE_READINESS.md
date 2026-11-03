@@ -619,9 +619,10 @@ DESIGN DECISIONS, the owner may want to overrule:
 INCOMPLETE, VM smoke:
 
 - Flush Cache unelevated. `DnsFlushResolverCache` was not run here, because it changes this PC's DNS
-  state. If it needs an administrator after all, the button says "Failed to flush the DNS resolver
-  cache." `FeatureId::DnsCacheFlush` in `include/sak/elevation_tier.h` still says Elevated; nothing
-  reads that entry to gate anything.
+  state. Microsoft's pages for `ipconfig /flushdns` and `Clear-DnsClientCache` state no administrator
+  requirement, and do not say there is none, so this stays unproven. If it needs an administrator after
+  all, the button says "Failed to flush the DNS resolver cache." `FeatureId::DnsCacheFlush` in
+  `include/sak/elevation_tier.h` now says Standard, matching the action registry and the tooltip.
 - Diagnose on a Windows with no msdt.exe: the plan is tested, the launch of Settings is not. This PC
   has msdt.exe and it was not launched.
 - Restore Settings on a non-English Windows, end to end. The script's output is tested on this PC
@@ -635,10 +636,92 @@ INCOMPLETE, VM smoke:
 - The assistant's Unattended prompt and the workflow notice through a real model run. No paid API was
   called: the tests stop at the run or use the approval hook.
 
-INCOMPLETE, found and not fixed: 43 labels carry an explicit accessible name, which hides their text
-from UI Automation, so a screen reader hears "Access mode status" rather than the status. Each needs its
-own decision (some are images with no text), and the capture harness reads through it. `unlockMemory`
-in `src/core/secure_memory.cpp` has no caller since `lockMemory` went, and was not on the approved list.
+### Leftovers of rounds 5 and 4b (2026-11-02)
+
+**Tests and this PC's drives.** `tests/support/test_hardware_guard.cpp` is in every native `test_*`
+binary. Without `SAK_TEST_ALLOW_REAL_HARDWARE=1`, which only ci.yml and nightly.yml set, it refuses any
+open of a physical drive or of a volume other than the system drive's, from product code or Qt, and any
+process whose command line queries a drive, scans or repairs Windows, changes the network or runs the
+application, and any request for elevation. The test scripts that run the application exit 77, which CTest reports as skipped. A full
+local `ctest` is therefore held off the USB drives by these guards, and not only by reading the tests.
+What such a run can still touch:
+
+- `QStorageInfo` (mounted volume names, labels and free space), which asks Windows and not the disk.
+  `src/actions/generate_system_report_action.cpp`, `src/core/file_management_file_system.cpp`,
+  `src/gui/email_file_scanner_dialog.cpp` and test fixtures use it. Qt's own open of each volume for its
+  block size is refused like any other.
+- `FindFirstVolumeW` and the PnP device list (`SetupDi*`), which name volumes and disks without opening
+  them. The opens that follow are refused.
+- The system drive's own volume (`\\.\C:`), by the writer CLIs' OS-disk guard tests.
+- PowerShell tests run outside the guard. By reading them: the writer CLI tests name
+  `\\.\PhysicalDrive0` and are refused by string before anything opens it, and the Create Image lock
+  fixture mocks every storage cmdlet. None queries a real disk.
+- `TEMP` and `SAK_TEST_IMAGE_SCRATCH_ROOT`, where the image tests write: whichever drive they name.
+
+What the guard catches: a full run of the T2 labels on this PC, 298 tests, 296 passed and the 2 that run
+the application skipped, in 218 s. It has 21 test binaries with calls refused, and each would have reached
+a real drive before this. `test_image_flasher_panel`, `test_app_theme` and `test_accessibility_audit` open
+every physical drive by building the Image Flasher; `test_drive_scanner`, `test_drive_unmounter` and
+`test_flash_coordinator` open every volume; `test_app_theme` and
+`test_ai_assistant_panel_tool_dispatch` run the sensor script, and the latter the inventory script;
+`test_file_management_file_system` and `test_partition_manager_core` open GLOBALROOT disk paths; the rest
+open a volume through `QStorageInfo`. They pass with those calls refused. Twelve test functions that only
+the real answer can prove skip, and run in CI.
+
+Decisions the owner may overrule:
+
+1. **CI keeps reaching real hardware.** A hosted runner has no drive anyone cares about, and the real
+   sensor and report scripts, the application's start-up and the real drive listing are only proved
+   there. Tests fake what they can; a few run the real thing in CI only.
+2. **A refused call fails with access denied rather than ending the test**, so a panel that lists drives
+   at start-up carries on with none.
+3. **An all-day event with no zone rounds to the nearest midnight**, as the owner asked. That is right
+   from 11 hours behind UTC to 12 ahead. New Zealand in summer (+13), Samoa, Tonga and Kiribati land a
+   day early when the event stores no zone: their 11:00 UTC is the same reading as American Samoa's.
+4. **A word in a charset Windows does not know stays as written**, and so does broken encoding.
+5. **Has attachments counts what opening the message lists**, which includes a picture in the body:
+   a part that is not text, or that names a file.
+6. **A button with words on it needs no accessible name of its own.** Qt reads its words, which is the
+   rule the audit holds a named button to. The audit used to call such a button missing; adding a copy
+   to the 100 or so in the dialogs would only let the two drift apart. A button with only an icon still
+   needs a name.
+
+Accessibility audit. The audit lives in `src/gui/accessibility_audit.cpp`; the application's audit mode
+and `test_accessibility_audit` run the same code. It now holds a label to its text (a name that does not
+contain the words hides them) and an image to a description, and it walks 12 dialogs and wizards beside
+the main window: Email Attachments, Calendar, Contacts and File Scanner, File Properties, Image Flasher
+Settings, Install Summary, Linux and Windows ISO download, Per-User Customization, and the Backup and
+Restore wizards. It cannot reach dialogs built inside the function that runs them, 42 in all:
+`partition_manager_panel.cpp` (13, plus `PartitionOperationDialog`, private to that file and built by 14
+functions), `network_diagnostic_panel.cpp` (6), `advanced_uninstall_panel_dialogs.cpp` (5),
+`file_management_explorer_panel.cpp`, `organizer_panel.cpp`, `wifi_manager_panel.cpp` (4 each),
+`advanced_search_panel.cpp` (3), `ai_assistant_panel.cpp` (2), `user_profile_backup_wizard_pages.cpp` (1).
+A label whose text is empty when the audit looks and which has both a name and a description would pass
+it and hide its text later.
+
+Zones and limits, proved here on synthetic data: `test_pst_recurrence` compares every zone in this PC's
+Windows registry with Windows' own conversion, every hour of 2026, UTC to wall clock. It found two bugs in
+the conversion: the hour before daylight time starts read as daylight, and a change on New Year's Eve
+was judged by the wrong year's rule. `test_email_search_worker` holds the 10,000 limit on a PST.
+
+INCOMPLETE:
+
+- Import of an exported mailbox and ICS into a real mail client, as round 4b left it. An inline part is
+  now only one the HTML shows; no real client has been asked.
+- ICS time zone blocks against a real client. The conversions match Windows; the VTIMEZONE text is not
+  compared with anything.
+- The real application's accessibility audit over the new dialogs runs in T2 only, by standing rule.
+
+Found and not fixed:
+
+- `FeatureId` and `kFeatureElevationTable` in `include/sak/elevation_tier.h` are read only by tests.
+- `MigrationReport`: `selectAll`, `getSelectedCount`, `getMatchedCount`, `getUnmatchedCount`,
+  `getEntryCount`, `getMetadata`, `clear` and `ReportMetadata` have no caller outside its own test.
+- `ai_conversation_store.cpp` and `ai_trace_store.cpp` read JSONL with `QFile::readLine(4 MB)`, which sets
+  aside 4 MB per line: the shape of the mailbox index's slowness, and small for files that size.
+- `scripts/run_all_mutation_catalogs.py --validate` (T4) reports stale find-strings in
+  `ai_app_action_output.json`, `ai_prompt_role_routing.json`, `backup_file_codec.json`,
+  `pst_block_decoder.json` and `quick_action_elevation.json`.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
