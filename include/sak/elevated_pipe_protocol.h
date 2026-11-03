@@ -98,7 +98,8 @@ static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
 /// largest round number whose milliseconds still fit the int the process runner takes.
 inline constexpr int kElevatedTaskMinTimeoutSeconds = 5;
 inline constexpr int kElevatedTaskMaxTimeoutSeconds = 2'000'000;
-static_assert(kElevatedTaskMaxTimeoutSeconds <= INT_MAX / 1000,
+inline constexpr int kElevatedTaskMsPerSecond = 1000;
+static_assert(kElevatedTaskMaxTimeoutSeconds <= INT_MAX / kElevatedTaskMsPerSecond,
               "the longest task must still fit an int in milliseconds");
 
 /// @brief How long the helper lets a task run for a requested number of seconds, in milliseconds.
@@ -108,7 +109,7 @@ static_assert(kElevatedTaskMaxTimeoutSeconds <= INT_MAX / 1000,
                         : requested_seconds > kElevatedTaskMaxTimeoutSeconds
                             ? kElevatedTaskMaxTimeoutSeconds
                             : requested_seconds;
-    return clamped * 1000;
+    return clamped * kElevatedTaskMsPerSecond;
 }
 
 inline constexpr uint32_t kPipeFrameByteMask = 0xFF;

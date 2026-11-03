@@ -860,6 +860,76 @@ and the VM was restored to its `pre-thunderbird` snapshot afterward.
 Not proved by that: one Thunderbird, one zone, and ImportExportTools NG was not used; a dropped file goes through the
 same reader.
 
+### Round 6: Partition Manager and the administrator helper (2026-11-03)
+
+**The app could not talk to its own administrator helper from 2026-08-02 until this round.** Since `9aa76892` each
+end of the pipe checks which program is on the other end. Each compared a path from Qt, with forward slashes, against
+one from `QueryFullProcessImageNameW`, with backslashes. They never matched, so every task handed to the helper failed
+with connection error 411. Every test of the check passed both paths in one spelling, and nothing connected the two
+for real. A run of the real helper in the VM found it; the first run failed with 411 and the runs after the fix passed.
+Fixed in `2a9573e4`. Read anything in this file between those dates that says a helper task worked with that in mind.
+
+**What ran in the VM, on its own throwaway virtual disks.** The MacBook's `Windows 11` VM, 8 new VDIs on SATA, each
+found by its exact size and bus right before anything changed it. The app's real code through a throwaway driver that
+is not in the tree, with the real helper over the real pipe where marked. No window was involved, so this says nothing
+about the dialogs. The VM went back to its snapshot afterward and the VDIs were deleted.
+
+| Test | Result |
+|---|---|
+| BitLocker Key Backup to exFAT, no consent, in-process and through the helper | Refused, nothing created |
+| The same, with consent | Saved, all three kinds of file, and the result and log say not protected |
+| To FAT32 with consent | Saved, with the same words |
+| To NTFS, in-process and through the helper | Saved; folder inherits nothing and a file is closed to ordinary users (in-process run) |
+| To the BitLocker volume whose key is in the backup | Refused |
+| `convert.exe G: /FS:NTFS /NoSecurity` as shipped, on a labeled FAT32 volume | Failed: "An incorrect volume label was entered for this drive", exit 4 |
+| The app's convert script, labeled and unlabeled FAT32 | Exit 0, NTFS, label kept, file survived |
+| Split with a larger free area elsewhere | New partition starts where the first ends, ends where the first used to, file survived |
+| Recovery scan on NTFS, FAT32, exFAT as Windows formats them | Each found once, at its true offset |
+| BIOS boot repair on this EFI VM's boot disk | Refused before writing: no active partition |
+| The same script, its disk selection swapped to a throwaway MBR disk, S: held by another volume | Exit 0, a free letter used and taken away, S: left alone, `bootmgr` and `BCD` on the active partition |
+| Defrag on a disk Windows calls `Unspecified`, model `VBOX HARDDISK` | Exit 0, NoErrorsFound |
+| Data Recovery on raw `\\.\B:`, 2.08 GB, PDF at 693 MB | Read to the last byte, found, no warnings |
+| Data Recovery on a source that will not open | Says it could not read |
+| Helper task through the real pipe, 7,200 s asked, sleeping 3,700 s | Ran 3,701 s, succeeded, not timed out |
+
+**How long a whole-source scan takes.** It first tried all three signatures at every byte: 11.5 minutes for those 2.08
+GB in the VM, and about 8 MB/s on this PC with its image on USB, more than a week for 8 TB. `b430ffdc` looks for a
+signature's first byte first: 45 s in the VM with the same result, and the test's 512 MB image went from 62.5 s to 4.6 s.
+
+**INCOMPLETE, and why:**
+
+- UEFI boot repair's real run. It writes to the Windows that is running, and the VM's OS disk was off limits this
+  round. Its script text is tested and the free-letter function it shares with BIOS repair ran.
+- BIOS boot repair's positive path ran only with the script's disk selection swapped, because it rightly refuses this
+  EFI VM's boot disk. Neither branch was followed by a boot from that disk.
+- OS migration, a full format of a large disk, and a clone past one hour were not run. The new limit was proved with
+  a sleeping task through the real helper, and each script's limit by test.
+- No dialog ran on a real desktop: BitLocker's warning, the Data Recovery notice and Not Added to the Queue are tested
+  offscreen.
+- The Partition Manager pages' screenshots are not retaken.
+
+**DESIGN DECISIONS:**
+
+- The long limit is 23 days, not scaled to the disk. Scaling needs a guess at the disk's speed, and is wrong on the slow
+  one, which is the one that matters. Cancel is what ends a long job. Only layout changes keep a short limit.
+- Defrag's script follows its validator: a model name with HDD or HARD counts as a hard disk, since a VBOX disk reports
+  `Unspecified`. SSD and NVMe are refused first.
+- Boot Repair repairs the running Windows, and the text now says so. Repairing a Windows on an attached disk needs a way
+  to find that Windows' system partition, in both firmware branches, plus real boot tests.
+- OS migration keeps copying a running disk, and warns so. A snapshot needs per-volume VSS, reading each volume from its
+  shadow device and the raw regions around them, rebuilding the layout, and real boot tests. Too large for this round.
+- BitLocker Key Backup's no-person routes (AI Assistant, Unattended) refuse FAT32 and exFAT.
+
+**Writer B's items.** B1 limits, B2 wizard options, B3 and B4 Data Recovery, B7 refusals, B8 log text, B9 FAT in the
+recovery scan, B10 and B11 APFS, B12 BIOS repair, B13 Split, B14 Check Now, B15 labels and B16 Create Image are fixed. B5 is
+a warning only, as above. B6: "certified" is gone from user-visible text in Partition Manager, File Explorer, About, the
+writer tools and the assistant's prompt. No claim level changed, and nothing under `certification/` changed.
+
+**What no automated test covers.** Script text is asserted; the scripts themselves run only in the VM. Panel tests prove
+what a dialog offers and what it sends, offscreen. Nothing connects a real helper over a real pipe in CI:
+`identity_imageChecksCompareTheFileNotTheSlashes` tests the comparison, and this round's VM run is the only end-to-end
+proof, which is how the defect above lived for three months.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
