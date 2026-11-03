@@ -609,8 +609,8 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
     if (!encryption.credentials.isEmpty() &&
         operation.target.size_bytes > kMaximumApfsGeneratedEncryptedFormatBytes) {
         return invalidPartitionScript(QStringLiteral(
-            "APFS FileVault-encrypted format is certified for single-chunk containers up to "
-            "128 MiB; larger encrypted targets remain blocked"));
+            "APFS FileVault-encrypted format is limited to single-chunk containers up to "
+            "128 MiB; format a larger partition without encryption"));
     }
 
     const QString targetPath = rawPartitionTargetPath(operation);
@@ -637,7 +637,7 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                           encryption.powershell_args);
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe format-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -678,7 +678,7 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath));
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe repair-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -1165,7 +1165,7 @@ QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operat
         return QStringLiteral("APFS root-file mutation requires confirmation");
     }
     if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
-        return QStringLiteral("APFS root-file mutation requires certified COW capability");
+        return QStringLiteral("APFS root-file mutation requires the copy-on-write write engine");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
@@ -1226,7 +1226,7 @@ QString apfsSnapshotPrerequisiteBlocker(const PartitionOperation& operation,
         return QStringLiteral("APFS snapshot mutation requires confirmation");
     }
     if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
-        return QStringLiteral("APFS snapshot mutation requires certified COW capability");
+        return QStringLiteral("APFS snapshot mutation requires the copy-on-write write engine");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
@@ -1297,7 +1297,8 @@ QString apfsA7PrerequisiteBlocker(const PartitionOperation& operation,
         return QStringLiteral("APFS clone/hard link/resize requires confirmation");
     }
     if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
-        return QStringLiteral("APFS clone/hard link/resize requires certified COW capability");
+        return QStringLiteral(
+            "APFS clone/hard link/resize requires the copy-on-write write engine");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
@@ -3256,8 +3257,9 @@ QString osMigrationBootValidationScript() {
         "}); if ($active.Count -eq 0) { throw 'BIOS boot validation failed: no active partition on "
         "target disk' }; Write-Output 'BIOS validation passed: active partition found' }\n"
         "else { throw 'Boot validation failed: target disk partition style is RAW or unknown' }\n"
-        "Write-Output 'Next step: select the target disk in BIOS/UEFI boot order. If boot fails, "
-        "run Partition Manager Boot Repair on the target Windows install.'\n");
+        "Write-Output 'Next step: select the target disk in BIOS/UEFI boot order. If it does not "
+        "start, start the PC from Windows installation media and use Startup Repair. Boot Repair "
+        "in this app rebuilds only the Windows it is running on.'\n");
 }
 
 struct PrimaryLogicalScriptPayload {
@@ -3384,7 +3386,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                      .arg(operation.target.disk_number.value())
                      .arg(operation.target.partition_number.value())
                      .arg(uintArg(targetSize));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -3498,7 +3500,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
         PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(resize2fs.tool_path)) +
         QStringLiteral(" -p ") + PartitionScriptBuilder::quotePowerShell(targetPath) +
         QStringLiteral(" ") + PartitionScriptBuilder::quotePowerShell(resizeSizeArg);
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -4403,7 +4405,7 @@ static PartitionScript buildCreateApfsScript(const PartitionOperation& operation
     out.dry_run_script =
         out.preview +
         QStringLiteral("\nCreate partition, derive raw target, run APFS writer helper");
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -4437,7 +4439,7 @@ static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
     out.dry_run_script = out.preview +
                          QStringLiteral("\nCreate partition, derive raw target, run ") +
                          PartitionScriptBuilder::quotePowerShell(resolution.tool_path);
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -4757,51 +4759,25 @@ PartitionScript PartitionScriptBuilder::buildDeleteScript(
     return out;
 }
 
-PartitionScript PartitionScriptBuilder::buildFormatScript(
-    const PartitionOperation& operation) const {
-    const QString fs =
-        payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"));
-    const QString label = payloadString(operation, QStringLiteral("label"), QStringLiteral("Data"));
-    if (isNonNativeFileSystemToolOperation(operation)) {
-        const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
-        if (!targetBlocker.isEmpty()) {
-            return invalidScript(targetBlocker);
-        }
-        if (isLinuxSwapFileSystemToken(fs)) {
-            return buildLinuxSwapFormatScript(operation, label);
-        }
-        if (isApfsFileSystemToken(fs)) {
-            return buildApfsRawFormatScript(operation, label);
-        }
-        const QString targetPath = rawPartitionTargetPath(operation);
-        const auto command = PartitionFileSystemToolRunner::buildFormatCommand(
-            fs,
-            targetPath,
-            label,
-            payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
-        ExternalFileSystemToolScriptRequest request;
-        request.operation_name = PartitionFileSystemToolRunner::formatOperation();
-        request.preview = QStringLiteral("Format Disk %1 Partition %2 as %3 with bundled %4")
-                              .arg(operation.target.disk_number.value())
-                              .arg(operation.target.partition_number.value())
-                              .arg(fs.toLower(), command.tool_id);
-        request.accepted_exit_codes = {QStringLiteral("0")};
-        request.command = command;
-        return buildExternalFileSystemToolScript(operation, request);
-    }
+namespace {
+
+// Format-Volume, for the file systems Windows formats itself.
+PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
+                                         const QString& fs,
+                                         const QString& label) {
     const QString fullArg = payloadBool(operation, QStringLiteral("full_format"))
                                 ? QStringLiteral(" -Full")
                                 : QString();
     const uint64_t allocationUnit = payloadUInt64(operation,
                                                   QStringLiteral("allocation_unit_bytes"));
     if (operation.target.partition_number.value() == 0 || operation.target.size_bytes == 0) {
-        return invalidScript(QStringLiteral("Format requires a partition identity"));
+        return invalidPartitionScript(QStringLiteral("Format requires a partition identity"));
     }
-    if (!isSupportedFileSystem(fs)) {
-        return invalidScript(QStringLiteral("Unsupported file system"));
+    if (!PartitionScriptBuilder::isSupportedFileSystem(fs)) {
+        return invalidPartitionScript(QStringLiteral("Unsupported file system"));
     }
     if (!isSupportedAllocationUnitSize(allocationUnit)) {
-        return invalidScript(QStringLiteral("Unsupported allocation unit size"));
+        return invalidPartitionScript(QStringLiteral("Unsupported allocation unit size"));
     }
 
     PartitionScript out;
@@ -4809,14 +4785,54 @@ PartitionScript PartitionScriptBuilder::buildFormatScript(
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value())
                       .arg(fs.toUpper());
-    out.script =
-        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-        QStringLiteral(
-            "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 "
-            "-Confirm:$false\n")
-            .arg(fs.toUpper(), quotePowerShell(label), fullArg, allocationUnitArg(operation));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 QStringLiteral(
+                     "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 "
+                     "-Confirm:$false\n")
+                     .arg(fs.toUpper(),
+                          PartitionScriptBuilder::quotePowerShell(label),
+                          fullArg,
+                          allocationUnitArg(operation));
+    out.timeout_seconds = fullArg.isEmpty() ? kPartitionFormatTaskTimeoutSeconds
+                                            : kPartitionLongTaskTimeoutSeconds;
     return out;
+}
+
+}  // namespace
+
+PartitionScript PartitionScriptBuilder::buildFormatScript(
+    const PartitionOperation& operation) const {
+    const QString fs =
+        payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"));
+    const QString label = payloadString(operation, QStringLiteral("label"), QStringLiteral("Data"));
+    if (!isNonNativeFileSystemToolOperation(operation)) {
+        return buildWindowsFormatScript(operation, fs, label);
+    }
+    const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
+    if (!targetBlocker.isEmpty()) {
+        return invalidScript(targetBlocker);
+    }
+    if (isLinuxSwapFileSystemToken(fs)) {
+        return buildLinuxSwapFormatScript(operation, label);
+    }
+    if (isApfsFileSystemToken(fs)) {
+        return buildApfsRawFormatScript(operation, label);
+    }
+    const QString targetPath = rawPartitionTargetPath(operation);
+    const auto command = PartitionFileSystemToolRunner::buildFormatCommand(
+        fs,
+        targetPath,
+        label,
+        payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
+    ExternalFileSystemToolScriptRequest request;
+    request.operation_name = PartitionFileSystemToolRunner::formatOperation();
+    request.preview = QStringLiteral("Format Disk %1 Partition %2 as %3 with bundled %4")
+                          .arg(operation.target.disk_number.value())
+                          .arg(operation.target.partition_number.value())
+                          .arg(fs.toLower(), command.tool_id);
+    request.accepted_exit_codes = {QStringLiteral("0")};
+    request.command = command;
+    return buildExternalFileSystemToolScript(operation, request);
 }
 
 PartitionScript PartitionScriptBuilder::buildSetDriveLetterScript(
@@ -4900,7 +4916,7 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
     out.script =
         commonHeader(out.preview) +
         QStringLiteral("Repair-Volume -DriveLetter %1 -Scan -Verbose\n").arg(letter.toUpper());
-    out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -4940,7 +4956,7 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") +
                          input.command + QStringLiteral(" ") +
                          quotePowerShell(rawPartitionTargetPath(operation));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -4976,7 +4992,7 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
                           quotePowerShell(snapshotName));
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + command +
                          QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5017,7 +5033,7 @@ PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
                           nameArgs);
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + command +
                          QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5132,7 +5148,7 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
     out.dry_run_script = out.preview + QStringLiteral("\n") +
                          quotePowerShell(resolution.tool_path) + QStringLiteral(" ") +
                          request.command.arguments.join(QLatin1Char(' '));
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5168,6 +5184,22 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
     return out;
 }
 
+QString PartitionScriptBuilder::bootSectorKindFunctionScript() {
+    return QStringLiteral(
+        "function Get-SakBootSectorKind([byte[]]$s) {\n"
+        "  if ($s.Length -lt 512 -or $s[510] -ne 0x55 -or $s[511] -ne 0xAA) { return $null }\n"
+        "  $ascii = [System.Text.Encoding]::ASCII\n"
+        "  $oem = $ascii.GetString($s, 3, 8)\n"
+        "  if ($oem -ceq 'NTFS    ') { return 'NTFS' }\n"
+        "  if ($oem -ceq 'EXFAT   ') { return 'exFAT' }\n"
+        "  if ($ascii.GetString($s, 82, 8) -ceq 'FAT32   ') { return 'FAT32' }\n"
+        "  $fat = $ascii.GetString($s, 54, 8)\n"
+        "  if ($fat -ceq 'FAT16   ' -or $fat -ceq 'FAT12   ' -or $fat -ceq 'FAT     ') { "
+        "return $fat.Trim() }\n"
+        "  return $null\n"
+        "}\n");
+}
+
 PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
     const PartitionOperation& operation) const {
     if (operation.target.kind != PartitionTargetKind::Disk) {
@@ -5184,7 +5216,7 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
                       .arg(fullScan ? QStringLiteral("Full") : QStringLiteral("Quick"))
                       .arg(operation.target.disk_number.value());
     out.script =
-        commonHeader(out.preview) +
+        commonHeader(out.preview) + bootSectorKindFunctionScript() +
         QStringLiteral(
             "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
             "$path = '\\\\.\\PhysicalDrive%1'\n"
@@ -5198,9 +5230,10 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
             "  for ($offset = [uint64]0; $offset -lt $limit; $offset += $step) {\n"
             "    [void]$stream.Seek([int64]$offset, [System.IO.SeekOrigin]::Begin)\n"
             "    [void]$stream.Read($buffer, 0, $buffer.Length)\n"
-            "    $oem = [System.Text.Encoding]::ASCII.GetString($buffer, 3, 8)\n"
-            "    if ($oem -match 'NTFS|FAT32|FAT16|EXFAT') {\n"
-            "      Write-Output \"Candidate partition boot sector at byte offset $offset ($oem)\"\n"
+            "    $kind = Get-SakBootSectorKind $buffer\n"
+            "    if ($kind) {\n"
+            "      Write-Output \"Candidate partition boot sector at byte offset $offset "
+            "($kind)\"\n"
             "    }\n"
             "  }\n"
             "} finally { $stream.Dispose() }\n")
@@ -5573,13 +5606,23 @@ PartitionScript PartitionScriptBuilder::buildSplitScript(
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
+                     "$sakSplitEnd = [uint64]$p.Offset + [uint64]$p.Size\n"
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n"
-                     "$new = New-Partition -DiskNumber %1 -UseMaximumSize -AssignDriveLetter\n"
+                     "$sakFirst = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
+                     "-ErrorAction Stop\n"
+                     "$sakAlign = [uint64]1048576\n"
+                     "$sakNewOffset = [uint64]$sakFirst.Offset + [uint64]$sakFirst.Size + "
+                     "$sakAlign - 1\n"
+                     "$sakNewOffset = $sakNewOffset - ($sakNewOffset % $sakAlign)\n"
+                     "if ($sakNewOffset -ge $sakSplitEnd) { throw 'Split leaves no room for a "
+                     "second partition' }\n"
+                     "$new = New-Partition -DiskNumber %1 -Offset $sakNewOffset -Size "
+                     "($sakSplitEnd - $sakNewOffset) -AssignDriveLetter\n"
                      "Format-Volume -Partition $new -FileSystem %4 -Confirm:$false\n")
                      .arg(operation.target.disk_number.value())
                      .arg(operation.target.partition_number.value())
                      .arg(uintArg(first_size), fs.toUpper());
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5592,11 +5635,14 @@ PartitionScript PartitionScriptBuilder::buildConvertFileSystemScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Convert %1: to NTFS").arg(letter.toUpper());
-    out.script = commonHeader(out.preview) + QStringLiteral(
-                                                 "convert.exe %1: /FS:NTFS /NoSecurity\n"
-                                                 "exit $LASTEXITCODE\n")
-                                                 .arg(letter.toUpper());
-    out.timeout_seconds = kPartitionConversionTaskTimeoutSeconds;
+    out.script = commonHeader(out.preview) +
+                 QStringLiteral(
+                     "$sakLabel = \"$((Get-Volume -DriveLetter %1 -ErrorAction "
+                     "Stop).FileSystemLabel)\"\n"
+                     "$sakLabel | convert.exe %1: /FS:NTFS /NoSecurity /X\n"
+                     "exit $LASTEXITCODE\n")
+                     .arg(letter.toUpper());
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5657,6 +5703,79 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     return out;
 }
 
+QString PartitionScriptBuilder::freeBootLetterFunctionScript() {
+    return QStringLiteral(
+        "function Get-SakFreeBootLetter([string]$preferred) {\n"
+        "  $used = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { "
+        "$_.Name.Substring(0, 1).ToUpperInvariant() })\n"
+        "  $used += @(Get-Partition -ErrorAction Stop | Where-Object { "
+        "[char]::IsLetter($_.DriveLetter) } | ForEach-Object { "
+        "([string]$_.DriveLetter).ToUpperInvariant() })\n"
+        "  foreach ($candidate in @($preferred) + @(90..68 | ForEach-Object { [string][char]$_ })) "
+        "{\n"
+        "    if ($used -notcontains $candidate) { return $candidate }\n"
+        "  }\n"
+        "  throw 'Boot repair found no free drive letter for the boot partition'\n"
+        "}\n");
+}
+
+namespace {
+
+QString biosBootRepairBody(const QString& windows_path, const QString& preferred_letter) {
+    // bcdboot writes to the partition the firmware starts from, which seldom has a letter, so
+    // this gives it one for the repair and takes it away again.
+    return QStringLiteral(
+               "$sakBootDisk = @(Get-Disk | Where-Object { $_.IsBoot }) | Select-Object -First 1\n"
+               "if (-not $sakBootDisk) { throw 'Boot repair could not find the disk this Windows "
+               "started from' }\n"
+               "$sakSystem = @(Get-Partition -DiskNumber $sakBootDisk.Number | Where-Object { "
+               "$_.IsActive }) | Select-Object -First 1\n"
+               "if (-not $sakSystem) { throw 'BIOS boot repair needs an active partition on the "
+               "disk this Windows started from, and there is none' }\n"
+               "$sakLettered = $false\n"
+               "if ([char]::IsLetter($sakSystem.DriveLetter)) { $sakBootLetter = "
+               "[string]$sakSystem.DriveLetter } else {\n"
+               "  $sakBootLetter = Get-SakFreeBootLetter %2\n"
+               "  Add-PartitionAccessPath -DiskNumber $sakSystem.DiskNumber -PartitionNumber "
+               "$sakSystem.PartitionNumber -AccessPath \"${sakBootLetter}:\\\"\n"
+               "  $sakLettered = $true\n"
+               "}\n"
+               "$code = 1\n"
+               "try {\n"
+               "  bcdboot.exe %1 /s \"${sakBootLetter}:\" /f BIOS\n"
+               "  $code = $LASTEXITCODE\n"
+               "  bootsect.exe /nt60 \"${sakBootLetter}:\" /mbr\n"
+               "  if ($LASTEXITCODE -ne 0 -and $code -eq 0) { $code = $LASTEXITCODE }\n"
+               "} finally {\n"
+               "  if ($sakLettered) { Remove-PartitionAccessPath -DiskNumber "
+               "$sakSystem.DiskNumber -PartitionNumber $sakSystem.PartitionNumber -AccessPath "
+               "\"${sakBootLetter}:\\\" }\n"
+               "}\n"
+               "reagentc.exe /info\n"
+               "exit $code\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(windows_path),
+             PartitionScriptBuilder::quotePowerShell(preferred_letter));
+}
+
+QString uefiBootRepairBody(const QString& windows_path, const QString& preferred_letter) {
+    // Never a letter something else holds: mountvol would fail, bcdboot would write its files
+    // to that drive, and the clean-up would take that drive's letter away.
+    return QStringLiteral(
+               "$sakBootLetter = Get-SakFreeBootLetter %2\n"
+               "mountvol \"${sakBootLetter}:\" /S\n"
+               "if ($LASTEXITCODE -ne 0) { throw \"Boot repair could not mount the EFI System "
+               "Partition as ${sakBootLetter}:\" }\n"
+               "$code = 1\n"
+               "try { bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI; $code = $LASTEXITCODE }\n"
+               "finally { mountvol \"${sakBootLetter}:\" /D }\n"
+               "reagentc.exe /info\n"
+               "exit $code\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(windows_path),
+             PartitionScriptBuilder::quotePowerShell(preferred_letter));
+}
+
+}  // namespace
+
 PartitionScript PartitionScriptBuilder::buildBootRepairScript(
     const PartitionOperation& operation) const {
     // No guessed C:\Windows: the caller names the installation whose boot files are rebuilt
@@ -5680,26 +5799,10 @@ PartitionScript PartitionScriptBuilder::buildBootRepairScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Repair %1 boot files for %2").arg(boot_mode, windows_path);
-    if (boot_mode == QStringLiteral("BIOS")) {
-        out.script = commonHeader(out.preview) +
-                     QStringLiteral(
-                         "bcdboot.exe %1 /s %2: /f BIOS\n"
-                         "$code = $LASTEXITCODE\n"
-                         "bootsect.exe /nt60 %2: /mbr\n"
-                         "if ($LASTEXITCODE -ne 0 -and $code -eq 0) { $code = $LASTEXITCODE }\n"
-                         "reagentc.exe /info\n"
-                         "exit $code\n")
-                         .arg(quotePowerShell(windows_path), esp_letter.toUpper());
-    } else {
-        out.script = commonHeader(out.preview) +
-                     QStringLiteral(
-                         "mountvol %1: /S\n"
-                         "try { bcdboot.exe %2 /s %1: /f UEFI; $code = $LASTEXITCODE }\n"
-                         "finally { mountvol %1: /D }\n"
-                         "reagentc.exe /info\n"
-                         "exit $code\n")
-                         .arg(esp_letter.toUpper(), quotePowerShell(windows_path));
-    }
+    out.script = commonHeader(out.preview) + freeBootLetterFunctionScript();
+    out.script += boot_mode == QStringLiteral("BIOS")
+                      ? biosBootRepairBody(windows_path, esp_letter.toUpper())
+                      : uefiBootRepairBody(windows_path, esp_letter.toUpper());
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }
@@ -5718,7 +5821,7 @@ PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
                      "fsutil behavior query DisableDeleteNotify\n"
                      "Optimize-Volume -DriveLetter %1 -ReTrim -Verbose\n")
                      .arg(letter.toUpper());
-    out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
 
@@ -5744,10 +5847,9 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
                      "if ($mediaText -match '(?i)SSD|NVMe') {\n"
                      "    throw \"Refusing HDD defrag on SSD/NVMe media: $mediaText\"\n"
                      "}\n"
-                     "$diskIsHdd = \"$($disk.MediaType)\" -match '(?i)^HDD$'\n"
-                     "$physicalIsHdd = $physical -and \"$($physical.MediaType)\" -match "
-                     "'(?i)^HDD$'\n"
-                     "if (-not $diskIsHdd -and -not $physicalIsHdd) {\n"
+                     "$hddText = \"$($disk.FriendlyName) $($disk.Model) $($disk.MediaType)\"\n"
+                     "if ($physical) { $hddText = \"$hddText $($physical.MediaType)\" }\n"
+                     "if ($hddText -notmatch '(?i)HDD|HARD') {\n"
                      "    throw \"Could not confirm HDD media classification: $mediaText\"\n"
                      "}\n"
                      "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n"

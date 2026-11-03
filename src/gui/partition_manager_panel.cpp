@@ -1966,12 +1966,9 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
-    void configure(const PartitionDiskInfo* source_disk,
-                   uint64_t target_bytes,
-                   const QString& layout_mode) {
+    void configure(const PartitionDiskInfo* source_disk, uint64_t target_bytes) {
         m_source_disk = source_disk;
         m_target_bytes = target_bytes;
-        m_layout_mode = layout_mode;
         update();
     }
 
@@ -2026,24 +2023,7 @@ private:
                      .color = QColor(QString::fromLatin1(ui::kColorError)),
                      .used_percent = 0}};
         }
-        return m_layout_mode.startsWith(QStringLiteral("Fit")) ? fittedTargetSegments()
-                                                               : keptTargetSegments();
-    }
-
-    [[nodiscard]] QVector<ClonePreviewSegment> fittedTargetSegments() const {
         auto segments = sourceSegments();
-        const uint64_t source_bytes = std::max(sourceTotalBytes(), kDiskMapMinimumBytes);
-        const uint64_t target_bytes = targetTotalBytes();
-        for (auto& segment : segments) {
-            segment.bytes = clonePreviewScaledBytes(segment.bytes, target_bytes, source_bytes);
-        }
-        return segments;
-    }
-
-    [[nodiscard]] QVector<ClonePreviewSegment> keptTargetSegments() const {
-        auto segments = sourceSegments();
-        const uint64_t source_bytes = sourceTotalBytes();
-        const uint64_t target_bytes = targetTotalBytes();
         if (target_bytes > source_bytes) {
             segments.append({.label = tr("Unallocated"),
                              .bytes = target_bytes - source_bytes,
@@ -2136,7 +2116,6 @@ private:
 
     const PartitionDiskInfo* m_source_disk{nullptr};
     uint64_t m_target_bytes{0};
-    QString m_layout_mode;
 };
 
 struct ApplyDiffSegment {
@@ -3236,6 +3215,12 @@ public:
 
     void setPreviewText(const QString& text) { m_preview->setText(text); }
 
+    void setAcceptText(const QString& text) {
+        if (m_accept_button != nullptr) {
+            m_accept_button->setText(text);
+        }
+    }
+
     void setAcceptEnabled(bool enabled) {
         if (m_accept_button != nullptr) {
             m_accept_button->setEnabled(enabled);
@@ -3268,8 +3253,9 @@ bool nonNativeCheckHfsCatalogMode(const QString& mode) {
     return mode == QString::fromLatin1(kHfsCatalogCheckOperation);
 }
 
-void syncNonNativeCheckDialog(const NonNativeCheckDialogControls& controls) {
-    const bool repair_mode = nonNativeCheckRepairMode(controls.mode);
+// Moves the target between the read-only one and the writable one as the mode changes, and leaves
+// anything the person typed alone.
+void syncNonNativeCheckTarget(const NonNativeCheckDialogControls& controls, bool repair_mode) {
     const QString current_target = controls.target_path->text().trimmed();
     if (repair_mode && current_target == controls.read_only_target &&
         !controls.write_target.isEmpty()) {
@@ -3277,6 +3263,11 @@ void syncNonNativeCheckDialog(const NonNativeCheckDialogControls& controls) {
     } else if (!repair_mode && current_target == controls.write_target) {
         controls.target_path->setText(controls.read_only_target);
     }
+}
+
+void syncNonNativeCheckDialog(const NonNativeCheckDialogControls& controls) {
+    const bool repair_mode = nonNativeCheckRepairMode(controls.mode);
+    syncNonNativeCheckTarget(controls, repair_mode);
 
     const QString target = controls.target_path->text().trimmed();
     controls.target_path->setReadOnly(repair_mode);
@@ -3287,6 +3278,8 @@ void syncNonNativeCheckDialog(const NonNativeCheckDialogControls& controls) {
     controls.repair_confirm->setVisible(repair_mode);
     controls.dialog->setAcceptEnabled(!target.isEmpty() &&
                                       (!repair_mode || controls.repair_confirm->isChecked()));
+    controls.dialog->setAcceptText(repair_mode ? QObject::tr("Add to Queue")
+                                               : QObject::tr("Check Now"));
     controls.dialog->setPreviewText(
         repair_mode ? QObject::tr("Queue %1 repair for %2.").arg(controls.file_system, target)
                     : QObject::tr("Run read-only check for %1.").arg(target));
@@ -3527,10 +3520,6 @@ QString gptEfiSystemType() {
     return QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}");
 }
 
-QString gptApfsType() {
-    return QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}");
-}
-
 QString partitionTypePayloadValue(const QString& key, const QString& value) {
     return key + QLatin1Char(':') + value;
 }
@@ -3555,8 +3544,6 @@ QComboBox* createPartitionTypeSelector(QWidget* parent, const PartitionDiskInfo*
             combo, QObject::tr("GPT Recovery"), QStringLiteral("gpt"), gptRecoveryType());
         addPartitionTypeChoice(
             combo, QObject::tr("GPT EFI System"), QStringLiteral("gpt"), gptEfiSystemType());
-        addPartitionTypeChoice(
-            combo, QObject::tr("GPT Apple APFS"), QStringLiteral("gpt"), gptApfsType());
     } else if (partition_scheme == QStringLiteral("MBR")) {
         addPartitionTypeChoice(combo,
                                QObject::tr("MBR IFS/NTFS primary"),
@@ -3721,7 +3708,7 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     widgets.label = new QLineEdit(QStringLiteral("Data"), &dialog);
     widgets.label->setAccessibleName(QObject::tr("Partition label"));
     widgets.drive_letter = createDriveLetterSelector(&dialog);
-    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow full format)"),
                                         &dialog);
     nameConfirmationBox(widgets.full_format, QObject::tr("Overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
@@ -4204,7 +4191,7 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.apfs_recovery_key->setEchoMode(QLineEdit::Password);
     widgets.apfs_recovery_key->setAccessibleName(QObject::tr("APFS personal recovery key"));
     widgets.apfs_recovery_key->setPlaceholderText(QObject::tr("Optional personal recovery key"));
-    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow full format)"),
                                         &dialog);
     nameConfirmationBox(widgets.full_format, QObject::tr("Overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
@@ -5246,7 +5233,7 @@ QuickPartitionWidgets addQuickPartitionControls(PartitionOperationDialog& dialog
     widgets.allocation_unit = createAllocationUnitSelector(&dialog);
     widgets.label_prefix = new QLineEdit(QStringLiteral("Data"), &dialog);
     widgets.label_prefix->setAccessibleName(QObject::tr("Quick partition label prefix"));
-    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow full format)"),
                                         &dialog);
     nameConfirmationBox(widgets.full_format, QObject::tr("Quick partition overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
@@ -7639,7 +7626,8 @@ void showSpaceAnalyzerDialog(QWidget* parent, const QString& root_path, const QS
 
 // Run the (potentially long) offline-image carve off the GUI thread behind a modal progress
 // dialog whose Cancel sets the engine's cooperative-cancel flag, so the UI stays responsive and
-// the scan is abortable. Returns the scan result (scan_cancelled set if the user cancelled).
+// the scan is abortable. Returns the scan result (stopped_by_cancel set if the user cancelled, with
+// whatever had been found by then).
 FileRecoveryScanResult runFileRecoveryScanWithProgress(QWidget* parent,
                                                        const FileRecoveryScanOptions& options,
                                                        const QString& source_path) {
@@ -7681,7 +7669,7 @@ FileRecoveryScanResult runFileRecoveryScanWithProgress(QWidget* parent,
     }));
     dialog.exec();
     // If the user cancelled, the carve observes the flag and returns promptly with
-    // scan_cancelled set; result() waits only for that brief unwind.
+    // stopped_by_cancel set; result() waits only for that brief unwind.
     return watcher.result();
 }
 
@@ -7774,6 +7762,16 @@ bool showFileRecoveryReviewDialog(QWidget* parent,
     summary->setAccessibleDescription(QObject::tr("Data recovery summary"));
     summary->setWordWrap(true);
     layout->addWidget(summary);
+    // A partial scan still gives back what it found, and says it is partial.
+    if (!scan.warnings.isEmpty()) {
+        auto* partial = new QLabel(QObject::tr("This scan did not cover everything: %1")
+                                       .arg(scan.warnings.join(QStringLiteral("; "))),
+                                   &dialog);
+        partial->setObjectName(QStringLiteral("partitionFileRecoveryPartialNotice"));
+        partial->setAccessibleDescription(QObject::tr("Data recovery partial scan notice"));
+        partial->setWordWrap(true);
+        layout->addWidget(partial);
+    }
     auto* table = createFileRecoveryTable(&dialog);
     populateFileRecoveryTable(table, scan.candidates);
     layout->addWidget(table, 1);
@@ -7883,7 +7881,6 @@ QString applyReviewText(const QVector<PartitionOperation>& operations,
 
 struct PartitionWizardResult {
     QString target_path;
-    QString layout_mode;
     QString verify_mode;
     QString scan_mode;
     uint64_t source_size_bytes{0};
@@ -7893,8 +7890,6 @@ struct PartitionWizardResult {
     uint64_t recovery_offset_bytes{0};
     uint64_t recovery_size_bytes{0};
     QString recovery_type_id;
-    bool align_1mb{true};
-    bool target_gpt{false};
     bool target_wipe_confirmed{false};
     bool target_region_selected{false};
     bool recovery_restore_requested{false};
@@ -7938,10 +7933,7 @@ struct DiskCopyWizardConfig {
 
 struct DiskCopyWizardWidgets {
     QComboBox* target_disk{nullptr};
-    QComboBox* layout_mode{nullptr};
     QComboBox* verify_mode{nullptr};
-    QCheckBox* align{nullptr};
-    QCheckBox* target_gpt{nullptr};
     QCheckBox* target_wipe{nullptr};
     CloneLayoutPreviewWidget* layout_preview{nullptr};
     QLabel* review{nullptr};
@@ -8025,7 +8017,7 @@ QComboBox* addTargetDiskSelector(QFormLayout* form,
 
 void syncWizardReview(QLabel* review, const WizardReviewSpec& spec) {
     review->setText(
-        QStringLiteral("%1\nSource: %2\nTarget: %3\nLayout: %4\nVerify: %5\n%6")
+        QStringLiteral("%1\nSource: %2\nTarget: %3\nCopy: %4\nVerify: %5\n%6")
             .arg(spec.operation, spec.source, spec.target, spec.mode, spec.verify, spec.sizing));
 }
 
@@ -8040,35 +8032,23 @@ void addDiskTargetPage(QWizard* wizard,
     wizard->addPage(target_page);
 }
 
-void addDiskOptionsPage(QWizard* wizard,
-                        const DiskCopyWizardConfig& config,
-                        DiskCopyWizardWidgets* widgets) {
+void addDiskOptionsPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
     auto* options_page = new QWizardPage(wizard);
     options_page->setTitle(QStringLiteral("Options"));
     auto* options_layout = new QFormLayout(options_page);
-    widgets->layout_mode = new QComboBox(options_page);
-    widgets->layout_mode->addItems({QStringLiteral("Keep original layout"),
-                                    QStringLiteral("Fit partitions to target"),
-                                    QStringLiteral("Edit layout after clone")});
-    widgets->layout_mode->setAccessibleName(QStringLiteral("Layout mode"));
+    auto* copy_note = new QLabel(
+        QStringLiteral("The disk is copied byte for byte, so the target's partitions keep the "
+                       "source's sizes, places and partition style. Any extra space on the target "
+                       "stays unallocated."),
+        options_page);
+    copy_note->setWordWrap(true);
+    copy_note->setAccessibleDescription(QStringLiteral("What the copy does"));
+    options_layout->addRow(copy_note);
     widgets->verify_mode = new QComboBox(options_page);
     widgets->verify_mode->addItems(
         {QStringLiteral("Sample verification"), QStringLiteral("Full verification")});
     widgets->verify_mode->setAccessibleName(QStringLiteral("Verification mode"));
-    widgets->align = new QCheckBox(QStringLiteral("Align partitions to 1 MB"), options_page);
-    widgets->align->setChecked(true);
-    widgets->align->setAccessibleName(QStringLiteral("Align partitions to 1 MB"));
-    widgets->align->setAccessibleDescription(QStringLiteral("Align partitions to one megabyte"));
-    widgets->target_gpt = new QCheckBox(QStringLiteral("Prefer GPT target boot layout"),
-                                        options_page);
-    widgets->target_gpt->setChecked(config.os_migration);
-    widgets->target_gpt->setAccessibleName(QStringLiteral("Prefer GPT target boot layout"));
-    options_layout->addRow(QStringLiteral("Layout:"), widgets->layout_mode);
     options_layout->addRow(QStringLiteral("Verify:"), widgets->verify_mode);
-    options_layout->addRow(QString(), widgets->align);
-    if (config.os_migration) {
-        options_layout->addRow(QString(), widgets->target_gpt);
-    }
     wizard->addPage(options_page);
 }
 
@@ -8113,13 +8093,12 @@ QString diskWizardSizingText(const DiskCopyWizardConfig& config,
 void updateDiskWizardReview(const DiskCopyWizardConfig& config,
                             const DiskCopyWizardWidgets& widgets) {
     widgets.layout_preview->configure(findWizardDisk(*config.inventory, config.source_disk),
-                                      selectedDiskWizardTargetSize(widgets),
-                                      widgets.layout_mode->currentText());
+                                      selectedDiskWizardTargetSize(widgets));
     syncWizardReview(widgets.review,
                      {.operation = config.title,
                       .source = physicalDrivePath(config.source_disk),
                       .target = selectedDiskWizardTarget(widgets),
-                      .mode = widgets.layout_mode->currentText(),
+                      .mode = QStringLiteral("Byte for byte"),
                       .verify = widgets.verify_mode->currentText(),
                       .sizing = diskWizardSizingText(config, widgets)});
 }
@@ -8134,7 +8113,6 @@ void connectDiskWizardReviewSignals(QWizard* wizard,
                      qOverload<int>(&QComboBox::currentIndexChanged),
                      wizard,
                      update_review);
-    QObject::connect(widgets->layout_mode, &QComboBox::currentTextChanged, wizard, update_review);
     QObject::connect(widgets->verify_mode, &QComboBox::currentTextChanged, wizard, update_review);
     update_review();
 }
@@ -8143,12 +8121,9 @@ PartitionWizardResult diskCopyWizardResult(const DiskCopyWizardConfig& config,
                                            const DiskCopyWizardWidgets& widgets) {
     PartitionWizardResult result;
     result.target_path = selectedDiskWizardTarget(widgets);
-    result.layout_mode = widgets.layout_mode->currentText();
     result.verify_mode = widgets.verify_mode->currentText();
     result.source_size_bytes = sourceDiskSize(*config.inventory, config.source_disk);
     result.target_size_bytes = selectedDiskWizardTargetSize(widgets);
-    result.align_1mb = widgets.align->isChecked();
-    result.target_gpt = widgets.target_gpt->isChecked();
     result.target_wipe_confirmed = widgets.target_wipe->isChecked();
     return result;
 }
@@ -8161,7 +8136,7 @@ std::optional<PartitionWizardResult> runDiskCopyWizard(const DiskCopyWizardConfi
 
     DiskCopyWizardWidgets widgets;
     addDiskTargetPage(&wizard, config, &widgets);
-    addDiskOptionsPage(&wizard, config, &widgets);
+    addDiskOptionsPage(&wizard, &widgets);
     addDiskReviewPage(&wizard, &widgets);
     connectDiskWizardReviewSignals(&wizard, config, &widgets);
 
@@ -8827,7 +8802,7 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActi
                            {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Copy Partition Wizard"),
                            kIconCopy,
-                           tr("Create a partition image"),
+                           tr("Copy a partition to free space or to an image file"),
                            &PartitionManagerPanel::onCopyPartitionWizard,
                            {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Copy Disk Wizard"),
@@ -8846,7 +8821,7 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActi
                               "files now (runs immediately, not added to the queue)"),
                            &PartitionManagerPanel::onDataRecovery,
                            {.target_kinds = actionTargetKindList({kActionTargetAny})}),
-            makeActionSpec(tr("Extend Partition Wizard"),
+            makeActionSpec(tr("Extend Partition"),
                            kIconResize,
                            tr("Extend into adjacent free space"),
                            &PartitionManagerPanel::onExtendPartitionWizard,
@@ -9354,6 +9329,14 @@ void PartitionManagerPanel::connectController() {
             &PartitionManagerController::executionFinished,
             this,
             &PartitionManagerPanel::onExecutionFinished);
+    connect(m_controller.get(),
+            &PartitionManagerController::queueRefused,
+            this,
+            [this](const QStringList& reasons) {
+                showWarningLogged(this,
+                                  tr("Not Added to the Queue"),
+                                  reasons.join(QLatin1Char('\n')));
+            });
     connect(m_controller.get(), &PartitionManagerController::stateChanged, this, [this]() {
         updateActionState();
     });
@@ -10688,7 +10671,7 @@ static QString apfsMutationPreview(PartitionOperationType type,
     case PartitionOperationType::ApfsResizeContainer:
         return QObject::tr(
                    "Queue APFS container resize to fill the partition (target %1). "
-                   "Requires a certified writable COW container that does not already fill it.")
+                   "Requires a writable copy-on-write container that does not already fill it.")
             .arg(formatPartitionBytes(partition_size_bytes));
     default:
         return {};
@@ -11605,13 +11588,13 @@ void PartitionManagerPanel::onExtendPartitionWizard() {
     const auto* partition = selectedPartition();
     if ((disk == nullptr) || (partition == nullptr)) {
         showWarningLogged(this,
-                          tr("Extend Partition Wizard"),
+                          tr("Extend Partition"),
                           tr("Select a partition before extending it."));
         return;
     }
     if (adjacentFreeBytesAfter(disk, partition) == 0) {
         showWarningLogged(this,
-                          tr("Extend Partition Wizard"),
+                          tr("Extend Partition"),
                           tr("No free space follows the selected partition, so it cannot be "
                              "extended directly. Use Allocate Free Space to move free space next "
                              "to this partition first, or shrink the following partition."));
@@ -11909,11 +11892,9 @@ void PartitionManagerPanel::onCloneDisk() {
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number.value());
     payload[QStringLiteral("target_path")] = result->target_path;
-    payload[QStringLiteral("layout_mode")] = result->layout_mode;
     payload[QStringLiteral("verify_mode")] = result->verify_mode;
     payload[QStringLiteral("source_size_bytes")] = QString::number(result->source_size_bytes);
     payload[QStringLiteral("target_size_bytes")] = QString::number(result->target_size_bytes);
-    payload[QStringLiteral("align_1mb")] = result->align_1mb;
     payload[QStringLiteral("target_wipe_confirmed")] = result->target_wipe_confirmed;
     queueOperation(PartitionOperationType::CloneDisk, *selected, expected_layout_hash, payload);
 }
@@ -12121,6 +12102,8 @@ QJsonObject createImageQueuePayload(const PartitionTarget& selected,
                                        : 0;
     return {{QStringLiteral("source_path"), source_path},
             {QStringLiteral("target_path"), image_path},
+            // The save dialog asked before it returned a file that is already there.
+            {QStringLiteral("overwrite_confirmed"), QFileInfo::exists(image_path)},
             {QStringLiteral("source_size_bytes"), QString::number(selected.size_bytes)},
             {QStringLiteral("verify_mode"), QStringLiteral("Full")},
             {QStringLiteral("source_capture_mode"),
@@ -12416,6 +12399,57 @@ QString PartitionManagerPanel::pinRestoreImageDigest(const QString& path) {
     return digest;
 }
 
+namespace {
+
+// Says how a scan with no list to show ended. True when there is a list to show.
+bool reportFileRecoveryScanEnding(QWidget* parent, const FileRecoveryScanResult& scan) {
+    const QString title = QObject::tr("Data Recovery");
+    switch (classifyFileRecoveryScan(scan)) {
+    case FileRecoveryScanOutcome::Stopped:
+        return false;
+    case FileRecoveryScanOutcome::CouldNotRead:
+        showWarningLogged(parent, title, scan.warnings.join(QLatin1Char('\n')));
+        return false;
+    case FileRecoveryScanOutcome::NothingInPart:
+        showWarningLogged(parent,
+                          title,
+                          QObject::tr("No recoverable PNG, JPEG, or PDF file signatures found in "
+                                      "what could be scanned.\n%1")
+                              .arg(scan.warnings.join(QLatin1Char('\n'))));
+        return false;
+    case FileRecoveryScanOutcome::NothingFound:
+        showInformationLogged(parent,
+                              title,
+                              QObject::tr("No recoverable PNG, JPEG, or PDF file signatures "
+                                          "found."));
+        return false;
+    case FileRecoveryScanOutcome::Found:
+        return true;
+    }
+    return false;
+}
+
+void showFileRecoveryRestoreResult(QWidget* parent,
+                                   const FileRecoveryRestoreResult& restore,
+                                   uint64_t source_hash_bytes) {
+    const QString warning_text =
+        restore.warnings.isEmpty() ? QString()
+                                   : QObject::tr("\nWarnings: %1").arg(restore.warnings.join("; "));
+    showInformationLogged(parent,
+                          QObject::tr("Data Recovery"),
+                          QObject::tr("Restored %1 file(s). Source unchanged%2: %3%4")
+                              .arg(restore.restored_paths.size())
+                              .arg(restore.source_hash_covered_whole
+                                       ? QString()
+                                       : QObject::tr(" (its first %1 checked)")
+                                             .arg(formatPartitionBytes(source_hash_bytes)),
+                                   restore.source_not_mutated ? QObject::tr("yes")
+                                                              : QObject::tr("no"),
+                                   warning_text));
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onDataRecovery() {
     const QString source_path = selectDataRecoverySourcePath(this, selectedTarget());
     if (source_path.isEmpty()) {
@@ -12429,20 +12463,17 @@ void PartitionManagerPanel::onDataRecovery() {
 
     FileRecoveryScanOptions scan_options;
     scan_options.image_path = source_path;
+    scan_options.max_scan_bytes = kFileRecoveryWholeSourceScanBytes;
+    scan_options.max_candidates = kFileRecoveryPanelMaxCandidates;
     // Carve off the GUI thread with a cancellable modal progress dialog (was a synchronous
     // call that froze the UI for the whole scan of a potentially large image).
     const auto scan = runFileRecoveryScanWithProgress(this, scan_options, source_path);
-    if (scan.scan_cancelled) {
+    if (classifyFileRecoveryScan(scan) == FileRecoveryScanOutcome::Stopped) {
         Q_EMIT statusMessage(tr("Data Recovery scan cancelled"), sak::kTimerStatusDefaultMs);
         return;
     }
-    if (scan.candidates.isEmpty()) {
-        showInformationLogged(this,
-                              tr("Data Recovery"),
-                              tr("No recoverable PNG, JPEG, or PDF file signatures found."));
-        return;
-    }
-    if (!showFileRecoveryReviewDialog(this, scan, source_path, destination_path)) {
+    if (!reportFileRecoveryScanEnding(this, scan) ||
+        !showFileRecoveryReviewDialog(this, scan, source_path, destination_path)) {
         return;
     }
 
@@ -12450,17 +12481,12 @@ void PartitionManagerPanel::onDataRecovery() {
     restore_options.image_path = source_path;
     restore_options.destination_directory = destination_path;
     restore_options.candidates = scan.candidates;
+    // The source is open read-only. Hashing a whole drive twice to confirm that would take longer
+    // than the scan, so the check covers its first part and says so.
+    restore_options.source_hash_bytes = kFileRecoveryDefaultMaxScanBytes;
     // Write the restored files off the GUI thread behind a modal progress dialog.
     const auto restore = runFileRecoveryRestoreWithProgress(this, restore_options);
-    const QString warning_text = restore.warnings.isEmpty()
-                                     ? QString()
-                                     : tr("\nWarnings: %1").arg(restore.warnings.join("; "));
-    showInformationLogged(this,
-                          tr("Data Recovery"),
-                          tr("Restored %1 file(s). Source image unchanged: %2%3")
-                              .arg(restore.restored_paths.size())
-                              .arg(restore.source_not_mutated ? tr("yes") : tr("no"),
-                                   warning_text));
+    showFileRecoveryRestoreResult(this, restore, restore_options.source_hash_bytes);
     Q_EMIT statusMessage(tr("Data Recovery restored %1 file(s)").arg(restore.restored_paths.size()),
                          sak::kTimerStatusDefaultMs);
 }
@@ -12524,12 +12550,9 @@ void PartitionManagerPanel::onMigrateOs() {
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number.value());
     payload[QStringLiteral("target_path")] = result->target_path;
-    payload[QStringLiteral("layout_mode")] = result->layout_mode;
     payload[QStringLiteral("verify_mode")] = result->verify_mode;
     payload[QStringLiteral("source_size_bytes")] = QString::number(result->source_size_bytes);
     payload[QStringLiteral("target_size_bytes")] = QString::number(result->target_size_bytes);
-    payload[QStringLiteral("align_1mb")] = result->align_1mb;
-    payload[QStringLiteral("target_gpt")] = result->target_gpt;
     payload[QStringLiteral("target_wipe_confirmed")] = result->target_wipe_confirmed;
     queueOperation(PartitionOperationType::MigrateOs, *selected, expected_layout_hash, payload);
 }
@@ -12544,7 +12567,14 @@ void PartitionManagerPanel::onRepairBoot() {
     bool ok = false;
     const QStringList modes{tr("UEFI"), tr("BIOS")};
     const QString mode = QInputDialog::getItem(
-        this, tr("Rebuild MBR / Boot Repair"), tr("Boot mode:"), modes, 0, false, &ok);
+        this,
+        tr("Rebuild MBR / Boot Repair"),
+        tr("This rebuilds the boot files of the Windows this PC is running now, whichever disk is "
+           "selected.\n\nBoot mode:"),
+        modes,
+        0,
+        false,
+        &ok);
     if (!ok) {
         return;
     }
@@ -12590,7 +12620,8 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
         PartitionOperationDialog dialog(
             QObject::tr("Wipe Disk"),
             target_text,
-            QObject::tr("Securely erases the entire disk and every partition on it."),
+            QObject::tr("Overwrites the entire disk once, with a full format, and removes every "
+                        "partition on it. This is not a drive sanitize command."),
             parent);
         auto* confirm = new QCheckBox(
             QObject::tr("I understand this erases the entire disk and all of its partitions."),
@@ -12618,7 +12649,7 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
     mode->addItem(QObject::tr("Entire partition (erase all data)"), QStringLiteral("partition"));
     // Default to free-space for a mounted volume, full wipe for an unmounted one.
     mode->setCurrentIndex(target.drive_letter.isEmpty() ? 1 : 0);
-    auto* confirm = new QCheckBox(QObject::tr("I understand the selected data is securely erased."),
+    auto* confirm = new QCheckBox(QObject::tr("I understand the selected data is overwritten."),
                                   &dialog);
     nameConfirmationBox(confirm, QObject::tr("Confirm wipe partition"));
     dialog.formLayout()->addRow(QObject::tr("Scope:"), mode);
@@ -12653,7 +12684,7 @@ void PartitionManagerPanel::onWipeSelected() {
 }
 
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
-    Q_EMIT logOutput(result.report_html);
+    Q_EMIT logOutput(result.report_text);
     // Surface a failed or timed-out apply as a warning rather than an information popup so the
     // technician can tell at a glance the operation did not complete; a user-initiated cancel is
     // an expected outcome and stays informational.

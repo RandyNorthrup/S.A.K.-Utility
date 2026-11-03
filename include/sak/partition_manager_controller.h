@@ -92,6 +92,8 @@ Q_SIGNALS:
     void queueChanged(const QVector<sak::PartitionOperation>& operations);
     void stateChanged(sak::PartitionManagerState state);
     void statusMessage(const QString& message, int timeout_ms);
+    /// A request was checked and not added to the queue, for these reasons.
+    void queueRefused(const QStringList& reasons);
     void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
     void executionFinished(const sak::PartitionExecutionResult& result);

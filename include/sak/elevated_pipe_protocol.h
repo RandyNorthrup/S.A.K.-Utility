@@ -19,6 +19,7 @@
 #include <QRandomGenerator>
 #include <QString>
 
+#include <climits>
 #include <cstdint>
 
 namespace sak {
@@ -86,6 +87,28 @@ static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
     return !first.isEmpty() && QString::compare(QDir::toNativeSeparators(first),
                                                 QDir::toNativeSeparators(second),
                                                 Qt::CaseInsensitive) == 0;
+}
+
+/// @brief The shortest and longest an elevated PowerShell task may run, in seconds.
+///
+/// A task that reads or writes every byte of a disk takes as long as the disk takes: one pass over
+/// 8 TB on USB is days, and a clock cannot tell that from a hang. Stopping one midway is what does
+/// the damage (a wipe part done, a copy that left its target offline), so the longest is out of
+/// reach of a real disk and the person's Cancel is what ends it. 2,000,000 s is 23 days, the
+/// largest round number whose milliseconds still fit the int the process runner takes.
+inline constexpr int kElevatedTaskMinTimeoutSeconds = 5;
+inline constexpr int kElevatedTaskMaxTimeoutSeconds = 2'000'000;
+static_assert(kElevatedTaskMaxTimeoutSeconds <= INT_MAX / 1000,
+              "the longest task must still fit an int in milliseconds");
+
+/// @brief How long the helper lets a task run for a requested number of seconds, in milliseconds.
+[[nodiscard]] constexpr int elevatedTaskTimeoutMs(int requested_seconds) {
+    const int clamped = requested_seconds < kElevatedTaskMinTimeoutSeconds
+                            ? kElevatedTaskMinTimeoutSeconds
+                        : requested_seconds > kElevatedTaskMaxTimeoutSeconds
+                            ? kElevatedTaskMaxTimeoutSeconds
+                            : requested_seconds;
+    return clamped * 1000;
 }
 
 inline constexpr uint32_t kPipeFrameByteMask = 0xFF;

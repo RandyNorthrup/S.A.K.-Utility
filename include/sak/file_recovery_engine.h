@@ -19,6 +19,10 @@ namespace sak {
 inline constexpr uint64_t kFileRecoveryDefaultMaxScanBytes = 512ULL * 1024ULL * 1024ULL;
 inline constexpr uint64_t kFileRecoveryDefaultMaxCandidateBytes = 128ULL * 1024ULL * 1024ULL;
 inline constexpr int kFileRecoveryDefaultMaxCandidates = 2048;
+/// A person's scan through Data Recovery: the whole source, however large it is, because it reads a
+/// window at a time, and as many files as a review table can hold. Cancel ends it.
+inline constexpr uint64_t kFileRecoveryWholeSourceScanBytes = UINT64_MAX;
+inline constexpr int kFileRecoveryPanelMaxCandidates = 100'000;
 
 struct FileRecoveryCandidate {
     QString id;
@@ -54,7 +58,20 @@ struct FileRecoveryScanResult {
     /// candidate list is still partial -- raising the cap and re-scanning can surface more. A
     /// caller wanting whole-source coverage must treat EITHER flag as incomplete (R5-P9-24).
     bool scan_truncated{false};
+    /// True when the caller's cancel flag ended the carve, so what was found so far is here.
+    bool stopped_by_cancel{false};
 };
+
+/// How a scan ended, for whoever has to tell a person about it.
+enum class FileRecoveryScanOutcome {
+    CouldNotRead,   ///< Nothing could be read: the source would not open, or gave no bytes.
+    Stopped,        ///< Cancelled before anything was found.
+    NothingFound,   ///< All of it was read, and no file signature was in it.
+    NothingInPart,  ///< No file signature in what was read, and not all of it was.
+    Found,          ///< Files were found. FileRecoveryScanResult::warnings says if it was partial.
+};
+
+[[nodiscard]] FileRecoveryScanOutcome classifyFileRecoveryScan(const FileRecoveryScanResult& scan);
 
 struct FileRecoveryRestoreOptions {
     QString image_path;

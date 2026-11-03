@@ -332,9 +332,6 @@ QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = 
 }
 
 constexpr int kDefaultPowerShellTimeoutSeconds = 120;
-constexpr int kMinPowerShellTimeoutSeconds = 5;
-constexpr int kMaxPowerShellTimeoutSeconds = 3600;
-constexpr int kPowerShellMillisecondsPerSecond = 1000;
 constexpr int kDefaultPowerShellOutputBytes = 262'144;
 constexpr int kMinPowerShellOutputBytes = 4096;
 constexpr int kMaxPowerShellOutputBytes = 4 * 1024 * 1024;
@@ -513,9 +510,7 @@ std::optional<ElevatedPowerShellConfig> elevatedPowerShellConfig(const QJsonObje
 
     ElevatedPowerShellConfig config;
     config.m_command = command_value.toString();
-    config.m_timeout_ms =
-        std::clamp(*timeout_seconds, kMinPowerShellTimeoutSeconds, kMaxPowerShellTimeoutSeconds) *
-        kPowerShellMillisecondsPerSecond;
+    config.m_timeout_ms = sak::elevatedTaskTimeoutMs(*timeout_seconds);
     config.m_output_cap =
         std::clamp(*max_output_bytes, kMinPowerShellOutputBytes, kMaxPowerShellOutputBytes);
     config.m_half_cap = std::max(config.m_output_cap / kPowerShellOutputHalfDivisor,

@@ -11,6 +11,7 @@
 
 #include "sak/elevated_pipe_protocol.h"
 #include "sak/elevated_pipe_server.h"
+#include "sak/partition_manager_types.h"
 
 #include <QTest>
 
@@ -20,6 +21,20 @@ class TestElevatedPipeProtocol : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // A wipe of a large disk runs for days. The helper used to stop every task at one hour, leaving
+    // the disk part overwritten or a copy's target offline.
+    void taskTimeoutOutlastsAWholeDiskPass() {
+        constexpr int kOneWeekSeconds = 7 * 24 * 3600;
+        QCOMPARE(sak::elevatedTaskTimeoutMs(kOneWeekSeconds), kOneWeekSeconds * 1000);
+        QCOMPARE(sak::elevatedTaskTimeoutMs(sak::kPartitionLongTaskTimeoutSeconds),
+                 sak::kPartitionLongTaskTimeoutSeconds * 1000);
+        QCOMPARE(sak::elevatedTaskTimeoutMs(1), sak::kElevatedTaskMinTimeoutSeconds * 1000);
+        QCOMPARE(sak::elevatedTaskTimeoutMs(-5), sak::kElevatedTaskMinTimeoutSeconds * 1000);
+        // Past the limit it stays the limit, and never wraps negative in the int it becomes.
+        QCOMPARE(sak::elevatedTaskTimeoutMs(INT_MAX), sak::kElevatedTaskMaxTimeoutSeconds * 1000);
+        QVERIFY(sak::elevatedTaskTimeoutMs(INT_MAX) > 0);
+    }
+
     // ======================================================================
     // Frame Encoding
     // ======================================================================

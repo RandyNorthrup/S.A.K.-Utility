@@ -9,6 +9,7 @@
 #include "sak/apfs_keybag.h"
 #include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
+#include "sak/elevated_pipe_protocol.h"
 #include "sak/elevation_broker.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
@@ -42,6 +43,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -1885,11 +1887,23 @@ private Q_SLOTS:
     void jsonUInt64_clampsNegativesInsteadOfWrapping();
     void scriptBuilder_buildsBiosBootRepairScript();
     void scriptBuilder_refusesBootRepairWithoutWindowsPath();
+    void scriptBuilder_migrationSendsAFailedBootToStartupRepair();
+    void scriptBuilder_bootRepairFindsAFreeLetterAndChecksTheMount();
+    void scriptBuilder_longWorkOutlastsAWholeDiskPass();
+    void scriptBuilder_convertAnswersItsOwnPrompts();
+    void scriptBuilder_splitPutsTheNewPartitionNextToTheOriginal();
+    void scriptBuilder_recoveryScanReadsEachKindOfBootSector();
+    void safetyValidator_warnsThatMigrationCopiesARunningDisk();
+    void safetyValidator_refusesLargeEncryptedApfsWhenQueued();
+    void defragRuleIsTheSameInTheValidatorAndTheScript();
     void operationQueue_blocksLayoutMismatch();
     void operationQueue_redoAvailableOnlyAfterUndo();
     void powershellQuoting_escapesSingleQuotes();
     void fileRecoveryEngine_scansAndRestoresOfflineImage();
     void fileRecoveryEngine_boundsHostileUnterminatedSignatures();
+    void fileRecoveryEngine_findsFilesPastTheFirstWindow();
+    void fileRecoveryEngine_aLimitKeepsWhatItFound();
+    void fileRecoveryEngine_saysHowAScanEnded();
     void fileRecoveryEngine_confinesCraftedCandidateNames();
     void fileRecoveryEngine_prefixHashDoesNotClaimWholeSource();
     void safetyValidator_refusesClonePartitionZeroOffsetOrUnknownSize();
@@ -2653,8 +2667,8 @@ void verifyMetadataOnlyRegistryCapabilities() {
     QCOMPARE(xfs.blocked_actions,
              QStringList({QStringLiteral("Deep xfs_repair check requires manifest-approved "
                                          "xfs_repair"),
-                          QStringLiteral("Format and repair remain blocked until bundled tools "
-                                         "and certification pass")}));
+                          QStringLiteral("Format and repair remain blocked until the bundled "
+                                         "tools have been tested")}));
 
     const auto btrfs = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("Btrfs"));
     QCOMPARE(btrfs.id, QStringLiteral("btrfs"));
@@ -2663,8 +2677,8 @@ void verifyMetadataOnlyRegistryCapabilities() {
                 .contains(QStringLiteral("metadata consistency check")));
     QCOMPARE(btrfs.blocked_actions,
              QStringList({QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
-                          QStringLiteral("Repair remains disabled until destructive VM/lab "
-                                         "certification proves safe scenarios")}));
+                          QStringLiteral("Repair remains disabled until destructive VM and lab "
+                                         "testing proves safe scenarios")}));
 }
 
 void verifyApfsRegistryCapability() {
@@ -2694,7 +2708,7 @@ void verifyApfsRegistryCapability() {
     QCOMPARE(apfs.blocked_actions,
              QStringList({QStringLiteral("Metadata-checksum repair is limited to S.A.K.-generated "
                                          "layouts; generated format/repair targets above the "
-                                         "certified ~24 TiB / 48 TiB-engine CAB ceiling remain "
+                                         "~24 TiB / 48 TiB-engine CAB ceiling remain "
                                          "blocked"),
                           QStringLiteral("Fusion and multi-device containers, sealed "
                                          "(signed-system) volumes, and case-sensitive volumes "
@@ -2742,7 +2756,7 @@ void verifyHfsRegistryCapability() {
     QCOMPARE(hfs.blocked_actions,
              QStringList({QStringLiteral("Raw-partition HFS+ complex file delete, unbounded "
                                          "folder-tree delete, and broad allocation growth remain "
-                                         "blocked pending operation-specific certification"),
+                                         "blocked pending testing of each operation"),
                           QStringLiteral("Inline/broad attribute growth and recursive "
                                          "extents-overflow-file overflow remain blocked in this "
                                          "milestone")}));
@@ -17897,7 +17911,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     const auto blocked = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsWriteRootFile, target, missingCertification));
     QVERIFY(!blocked.valid());
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("certified COW")));
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("copy-on-write")));
 
     // A1 promotion: in-place root-file mutation now runs on the certified multi-CIB /
     // metadata-overflow / CAB COW engine, so the production mutation gate accepts targets
@@ -20700,7 +20714,7 @@ void verifyApfsSafetyValidatorFailClosedCases(const PartitionInventory& inventor
     auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::ApfsWriteRootFile, target, missingCertification);
     QVERIFY(!preview.canApply());
-    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("certified COW")));
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("copy-on-write")));
 
     QJsonObject forgedTarget = payload;
     forgedTarget[QStringLiteral("target_path")] =
@@ -20774,7 +20788,7 @@ void verifyApfsContainerToolValidatorCases(const PartitionInventory& inventory,
             const auto preview = previewNonNativeOperation(inventory, type, target, foreignPayload);
             QVERIFY2(!preview.canApply(), qPrintable(foreign));
             QVERIFY2(preview.blockers.join(' ').contains(
-                         QStringLiteral("APFS generated create/format/repair and certified COW")),
+                         QStringLiteral("APFS generated create/format/repair and copy-on-write")),
                      qPrintable(preview.blockers.join(QStringLiteral("; "))));
         }
     }
@@ -21848,8 +21862,294 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {
     const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::RepairBoot, target, payload));
     QVERIFY(script.valid());
-    QVERIFY(script.script.contains(QStringLiteral("bcdboot.exe 'D:\\Windows' /s S: /f BIOS")));
-    QVERIFY(script.script.contains(QStringLiteral("bootsect.exe /nt60 S: /mbr")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("bcdboot.exe 'D:\\Windows' /s \"${sakBootLetter}:\" /f BIOS")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("bootsect.exe /nt60 \"${sakBootLetter}:\" /mbr")));
+    // bcdboot and bootsect need a letter on the partition the firmware starts from, which seldom
+    // has one. The script gives it one, and takes it away again however the repair ends.
+    QVERIFY(script.script.contains(QStringLiteral("$_.IsBoot")));
+    QVERIFY(script.script.contains(QStringLiteral("$_.IsActive")));
+    QVERIFY(script.script.contains(QStringLiteral("Get-SakFreeBootLetter 'S'")));
+    const qsizetype added = script.script.indexOf(QStringLiteral("Add-PartitionAccessPath"));
+    const qsizetype repaired = script.script.indexOf(QStringLiteral("bcdboot.exe"));
+    const qsizetype removed = script.script.indexOf(QStringLiteral("Remove-PartitionAccessPath"));
+    QVERIFY(added >= 0 && added < repaired && repaired < removed);
+    QVERIFY(script.script.indexOf(QStringLiteral("finally")) < removed);
+}
+
+// Boot Repair rebuilds the Windows it runs on, so it cannot be what fixes a target that will not
+// start.
+void PartitionManagerCoreTests::scriptBuilder_migrationSendsAFailedBootToStartupRepair() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    pinRawTargetIdentity(&payload);
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::MigrateOs, target, payload));
+    QVERIFY(script.valid());
+    QVERIFY(script.script.contains(QStringLiteral("use Startup Repair")));
+    QVERIFY(!script.script.contains(QStringLiteral("on the target Windows install")));
+    QCOMPARE(script.timeout_seconds, kPartitionLongTaskTimeoutSeconds);
+}
+
+// mountvol failing used to go unnoticed: bcdboot then wrote its files to whatever already had that
+// letter, and the clean-up took the letter away from it.
+void PartitionManagerCoreTests::scriptBuilder_bootRepairFindsAFreeLetterAndChecksTheMount() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    QJsonObject payload;
+    payload[QStringLiteral("windows_path")] = QStringLiteral("D:\\Windows");
+    payload[QStringLiteral("esp_letter")] = QStringLiteral("S");
+    payload[QStringLiteral("boot_mode")] = QStringLiteral("UEFI");
+
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::RepairBoot, target, payload));
+    QVERIFY(script.valid());
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakFreeBootLetter")));
+    QVERIFY(script.script.contains(QStringLiteral("$sakBootLetter = Get-SakFreeBootLetter 'S'")));
+    QVERIFY(script.script.contains(QStringLiteral("mountvol \"${sakBootLetter}:\" /S")));
+    const qsizetype mounted =
+        script.script.indexOf(QStringLiteral("mountvol \"${sakBootLetter}:\" /S"));
+    const qsizetype checked =
+        script.script.indexOf(QStringLiteral("if ($LASTEXITCODE -ne 0) { throw"), mounted);
+    const qsizetype repaired = script.script.indexOf(QStringLiteral("bcdboot.exe"));
+    QVERIFY(mounted >= 0 && mounted < checked && checked < repaired);
+    QVERIFY(
+        script.script.contains(QStringLiteral("finally { mountvol \"${sakBootLetter}:\" /D }")));
+    QVERIFY(!script.script.contains(QStringLiteral("mountvol S:")));
+}
+
+// What scales with a disk, a volume or the data on it has the long limit. Only work that touches
+// metadata alone keeps a short one, where running past it can only mean a hang.
+void PartitionManagerCoreTests::scriptBuilder_longWorkOutlastsAWholeDiskPass() {
+    constexpr int kOneWeekSeconds = 7 * 24 * 3600;
+    QVERIFY(kPartitionLongTaskTimeoutSeconds > kOneWeekSeconds);
+
+    PartitionScriptBuilder builder;
+    const auto timeoutOf = [&builder](PartitionOperationType type,
+                                      const PartitionTarget& target,
+                                      const QJsonObject& payload = {}) {
+        const auto script =
+            builder.buildScript(PartitionOperationPlanner::makeOperation(type, target, payload));
+        return script.valid() ? script.timeout_seconds : -1;
+    };
+
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&disk);
+    QCOMPARE(timeoutOf(PartitionOperationType::WipeDisk, disk), kPartitionLongTaskTimeoutSeconds);
+    QCOMPARE(timeoutOf(PartitionOperationType::SurfaceTest, disk),
+             kPartitionLongTaskTimeoutSeconds);
+
+    PartitionTarget volume;
+    volume.kind = PartitionTargetKind::Partition;
+    volume.disk_number = DiskNumber{2};
+    volume.partition_number = PartitionNumber{1};
+    volume.size_bytes = 100 * 1024 * 1024;
+    volume.drive_letter = QStringLiteral("T");
+    for (const PartitionOperationType type : {PartitionOperationType::WipeFreeSpace,
+                                              PartitionOperationType::WipePartition,
+                                              PartitionOperationType::ConvertFileSystem,
+                                              PartitionOperationType::CheckFileSystem,
+                                              PartitionOperationType::OptimizeSsd,
+                                              PartitionOperationType::DefragVolume}) {
+        QCOMPARE(timeoutOf(type, volume), kPartitionLongTaskTimeoutSeconds);
+    }
+    const QJsonObject split{{QStringLiteral("first_size_bytes"), QStringLiteral("52428800")},
+                            {QStringLiteral("new_file_system"), QStringLiteral("NTFS")}};
+    QCOMPARE(timeoutOf(PartitionOperationType::Split, volume, split),
+             kPartitionLongTaskTimeoutSeconds);
+
+    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("52428800")}};
+    QCOMPARE(timeoutOf(PartitionOperationType::Resize, volume, shrink),
+             kPartitionLongTaskTimeoutSeconds);
+
+    // A full format writes every sector. A quick one writes a little, and keeps its short limit.
+    QJsonObject quick{{QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                      {QStringLiteral("label"), QStringLiteral("DATA")}};
+    QCOMPARE(timeoutOf(PartitionOperationType::Format, volume, quick),
+             kPartitionFormatTaskTimeoutSeconds);
+    QJsonObject full = quick;
+    full[QStringLiteral("full_format")] = true;
+    QCOMPARE(timeoutOf(PartitionOperationType::Format, volume, full),
+             kPartitionLongTaskTimeoutSeconds);
+
+    // Boot files take minutes on any disk.
+    QJsonObject boot{{QStringLiteral("windows_path"), QStringLiteral("C:\\Windows")},
+                     {QStringLiteral("boot_mode"), QStringLiteral("UEFI")}};
+    QCOMPARE(timeoutOf(PartitionOperationType::RepairBoot, disk, boot),
+             kPartitionMediumTaskTimeoutSeconds);
+}
+
+void PartitionManagerCoreTests::scriptBuilder_convertAnswersItsOwnPrompts() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.drive_letter = QStringLiteral("t");
+
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertFileSystem, target));
+    QVERIFY(script.valid());
+    // convert.exe stops to ask for the volume's label, and for leave to dismount it, and no one is
+    // there to answer either question.
+    QVERIFY(script.script.contains(QStringLiteral("Get-Volume -DriveLetter T")));
+    QVERIFY(script.script.contains(QStringLiteral("FileSystemLabel")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("$sakLabel | convert.exe T: /FS:NTFS /NoSecurity /X")));
+    QVERIFY(script.script.contains(QStringLiteral("exit $LASTEXITCODE")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_splitPutsTheNewPartitionNextToTheOriginal() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.size_bytes = 100 * 1024 * 1024;
+    const QJsonObject payload{{QStringLiteral("first_size_bytes"), QStringLiteral("52428800")},
+                              {QStringLiteral("new_file_system"), QStringLiteral("NTFS")}};
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Split, target, payload));
+    QVERIFY(script.valid());
+    QVERIFY(!script.script.contains(QStringLiteral("UseMaximumSize")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("New-Partition -DiskNumber 2 -Offset $sakNewOffset -Size ($sakSplitEnd - "
+                       "$sakNewOffset)")));
+    // The end is read before the resize moves it.
+    QVERIFY(script.script.indexOf(QStringLiteral("$sakSplitEnd =")) <
+            script.script.indexOf(QStringLiteral("Resize-Partition")));
+}
+
+// Real PowerShell over real bytes, with no disk involved. Windows writes MSDOS5.0 as a FAT drive's
+// OEM name, so a scan that read only that name missed nearly every Windows-formatted FAT partition.
+void PartitionManagerCoreTests::scriptBuilder_recoveryScanReadsEachKindOfBootSector() {
+    const QString script =
+        PartitionScriptBuilder::bootSectorKindFunctionScript() +
+        QStringLiteral(
+            "function New-SakSector([string]$oem, [int]$at = -1, [string]$kind = '', "
+            "[bool]$signed = $true) {\n"
+            "  $s = New-Object byte[] 512\n"
+            "  $a = [System.Text.Encoding]::ASCII\n"
+            "  [Array]::Copy($a.GetBytes($oem), 0, $s, 3, $oem.Length)\n"
+            "  if ($at -ge 0) { [Array]::Copy($a.GetBytes($kind), 0, $s, $at, $kind.Length) }\n"
+            "  if ($signed) { $s[510] = 0x55; $s[511] = 0xAA }\n"
+            "  return ,$s\n"
+            "}\n"
+            "'ntfs=' + (Get-SakBootSectorKind (New-SakSector 'NTFS    '))\n"
+            "'exfat=' + (Get-SakBootSectorKind (New-SakSector 'EXFAT   '))\n"
+            "'fat32=' + (Get-SakBootSectorKind (New-SakSector 'MSDOS5.0' 82 'FAT32   '))\n"
+            "'fat16=' + (Get-SakBootSectorKind (New-SakSector 'MSDOS5.0' 54 'FAT16   '))\n"
+            "'fat12=' + (Get-SakBootSectorKind (New-SakSector 'MSDOS5.0' 54 'FAT12   '))\n"
+            "'oemonly=' + (Get-SakBootSectorKind (New-SakSector 'MSDOS5.0'))\n"
+            "'unsigned=' + (Get-SakBootSectorKind (New-SakSector 'NTFS    ' -1 '' $false))\n"
+            "'loose=' + (Get-SakBootSectorKind (New-SakSector 'xNTFSx  '))\n");
+    const ProcessResult proc = sak::runPowerShell(script, 60'000);
+    QVERIFY2(proc.succeeded(), qPrintable(proc.std_err));
+    const QStringList lines = proc.std_out.split(QRegularExpression(QStringLiteral("\\r?\\n")),
+                                                 Qt::SkipEmptyParts);
+    QCOMPARE(lines,
+             QStringList({QStringLiteral("ntfs=NTFS"),
+                          QStringLiteral("exfat=exFAT"),
+                          QStringLiteral("fat32=FAT32"),
+                          QStringLiteral("fat16=FAT16"),
+                          QStringLiteral("fat12=FAT12"),
+                          QStringLiteral("oemonly="),
+                          QStringLiteral("unsigned="),
+                          QStringLiteral("loose=")}));
+}
+
+void PartitionManagerCoreTests::safetyValidator_warnsThatMigrationCopiesARunningDisk() {
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    inventory.disks.first().is_boot = true;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    const QJsonObject payload{
+        {QStringLiteral("source_path"), QStringLiteral("\\\\.\\PhysicalDrive0")},
+        {QStringLiteral("target_path"), QStringLiteral("\\\\.\\PhysicalDrive1")},
+        {QStringLiteral("source_size_bytes"), QStringLiteral("1048576")},
+        {QStringLiteral("target_size_bytes"), QStringLiteral("2097152")},
+        {QStringLiteral("target_wipe_confirmed"), true}};
+    PartitionOperationPlanner planner;
+    const auto migrate =
+        planner.previewOperation(inventory,
+                                 PartitionOperationPlanner::makeOperation(
+                                     PartitionOperationType::MigrateOs, target, payload));
+    const QString warnings = migrate.warnings.join(QLatin1Char(' '));
+    QVERIFY2(warnings.contains(QStringLiteral("no snapshot")), qPrintable(warnings));
+    QVERIFY2(warnings.contains(QStringLiteral("check the disk")), qPrintable(warnings));
+
+    const auto clone =
+        planner.previewOperation(inventory,
+                                 PartitionOperationPlanner::makeOperation(
+                                     PartitionOperationType::CloneDisk, target, payload));
+    QVERIFY(!clone.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("no snapshot")));
+}
+
+// The limit is the writer's, and a person used to learn it only when Apply ran.
+void PartitionManagerCoreTests::safetyValidator_refusesLargeEncryptedApfsWhenQueued() {
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(&inventory);
+    const auto& partition = inventory.disks.first().partitions.at(1);
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = partition.size_bytes;
+    QVERIFY(target.size_bytes > 128ULL * 1024ULL * 1024ULL);
+    QJsonObject payload = baseExtToolPayload();
+    payload[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    payload[QStringLiteral("apfs_encrypt_volume")] = true;
+    payload[QStringLiteral("apfs_volume_password")] = QStringLiteral("sakpass1234");
+    const auto blocked =
+        previewNonNativeOperation(inventory, PartitionOperationType::Format, target, payload);
+    QVERIFY2(blocked.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("up to 128 MiB")),
+             qPrintable(blocked.blockers.join(QLatin1Char(' '))));
+
+    target.size_bytes = 128ULL * 1024ULL * 1024ULL;
+    const auto allowed =
+        previewNonNativeOperation(inventory, PartitionOperationType::Format, target, payload);
+    QVERIFY2(!allowed.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("up to 128 MiB")),
+             qPrintable(allowed.blockers.join(QLatin1Char(' '))));
+}
+
+// The validator took a model name reading "Hard Disk" while the script took only a MediaType of
+// HDD, so the queue accepted what Apply then refused.
+void PartitionManagerCoreTests::defragRuleIsTheSameInTheValidatorAndTheScript() {
+    PartitionDiskInfo unspecified;
+    unspecified.media_type = QStringLiteral("Unspecified");
+    unspecified.model = QStringLiteral("VBOX HARDDISK");
+    QVERIFY(sak::diskLooksHdd(unspecified));
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.drive_letter = QStringLiteral("T");
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::DefragVolume, target));
+    QVERIFY(script.valid());
+    QVERIFY(script.script.contains(QStringLiteral("$disk.FriendlyName")));
+    QVERIFY(script.script.contains(QStringLiteral("$disk.Model")));
+    QVERIFY(script.script.contains(QStringLiteral("$hddText -notmatch '(?i)HDD|HARD'")));
+    QVERIFY(!script.script.contains(QStringLiteral("^HDD$")));
+    // SSD and NVMe are still refused first, whatever else the text says.
+    QVERIFY(script.script.indexOf(QStringLiteral("Refusing HDD defrag on SSD/NVMe media")) <
+            script.script.indexOf(QStringLiteral("$hddText -notmatch")));
 }
 
 // Boot repair used to fall back to C:\Windows when no Windows folder was named -- the wrong
@@ -22058,6 +22358,159 @@ void PartitionManagerCoreTests::fileRecoveryEngine_boundsHostileUnterminatedSign
         }
     }
     QVERIFY2(bounded, qPrintable(scan.warnings.join(QStringLiteral("; "))));
+}
+
+// A source past the first window used to be cut at 512 MB and its results thrown away. A file
+// starting after the first window and one straddling the window's edge both have to be found, at
+// their real offsets, and restore from there.
+void PartitionManagerCoreTests::fileRecoveryEngine_findsFilesPastTheFirstWindow() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    const QString imagePath = root.filePath(QStringLiteral("large.bin"));
+    const QByteArray pdf =
+        QByteArrayLiteral("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+    constexpr qint64 kWindow = 256LL * 1024LL * 1024LL;
+    const qint64 straddling = kWindow - (pdf.size() / 2);
+    // Where the first pass runs out of look-ahead: found only if the next window starts over it.
+    const qint64 at_lookahead_end = kWindow + (1024 * 1024) - (pdf.size() / 2);
+    const qint64 far_past = (kWindow * 2) + 4096;
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QVERIFY(image.write(pdf) == pdf.size());
+        QVERIFY(image.seek(straddling));
+        QVERIFY(image.write(pdf) == pdf.size());
+        QVERIFY(image.seek(at_lookahead_end));
+        QVERIFY(image.write(pdf) == pdf.size());
+        QVERIFY(image.seek(far_past));
+        QVERIFY(image.write(pdf) == pdf.size());
+        QVERIFY(image.resize(far_past + pdf.size() + 1024));
+    }
+
+    FileRecoveryScanOptions options;
+    options.image_path = imagePath;
+    options.max_scan_bytes = kFileRecoveryWholeSourceScanBytes;
+    options.max_candidates = kFileRecoveryPanelMaxCandidates;
+    // A small look-ahead keeps this test's memory low, and is still enough for the file.
+    options.max_candidate_bytes = 1024 * 1024;
+    const auto scan = FileRecoveryEngine::scanOfflineImage(options);
+    QVERIFY2(scan.warnings.isEmpty(), qPrintable(scan.warnings.join(QStringLiteral("; "))));
+    QVERIFY(!scan.scan_cancelled);
+    QVERIFY(!scan.scan_truncated);
+    QCOMPARE(scan.bytes_read, static_cast<uint64_t>(far_past + pdf.size() + 1024));
+    QCOMPARE(scan.candidates.size(), 4);
+    QCOMPARE(scan.candidates.at(0).offset_bytes, 0ULL);
+    QCOMPARE(scan.candidates.at(1).offset_bytes, static_cast<uint64_t>(straddling));
+    QCOMPARE(scan.candidates.at(2).offset_bytes, static_cast<uint64_t>(at_lookahead_end));
+    QCOMPARE(scan.candidates.at(3).offset_bytes, static_cast<uint64_t>(far_past));
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::Found);
+
+    FileRecoveryRestoreOptions restore;
+    restore.image_path = imagePath;
+    restore.destination_directory = root.filePath(QStringLiteral("restore"));
+    restore.candidates = scan.candidates;
+    restore.source_hash_bytes = 1024 * 1024;
+    const auto restored = FileRecoveryEngine::restoreCandidates(restore);
+    QCOMPARE(restored.restored_paths.size(), 4);
+    for (const QString& path : restored.restored_paths) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), pdf);
+    }
+}
+
+// The two limits stay limits, and what was found inside them is kept, with the reason.
+void PartitionManagerCoreTests::fileRecoveryEngine_aLimitKeepsWhatItFound() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("limits.bin"));
+    const QByteArray pdf =
+        QByteArrayLiteral("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+    constexpr qint64 kMiB = 1024LL * 1024LL;
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        for (const qint64 offset : {qint64{0}, 2 * kMiB, 4 * kMiB, 6 * kMiB}) {
+            QVERIFY(image.seek(offset));
+            QVERIFY(image.write(pdf) == pdf.size());
+        }
+        QVERIFY(image.resize(7 * kMiB));
+    }
+
+    FileRecoveryScanOptions options;
+    options.image_path = imagePath;
+    options.max_scan_bytes = kFileRecoveryWholeSourceScanBytes;
+    options.max_candidates = kFileRecoveryPanelMaxCandidates;
+    options.max_candidate_bytes = kMiB;
+
+    FileRecoveryScanOptions capped = options;
+    capped.max_scan_bytes = kMiB;
+    const auto capped_scan = FileRecoveryEngine::scanOfflineImage(capped);
+    QVERIFY(capped_scan.scan_truncated);
+    QCOMPARE(capped_scan.candidates.size(), 1);
+    QCOMPARE(classifyFileRecoveryScan(capped_scan), FileRecoveryScanOutcome::Found);
+    QVERIFY(capped_scan.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("limited to")));
+
+    FileRecoveryScanOptions few = options;
+    few.max_candidates = 2;
+    const auto few_scan = FileRecoveryEngine::scanOfflineImage(few);
+    QVERIFY(few_scan.scan_truncated);
+    QCOMPARE(few_scan.candidates.size(), 2);
+    QVERIFY(few_scan.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("limit")));
+}
+
+void PartitionManagerCoreTests::fileRecoveryEngine_saysHowAScanEnded() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString missing = QDir(temp.path()).filePath(QStringLiteral("absent.bin"));
+
+    // A source that would not open is not an empty source.
+    FileRecoveryScanOptions options;
+    options.image_path = missing;
+    auto scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::CouldNotRead);
+    QVERIFY(scan.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("Could not open")));
+
+    // An empty file opened and held nothing.
+    const QString empty = QDir(temp.path()).filePath(QStringLiteral("empty.bin"));
+    {
+        QFile file(empty);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    options.image_path = empty;
+    scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::NothingFound);
+
+    // Bytes with no signature in them, read to the end.
+    const QString plain = QDir(temp.path()).filePath(QStringLiteral("plain.bin"));
+    {
+        QFile file(plain);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(QByteArray(4096, 'x')) == 4096);
+    }
+    options.image_path = plain;
+    scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::NothingFound);
+
+    // The same bytes, not read to the end.
+    options.max_scan_bytes = 1024;
+    scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::NothingInPart);
+
+    // Cancelled: said to be cancelled, not partial, not empty. With a file already found, that file
+    // is kept for the review.
+    options.max_scan_bytes = kFileRecoveryDefaultMaxScanBytes;
+    const std::atomic<bool> stop{true};
+    scan = FileRecoveryEngine::scanOfflineImage(options, &stop);
+    QVERIFY(scan.stopped_by_cancel);
+    QCOMPARE(classifyFileRecoveryScan(scan), FileRecoveryScanOutcome::Stopped);
+    FileRecoveryScanResult found_then_stopped;
+    found_then_stopped.source_opened_read_only = true;
+    found_then_stopped.bytes_read = 10;
+    found_then_stopped.stopped_by_cancel = true;
+    found_then_stopped.candidates.append(FileRecoveryCandidate{});
+    QCOMPARE(classifyFileRecoveryScan(found_then_stopped), FileRecoveryScanOutcome::Found);
 }
 
 void PartitionManagerCoreTests::fileRecoveryEngine_confinesCraftedCandidateNames() {

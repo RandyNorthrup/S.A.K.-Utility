@@ -22,6 +22,9 @@
 
 namespace sak {
 
+static_assert(kPartitionLongTaskTimeoutSeconds <= kElevatedTaskMaxTimeoutSeconds,
+              "a long partition task must not be cut short by the helper's own limit");
+
 namespace {
 constexpr int kDefaultPartitionTaskTimeoutSeconds = 1800;
 constexpr int kMaxPartitionTaskOutputBytes = 1024 * 1024;

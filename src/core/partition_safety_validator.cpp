@@ -77,6 +77,7 @@ constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
 constexpr auto kApfsCowMutationCertifiedPayload = "apfs_cow_mutation_certified";
 constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
+constexpr uint64_t kMaximumApfsEncryptedFormatBytes = 128ULL * 1024ULL * 1024ULL;
 constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
@@ -1735,14 +1736,14 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
         nonNativeToolUnsupportedOperation(operation),
         QStringLiteral(
             "Non-Windows filesystem tool support is limited to format, repair, resize, APFS "
-            "certified COW root-file/root-directory mutation, and HFS+ staged file mutation"));
+            "copy-on-write root-file/root-directory mutation, and HFS+ staged file mutation"));
     addBlockerIf(
         result,
         nonNativeToolUnsupportedFileSystem(operation),
         QStringLiteral(
             "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, "
             "HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and "
-            "APFS generated create/format/repair and certified COW root-file/root-directory "
+            "APFS generated create/format/repair and copy-on-write root-file/root-directory "
             "mutation"));
     addBlockerIf(result,
                  nonNativeToolMissingTarget(operation),
@@ -1761,6 +1762,11 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  apfsEncryptedFormatWrongFileSystem(operation),
                  QStringLiteral("Volume encryption is only supported for APFS format"));
+    addBlockerIf(result,
+                 apfsEncryptedFormatRequested(operation) &&
+                     operation.target.size_bytes > kMaximumApfsEncryptedFormatBytes,
+                 QStringLiteral("APFS encryption is limited to containers up to 128 MiB; format "
+                                "this partition without encryption, or use a smaller one"));
 }
 
 void validateApfsRootMutationContentBlockers(const PartitionOperation& operation,
@@ -1779,7 +1785,7 @@ void validateApfsRootMutationContentBlockers(const PartitionOperation& operation
                  QStringLiteral("APFS COW mutation requires destructive confirmation"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingCowCertification(operation),
-                 QStringLiteral("APFS root mutation requires certified COW mutation capability"));
+                 QStringLiteral("APFS root mutation requires the copy-on-write write engine"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingFileName(operation),
                  apfsRootMutationMissingNameMessage(operation.type));
@@ -1856,7 +1862,8 @@ void validateResizeContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  resizeRequestsDonorSpace(operation),
                  QStringLiteral(
-                     "Donor-space extend requires an offline move engine and certification"));
+                     "Donor-space extend requires an offline move engine, which this version "
+                     "does not have"));
 }
 
 void validateConversionAndClusterBlockers(const PartitionInfoEx& partition,
@@ -2236,6 +2243,15 @@ static void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
 static void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
                                            const PartitionOperation& operation,
                                            PartitionValidationResult* result) {
+    // The disk being copied is the one Windows is running from, and nothing takes a snapshot of it.
+    if (operation.type == PartitionOperationType::MigrateOs) {
+        result->warnings.append(
+            QStringLiteral("Windows keeps running while this copies its own disk, with no "
+                           "snapshot, so anything that changes during the copy can be inconsistent "
+                           "on the target. Close other programs first, and let Windows check the "
+                           "disk on its first start from the target. Full verification can report "
+                           "differences for the same reason."));
+    }
     addBlockerIf(result,
                  operation.type == PartitionOperationType::MigrateOs &&
                      !(disk.is_system || disk.is_boot),
@@ -2424,7 +2440,7 @@ void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskI
                          "Non-Windows write support is limited to ext2/ext3/ext4 "
                          "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
                          "mutation, Linux swap create/format, APFS generated create/format/repair, "
-                         "and certified COW root-file/root-directory mutation"));
+                         "and copy-on-write root-file/root-directory mutation"));
         addBlockerIf(
             result,
             nonNativeToolMissingConfirmation(operation),

@@ -41,6 +41,11 @@ public:
     [[nodiscard]] static QString quotePowerShell(const QString& value);
     [[nodiscard]] static bool isValidDriveLetter(const QString& value);
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
+    /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.
+    /// Public so a test can run it on bytes, with no disk involved.
+    [[nodiscard]] static QString bootSectorKindFunctionScript();
+    /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
+    [[nodiscard]] static QString freeBootLetterFunctionScript();
 
 private:
     using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;

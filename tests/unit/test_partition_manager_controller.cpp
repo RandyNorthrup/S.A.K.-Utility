@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/partition_manager_controller.h"
+#include "sak/partition_report_generator.h"
 #include "sak/process_runner.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QSignalSpy>
 #include <QTest>
 #include <QThread>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -121,6 +124,8 @@ private Q_SLOTS:
     void refreshDerivesReadyPartialAndFailedStates();
     void queueCapacityRefusalIsAtomic();
     void controllerBatchQueueRefusalIsAtomic();
+    void queueRefusalGivesItsReasons();
+    void logTextIsPlainAndWhole();
     void quickPartitionBatchUsesSequentialProjectedInventory();
     void changedQueueReviewTokenRefusesApply();
     void undoLastOperationRestoresReadyState();
@@ -242,6 +247,50 @@ void PartitionManagerControllerTests::controllerBatchQueueRefusalIsAtomic() {
     QVERIFY(!controller.queueOperations(requests));
     QVERIFY(controller.queue().isEmpty());
     QCOMPARE(controller.state(), sak::PartitionManagerState::Ready);
+}
+
+// The status bar said only that a batch failed validation. The reason is what a person acts on.
+void PartitionManagerControllerTests::queueRefusalGivesItsReasons() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    QSignalSpy refused(&controller, &sak::PartitionManagerController::queueRefused);
+    QSignalSpy status(&controller, &sak::PartitionManagerController::statusMessage);
+
+    sak::PartitionTarget absent = testDiskTarget();
+    absent.disk_number = sak::DiskNumber{42};
+    QVERIFY(!controller.queueOperation(sak::PartitionOperationType::InitializeDisk, absent));
+    QVERIFY(controller.queue().isEmpty());
+    QCOMPARE(refused.count(), 1);
+    const QStringList reasons = refused.first().at(0).toStringList();
+    QVERIFY(!reasons.isEmpty());
+    QVERIFY(std::ranges::all_of(reasons, [](const QString& reason) { return !reason.isEmpty(); }));
+    const QString shown = status.last().at(0).toString();
+    QVERIFY2(shown.startsWith(QStringLiteral("Not added to the queue: ")), qPrintable(shown));
+    QVERIFY2(shown.contains(reasons.first()), qPrintable(shown));
+}
+
+void PartitionManagerControllerTests::logTextIsPlainAndWhole() {
+    sak::PartitionExecutionResult result;
+    result.message = QStringLiteral("Dry run complete");
+    sak::PartitionExecutionStep step;
+    step.summary = QStringLiteral("Wipe <Disk 4>");
+    step.success = true;
+    step.stdout_text = QStringLiteral("line\n") + QString(5000, QLatin1Char('x')) +
+                       QStringLiteral("THE-END");
+    result.steps.append(step);
+    sak::PartitionExecutionStep failed;
+    failed.summary = QStringLiteral("Second step");
+    failed.error_message = QStringLiteral("it broke");
+    failed.stderr_text = QStringLiteral("stderr here");
+    result.steps.append(failed);
+
+    const QString text = sak::PartitionReportGenerator::generateLogText(result);
+    QVERIFY(text.startsWith(QStringLiteral("Dry run complete\n")));
+    QVERIFY(text.contains(QStringLiteral("Success: Wipe <Disk 4>\n")));
+    QVERIFY2(text.contains(QStringLiteral("THE-END")), "a step's output is not cut in the log");
+    QVERIFY(text.contains(QStringLiteral("Failed: Second step\nit broke\nstderr here")));
+    QVERIFY(!text.contains(QStringLiteral("<table")));
+    QVERIFY(!text.contains(QStringLiteral("&lt;")));
 }
 
 void PartitionManagerControllerTests::quickPartitionBatchUsesSequentialProjectedInventory() {

@@ -62,6 +62,20 @@ QJsonArray disksToJson(const PartitionInventory& inventory) {
 
 }  // namespace
 
+QString PartitionReportGenerator::generateLogText(const PartitionExecutionResult& result) {
+    QStringList lines{result.message};
+    for (const auto& step : result.steps) {
+        lines.append(QStringLiteral("%1: %2").arg(
+            step.success ? QStringLiteral("Success") : QStringLiteral("Failed"), step.summary));
+        for (const QString* detail : {&step.error_message, &step.stdout_text, &step.stderr_text}) {
+            if (!detail->trimmed().isEmpty()) {
+                lines.append(detail->trimmed());
+            }
+        }
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 QString PartitionReportGenerator::generateHtml(const PartitionInventory& before,
                                                const PartitionInventory& after,
                                                const PartitionExecutionResult& result) {

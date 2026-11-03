@@ -262,9 +262,17 @@ bool PartitionManagerController::queueOperations(
         if (!preview.canApply() || preview.operations.isEmpty() ||
             !projectQueuedOperation(&projected_inventory, preview.operations.constLast())) {
             setState(stableState());
-            Q_EMIT statusMessage(
-                QStringLiteral("Partition operation batch failed sequential safety validation"),
-                sak::kTimerStatusDefaultMs);
+            // What the checks said, which is what the person has to act on. A projection that
+            // fails with no blocker of its own still gets a reason.
+            const QStringList reasons =
+                batch.blockers.isEmpty()
+                    ? QStringList{QStringLiteral("The operation does not fit the disk layout left "
+                                                 "by the operations queued before it")}
+                    : batch.blockers;
+            Q_EMIT statusMessage(QStringLiteral("Not added to the queue: %1")
+                                     .arg(reasons.join(QStringLiteral("; "))),
+                                 sak::kTimerStatusLongMs);
+            Q_EMIT queueRefused(reasons);
             return false;
         }
     }
@@ -824,6 +832,7 @@ PartitionManagerState PartitionManagerController::publishExecutionResult(
     PartitionExecutionResult result, const PartitionInventory& after_inventory) {
     m_inventory = after_inventory;
     const PartitionReportGenerator report_generator;
+    result.report_text = report_generator.generateLogText(result);
     result.report_html =
         report_generator.generateHtml(m_apply_before_inventory, m_inventory, result);
     result.report_json =

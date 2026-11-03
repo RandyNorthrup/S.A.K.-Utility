@@ -1830,10 +1830,14 @@ AppActionDescriptor mutatingDescriptor(const QString& id,
 // ---------------------------------------------------------------------------
 
 // A partition op can legitimately run for up to the executor's own per-op ceiling
-// (kPartitionLongTaskTimeoutSeconds == 3600s). Set the outer bridge timeout just above
-// that so it never preempts a legitimate long op -- the executor's own timeout ends the
-// op first; this only fires if the executor itself wedges.
-constexpr int kApplyTimeoutMs = 65 * 60 * 1000;
+// (kPartitionLongTaskTimeoutSeconds). Set the outer bridge timeout just above that so it never
+// preempts a legitimate long op -- the executor's own timeout ends the op first; this only fires
+// if the executor itself wedges.
+constexpr int kApplyTimeoutMarginSeconds = 300;
+constexpr int kApplyTimeoutMs = (kPartitionLongTaskTimeoutSeconds + kApplyTimeoutMarginSeconds) *
+                                sak::kMillisecondsPerSecond;
+static_assert(kApplyTimeoutMs / sak::kMillisecondsPerSecond > kPartitionLongTaskTimeoutSeconds,
+              "the assistant must not cancel a job the executor still allows");
 
 QJsonObject serializeApplyStep(const PartitionExecutionStep& step) {
     QJsonObject obj{{QStringLiteral("summary"), step.summary},

@@ -12,6 +12,9 @@ namespace sak {
 
 class PartitionReportGenerator {
 public:
+    /// What the Log window shows: plain text, with each step's whole output, which on a dry run is
+    /// the script that would run.
+    [[nodiscard]] static QString generateLogText(const PartitionExecutionResult& result);
     [[nodiscard]] static QString generateHtml(const PartitionInventory& before,
                                               const PartitionInventory& after,
                                               const PartitionExecutionResult& result);

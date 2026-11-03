@@ -45,6 +45,8 @@ constexpr qint64 kHashChunkBytes = 1024 * 1024;
 // instead of pinning the CPU on O(n * max_candidate_bytes) work.
 constexpr uint64_t kScanWorkBudgetFactor = 4;
 constexpr uint64_t kScanWorkBudgetFloorBytes = 64ULL * 1024 * 1024;
+// A source is read a window at a time, with room past each window for a file that starts in it.
+constexpr uint64_t kScanWindowBytes = 256ULL * 1024 * 1024;
 constexpr char kPngSignature[kPngSignatureSize] = {'\x89', 'P', 'N', 'G', '\r', '\n', '\x1a', '\n'};
 
 struct CandidateMatch {
@@ -513,58 +515,71 @@ uint64_t scanByteLimit(uint64_t imageSize, const FileRecoveryScanOptions& option
     return std::min(imageSize, options.max_scan_bytes);
 }
 
-QByteArray readScanData(QFile* image,
-                        uint64_t imageSize,
-                        const FileRecoveryScanOptions& options,
-                        FileRecoveryScanResult* result) {
-    const uint64_t scanBytes = scanByteLimit(imageSize, options);
-    if (scanBytes < imageSize) {
-        // The byte cap stopped the read before EOF, so any candidate list carved from it is a
-        // partial view of the source. Flag it (like the candidate-limit and work-budget bounds)
-        // so a caller that only checks scan_cancelled never reports a capped scan as complete.
-        result->warnings.append(
-            QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
-        result->scan_cancelled = true;
-        result->scan_truncated = true;
-    }
-
-    // Fill up to scanBytes over repeated reads: a single QFile::read can short-read a device, and
-    // casting a huge scanBytes straight to qint64 could go negative. Loop in bounded chunks and
-    // surface a genuine read error as a partial result rather than a clean-looking empty scan
-    // (F2/F10/F11).
+// One stretch of the source in memory. A candidate may start at any offset below scan_end, and has
+// everything after that up to max_candidate_bytes in which to finish.
+struct ScanWindow {
     QByteArray data;
-    while (static_cast<uint64_t>(data.size()) < scanBytes) {
-        const qint64 want =
-            static_cast<qint64>(std::min<uint64_t>(static_cast<uint64_t>(kHashChunkBytes),
-                                                   scanBytes - static_cast<uint64_t>(data.size())));
-        const QByteArray chunk = image->read(want);
+    uint64_t source_offset{0};  // where data[0] is in the source
+    qsizetype scan_end{0};
+    bool reaches_end{false};    // nothing of the source lies past data
+};
+
+// What a window is filled from, and how much of it to hold in memory at once.
+struct ScanSource {
+    QFile* image{nullptr};
+    uint64_t scan_bytes{0};
+    uint64_t wanted_in_memory{0};
+    const std::atomic<bool>* cancel{nullptr};
+};
+
+// Tops @p window up from the source. A single QFile::read can short-read a device, and casting a
+// huge byte count straight to qint64 could go negative, so this loops in bounded chunks, and a
+// genuine read error becomes a partial result rather than a clean-looking empty scan (F2/F10/F11).
+void fillScanWindow(const ScanSource& source, ScanWindow* window, FileRecoveryScanResult* result) {
+    window->reaches_end = false;
+    while (static_cast<uint64_t>(window->data.size()) < source.wanted_in_memory) {
+        if (result->bytes_read >= source.scan_bytes) {
+            window->reaches_end = true;
+            break;
+        }
+        // A failing drive can take a long time over each chunk, and Cancel should not have to wait.
+        if (source.cancel != nullptr && source.cancel->load()) {
+            break;
+        }
+        const qint64 want = static_cast<qint64>(std::min<uint64_t>(
+            {static_cast<uint64_t>(kHashChunkBytes),
+             source.scan_bytes - result->bytes_read,
+             source.wanted_in_memory - static_cast<uint64_t>(window->data.size())}));
+        const QByteArray chunk = source.image->read(want);
         if (chunk.isEmpty()) {
-            if (image->error() != QFileDevice::NoError) {
+            if (source.image->error() != QFileDevice::NoError) {
                 // A genuine read error truncated the scan; the carve is partial. Flag it so the
                 // shortfall is never read as a complete, authoritative scan of the source.
                 result->warnings.append(
                     QStringLiteral("Read error during scan; results are partial"));
                 result->scan_cancelled = true;
             }
+            window->reaches_end = true;
             break;
         }
-        data.append(chunk);
+        window->data.append(chunk);
+        result->bytes_read += static_cast<uint64_t>(chunk.size());
     }
-    result->bytes_read = static_cast<uint64_t>(std::max<qsizetype>(0, data.size()));
-    if (scanBytes > 0 && data.isEmpty()) {
-        result->warnings.append(QStringLiteral("No bytes read from recovery source"));
-    }
-    return data;
+    window->scan_end = window->reaches_end
+                           ? window->data.size()
+                           : std::min<qsizetype>(window->data.size(),
+                                                 static_cast<qsizetype>(kScanWindowBytes));
 }
 
 FileRecoveryCandidate scanCandidateFromMatch(const QByteArray& data,
+                                             uint64_t source_offset,
                                              const CandidateMatch& match,
                                              bool captureCandidateBytes) {
     FileRecoveryCandidate candidate;
-    candidate.id = candidateId(match.offset, match.extension);
+    candidate.id = candidateId(source_offset + match.offset, match.extension);
     candidate.format = match.format;
     candidate.extension = match.extension;
-    candidate.offset_bytes = match.offset;
+    candidate.offset_bytes = source_offset + match.offset;
     candidate.size_bytes = match.size;
     candidate.sha256 = candidateHash(data, match.offset, match.size);
     if (captureCandidateBytes) {
@@ -576,10 +591,18 @@ FileRecoveryCandidate scanCandidateFromMatch(const QByteArray& data,
     return candidate;
 }
 
-void appendScanCandidates(const QByteArray& data,
-                          const FileRecoveryScanOptions& options,
-                          FileRecoveryScanResult* result,
-                          const std::atomic<bool>* cancel) {
+void noteScanStoppedByCancel(FileRecoveryScanResult* result) {
+    result->scan_cancelled = true;
+    result->stopped_by_cancel = true;
+    result->warnings.append(QStringLiteral("Scan stopped before it reached the end"));
+}
+
+// Carves one window. @return How much of the window is done with; what is left starts the next one.
+qsizetype appendScanCandidates(const ScanWindow& window,
+                               const FileRecoveryScanOptions& options,
+                               FileRecoveryScanResult* result,
+                               const std::atomic<bool>* cancel) {
+    const QByteArray& data = window.data;
     // Total forward-scan work bound: matchAt scans forward up to max_candidate_bytes
     // per signature prefix, so a crafted image of repeated unterminated signatures is
     // O(n * max_candidate_bytes). A real image (sparse, terminated signatures) scans
@@ -589,43 +612,93 @@ void appendScanCandidates(const QByteArray& data,
     const uint64_t work_budget = (static_cast<uint64_t>(data.size()) * kScanWorkBudgetFactor) +
                                  kScanWorkBudgetFloorBytes;
     uint64_t work = 0;
-    for (qsizetype offset = 0;
-         offset < data.size() && result->candidates.size() < options.max_candidates;
+    qsizetype offset = 0;
+    for (; offset < window.scan_end && result->candidates.size() < options.max_candidates;
          ++offset) {
         // Poll the cancel flag once per start offset (a supplied deadline can still
         // interrupt), and also stop when the forward-scan work budget is exhausted.
         if (cancel != nullptr && cancel->load()) {
-            result->scan_cancelled = true;
-            result->warnings.append(
-                QStringLiteral("Scan cancelled before completing (time limit reached)"));
-            return;
+            noteScanStoppedByCancel(result);
+            return offset;
         }
         if (work > work_budget) {
             result->scan_cancelled = true;
             result->warnings.append(
                 QStringLiteral("Scan bounded before completing: excessive unterminated signatures "
                                "(possible hostile image); results are partial"));
-            return;
+            return offset;
         }
         const auto match = matchAt(data, offset, options.max_candidate_bytes, &work);
         if (!match) {
             continue;
         }
-        result->candidates.append(
-            scanCandidateFromMatch(data, *match, options.capture_candidate_bytes));
+        result->candidates.append(scanCandidateFromMatch(
+            data, window.source_offset, *match, options.capture_candidate_bytes));
         offset += static_cast<qsizetype>(std::max<uint64_t>(match->size, kMinimumCandidateAdvance) -
                                          kMinimumCandidateAdvance);
+    }
+    return std::min(offset, data.size());
+}
+
+// Reads and carves the source a window at a time, so its size is limited by the time a person is
+// willing to wait and not by memory.
+void carveSource(QFile* image,
+                 uint64_t scanBytes,
+                 const FileRecoveryScanOptions& options,
+                 FileRecoveryScanResult* result,
+                 const std::atomic<bool>* cancel) {
+    const ScanSource source{image,
+                            scanBytes,
+                            kScanWindowBytes + std::min(options.max_candidate_bytes, scanBytes),
+                            cancel};
+    ScanWindow window;
+    while (true) {
+        fillScanWindow(source, &window, result);
+        const qsizetype done = appendScanCandidates(window, options, result, cancel);
+        if (cancel != nullptr && cancel->load() && !result->stopped_by_cancel &&
+            !window.reaches_end) {
+            noteScanStoppedByCancel(result);
+        }
+        // Everything that stops the scan early flags the result, so there is no next window.
+        const bool stopped = result->stopped_by_cancel || result->scan_cancelled ||
+                             result->candidates.size() >= options.max_candidates;
+        if (window.reaches_end || stopped) {
+            return;
+        }
+        window.data.remove(0, done);
+        window.source_offset += static_cast<uint64_t>(done);
     }
 }
 
 }  // namespace
+
+FileRecoveryScanOutcome classifyFileRecoveryScan(const FileRecoveryScanResult& scan) {
+    if (!scan.candidates.isEmpty()) {
+        return FileRecoveryScanOutcome::Found;
+    }
+    if (scan.stopped_by_cancel) {
+        return FileRecoveryScanOutcome::Stopped;
+    }
+    if (!scan.source_opened_read_only || scan.bytes_read == 0) {
+        // An empty file reads no bytes and has nothing wrong with it; only a warning says
+        // otherwise.
+        return scan.warnings.isEmpty() ? FileRecoveryScanOutcome::NothingFound
+                                       : FileRecoveryScanOutcome::CouldNotRead;
+    }
+    return scan.scan_cancelled || scan.scan_truncated ? FileRecoveryScanOutcome::NothingInPart
+                                                      : FileRecoveryScanOutcome::NothingFound;
+}
 
 FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoveryScanOptions& options,
                                                             const std::atomic<bool>* cancel) {
     FileRecoveryScanResult result;
     QFile image(options.image_path);
     if (!image.open(QIODevice::ReadOnly)) {
-        result.warnings.append(QStringLiteral("Could not open recovery source image read-only"));
+        result.warnings.append(
+            isWindowsRawDevicePath(options.image_path)
+                ? QStringLiteral("Could not open recovery source read-only. Reading a drive "
+                                 "directly needs S.A.K. Utility run as administrator.")
+                : QStringLiteral("Could not open recovery source image read-only"));
         return result;
     }
     result.source_opened_read_only = true;
@@ -638,8 +711,20 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
         return result;
     }
     const uint64_t imageSize = static_cast<uint64_t>(std::max<qint64>(0, reportedSize));
-    const QByteArray data = readScanData(&image, imageSize, options, &result);
-    appendScanCandidates(data, options, &result, cancel);
+    const uint64_t scanBytes = scanByteLimit(imageSize, options);
+    carveSource(&image, scanBytes, options, &result, cancel);
+    if (scanBytes < imageSize) {
+        // The byte cap stopped the read before EOF, so any candidate list carved from it is a
+        // partial view of the source. Flag it (like the candidate-limit and work-budget bounds)
+        // so a caller that only checks scan_cancelled never reports a capped scan as complete.
+        result.warnings.append(
+            QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
+        result.scan_cancelled = true;
+        result.scan_truncated = true;
+    }
+    if (scanBytes > 0 && result.bytes_read == 0) {
+        result.warnings.append(QStringLiteral("No bytes read from recovery source"));
+    }
     if (result.candidates.size() >= options.max_candidates) {
         // The cap cut enumeration short -- more candidates may exist beyond it. Flag the result as
         // partial (like the work-budget bound) so callers do not report the scan as complete (F12).

@@ -109,7 +109,7 @@ $gates = @(
         ids = @("external.boot-repair-uefi", "external.boot-repair-bios")
         evidence = @(
             @{ path = $uiPath; patterns = @("Rebuild MBR / Boot Repair", "onRepairBoot") },
-            @{ path = $scriptBuilderPath; patterns = @("bcdboot.exe %2 /s %1: /f UEFI", "reagentc.exe /info") }
+            @{ path = $scriptBuilderPath; patterns = @('bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info") }
         )
     },
     @{

@@ -13,6 +13,46 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   a path written with forward slashes against one written with backslashes. They never matched, so
   every task handed to the helper failed with a connection error. A run in a VM found it; no test had
   ever connected the two for real. The check now compares the file, and still refuses any other program.
+- **Long partition jobs are no longer cut off** - Partition Manager stopped any one job after an hour,
+  and most others after 10 to 30 minutes, whatever it was doing. A large wipe, clone, move or full
+  format died midway, which left a wipe part done or a copy's target offline. Anything that scales with
+  a drive or the data on it now runs as long as it needs, up to 23 days, and Cancel ends it. Jobs that
+  only change a disk's layout keep a short limit, because running past it can only mean something is
+  stuck.
+- **The disk copy wizards offer only what the copy does** - Layout, Align partitions to 1 MB and Prefer
+  GPT were read by nothing, though Layout changed the picture of the result. They are gone, and the
+  page says the copy is byte for byte.
+- **Data Recovery reads the whole source and keeps what it finds** - An image over 512 MB, or a scan
+  reaching 2,048 files, ended with "scan cancelled" and threw away what it had found, and only the first
+  512 MB of a volume was ever read. It now reads the whole source a piece at a time, stops at 100,000
+  files, and gives you the list with a line saying why if it did not cover everything. Cancel keeps what
+  was found so far. A source that will not open says so, rather than reading as nothing found.
+- **A refused Partition Manager operation says why** - The status bar said only that a batch failed
+  validation. A message now gives the reasons.
+- **The log shows Partition Manager's results as text** - It showed raw HTML, cut to 4,000 characters
+  per step. It now shows each step's result and its whole output, so a Dry Run shows the whole script.
+- **Boot Repair finds its own drive letter** - BIOS repair named S: and never assigned it, so it failed
+  on nearly every PC. UEFI repair did not check S: was free: bcdboot could write to whatever already had
+  that letter, and the clean-up then took the letter away from it. Both now use a free letter, and BIOS
+  repair gives it to the active partition and takes it away again. The dialog says it repairs the
+  Windows that is running, and OS migration no longer sends you to run it on the target.
+- **Convert to NTFS answers its own prompts** - convert.exe stops to ask for the volume's label, and for
+  leave to dismount, and no one was there to answer, so a labeled volume could not be converted.
+- **Defrag agrees with itself** - The queue accepted a drive whose model name says it is a hard disk, and
+  then the script refused it unless Windows reported it as HDD. Both now take either. SSD and NVMe are
+  still refused.
+- **Split puts the new partition next to the original** - It went in the largest free area on the disk,
+  wherever that was.
+- **Partition recovery scan finds Windows-formatted FAT** - It read only the OEM name, which Windows sets
+  to MSDOS5.0 on FAT, so it missed them. It also checks for a boot signature, so stray text no longer
+  counts.
+- **Other Partition Manager fixes** - Create no longer offers GPT Apple APFS, which could never be queued.
+  APFS encryption over 128 MiB is refused when you queue it, not when it runs. A read-only check's button
+  says Check Now. Create Image over an existing file works after the save dialog's question. OS migration
+  warns that it copies a running disk with no snapshot. Extend Partition Wizard is Extend Partition, since
+  it is one dialog, and the wipe and full format text says what they do instead of "secure".
+- **No more "certified" in Partition Manager and File Explorer** - Messages, capability lists and the About
+  tab said certified. They now say what was done, or say nothing. No claim changed.
 - **BitLocker keys can go to a FAT32 or exFAT drive, after a warning** - These were refused outright,
   which got in the way of a technician carrying keys across to another device. BitLocker Key Backup
   now says what such a drive means: it cannot restrict who reads files, so anyone with the drive can

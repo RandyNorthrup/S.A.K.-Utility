@@ -104,7 +104,7 @@ $features = @(
             @{
                 kind = "UI action"
                 path = "src\gui\partition_manager_panel.cpp"
-                patterns = @("Resize/Move Partition", "Extend Partition Wizard", "Move partition start", "Offline move will back up")
+                patterns = @("Resize/Move Partition", "Extend Partition", "Move partition start", "Offline move will back up")
             },
             @{
                 kind = "test"
@@ -164,7 +164,7 @@ $features = @(
             @{
                 kind = "script builder"
                 path = "src\core\partition_script_builder.cpp"
-                patterns = @("convert.exe %1: /FS:NTFS /NoSecurity")
+                patterns = @("convert.exe %1: /FS:NTFS /NoSecurity /X")
             },
             @{
                 kind = "test"
@@ -209,7 +209,7 @@ $features = @(
             @{
                 kind = "script builder"
                 path = "src\core\partition_script_builder.cpp"
-                patterns = @("SAK OS migration boot validation", "bcdboot.exe %2 /s %1: /f UEFI", "reagentc.exe /info")
+                patterns = @("SAK OS migration boot validation", 'bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info")
             },
             @{
                 kind = "test"

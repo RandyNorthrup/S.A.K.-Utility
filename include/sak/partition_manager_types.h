@@ -33,7 +33,9 @@ inline constexpr int kPartitionDefaultTaskTimeoutSeconds = 120;
 inline constexpr int kPartitionMediumTaskTimeoutSeconds = 600;
 inline constexpr int kPartitionFormatTaskTimeoutSeconds = 900;
 inline constexpr int kPartitionConversionTaskTimeoutSeconds = 1800;
-inline constexpr int kPartitionLongTaskTimeoutSeconds = 3600;
+/// For what scales with a disk, a volume or the data on it. See kElevatedTaskMaxTimeoutSeconds,
+/// which this may not exceed: the person's Cancel ends such a run, not a clock.
+inline constexpr int kPartitionLongTaskTimeoutSeconds = 2'000'000;
 inline constexpr int kPartitionReportOutputPreviewChars = 4000;
 inline constexpr int kPartitionLayoutHashPreviewChars = 10;
 inline constexpr int kPartitionCenterTableStretch = 3;
@@ -345,6 +347,7 @@ struct PartitionExecutionResult {
     bool cancelled{false};
     bool timed_out{false};
     QString message;
+    QString report_text;  ///< For the log: every step, and all of its output, as plain text
     QString report_html;
     QString report_json;
     QVector<PartitionExecutionStep> steps;
