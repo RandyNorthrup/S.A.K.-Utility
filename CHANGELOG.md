@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Distribution lists show who is on them** - Email Inspector read a distribution list's name and nothing else, so its
+  card had an empty heading and no members, and exporting it to vCard counted as a failure. The card now shows the
+  list's name and members, and the vCard carries them in its note.
+- **Contact pictures reach the vCard** - A contact's picture was never read from the mailbox, so an exported vCard had
+  none. It now does.
+- **Notes, tasks and journal entries export clean** - The text of each ended in an invisible NUL character that went
+  into every export of it. It no longer does.
 - **Pictures stay in the message in exported mail** - In a converted MBOX or an exported EML, a picture
   the message's body shows sat beside the body, where a mail program could not find it. Checking a
   converted mailbox in Thunderbird showed the picture's alt text in the message, a warning about remote
