@@ -162,6 +162,8 @@ struct PstAttachmentInfo {
     /// PidTagAttachmentHidden: part of how the item is stored, not a file someone attached. A
     /// changed occurrence of a repeating event is kept as one.
     bool hidden = false;
+    /// PidTagAttachmentContactPhoto: the picture Outlook shows for this contact.
+    bool contact_photo = false;
 };
 
 // ============================================================================
@@ -252,6 +254,12 @@ struct PstRecurrence {
 // ============================================================================
 
 /// @brief Full detail for a single item (loaded on demand)
+/// @brief One member of a distribution list.
+struct PstDistListMember {
+    QString name;
+    QString email;
+};
+
 struct PstItemDetail {
     uint64_t node_id = 0;
     EmailItemType item_type = EmailItemType::Unknown;
@@ -291,6 +299,9 @@ struct PstItemDetail {
     QString mobile_phone;
     QString home_phone;
     QByteArray contact_photo;  ///< JPEG/PNG bytes
+
+    // Distribution-list-specific; its name is the subject
+    QVector<PstDistListMember> distlist_members;
 
     // Calendar-specific
     QDateTime start_time;

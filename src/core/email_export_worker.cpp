@@ -1020,19 +1020,10 @@ bool EmailExportWorker::writeVcf(const sak::PstItemDetail& contact,
     return true;
 }
 
-QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact) {
-    QByteArray vcf;
-    vcf += "BEGIN:VCARD\r\n";
-    vcf += "VERSION:3.0\r\n";
-
-    // N: Surname;Given name (each component escaped so a value cannot inject a
-    // new structured field or property line)
-    vcf += "N:" + escapeCalendarText(contact.surname).toUtf8() + ";" +
-           escapeCalendarText(contact.given_name).toUtf8() + ";;;\r\n";
-
-    // FN: Full name. FN is REQUIRED by RFC 6350; fall back to the (real) email
-    // address as the formatted name, and fail closed (empty content) if there is no
-    // name or address to identify the contact rather than emit an invalid vCard.
+// FN is REQUIRED by RFC 6350; fall back to the (real) email address, and for a distribution list,
+// which has neither a person's name nor an address, to its own name. Empty if nothing identifies
+// it.
+static QString vcfFullName(const sak::PstItemDetail& contact) {
     QString full_name = contact.given_name;
     if (!contact.surname.isEmpty()) {
         if (!full_name.isEmpty()) {
@@ -1043,6 +1034,37 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
     if (full_name.isEmpty()) {
         full_name = contact.email_address;
     }
+    if (full_name.isEmpty() && contact.item_type == sak::EmailItemType::DistList) {
+        full_name = contact.subject;
+    }
+    return full_name;
+}
+
+// vCard 3.0 has no list of members, so they go in the one field every reader shows.
+static void appendVcfMembers(QByteArray& vcf, const sak::PstItemDetail& contact) {
+    if (contact.distlist_members.isEmpty()) {
+        return;
+    }
+    QStringList members;
+    for (const auto& member : contact.distlist_members) {
+        members.append(QStringLiteral("%1 <%2>").arg(member.name, member.email));
+    }
+    appendVcfField(vcf, "NOTE:", QStringLiteral("Members: ") + members.join(QStringLiteral("; ")));
+}
+
+QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact) {
+    QByteArray vcf;
+    vcf += "BEGIN:VCARD\r\n";
+    vcf += "VERSION:3.0\r\n";
+
+    // N: Surname;Given name (each component escaped so a value cannot inject a
+    // new structured field or property line)
+    vcf += "N:" + escapeCalendarText(contact.surname).toUtf8() + ";" +
+           escapeCalendarText(contact.given_name).toUtf8() + ";;;\r\n";
+
+    // Fail closed (empty content) if nothing identifies the contact, rather than emit an invalid
+    // vCard.
+    const QString full_name = vcfFullName(contact);
     if (full_name.isEmpty()) {
         return {};  // no identifying data -> caller treats as a failed contact
     }
@@ -1053,6 +1075,7 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
     appendVcfField(vcf, "TEL;TYPE=WORK:", contact.business_phone);
     appendVcfField(vcf, "TEL;TYPE=CELL:", contact.mobile_phone);
     appendVcfField(vcf, "TEL;TYPE=HOME:", contact.home_phone);
+    appendVcfMembers(vcf, contact);
 
     // Label the PHOTO with its detected type instead of assuming JPEG; skip an
     // unrecognized blob rather than mislabel it.

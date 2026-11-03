@@ -120,7 +120,7 @@ private:
                                          const QString& output_dir);
 
     // Content builders
-    [[nodiscard]] QByteArray buildVcfContent(const sak::PstItemDetail& contact);
+    [[nodiscard]] static QByteArray buildVcfContent(const sak::PstItemDetail& contact);
     [[nodiscard]] QByteArray buildIcsContent(const QVector<sak::PstItemDetail>& events);
 
     // Per-item helpers

@@ -65,6 +65,43 @@ struct BuilderProp {
     QByteArray value;
 };
 
+/// A one-off EntryID (MS-OXCDATA 2.2.5.1), as a distribution list holds each member.
+inline QByteArray builderOneOffMember(const QString& name,
+                                      const QString& address,
+                                      bool wide = true) {
+    QByteArray entry(4, '\0');
+    entry += QByteArray::fromHex("812B1FA4BEA310199D6E00DD010F5402");
+    entry += QByteArray(2, '\0');
+    entry += wide ? QByteArray::fromHex("0080") : QByteArray::fromHex("0000");
+    for (const QString& text : {name, QStringLiteral("SMTP"), address}) {
+        if (wide) {
+            entry += QByteArray(reinterpret_cast<const char*>(text.utf16()),
+                                text.size() * static_cast<qsizetype>(sizeof(char16_t)));
+            entry += QByteArray(2, '\0');
+        } else {
+            entry += text.toLatin1();
+            entry += '\0';
+        }
+    }
+    return entry;
+}
+
+/// A multi-valued binary (MS-PST 2.3.3.4.2): a count, one 32-bit offset per value, then the values.
+inline QByteArray builderMultiBinary(const QList<QByteArray>& values) {
+    const auto word = [](qsizetype value) {
+        const auto narrow = static_cast<uint32_t>(value);
+        return QByteArray(reinterpret_cast<const char*>(&narrow), sizeof(narrow));
+    };
+    QByteArray head = word(values.size());
+    QByteArray body;
+    const qsizetype start = (values.size() + 1) * static_cast<qsizetype>(sizeof(uint32_t));
+    for (const QByteArray& value : values) {
+        head += word(start + body.size());
+        body += value;
+    }
+    return head + body;
+}
+
 inline QByteArray builderUnicode(const QString& text) {
     QByteArray bytes(reinterpret_cast<const char*>(text.utf16()),
                      static_cast<qsizetype>(text.size()) * 2);
@@ -108,6 +145,8 @@ struct BuilderAttachment {
     QString content_id;
     bool ole_object = false;  ///< Store @c data the way an OLE attachment (method 6) is stored
     bool hidden = false;      ///< PidTagAttachmentHidden, as a repeating event's exceptions have
+    bool contact_photo =
+        false;  ///< PidTagAttachmentContactPhoto, as Outlook marks a contact's picture
 };
 
 /// A row of a message's recipient table.
@@ -835,6 +874,11 @@ private:
         }
         if (att.hidden) {
             props.append({sak::email::kPropIdAttachmentHidden,
+                          sak::email::kPropTypeBoolean,
+                          QByteArray(1, 1)});
+        }
+        if (att.contact_photo) {
+            props.append({sak::email::kPropIdAttachmentContactPhoto,
                           sak::email::kPropTypeBoolean,
                           QByteArray(1, 1)});
         }

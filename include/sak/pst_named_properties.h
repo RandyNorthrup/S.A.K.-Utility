@@ -45,6 +45,7 @@ inline constexpr uint16_t kPropIdNameidStreamGuid = 0x0002;
 inline constexpr uint16_t kPropIdNameidStreamEntry = 0x0003;
 
 /// Named-property long ids the app reads. The values are from MS-OXPROPS.
+inline constexpr uint32_t kLidDistributionListOneOffMembers = 0x8054;
 inline constexpr uint32_t kLidTaskStatus = 0x8101;
 inline constexpr uint32_t kLidTaskPercentComplete = 0x8102;
 inline constexpr uint32_t kLidTaskStartDate = 0x8104;

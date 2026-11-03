@@ -433,6 +433,77 @@ private Q_SLOTS:
         QCOMPARE(sticky->note_color, 1);
     }
 
+    // Nothing read the picture, so the vCard writer's PHOTO line could never run. Outlook marks it,
+    // and it is not necessarily the first attachment.
+    void readsAContactsPicture() {
+        const QByteArray picture("\xFF\xD8\xFF\xE0 a fictional picture", 24);
+        BuilderMessage with_picture;
+        with_picture.message_class = QStringLiteral("IPM.Contact");
+        with_picture.subject = QStringLiteral("Theo Brandt");
+        BuilderAttachment file{
+            QStringLiteral("menu.pdf"), QStringLiteral("application/pdf"), QByteArray("%PDF-"), {}};
+        BuilderAttachment photo{QStringLiteral("ContactPicture.jpg"), {}, picture, {}};
+        photo.contact_photo = true;
+        with_picture.attachments = {file, photo};
+
+        BuilderFolder with;
+        with.name = QStringLiteral("With");
+        with.container_class = QStringLiteral("IPF.Contact");
+        with.messages.append(with_picture);
+
+        BuilderMessage without_picture = with_picture;
+        without_picture.attachments = {file};
+        BuilderFolder without;
+        without.name = QStringLiteral("Without");
+        without.container_class = QStringLiteral("IPF.Contact");
+        without.messages.append(without_picture);
+
+        PstParser parser;
+        parser.open(writeStore(PstStoreBuilder{}.build({with, without})));
+        const auto person = onlyMessage(parser, QStringLiteral("With"));
+        QVERIFY(person.has_value());
+        QCOMPARE(person->contact_photo, picture);
+        const auto other = onlyMessage(parser, QStringLiteral("Without"));
+        QVERIFY(other.has_value());
+        QVERIFY(other->contact_photo.isEmpty());
+    }
+
+    // A list keeps each member as a one-off EntryID. One entry can be in 8-bit text, and a damaged
+    // one must cost only itself.
+    void readsADistributionListsMembers() {
+        BuilderMessage list;
+        list.message_class = QStringLiteral("IPM.DistList");
+        list.subject = QStringLiteral("Harbor Lane Crew");
+        const QByteArray cut = builderOneOffMember(QStringLiteral("Cut Off"),
+                                                   QStringLiteral("cut@example.invalid"))
+                                   .chopped(10);
+        list.named_props = {
+            {kSetAddress,
+             sak::pst::kLidDistributionListOneOffMembers,
+             sak::email::kPropTypeMultiBinary,
+             builderMultiBinary({builderOneOffMember(QStringLiteral(u"J\u00F6rg"),
+                                                     QStringLiteral("joerg@example.invalid")),
+                                 cut,
+                                 builderOneOffMember(QStringLiteral("Bob Fictional"),
+                                                     QStringLiteral("bob@example.invalid"),
+                                                     false)})}};
+        BuilderFolder lists;
+        lists.name = QStringLiteral("Lists");
+        lists.container_class = QStringLiteral("IPF.Contact");
+        lists.messages.append(list);
+
+        PstParser parser;
+        parser.open(writeStore(PstStoreBuilder{}.build({lists})));
+        const auto detail = onlyMessage(parser, QStringLiteral("Lists"));
+        QVERIFY(detail.has_value());
+        QCOMPARE(detail->item_type, sak::EmailItemType::DistList);
+        QCOMPARE(detail->distlist_members.size(), 2);
+        QCOMPARE(detail->distlist_members.at(0).name, QStringLiteral(u"J\u00F6rg"));
+        QCOMPARE(detail->distlist_members.at(0).email, QStringLiteral("joerg@example.invalid"));
+        QCOMPARE(detail->distlist_members.at(1).name, QStringLiteral("Bob Fictional"));
+        QCOMPARE(detail->distlist_members.at(1).email, QStringLiteral("bob@example.invalid"));
+    }
+
     // Most calendar items, and some mail, have compressed RTF as their only body.
     void fillsTheBodyFromCompressedRtfWhenThatIsAllThereIs() {
         BuilderMessage msg = plainMessage(QStringLiteral("RTF only"));

@@ -1141,6 +1141,98 @@ private Q_SLOTS:
         dialog.filterContacts(QStringLiteral("oven works"));
         QCOMPARE(dialog.m_contact_table->rowCount(), 1);
     }
+    // A list has no person's name and no address of its own, so its card had an empty heading and
+    // exporting it failed. Neither said who was on it.
+    void aDistributionListShowsAndExportsItsMembers() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("lists.pst"));
+        BuilderMessage list;
+        list.message_class = QStringLiteral("IPM.DistList");
+        list.subject = QStringLiteral("Harbor Lane Crew");
+        list.named_props = {
+            {kSetAddress,
+             sak::pst::kLidDistributionListOneOffMembers,
+             sak::email::kPropTypeMultiBinary,
+             builderMultiBinary({builderOneOffMember(QStringLiteral("Alice Example"),
+                                                     QStringLiteral("alice@example.invalid")),
+                                 builderOneOffMember(QStringLiteral("Bob Fictional"),
+                                                     QStringLiteral("bob@example.invalid"))})}};
+        BuilderFolder folder;
+        folder.name = QStringLiteral("Contacts");
+        folder.container_class = QStringLiteral("IPF.Contact");
+        folder.messages = {list};
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(PstStoreBuilder{}.build({folder}));
+        file.close();
+
+        PstParser parser;
+        parser.open(path);
+        QVERIFY(parser.isOpen());
+        const QString out = dir.filePath(QStringLiteral("out"));
+        exportFirstFolder(parser, sak::ExportFormat::Vcf, out);
+        QDirIterator cards(
+            out, {QStringLiteral("*.vcf")}, QDir::Files, QDirIterator::Subdirectories);
+        QVERIFY(cards.hasNext());
+        QFile card(cards.next());
+        QVERIFY(card.open(QIODevice::ReadOnly));
+        const QByteArray text = card.readAll();
+        QVERIFY2(text.contains("FN:Harbor Lane Crew"), text.constData());
+        QVERIFY2(text.contains("Alice Example <alice@example.invalid>"), text.constData());
+        QVERIFY2(text.contains("Bob Fictional <bob@example.invalid>"), text.constData());
+
+        EmailInspectorController controller;
+        sak::EmailContactsDialog dialog(&controller, {});
+        sak::PstItemDetail detail;
+        detail.item_type = sak::EmailItemType::DistList;
+        detail.subject = QStringLiteral("Harbor Lane Crew");
+        detail.distlist_members = {
+            {QStringLiteral("Alice Example"), QStringLiteral("alice@example.invalid")}};
+        dialog.displayContactDetail(detail);
+        const QString shown = dialog.m_detail_browser->toPlainText();
+        QVERIFY2(shown.startsWith(QStringLiteral("Harbor Lane Crew")), qPrintable(shown));
+        QVERIFY2(shown.contains(QStringLiteral("Alice Example <alice@example.invalid>")),
+                 qPrintable(shown));
+    }
+
+    void aContactsPictureReachesItsVcard() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("people.pst"));
+        const QByteArray png("\x89PNG\r\n\x1a\nfixture bytes", 21);
+        BuilderMessage person;
+        person.message_class = QStringLiteral("IPM.Contact");
+        person.subject = QStringLiteral("Theo Brandt");
+        person.extra_props = {{sak::email::kPropIdGivenName,
+                               sak::email::kPropTypeUnicode,
+                               builderUnicode(QStringLiteral("Theo"))}};
+        BuilderAttachment picture{QStringLiteral("ContactPicture.png"), {}, png, {}};
+        picture.contact_photo = true;
+        person.attachments = {picture};
+        BuilderFolder folder;
+        folder.name = QStringLiteral("Contacts");
+        folder.container_class = QStringLiteral("IPF.Contact");
+        folder.messages = {person};
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(PstStoreBuilder{}.build({folder}));
+        file.close();
+
+        PstParser parser;
+        parser.open(path);
+        QVERIFY(parser.isOpen());
+        const QString out = dir.filePath(QStringLiteral("out"));
+        exportFirstFolder(parser, sak::ExportFormat::Vcf, out);
+        QDirIterator cards(
+            out, {QStringLiteral("*.vcf")}, QDir::Files, QDirIterator::Subdirectories);
+        QVERIFY(cards.hasNext());
+        QFile card(cards.next());
+        QVERIFY(card.open(QIODevice::ReadOnly));
+        const QByteArray text = card.readAll();
+        QVERIFY2(text.contains("PHOTO;ENCODING=b;TYPE=PNG:" + png.toBase64()), text.constData());
+    }
+
     // An event went on the day its invitation arrived, with no end or location. An event with no
     // delivery date, most of a real calendar, was not shown at all.
     void anEventGoesOnTheDayItHappensWithItsDetails() {

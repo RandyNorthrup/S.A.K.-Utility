@@ -307,6 +307,7 @@ constexpr uint16_t kPropIdAttachMimeTag = 0x370E;
 constexpr uint16_t kPropIdAttachContentId = 0x3712;
 constexpr uint16_t kPropIdAttachMethod = 0x3705;
 constexpr uint16_t kPropIdAttachmentHidden = 0x7FFE;
+constexpr uint16_t kPropIdAttachmentContactPhoto = 0x7FFF;
 
 // -- Contact properties --
 constexpr uint16_t kPropIdEmailAddress = 0x3003;

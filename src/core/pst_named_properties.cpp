@@ -8,6 +8,8 @@
 
 #include "sak/pst_recurrence.h"
 
+#include <QByteArrayView>
+#include <QStringList>
 #include <QtEndian>
 
 #include <array>
@@ -155,7 +157,81 @@ void applyTask(sak::PstItemDetail& detail, uint32_t lid, const sak::MapiProperty
     }
 }
 
+// MS-OXCDATA 2.2.5.1, a one-off EntryID: 4 flag bytes, the 16-byte provider UID, a 2-byte version,
+// 2 bytes of flags, then the display name, address type and address, each NUL-terminated.
+constexpr int kOneOffFlagsOffset = 22;
+constexpr int kOneOffStringsOffset = 24;
+constexpr uint16_t kOneOffUnicodeFlag = 0x8000;
+constexpr int kOneOffStringCount = 3;
+constexpr int kOneOffNameIndex = 0;
+constexpr int kOneOffAddressIndex = 2;
+constexpr int kWideCharBytes = 2;
+
+QString oneOffString(const QByteArrayView text, bool wide) {
+    return wide ? QString::fromUtf16(reinterpret_cast<const char16_t*>(text.data()),
+                                     text.size() / kWideCharBytes)
+                : QString::fromLatin1(text);
+}
+
+QStringList oneOffStrings(const QByteArrayView entry) {
+    QStringList strings;
+    if (entry.size() < kOneOffStringsOffset) {
+        return strings;
+    }
+    const auto flags = qFromLittleEndian<uint16_t>(entry.data() + kOneOffFlagsOffset);
+    const bool wide = (flags & kOneOffUnicodeFlag) != 0;
+    const int unit = wide ? kWideCharBytes : 1;
+    const auto endsHere = [&entry, wide](qsizetype where) {
+        return entry[where] == 0 && (!wide || entry[where + 1] == 0);
+    };
+    qsizetype at = kOneOffStringsOffset;
+    while (strings.size() < kOneOffStringCount) {
+        qsizetype end = at;
+        while (end + unit <= entry.size() && !endsHere(end)) {
+            end += unit;
+        }
+        if (end + unit > entry.size()) {
+            return {};  // A string with no terminator: this entry is damaged.
+        }
+        strings.append(oneOffString(entry.sliced(at, end - at), wide));
+        at = end + unit;
+    }
+    return strings;
+}
+
+// MS-PST 2.3.3.4.2, a multi-valued binary: a count, one 32-bit offset per value, then the values.
+QVector<sak::PstDistListMember> oneOffMembers(const QByteArray& raw) {
+    constexpr int kFieldBytes = 4;
+    QVector<sak::PstDistListMember> members;
+    if (raw.size() < kFieldBytes) {
+        return members;
+    }
+    const auto count = qFromLittleEndian<uint32_t>(raw.constData());
+    if (count > static_cast<uint32_t>((raw.size() - kFieldBytes) / kFieldBytes)) {
+        return members;
+    }
+    const auto offsetOf = [&raw](uint32_t index) {
+        return qFromLittleEndian<uint32_t>(raw.constData() + kFieldBytes + index * kFieldBytes);
+    };
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t start = offsetOf(i);
+        const uint32_t end = i + 1 < count ? offsetOf(i + 1) : static_cast<uint32_t>(raw.size());
+        if (start > end || end > static_cast<uint32_t>(raw.size())) {
+            continue;
+        }
+        const QStringList strings = oneOffStrings(QByteArrayView(raw).sliced(start, end - start));
+        if (strings.size() == kOneOffStringCount) {
+            members.append({strings.at(kOneOffNameIndex), strings.at(kOneOffAddressIndex)});
+        }
+    }
+    return members;
+}
+
 void applyAddress(sak::PstItemDetail& detail, uint32_t lid, const sak::MapiProperty& prop) {
+    if (lid == kLidDistributionListOneOffMembers) {
+        detail.distlist_members = oneOffMembers(prop.raw_value);
+        return;
+    }
     // A contact can carry up to three addresses. Email1 is the primary; the others only fill a
     // gap, so a contact with just a second address still shows one.
     if (lid == kLidEmail1EmailAddress) {

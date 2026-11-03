@@ -25,6 +25,7 @@
 #include <array>
 #include <cstring>
 #include <format>
+#include <iterator>
 #include <limits>
 
 using sak::error_code;
@@ -760,6 +761,10 @@ static const QHash<uint16_t, AttachSetter>& attachmentSetters() {
          }},
         {sak::email::kPropIdAttachmentHidden,
          [](sak::PstAttachmentInfo& a, const QString& v) { a.hidden = v == QLatin1String("true"); }},
+        {sak::email::kPropIdAttachmentContactPhoto,
+         [](sak::PstAttachmentInfo& a, const QString& v) {
+             a.contact_photo = v == QLatin1String("true");
+         }},
     };
     return kMap;
 }
@@ -3399,6 +3404,9 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessageForNode(
         detail.item_type == sak::EmailItemType::MeetingRequest) {
         readAttendees(node, detail);
     }
+    if (detail.item_type == sak::EmailItemType::Contact) {
+        readContactPhoto(node, detail);
+    }
 
     applyRtfBody(detail);
 
@@ -3699,6 +3707,24 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
     }
 
     describeAttachedMessage(att, display_name);
+}
+
+void PstParser::readContactPhoto(const sak::PstNode& node, sak::PstItemDetail& detail) {
+    const auto photo = std::ranges::find_if(detail.attachments, [](const auto& attachment) {
+        return attachment.contact_photo;
+    });
+    if (photo == detail.attachments.end()) {
+        return;
+    }
+    // The contact is still worth showing without its picture.
+    const int index = static_cast<int>(std::distance(detail.attachments.begin(), photo));
+    auto data = readAttachmentDataForNode(node, index);
+    if (data) {
+        detail.contact_photo = std::move(*data);
+    } else {
+        sak::logWarning("PstParser: could not read the picture of contact NID 0x{:08X}",
+                        node.node_id);
+    }
 }
 
 std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttachments(

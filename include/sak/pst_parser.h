@@ -586,6 +586,7 @@ private:
     /// Fill a calendar item's attendees from its recipient table. An unreadable table is noted on
     /// the item and does not stop it being read.
     void readAttendees(const sak::PstNode& node, sak::PstItemDetail& detail);
+    void readContactPhoto(const sak::PstNode& node, sak::PstItemDetail& detail);
     [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code>
     readAttachmentsForNode(const sak::PstNode& node);
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentDataForNode(

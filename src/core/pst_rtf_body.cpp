@@ -411,6 +411,9 @@ std::optional<QByteArray> decompressRtf(const QByteArray& compressed) {
 RtfBodyText rtfToText(const QByteArray& rtf) {
     RtfTextExtractor extractor(rtf);
     RtfBodyText body = extractor.run();
+    // Outlook ends the decompressed stream with a NUL after the closing brace. Tasks, notes and
+    // journal entries have no other body, so it would reach every export of one.
+    body.text.remove(QChar::Null);
     body.text = body.text.trimmed();
     return body;
 }

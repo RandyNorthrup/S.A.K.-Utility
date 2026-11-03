@@ -6,6 +6,12 @@
 ///
 /// Usage: make_sample_pst <output.pst> [yyyy-MM]
 /// The calendar's events fall in the given month, or the current month if none is given.
+///
+/// The file is for screenshots of this app, which reads it. Never attach it to Outlook. Its header
+/// has no valid allocation fields (bidNextB and bidNextP are 0) and it has no allocation maps, so
+/// Outlook's PST provider (MSPST32) stops at its corruption check and ends the Outlook process.
+/// That is Outlook refusing this file, not a defect in Outlook, and it can leave an unconfigured
+/// data file entry behind in the profile.
 
 #include "../support/harbor_lane_sample.h"
 

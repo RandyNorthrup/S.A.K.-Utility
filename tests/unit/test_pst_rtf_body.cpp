@@ -25,6 +25,14 @@ private Q_SLOTS:
         QCOMPARE(*rtf, QByteArray("{\\rtf1\\ansi\\ansicpg1252\\pard hello world}\r\n"));
     }
 
+    // Outlook ends the stream with a NUL after the closing brace, and a note, task or journal
+    // entry has no other body, so the NUL reached every export of one.
+    void dropsTheNulThatEndsTheStream() {
+        QByteArray rtf("{\\rtf1\\ansi\\fromtext Tide table\\par}");
+        rtf.append('\0');
+        QCOMPARE(rtfToText(rtf).text, QStringLiteral("Tide table"));
+    }
+
     // MS-OXRTFCP 4.2: a reference that overlaps its own output, wrapping past the write position.
     void inflatesAReferenceOverlappingItsOwnOutput() {
         const QByteArray compressed =

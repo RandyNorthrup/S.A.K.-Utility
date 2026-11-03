@@ -372,13 +372,43 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     m_contact_table->setUpdatesEnabled(true);
 }
 
+namespace {
+
+/// One labelled line of the detail pane, or nothing when the contact has no such value.
+QString contactFieldHtml(const char* label, const QString& value) {
+    if (value.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("<p><b>%1:</b> %2</p>")
+        .arg(QLatin1String(label), clampContactField(value).toHtmlEscaped());
+}
+
+QString distListMembersHtml(const sak::PstItemDetail& detail) {
+    if (detail.distlist_members.isEmpty()) {
+        return {};
+    }
+    QString html = QStringLiteral("<p><b>Members:</b></p><ul>");
+    for (const auto& member : detail.distlist_members) {
+        html += QStringLiteral("<li>%1 &lt;%2&gt;</li>")
+                    .arg(clampContactField(member.name).toHtmlEscaped(),
+                         clampContactField(member.email).toHtmlEscaped());
+    }
+    return html + QStringLiteral("</ul>");
+}
+
+}  // namespace
+
 void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail) {
+    // A distribution list has a name of its own, not a person's first and last name.
+    const bool is_list = detail.item_type == EmailItemType::DistList;
+    const QString heading_first = is_list ? detail.subject : detail.given_name;
+    const QString heading_last = is_list ? QString() : detail.surname;
     QString html = QString::fromLatin1(ui::kHtmlContactDetailHeadingOpen)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(ui::kSpacingMedium)
-                       .arg(clampContactField(detail.given_name).toHtmlEscaped())
-                       .arg(clampContactField(detail.surname).toHtmlEscaped());
+                       .arg(clampContactField(heading_first).toHtmlEscaped())
+                       .arg(clampContactField(heading_last).toHtmlEscaped());
 
     if (!detail.job_title.isEmpty() || !detail.company_name.isEmpty()) {
         html += QString::fromLatin1(ui::kHtmlParagraphColorMarginOpen)
@@ -396,31 +426,13 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
 
-    // Email
-    if (!detail.email_address.isEmpty()) {
-        html += QStringLiteral("<p><b>Email:</b> %1</p>")
-                    .arg(clampContactField(detail.email_address).toHtmlEscaped());
-    }
-
-    // Phones
-    if (!detail.business_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Business:</b> %1</p>")
-                    .arg(clampContactField(detail.business_phone).toHtmlEscaped());
-    }
-    if (!detail.mobile_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Mobile:</b> %1</p>")
-                    .arg(clampContactField(detail.mobile_phone).toHtmlEscaped());
-    }
-    if (!detail.home_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Home:</b> %1</p>")
-                    .arg(clampContactField(detail.home_phone).toHtmlEscaped());
-    }
-
-    // Subject (often the full display name)
-    if (!detail.subject.isEmpty()) {
-        html += QStringLiteral("<p><b>Display Name:</b> %1</p>")
-                    .arg(clampContactField(detail.subject).toHtmlEscaped());
-    }
+    html += contactFieldHtml("Email", detail.email_address);
+    html += distListMembersHtml(detail);
+    html += contactFieldHtml("Business", detail.business_phone);
+    html += contactFieldHtml("Mobile", detail.mobile_phone);
+    html += contactFieldHtml("Home", detail.home_phone);
+    // Often the full display name.
+    html += contactFieldHtml("Display Name", detail.subject);
 
     // Notes / body
     if (!detail.body_plain.isEmpty()) {
