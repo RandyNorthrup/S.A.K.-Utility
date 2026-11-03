@@ -186,7 +186,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_encryption | `encryption` | AES-256-CBC encrypt/decrypt, wrong password, Unicode, file encryption, IV randomness |
-| test_secure_memory | `secure_memory` | Memory wiping, and what unlockMemory refuses |
+| test_secure_memory | `secure_memory` | Memory wiping |
 
 ### Elevation & Privilege
 | Test | Module Under Test | Coverage |
@@ -198,7 +198,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 ### Deployment & Migration
 | Test | Module Under Test | Coverage |
 |---|---|---|
-| test_migration_report | `migration_report` | Migration report generation |
+| test_migration_report | `migration_report` | The install queue's entries and counts |
 | test_email_inspector_panel | `email_inspector_panel` | Search scope, fields searched, and hits listed in the item table |
 | test_main_window_help | `main_window` | Where the Help tab's links go and what the About tab claims |
 | test_package_matcher | `package_matcher` | App-to-Chocolatey matching on real display names |

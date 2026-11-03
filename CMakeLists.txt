@@ -371,7 +371,6 @@ set(SAK_FOUNDATION_SOURCES
     src/core/logger.cpp
     src/core/app_paths.cpp
     src/core/path_utils.cpp
-    src/core/secure_memory.cpp
     src/core/file_hash.cpp
     src/core/process_runner.cpp
     src/core/contained_process_quarantine.cpp

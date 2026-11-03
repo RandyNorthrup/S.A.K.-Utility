@@ -1119,7 +1119,7 @@ add_test(NAME test_path_utils COMMAND test_path_utils
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_path_utils")
 
-# test_secure_memory - wipe, secure random, constant-time compare, locked memory
+# test_secure_memory - wipe
 add_executable(test_secure_memory
     unit/test_secure_memory.cpp
 )
@@ -4712,7 +4712,7 @@ add_test(NAME test_quick_action_controller COMMAND test_quick_action_controller
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_quick_action_controller")
 
-# test_migration_report - entry CRUD, selection, counts, distribution
+# test_migration_report - entries, bounds-checked access, counts
 add_executable(test_migration_report
     unit/test_migration_report.cpp
 )

@@ -5,76 +5,44 @@
   "ctest_regex": "^test_package_matcher$",
   "mutants": [
     {
-      "id": "exact-min-confidence-guard-inverted",
-      "file": "src/core/package_matcher.cpp",
-      "find": "if (!exact.has_value() || exact->confidence < config.min_confidence) {",
-      "replace": "if (!exact.has_value() || exact->confidence > config.min_confidence) {",
-      "expect": "killed",
-      "why": "resolveExactMatch must ACCEPT an exact hit whose confidence >= min_confidence; flipping < to > rejects the confidence-1.0 direct mapping (1.0 > 0.5) and returns nullopt. findMatch_exactMapping asserts QVERIFY(result.has_value())"
-    },
-    {
       "id": "exact-direct-confidence-degraded",
       "file": "src/core/package_matcher.cpp",
-      "find": ".confidence = 1.0,  // Perfect confidence",
-      "replace": ".confidence = 0.5,  // Perfect confidence",
+      "find": ".confidence = 1.0,",
+      "replace": ".confidence = 0.5,",
       "expect": "killed",
-      "why": "a direct exact-mapping hit reports perfect confidence 1.0; degrading it to 0.5 still clears the min_confidence gate but violates the strength assertion. findMatch_exactMapping asserts QVERIFY(result->confidence > 0.9)"
+      "why": "a direct table hit reports perfect confidence; findMatch_exactMapping pins 1.0."
     },
     {
-      "id": "mapping-count-zeroed",
+      "id": "case-insensitive-compare-inverted",
       "file": "src/core/package_matcher.cpp",
-      "find": "return static_cast<int>(m_exact_mappings.size());",
-      "replace": "return static_cast<int>(0);",
+      "find": "if (it.key().compare(app_name, Qt::CaseInsensitive) == 0) {",
+      "replace": "if (it.key().compare(app_name, Qt::CaseInsensitive) != 0) {",
       "expect": "killed",
-      "why": "getMappingCount must report the live mapping count; forcing 0 hides the built-in mappings. constructor_initializesCommonMappings asserts QVERIFY(matcher.getMappingCount() > 0)"
+      "why": "the second pass matches a name in another case, and only that name; findMatch_caseInsensitive and findMatch_noResult pin both sides."
     },
     {
-      "id": "export-writes-value-as-appname",
+      "id": "blank-mapping-guard-weakened",
       "file": "src/core/package_matcher.cpp",
-      "find": "mapping[\"app_name\"] = it.key();",
-      "replace": "mapping[\"app_name\"] = it.value();",
+      "find": "if (normalized.isEmpty() || choco_package.isEmpty()) {",
+      "replace": "if (normalized.isEmpty() && choco_package.isEmpty()) {",
       "expect": "killed",
-      "why": "the exported app_name must be the mapping key; writing the choco value instead means re-import stores under the wrong key. exportImport_roundTrip asserts QVERIFY(imported.hasMapping(\"UniqueTestApp\")) after export+import"
+      "why": "a mapping with a name and no package must not be stored: it would surface as an empty suggestion."
     },
     {
-      "id": "import-size-cap-operator-inverted",
+      "id": "store-apps-get-matched",
       "file": "src/core/package_matcher.cpp",
-      "find": "if (file.size() > kMaxMappingsFileBytes) {",
-      "replace": "if (file.size() < kMaxMappingsFileBytes) {",
+      "find": "if (app.source == AppScanner::AppInfo::Source::AppX) {",
+      "replace": "if (app.source != AppScanner::AppInfo::Source::AppX) {",
       "expect": "killed",
-      "why": "the DoS size guard must reject only oversized files; flipping > to < rejects every normal (small) mappings file so import returns false. exportImport_roundTrip asserts QVERIFY(imported.importMappings(exportPath))"
+      "why": "Chocolatey does not install Store apps, and desktop apps must still match; applyMatches_leavesStoreAppsUnmatched and applyMatches_recordsTheTableMatchOnADesktopApp."
     },
     {
-      "id": "export-open-guard-inverted",
+      "id": "chocolatey-own-package-kept",
       "file": "src/core/package_matcher.cpp",
-      "find": "if (!file.open(QIODevice::WriteOnly)) {",
-      "replace": "if (file.open(QIODevice::WriteOnly)) {",
+      "find": "if (app.choco_package.compare(kChocolateyOwnPackage, Qt::CaseInsensitive) == 0) {",
+      "replace": "if (app.choco_package.compare(kChocolateyOwnPackage, Qt::CaseInsensitive) != 0) {",
       "expect": "killed",
-      "why": "the open-failure guard fails closed on a bad open; dropping the ! makes a SUCCESSFUL open return false and never write. exportImport_roundTrip asserts QVERIFY(original.exportMappings(exportPath))"
-    },
-    {
-      "id": "import-object-guard-inverted",
-      "file": "src/core/package_matcher.cpp",
-      "find": "if (!doc.isObject()) {",
-      "replace": "if (doc.isObject()) {",
-      "expect": "killed",
-      "why": "importMappings must reject non-object JSON; dropping the ! makes a VALID object doc return false before applying mappings. exportImport_roundTrip asserts QVERIFY(imported.importMappings(exportPath))"
-    },
-    {
-      "id": "fuzzy-threshold-boundary-tightened",
-      "file": "src/core/package_matcher.cpp",
-      "find": "if (best_similarity >= kFuzzyMatchThreshold) {",
-      "replace": "if (best_similarity > kFuzzyMatchThreshold) {",
-      "expect": "killed",
-      "why": "fuzzyMatch_similarityAtThresholdMatches drives fuzzyMatch via the friend cache-seed seam (cacheSearch short-circuits fetchSearchOutput before searchPackage's init gate, so an uninitialized ChocolateyManager works). calculateSimilarity(\"abcd\",\"axyd\") == 0.6 EXACTLY (jaro-winkler 0.7 + levenshtein-sim 0.5, averaged), landing on kFuzzyMatchThreshold. Real >= returns the match; the > boundary-tighten rejects the exact-threshold candidate and returns nullopt, so QVERIFY(result.has_value()) fails"
-    },
-    {
-      "id": "fuzzy-best-select-tie-flip",
-      "file": "src/core/package_matcher.cpp",
-      "find": "if (similarity <= best_similarity) {",
-      "replace": "if (similarity < best_similarity) {",
-      "expect": "killed",
-      "why": "fuzzyMatch_bestSelectTieKeepsFirst drives fuzzyMatch via the friend cache-seed seam with two candidates (\"abcde\", \"abcdz\") that both contain the query \"abcd\" and so score an EXACT tie at kContainedNameSimilarity (0.85). <= keeps the FIRST candidate on the tie; the < mutant lets the later equal-scoring package overwrite it. QCOMPARE(result->choco_package, \"abcde\") passes for real and fails for the mutant (which selects \"abcdz\")"
+      "why": "Chocolatey itself is not offered for reinstall, and every other package keeps its id; applyMatches_dropsChocolateysOwnPackage and applyMatches_keepsTheIdChocolateyReported."
     }
   ]
 }

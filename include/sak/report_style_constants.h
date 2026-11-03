@@ -77,7 +77,6 @@ inline constexpr int kAiReportFindingPaddingHorizontalPx = 14;
 inline constexpr int kAiReportSeverityFontPx = 12;
 
 inline constexpr int kSavedEmailMaxWidthPx = 800;
-inline constexpr int kMigrationReportMetadataLabelWidthPx = 200;
 inline constexpr int kSavedEmailBodyFontPt = 10;
 inline constexpr int kSavedEmailPageMarginPx = 24;
 inline constexpr int kSavedEmailHorizontalPaddingPx = 16;
@@ -441,18 +440,6 @@ inline QString pdfEmailStyleSheet() {
                .arg(detail::cssColor(ui::kColorTextMuted),
                     detail::cssPx(kPdfEmailAttachmentFontPt),
                     detail::cssPx(kPdfEmailAttachmentMarginTopPx));
-    return css;
-}
-
-inline QString migrationReportExtraStyleSheet() {
-    QString css;
-    css += QStringLiteral(".metadata table { width: %1; border-collapse: collapse; }")
-               .arg(detail::cssPercent(kReportCssPercentFull));
-    css += QStringLiteral(".metadata td:first-child { font-weight: %1; width: %2; }")
-               .arg(QString::number(ui::kFontWeightBold),
-                    detail::cssPx(kMigrationReportMetadataLabelWidthPx));
-    css += QStringLiteral(".confidence { font-weight: %1; }")
-               .arg(QString::number(ui::kFontWeightBold));
     return css;
 }
 

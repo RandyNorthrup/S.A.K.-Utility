@@ -20,8 +20,6 @@ private Q_SLOTS:
     void wipe_spanOverload();
     void wipe_nullIsNoop();
     void wipe_zeroSizeIsNoop();
-
-    void unlockMemory_refusesWhatItCannotUnlock();
 };
 
 // ============================================================================
@@ -61,12 +59,6 @@ void SecureMemoryTests::wipe_zeroSizeIsNoop() {
     sak::secure_wiper::wipe(&dummy, 0);
     // Value should remain unchanged (wipe with size 0 is a no-op)
     QCOMPARE(dummy, 42);
-}
-
-void SecureMemoryTests::unlockMemory_refusesWhatItCannotUnlock() {
-    std::array<unsigned char, 4096> buffer{};
-    QVERIFY(!sak::unlockMemory(nullptr, buffer.size()));
-    QVERIFY(!sak::unlockMemory(buffer.data(), 0));
 }
 
 QTEST_GUILESS_MAIN(SecureMemoryTests)

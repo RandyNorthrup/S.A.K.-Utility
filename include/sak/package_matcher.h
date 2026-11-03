@@ -56,10 +56,8 @@ public:
     ///        Chocolatey does not install them.
     void applyMatches(std::vector<AppScanner::AppInfo>& apps) const;
 
-    // Manual mapping management
+    /// @brief Add one name to the table. The constructor fills it from the reviewed list.
     void addMapping(const QString& app_name, const QString& choco_package);
-
-    int getMappingCount() const;
 
 private:
     std::optional<MatchResult> exactMatch(const QString& app_name) const;

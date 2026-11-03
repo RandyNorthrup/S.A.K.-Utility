@@ -4,27 +4,17 @@
 #pragma once
 
 #include <QDateTime>
-#include <QMap>
 #include <QString>
 
-#include <optional>
 #include <vector>
 
 namespace sak {
 
 /**
- * @brief MigrationReport - Export/import application migration plans
+ * @brief MigrationReport - the list of applications an install run works through.
  *
- * This class manages the creation, export, and import of migration reports
- * that combine scanned apps with their matched Chocolatey packages. Reports
- * can be exported to JSON or CSV for documentation, planning, or execution
- * on target machines.
- *
- * Use cases:
- * - Document current system state
- * - Plan migration to new machine
- * - Share migration list with team
- * - Import migration list on target machine
+ * The install panel fills it from its queue, and the install worker records each entry's outcome
+ * in it.
  */
 class MigrationReport {
 public:
@@ -79,23 +69,8 @@ public:
     };
 
     void addEntry(const MigrationEntry& entry);
-    void updateEntry(int index, const MigrationEntry& entry);
-    void removeEntry(int index);
 
-    // Selection management
-    void selectEntry(int index, bool selected = true);
     void selectAll();
-    void deselectAll();
-    void selectByMatchType(const QString& match_type);
-    void selectByConfidence(double min_confidence);
-
-    // Export formats
-    bool exportToJson(const QString& file_path) const;
-    bool exportToCsv(const QString& file_path) const;
-    bool exportToHtml(const QString& file_path) const;  // Human-readable report
-
-    // Import
-    bool importFromJson(const QString& file_path);
 
     // Accessors
     const std::vector<MigrationEntry>& getEntries() const { return m_entries; }
@@ -132,12 +107,6 @@ public:
     const ReportMetadata& getMetadata() const { return m_metadata; }
     ReportMetadata& getMetadata() { return m_metadata; }
 
-    // Statistics
-    double getMatchRate() const;
-    QMap<QString, int> getMatchTypeDistribution() const;
-    std::vector<MigrationEntry> getSelectedEntries() const;
-    std::vector<MigrationEntry> getUnmatchedEntries() const;
-
     // Clear
     void clear();
 
@@ -145,14 +114,6 @@ private:
     // Helper methods
     static QString getComputerName();
     static QString getCurrentUser();
-
-    static QString escapeCsvField(const QString& field);
-    QString formatHtmlReport() const;
-    static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
-    static ReportMetadata parseMetadataFromJson(const QJsonObject& root,
-                                                const ReportMetadata& current);
-    static QString buildHtmlStyles();
-    void buildHtmlEntryRows(QTextStream& out) const;
 
     // Data members
     std::vector<MigrationEntry> m_entries;

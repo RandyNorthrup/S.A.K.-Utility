@@ -16,7 +16,7 @@ class PackageMatcherTests : public QObject {
 private Q_SLOTS:
     // Mapping management
     void addMapping_isWhatFindMatchFinds();
-    void getMappingCount_afterAdd();
+    void addMapping_storesNothingBlank();
 
     // findMatch
     void findMatch_exactMapping();
@@ -57,14 +57,12 @@ void PackageMatcherTests::addMapping_isWhatFindMatchFinds() {
     QCOMPARE(result->choco_package, QString("test-app-choco"));
 }
 
-void PackageMatcherTests::getMappingCount_afterAdd() {
+void PackageMatcherTests::addMapping_storesNothingBlank() {
     sak::PackageMatcher matcher;
-    int initial = matcher.getMappingCount();
-
-    matcher.addMapping("NewApp1", "new-app-1");
-    matcher.addMapping("NewApp2", "new-app-2");
-
-    QCOMPARE(matcher.getMappingCount(), initial + 2);
+    matcher.addMapping("Blank Package App", "");
+    QVERIFY(!matcher.findMatch(makeAppInfo("Blank Package App")).has_value());
+    matcher.addMapping("", "blank-name-package");
+    QVERIFY(!matcher.findMatch(makeAppInfo("")).has_value());
 }
 
 // ============================================================================

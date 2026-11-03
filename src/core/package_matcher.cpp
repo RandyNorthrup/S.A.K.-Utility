@@ -243,8 +243,4 @@ void PackageMatcher::addMapping(const QString& app_name, const QString& choco_pa
     m_exact_mappings[normalized] = choco_package;
 }
 
-int PackageMatcher::getMappingCount() const {
-    return static_cast<int>(m_exact_mappings.size());
-}
-
 }  // namespace sak

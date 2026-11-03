@@ -54,10 +54,4 @@ public:
     }
 };
 
-/// @brief Unlock previously locked memory
-/// @param ptr Pointer to memory
-/// @param size Size of memory region
-/// @return True if successful
-[[nodiscard]] bool unlockMemory(void* ptr, std::size_t size) noexcept;
-
 }  // namespace sak
