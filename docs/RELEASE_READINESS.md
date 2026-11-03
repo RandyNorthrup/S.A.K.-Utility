@@ -361,12 +361,17 @@ worker and restores it through the restore worker, which nothing did before.
   `.sakbak`. Its files stand together, and a renamed `Bookmarks` is a restore that did nothing.
 - FIXED, security: BitLocker Key Backup wrote plaintext keys to FAT32 and exFAT, and said the
   folder was restricted. Set-Acl reports success there and stores nothing (confirmed on an exFAT
-  drive: the script printed SUCCESS and the folder stayed open to Everyone). The location is now
-  refused by file system, and the script reads the result back. The read-back has no automated
-  test, because no CI runner has an exFAT drive; it was run by hand on one, with the result recorded
-  in the commit. DESIGN DECISION: refused rather than allowed with a warning, because the action's
-  stated rule is that keys are never written under a permissive ACL. The owner may prefer to allow
-  it after a warning, since many USB drives are exFAT.
+  drive: the script printed SUCCESS and the folder stayed open to Everyone). The script now reads the
+  result back, and the action checks the drive first. The read-back has no automated test, because
+  no CI runner has an exFAT drive; it was run by hand on one, with the result recorded in the
+  commit. DESIGN DECISION, owner 2026-11-02, reversing the refusal this round first made: a FAT32 or
+  exFAT destination is allowed after a warning, because a technician often only carries keys across
+  to another device. Cancel is the default and writes nothing. The result and the log say the keys
+  were saved and are not protected. On NTFS a failed lock-down is still a failure, and a warning
+  accepted for this run changes nothing there. DESIGN DECISION: a route with no person to answer the
+  warning refuses and writes nothing. The assistant's approval covers running the action and never
+  shows this warning, and Unattended has no one there at all, so its runs carry no acceptance. The
+  helper takes an acceptance only as a JSON true in the payload, which only the panel's run sends.
 - FIXED: path::string() throws on a character outside the system code page. That ended organizer
   and duplicate runs, and made the restore path guard refuse a whole backup. These paths now use
   UTF-8 (pathAsUtf8), with a real round trip per backup kind.
@@ -616,6 +621,8 @@ DESIGN DECISIONS, the owner may want to overrule:
 
 INCOMPLETE, VM smoke:
 
+- Time a real flash at the 64 MB buffer against 256 MB, on one real image and one real drive. If 64 MB
+  is measurably slower, raise it. Round 3 settled on 64 MB everywhere without a timing.
 - Flush Cache unelevated. `DnsFlushResolverCache` was not run here, because it changes this PC's DNS
   state. Microsoft's pages for `ipconfig /flushdns` and `Clear-DnsClientCache` state no administrator
   requirement, and do not say there is none, so this stays unproven. If it needs an administrator after

@@ -8,6 +8,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **BitLocker keys can go to a FAT32 or exFAT drive, after a warning** - These were refused outright,
+  which got in the way of a technician carrying keys across to another device. BitLocker Key Backup
+  now says what such a drive means: it cannot restrict who reads files, so anyone with the drive can
+  read the keys, and they should be moved somewhere secure and deleted from it. Cancel is the
+  default and writes nothing. If you go on, the result and the log say the keys were saved and are
+  not protected. The AI Assistant has no one to show this to, so it still refuses these drives.
+- **A PST in Outlook's folder is backed up by default** - The one Outlook Data row in the backup wizard
+  was unticked because an OST can run to tens of gigabytes and the mail server still has it. A PST
+  kept in the same folder could be the only copy of that mail, and it stayed behind with the OST. There
+  are now two rows: Outlook Archives (PST), ticked, and Outlook Cache (OST), unticked, each with its
+  own size. The restore wizard lists them apart too. Older backups keep their one row.
+- **The converter says what it left out, by message class** - Converting a store counted what was not
+  mail as contacts, calendar items, tasks, notes and "other". The report now has a table of each
+  class name and how many items had it, for each file, and the log has the same counts, so a smaller
+  mailbox can be explained. Nothing from the items themselves is listed.
+- **BitLocker Key Backup says where it saved through the helper** - Run through the elevated helper,
+  its completion line left out the folder. It now names it, and any warning with it.
 - **Distribution lists show who is on them** - Email Inspector read a distribution list's name and nothing else, so its
   card had an empty heading and no members, and exporting it to vCard counted as a failure. The card now shows the
   list's name and members, and the vCard carries them in its note.

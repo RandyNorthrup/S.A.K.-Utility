@@ -60,6 +60,9 @@ about what is "obviously fine".
   keep their four parts.
 - **The log window stays a detached window that snaps to the main window** (owner, 2026-11-02).
   Do not build it into the main window.
+- **S.A.K. Utility is primarily a technician tool** (owner, 2026-11-02). When a default or a warning
+  could go either way, choose what a working technician needs, and never at the cost of silently
+  losing a customer's data.
 
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem
