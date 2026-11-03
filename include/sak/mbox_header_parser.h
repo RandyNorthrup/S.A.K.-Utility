@@ -19,7 +19,11 @@
 #include <QByteArray>
 #include <QList>
 #include <QMap>
+#include <QRegularExpression>
 #include <QString>
+#include <QStringDecoder>
+
+#include <optional>
 
 namespace sak::mbox {
 
@@ -86,6 +90,153 @@ namespace sak::mbox {
     flushHeader();
 
     return headers;
+}
+
+namespace detail {
+
+constexpr int kHexBase = 16;
+constexpr qsizetype kQHexDigits = 2;
+
+/// RFC 2047 Q encoding: '_' is a space and =XX is a byte. Nullopt on a stray '='.
+[[nodiscard]] inline std::optional<QByteArray> decodeQEncoding(const QByteArray& text) {
+    QByteArray bytes;
+    bytes.reserve(text.size());
+    for (qsizetype at = 0; at < text.size(); ++at) {
+        const char ch = text.at(at);
+        if (ch == '_') {
+            bytes.append(' ');
+        } else if (ch != '=') {
+            bytes.append(ch);
+        } else {
+            bool ok = false;
+            const QByteArray digits = text.mid(at + 1, kQHexDigits);
+            const int value = digits.toInt(&ok, kHexBase);
+            if (!ok || digits.size() != kQHexDigits) {
+                return std::nullopt;
+            }
+            bytes.append(static_cast<char>(value));
+            at += kQHexDigits;
+        }
+    }
+    return bytes;
+}
+
+/// RFC 2047 B encoding. Real senders often leave off the padding, which Qt reads without complaint.
+[[nodiscard]] inline std::optional<QByteArray> decodeBEncoding(const QByteArray& text) {
+    auto decoded = QByteArray::fromBase64Encoding(text, QByteArray::AbortOnBase64DecodingErrors);
+    if (!decoded) {
+        return std::nullopt;
+    }
+    return std::move(decoded.decoded);
+}
+
+/// The text @p bytes spell in @p charset. Nullopt when the charset is unknown or they do not fit
+/// it.
+[[nodiscard]] inline std::optional<QString> decodeWordBytes(const QByteArray& bytes,
+                                                            const QString& charset) {
+    // Stateless: a word ending partway through a character is an error, not something to wait on.
+    QStringDecoder decoder(charset.toLatin1().constData(), QStringConverter::Flag::Stateless);
+    if (!decoder.isValid()) {
+        return std::nullopt;
+    }
+    QString text = decoder.decode(bytes);
+    if (decoder.hasError()) {
+        return std::nullopt;
+    }
+    return text;
+}
+
+/// A run of adjacent words in one charset, decoded together: senders split a character across two.
+struct EncodedWordRun {
+    bool active = false;
+    QString charset;
+    QByteArray bytes;
+    qsizetype raw_start = 0;
+    qsizetype raw_end = 0;
+};
+
+inline void flushEncodedWordRun(EncodedWordRun& run, const QString& value, QString& out) {
+    if (!run.active) {
+        return;
+    }
+    const std::optional<QString> text = decodeWordBytes(run.bytes, run.charset);
+    out += text.has_value() ? *text : value.mid(run.raw_start, run.raw_end - run.raw_start);
+    run = {};
+}
+
+/// One encoded word: its charset, without the language RFC 2231 lets it carry after '*', and its
+/// bytes. Nullopt bytes when the encoding does not decode.
+struct EncodedWord {
+    QString charset;
+    std::optional<QByteArray> bytes;
+};
+
+[[nodiscard]] inline EncodedWord parseEncodedWord(const QRegularExpressionMatch& match) {
+    constexpr int kCharsetGroup = 1;
+    constexpr int kEncodingGroup = 2;
+    constexpr int kTextGroup = 3;
+    const QByteArray text = match.captured(kTextGroup).toLatin1();
+    const bool base64 =
+        match.captured(kEncodingGroup).compare(QLatin1String("b"), Qt::CaseInsensitive) == 0;
+    return {.charset = match.captured(kCharsetGroup).section(QLatin1Char('*'), 0, 0),
+            .bytes = base64 ? decodeBEncoding(text) : decodeQEncoding(text)};
+}
+
+/// A header value stays on one line, whatever an encoded word smuggled into it.
+inline void blankControlCharacters(QString& text) {
+    for (QChar& ch : text) {
+        if (ch.category() == QChar::Other_Control && ch != QLatin1Char('\t')) {
+            ch = QLatin1Char(' ');
+        }
+    }
+}
+
+}  // namespace detail
+
+/// The text of a header value holding RFC 2047 encoded words, =?charset?B|Q?text?=. Adjacent words
+/// join with the white space between them dropped, which covers a folded header. A word with a
+/// charset this system does not know, or an encoding that does not decode, stays exactly as
+/// written: the raw text is better than nothing, and reading a mailbox must not fail over it.
+[[nodiscard]] inline QString decodeEncodedWords(const QString& value) {
+    if (!value.contains(QStringLiteral("=?"))) {
+        return value;
+    }
+    static const QRegularExpression word(
+        QStringLiteral(R"re(=\?([^?\s]+)\?([BbQq])\?(\S*?)\?=)re"));
+    QString out;
+    qsizetype copied = 0;
+    detail::EncodedWordRun run;
+    auto matches = word.globalMatch(value);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        const QString between = value.mid(copied, match.capturedStart() - copied);
+        const bool adjacent = run.active && between.trimmed().isEmpty();
+        const detail::EncodedWord parsed = detail::parseEncodedWord(match);
+        copied = match.capturedEnd();
+        if (adjacent && parsed.bytes.has_value() &&
+            parsed.charset.compare(run.charset, Qt::CaseInsensitive) == 0) {
+            run.bytes += *parsed.bytes;
+            run.raw_end = copied;
+            continue;
+        }
+        detail::flushEncodedWordRun(run, value, out);
+        if (!adjacent || !parsed.bytes.has_value()) {
+            out += between;
+        }
+        if (parsed.bytes.has_value()) {
+            run = {.active = true,
+                   .charset = parsed.charset,
+                   .bytes = *parsed.bytes,
+                   .raw_start = match.capturedStart(),
+                   .raw_end = copied};
+        } else {
+            out += match.captured(0);
+        }
+    }
+    detail::flushEncodedWordRun(run, value, out);
+    out += value.mid(copied);
+    detail::blankControlCharacters(out);
+    return out;
 }
 
 }  // namespace sak::mbox

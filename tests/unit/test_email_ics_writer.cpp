@@ -303,6 +303,72 @@ private Q_SLOTS:
                  QStringList{QStringLiteral("DTEND;VALUE=DATE:20261226")});
     }
 
+    // Outlook stores an all-day start as midnight where it was made, in UTC. With no zone stored,
+    // the nearest midnight is the date. These are the stores of a PC in each of those places.
+    void aSingleAllDayEventWithNoZoneIsItsOwnDate_data() {
+        QTest::addColumn<QDateTime>("start");
+        QTest::addColumn<QString>("date");
+        QTest::newRow("UTC") << utcAt(2026, 3, 15, 0) << QStringLiteral("20260315");
+        QTest::newRow("London in summer") << utcAt(2026, 7, 14, 23) << QStringLiteral("20260715");
+        QTest::newRow("Berlin") << utcAt(2026, 3, 14, 23) << QStringLiteral("20260315");
+        QTest::newRow("India") << utcAt(2026, 3, 14, 18, 30) << QStringLiteral("20260315");
+        QTest::newRow("Japan") << utcAt(2026, 3, 14, 15) << QStringLiteral("20260315");
+        QTest::newRow("Sydney in summer") << utcAt(2026, 3, 14, 13) << QStringLiteral("20260315");
+        QTest::newRow("New Zealand in winter")
+            << utcAt(2026, 7, 14, 12) << QStringLiteral("20260715");
+        QTest::newRow("New York") << utcAt(2026, 3, 15, 4) << QStringLiteral("20260315");
+        QTest::newRow("Pacific") << utcAt(2026, 12, 25, 8) << QStringLiteral("20261225");
+        QTest::newRow("Hawaii") << utcAt(2026, 3, 15, 10) << QStringLiteral("20260315");
+        QTest::newRow("American Samoa") << utcAt(2026, 3, 15, 11) << QStringLiteral("20260315");
+    }
+
+    void aSingleAllDayEventWithNoZoneIsItsOwnDate() {
+        QFETCH(QDateTime, start);
+        QFETCH(QString, date);
+        sak::PstItemDetail event = plainEvent();
+        event.is_all_day = true;
+        event.start_time = start;
+        event.end_time = start.addDays(1);
+        const QByteArray ics = sak::buildIcsCalendar({event}, kStamp);
+        QCOMPARE(linesOf(ics, QStringLiteral("DTSTART")),
+                 QStringList{QStringLiteral("DTSTART;VALUE=DATE:") + date});
+        const QString next = QDate::fromString(date, QStringLiteral("yyyyMMdd"))
+                                 .addDays(1)
+                                 .toString(QStringLiteral("yyyyMMdd"));
+        QCOMPARE(linesOf(ics, QStringLiteral("DTEND")),
+                 QStringList{QStringLiteral("DTEND;VALUE=DATE:") + next});
+    }
+
+    // An event's time is the same instant wherever the file is read, so its date must not move.
+    void anAllDayEventsDateDoesNotDependOnThePcReadingIt() {
+        sak::PstItemDetail event = plainEvent();
+        event.is_all_day = true;
+        event.start_time = utcAt(2026, 3, 14, 18, 30).toLocalTime();
+        event.end_time = utcAt(2026, 3, 15, 18, 30).toLocalTime();
+        QCOMPARE(linesOf(sak::buildIcsCalendar({event}, kStamp), QStringLiteral("DTSTART")),
+                 QStringList{QStringLiteral("DTSTART;VALUE=DATE:20260315")});
+    }
+
+    // DTEND must be later than a date DTSTART, and with none the event is that one day.
+    void anAllDayEventWithNoUsableEndIsOneDay() {
+        sak::PstItemDetail event = plainEvent();
+        event.is_all_day = true;
+        event.start_time = utcAt(2026, 3, 14, 18, 30);
+        event.end_time = event.start_time;
+        QVERIFY(linesOf(sak::buildIcsCalendar({event}, kStamp), QStringLiteral("DTEND")).isEmpty());
+        event.end_time = {};
+        QVERIFY(linesOf(sak::buildIcsCalendar({event}, kStamp), QStringLiteral("DTEND")).isEmpty());
+    }
+
+    // A timed event is still a moment, whatever its time of day.
+    void aTimedEventIsNotADate() {
+        sak::PstItemDetail event = plainEvent();
+        event.start_time = utcAt(2026, 3, 14, 18, 30);
+        event.end_time = utcAt(2026, 3, 14, 19, 30);
+        QCOMPARE(linesOf(sak::buildIcsCalendar({event}, kStamp), QStringLiteral("DTSTART")),
+                 QStringList{QStringLiteral("DTSTART:20260314T183000Z")});
+    }
+
     void anUnreadablePatternIsSaidOnTheEventAndInTheLog() {
         RecurrenceSpec spec;
         spec.frequency = 0x2099;

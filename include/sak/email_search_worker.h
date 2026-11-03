@@ -117,8 +117,7 @@ private:
 
     /// Check if an MBOX message passes pre-match filters
     [[nodiscard]] bool passesMboxFilters(const sak::MboxMessage& msg,
-                                         const sak::EmailSearchCriteria& criteria,
-                                         MboxParser* parser) const;
+                                         const sak::EmailSearchCriteria& criteria) const;
 
     /// Try to match an MBOX message against query criteria
     [[nodiscard]] std::optional<MatchResult> matchMboxItem(const sak::MboxMessage& msg,

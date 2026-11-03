@@ -21,6 +21,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/pst_recurrence.h"
 #include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
@@ -2536,13 +2537,19 @@ void EmailInspectorPanel::displayJournalDetail(const sak::PstItemDetail& detail)
     if (!detail.journal_type.isEmpty()) {
         html += QStringLiteral("<p><b>Type:</b> %1</p>").arg(detail.journal_type.toHtmlEscaped());
     }
-    if (detail.start_time.isValid()) {
-        html += QStringLiteral("<p><b>Start:</b> %1</p>")
-                    .arg(detail.start_time.toString(Qt::RFC2822Date));
-    }
-    if (detail.end_time.isValid()) {
-        html +=
-            QStringLiteral("<p><b>End:</b> %1</p>").arg(detail.end_time.toString(Qt::RFC2822Date));
+    if (detail.is_all_day && detail.start_time.isValid()) {
+        html += QStringLiteral("<p><b>Date:</b> %1 (all day)</p>")
+                    .arg(sak::pst::allDayDate(detail.time_zone, detail.start_time)
+                             .toString(Qt::RFC2822Date));
+    } else {
+        if (detail.start_time.isValid()) {
+            html += QStringLiteral("<p><b>Start:</b> %1</p>")
+                        .arg(detail.start_time.toString(Qt::RFC2822Date));
+        }
+        if (detail.end_time.isValid()) {
+            html += QStringLiteral("<p><b>End:</b> %1</p>")
+                        .arg(detail.end_time.toString(Qt::RFC2822Date));
+        }
     }
     if (detail.journal_duration_minutes > 0) {
         html += QStringLiteral("<p><b>Duration:</b> %1 minutes</p>")

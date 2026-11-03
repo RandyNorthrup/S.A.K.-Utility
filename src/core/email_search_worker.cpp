@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
+#include "sak/pst_recurrence.h"
 
 #include <QElapsedTimer>
 
@@ -87,6 +88,13 @@ bool dateInRange(const QDateTime& date, const sak::EmailSearchCriteria& criteria
     }
     return (!criteria.date_from.isValid() || date >= criteria.date_from) &&
            (!criteria.date_to.isValid() || date <= criteria.date_to);
+}
+
+/// When an item happens, as a range compares it. A range is days on this PC's calendar, and an
+/// all-day event is on its own date whatever PC reads it.
+QDateTime rangeDateOf(const sak::PstItemDetail& item) {
+    return item.is_all_day ? sak::pst::allDayDate(item.time_zone, item.start_time).startOfDay()
+                           : item.start_time;
 }
 
 /// Events and journal entries belong to the day they happen. The date in a contents table is when
@@ -314,7 +322,7 @@ bool EmailSearchWorker::searchMessagePage(MboxParser* parser,
         }
         ++state.items_searched;
 
-        if (!passesMboxFilters(msg, criteria, parser)) {
+        if (!passesMboxFilters(msg, criteria)) {
             continue;
         }
 
@@ -431,7 +439,7 @@ bool EmailSearchWorker::passesItemFilters(const sak::PstItemSummary& item,
             return false;
         }
         if (detail->start_time.isValid()) {
-            filter_date = detail->start_time;
+            filter_date = rangeDateOf(*detail);
         }
     }
     return dateInRange(filter_date, criteria);
@@ -576,8 +584,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemAtt
 }
 
 bool EmailSearchWorker::passesMboxFilters(const sak::MboxMessage& msg,
-                                          const sak::EmailSearchCriteria& criteria,
-                                          MboxParser* parser) const {
+                                          const sak::EmailSearchCriteria& criteria) const {
     // A mailbox holds only email, so asking it for anything else finds nothing.
     if (criteria.item_type_filter != sak::EmailItemType::Unknown &&
         criteria.item_type_filter != sak::EmailItemType::Email) {
@@ -586,20 +593,7 @@ bool EmailSearchWorker::passesMboxFilters(const sak::MboxMessage& msg,
     if (!dateInRange(msg.date, criteria)) {
         return false;
     }
-    if (!criteria.has_attachment_only) {
-        return true;
-    }
-    // The index has only the headers to go on, and they say "might": any multipart message, which
-    // is nearly all mail. On real mailboxes that was 766 hits where 21 messages had attachments.
-    if (!msg.has_attachments) {
-        return false;
-    }
-    const auto detail = parser->readMessageDetail(msg.message_index);
-    if (!detail) {
-        ++t_item_read_failures;
-        return false;
-    }
-    return !detail->attachments.isEmpty();
+    return !criteria.has_attachment_only || msg.has_attachments;
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxHeaders(

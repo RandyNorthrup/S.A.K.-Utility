@@ -11,6 +11,12 @@
 
 #include <QtTest/QtTest>
 
+#include <array>
+#include <cstring>
+#include <vector>
+
+#include <windows.h>
+
 using namespace sak::pst_fixture;
 using sak::pst::parseAppointmentRecurrence;
 using sak::pst::parseTimeZoneDefinition;
@@ -34,6 +40,79 @@ QDateTime utcAt(int year, int month, int day, int hour, int minute = 0) {
     return QDateTime(QDate(year, month, day), QTime(hour, minute), QTimeZone::UTC);
 }
 
+}  // namespace
+
+namespace {
+// The registry's value for a zone (REG_TZI_FORMAT).
+struct RegTziFormat {
+    LONG bias;
+    LONG standard_bias;
+    LONG daylight_bias;
+    SYSTEMTIME standard_date;
+    SYSTEMTIME daylight_date;
+};
+
+// PidLidTimeZoneStruct is the same fields with a year in front of each date.
+QByteArray zoneStructFrom(const RegTziFormat& tzi) {
+    QByteArray raw;
+    const auto append = [&raw](const auto& value) {
+        raw.append(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    append(tzi.bias);
+    append(tzi.standard_bias);
+    append(tzi.daylight_bias);
+    append(WORD{0});
+    append(tzi.standard_date);
+    append(WORD{0});
+    append(tzi.daylight_date);
+    return raw;
+}
+
+SYSTEMTIME systemTimeOf(const QDateTime& utc) {
+    SYSTEMTIME time{};
+    time.wYear = static_cast<WORD>(utc.date().year());
+    time.wMonth = static_cast<WORD>(utc.date().month());
+    time.wDay = static_cast<WORD>(utc.date().day());
+    time.wHour = static_cast<WORD>(utc.time().hour());
+    time.wMinute = static_cast<WORD>(utc.time().minute());
+    return time;
+}
+
+QDateTime dateTimeOf(const SYSTEMTIME& time) {
+    return QDateTime(QDate(time.wYear, time.wMonth, time.wDay),
+                     QTime(time.wHour, time.wMinute),
+                     QTimeZone::UTC);
+}
+
+// What this code and Windows disagree on, or empty. A wall-clock time in the hour a change skips or
+// repeats names no one instant, so only the direction with one answer, UTC to wall clock, is held
+// to every hour.
+QString firstDisagreementWithWindows(const sak::PstTimeZone& zone, const RegTziFormat& tzi) {
+    TIME_ZONE_INFORMATION windows{};
+    windows.Bias = tzi.bias;
+    windows.StandardBias = tzi.standard_bias;
+    windows.DaylightBias = tzi.daylight_bias;
+    windows.StandardDate = tzi.standard_date;
+    windows.DaylightDate = tzi.daylight_date;
+    const QDateTime first(QDate(2026, 1, 1), QTime(0, 0), QTimeZone::UTC);
+    constexpr int kHoursInAYear = 365 * 24;
+    for (int hour = 0; hour < kHoursInAYear; ++hour) {
+        const QDateTime utc = first.addSecs(static_cast<qint64>(hour) * 3600);
+        const SYSTEMTIME utc_time = systemTimeOf(utc);
+        SYSTEMTIME local{};
+        if (SystemTimeToTzSpecificLocalTime(&windows, &utc_time, &local) == 0) {
+            return QStringLiteral("Windows refused %1").arg(utc.toString(Qt::ISODate));
+        }
+        const QDateTime ours = sak::pst::zoneUtcToWallClock(zone, utc);
+        if (ours != dateTimeOf(local)) {
+            return QStringLiteral("%1 UTC: ours %2, Windows %3")
+                .arg(utc.toString(Qt::ISODate),
+                     ours.toString(Qt::ISODate),
+                     dateTimeOf(local).toString(Qt::ISODate));
+        }
+    }
+    return {};
+}
 }  // namespace
 
 class PstRecurrenceTests : public QObject {
@@ -505,6 +584,63 @@ private Q_SLOTS:
         QCOMPARE(zone.daylight_offset_minutes, -420);
         QCOMPARE(zone.to_standard.week, 1);
         QCOMPARE(zone.to_daylight.week, 2);
+    }
+
+    void allDayDateRoundsToTheNearestMidnight() {
+        const sak::PstTimeZone no_zone;
+        QCOMPARE(sak::pst::allDayDate(no_zone, utcAt(2026, 3, 14, 18, 30)), QDate(2026, 3, 15));
+        QCOMPARE(sak::pst::allDayDate(no_zone, utcAt(2026, 3, 15, 0)), QDate(2026, 3, 15));
+        QCOMPARE(sak::pst::allDayDate(no_zone, utcAt(2026, 3, 15, 11, 59)), QDate(2026, 3, 15));
+        QCOMPARE(sak::pst::allDayDate(no_zone, utcAt(2026, 3, 15, 12)), QDate(2026, 3, 16));
+        // The same instant, held as local time, is the same date.
+        QCOMPARE(sak::pst::allDayDate(no_zone, utcAt(2026, 3, 14, 18, 30).toLocalTime()),
+                 QDate(2026, 3, 15));
+    }
+
+    // A zone settles what no-zone rounding cannot: 11:00 UTC is the day before in New Zealand's
+    // summer, 13 hours ahead, and the same day in American Samoa.
+    void allDayDateUsesTheEventsOwnZone() {
+        sak::PstTimeZone new_zealand_summer;
+        new_zealand_summer.known = true;
+        new_zealand_summer.standard_offset_minutes = 13 * 60;
+        new_zealand_summer.daylight_offset_minutes = 13 * 60;
+        QCOMPARE(sak::pst::allDayDate(new_zealand_summer, utcAt(2026, 1, 14, 11)),
+                 QDate(2026, 1, 15));
+        QCOMPARE(sak::pst::allDayDate({}, utcAt(2026, 1, 14, 11)), QDate(2026, 1, 14));
+    }
+
+    // Windows' own zone database, read from the registry, and Windows' own conversion. Every zone
+    // on this PC, every hour of a year, compared with what a stored zone of the same bytes gives.
+    // Reads the registry and changes nothing.
+    void everyWindowsZoneConvertsAsWindowsDoes() {
+        HKEY zones = nullptr;
+        const wchar_t* const path = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones";
+        QCOMPARE(RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &zones), ERROR_SUCCESS);
+        int compared = 0;
+        std::array<wchar_t, 256> name{};
+        for (DWORD index = 0;; ++index) {
+            DWORD length = static_cast<DWORD>(name.size());
+            if (RegEnumKeyExW(
+                    zones, index, name.data(), &length, nullptr, nullptr, nullptr, nullptr) !=
+                ERROR_SUCCESS) {
+                break;
+            }
+            RegTziFormat tzi{};
+            DWORD size = sizeof(tzi);
+            if (RegGetValueW(zones, name.data(), L"TZI", RRF_RT_REG_BINARY, nullptr, &tzi, &size) !=
+                ERROR_SUCCESS) {
+                continue;
+            }
+            const QString zone_name = QString::fromWCharArray(name.data());
+            const sak::PstTimeZone zone = sak::pst::parseTimeZoneStruct(zoneStructFrom(tzi),
+                                                                        zone_name);
+            QVERIFY2(zone.known, qPrintable(zone_name));
+            const QString wrong = firstDisagreementWithWindows(zone, tzi);
+            QVERIFY2(wrong.isEmpty(), qPrintable(zone_name + QStringLiteral(": ") + wrong));
+            ++compared;
+        }
+        RegCloseKey(zones);
+        QVERIFY2(compared > 50, qPrintable(QString::number(compared)));
     }
 
     void aDamagedZoneIsNotKnown() {

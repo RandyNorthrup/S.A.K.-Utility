@@ -28,6 +28,7 @@ using sak::error_code;
 namespace {
 
 constexpr qint64 kFromLineProbeBytes = 1024;
+constexpr qsizetype kIndexLineBufferBytes = 64 * 1024;
 constexpr int kIndexProgressStepPercent = 5;
 constexpr int kCrLfHeaderBoundaryBytes = 4;
 constexpr int kLfHeaderBoundaryBytes = 2;
@@ -58,7 +59,9 @@ QString fileNameInHeader(const QString& header) {
     if (!plain.hasMatch()) {
         return {};
     }
-    return plain.captured(1).isNull() ? plain.captured(kUnquotedFilenameGroup) : plain.captured(1);
+    // A name in an encoded word is not what the MIME rules ask for, and is what real mail does.
+    return sak::mbox::decodeEncodedWords(
+        plain.captured(1).isNull() ? plain.captured(kUnquotedFilenameGroup) : plain.captured(1));
 }
 
 QString partFileName(const QString& content_type, const QString& disposition) {
@@ -74,19 +77,13 @@ bool isFilePart(const QString& content_type, const QString& disposition) {
            !partFileName(content_type, disposition).isEmpty();
 }
 
-/// Header-level attachment heuristic for the summary list. Mirrors the classification
-/// parseMimeMessage applies to full bodies: any multipart/* may carry parts, an explicit
-/// attachment disposition, or a single non-text part all count as "has attachments". The old
-/// check only matched multipart/mixed and so under-reported (multipart/related, a lone PDF, etc.).
-bool summaryHasAttachments(const QString& content_type, const QString& disposition) {
-    if (content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
-        return true;
-    }
-    if (isFilePart(content_type, disposition)) {
-        return true;
-    }
-    return !content_type.isEmpty() &&
-           !content_type.startsWith(QLatin1String("text/"), Qt::CaseInsensitive);
+/// Whether @p raw_message holds anything parseMimeMessage lists as an attachment. Same test, with
+/// nothing decoded, so the message list can say so without the cost of opening every message.
+bool messageHoldsAttachment(const QByteArray& raw_message, const QMap<QString, QString>& headers);
+
+/// A header's text, with any RFC 2047 encoded words decoded.
+QString decodedHeader(const QMap<QString, QString>& headers, const char* name) {
+    return sak::mbox::decodeEncodedWords(headers.value(QLatin1String(name)));
 }
 
 struct MboxMessageByteRange {
@@ -115,9 +112,13 @@ std::expected<MboxMessageByteRange, error_code> messageByteRange(const QVector<q
     return MboxMessageByteRange{start_offset, end_offset};
 }
 
-std::expected<std::optional<QByteArray>, error_code> readIndexLine(QFile* file) {
-    const QByteArray line = file->readLine(sak::email::kMboxMaxMessageSize);
-    if (line.isEmpty()) {
+/// The next line of a mailbox, into @p buffer, which is kept between calls: QFile::readLine(max)
+/// allocates all of max for every line, which took minutes on a large mailbox. A line longer than
+/// the buffer comes back in pieces, and only one that ends in a newline ends the line.
+std::expected<std::optional<QByteArray>, error_code> readIndexLine(QFile* file,
+                                                                   QByteArray* buffer) {
+    const qint64 length = file->readLine(buffer->data(), buffer->size());
+    if (length <= 0) {
         if (file->error() != QFileDevice::NoError || !file->atEnd()) {
             return std::unexpected(error_code::read_error);
         }
@@ -126,7 +127,7 @@ std::expected<std::optional<QByteArray>, error_code> readIndexLine(QFile* file) 
     if (file->error() != QFileDevice::NoError) {
         return std::unexpected(error_code::read_error);
     }
-    return std::optional<QByteArray>{line};
+    return std::optional<QByteArray>{QByteArray::fromRawData(buffer->constData(), length)};
 }
 
 std::expected<qint64, error_code> prepareIndexScan(QFile* file) {
@@ -368,17 +369,12 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
         msg.message_index = msg_idx;
         msg.file_offset = m_message_offsets[msg_idx];
         msg.message_size = raw->size();
-        msg.subject = headers.value(QStringLiteral("subject"));
-        msg.from = headers.value(QStringLiteral("from"));
-        msg.to = headers.value(QStringLiteral("to"));
-        msg.cc = headers.value(QStringLiteral("cc"));
+        msg.subject = decodedHeader(headers, "subject");
+        msg.from = decodedHeader(headers, "from");
+        msg.to = decodedHeader(headers, "to");
+        msg.cc = decodedHeader(headers, "cc");
         msg.date = parseEmailDate(headers.value(QStringLiteral("date")));
-
-        // Check for attachment indicators from the message headers (broadened to match
-        // what parseMimeMessage would actually surface as attachments, not just mixed).
-        msg.has_attachments =
-            summaryHasAttachments(headers.value(QStringLiteral("content-type")),
-                                  headers.value(QStringLiteral("content-disposition")));
+        msg.has_attachments = messageHoldsAttachment(*raw, headers);
 
         messages.append(std::move(msg));
     }
@@ -413,11 +409,11 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
 
     sak::MboxMessageDetail detail;
     detail.message_index = message_index;
-    detail.subject = headers.value(QStringLiteral("subject"));
-    detail.from = headers.value(QStringLiteral("from"));
-    detail.to = headers.value(QStringLiteral("to"));
-    detail.cc = headers.value(QStringLiteral("cc"));
-    detail.bcc = headers.value(QStringLiteral("bcc"));
+    detail.subject = decodedHeader(headers, "subject");
+    detail.from = decodedHeader(headers, "from");
+    detail.to = decodedHeader(headers, "to");
+    detail.cc = decodedHeader(headers, "cc");
+    detail.bcc = decodedHeader(headers, "bcc");
     detail.date = parseEmailDate(headers.value(QStringLiteral("date")));
     detail.message_id = headers.value(QStringLiteral("message-id"));
 
@@ -492,6 +488,8 @@ std::expected<void, error_code> MboxParser::buildMessageIndex() {
     QVector<qint64> offsets;
     qint64 bytes_read = 0;
     int last_progress = 0;
+    QByteArray line_buffer(kIndexLineBufferBytes, Qt::Uninitialized);
+    bool at_line_start = true;
 
     while (!m_file.atEnd()) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
@@ -499,7 +497,7 @@ std::expected<void, error_code> MboxParser::buildMessageIndex() {
         }
 
         const qint64 line_offset = m_file.pos();
-        const auto line_result = readIndexLine(&m_file);
+        const auto line_result = readIndexLine(&m_file, &line_buffer);
         if (!line_result) {
             return std::unexpected(line_result.error());
         }
@@ -508,7 +506,7 @@ std::expected<void, error_code> MboxParser::buildMessageIndex() {
         }
         const QByteArray& line = **line_result;
 
-        if (isCompleteFromLine(line)) {
+        if (isSeparatorPiece(line, &at_line_start)) {
             offsets.append(line_offset);
             // Defensive bound: the public message-count / index API (messageCount, the readMessages
             // offset/limit, the indexingComplete / messagesLoaded signals) is int-based, so refuse
@@ -697,6 +695,56 @@ QString extractBoundary(const QString& content_type) {
     return match.hasMatch() ? match.captured(1) : QString();
 }
 
+constexpr int kMaxMimeDepth = 20;
+
+bool contentHoldsAttachment(const QString& type,
+                            const QString& disposition,
+                            const QByteArray& body,
+                            int depth);
+
+bool partHoldsAttachment(const QByteArray& part, int depth) {
+    const auto [header_end, body_start] = findBodyBoundary(part);
+    if (header_end < 0) {
+        return false;
+    }
+    const QMap<QString, QString> headers = sak::mbox::parseRfc5322Headers(part);
+    return contentHoldsAttachment(headers.value(QStringLiteral("content-type"),
+                                                QStringLiteral("text/plain")),
+                                  headers.value(QStringLiteral("content-disposition")),
+                                  part.mid(body_start),
+                                  depth);
+}
+
+bool contentHoldsAttachment(const QString& type,
+                            const QString& disposition,
+                            const QByteArray& body,
+                            int depth) {
+    if (!type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
+        return isFilePart(type, disposition) ||
+               !type.startsWith(QLatin1String("text/"), Qt::CaseInsensitive);
+    }
+    const QString boundary = extractBoundary(type);
+    if (boundary.isEmpty() || depth >= kMaxMimeDepth) {
+        return false;
+    }
+    const QVector<QByteArray> parts = splitMimeParts(body, "--" + boundary.toUtf8());
+    return std::ranges::any_of(parts, [depth](const QByteArray& part) {
+        return partHoldsAttachment(part, depth + 1);
+    });
+}
+
+bool messageHoldsAttachment(const QByteArray& raw_message, const QMap<QString, QString>& headers) {
+    const auto [header_end, body_start] = findBodyBoundary(raw_message);
+    if (header_end < 0) {
+        return false;
+    }
+    return contentHoldsAttachment(headers.value(QStringLiteral("content-type"),
+                                                QStringLiteral("text/plain")),
+                                  headers.value(QStringLiteral("content-disposition")),
+                                  raw_message.mid(body_start),
+                                  0);
+}
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -747,7 +795,6 @@ void MboxParser::recurseMultipartPart(const QString& part_content_type,
                                       sak::MboxMessageDetail& detail,
                                       int& attachment_idx,
                                       int depth) {
-    constexpr int kMaxMimeDepth = 20;
     if (depth >= kMaxMimeDepth) {
         // Fail closed rather than silently drop every part below this point: nesting deeper than
         // any real mail is only ever a crafted structure, and handing back the partial parse as a
@@ -1006,6 +1053,13 @@ bool MboxParser::isFromLine(const QByteArray& line) {
     static const QRegularExpression from_line_shape(
         QStringLiteral(R"re(^From \S+ .*\d{1,2}:\d{2}(:\d{2})?.*\d{4})re"));
     return from_line_shape.match(QString::fromLatin1(line)).hasMatch();
+}
+
+bool MboxParser::isSeparatorPiece(const QByteArray& piece, bool* at_line_start) {
+    // The middle of a very long line can look like anything, a separator included.
+    const bool starts_a_line = *at_line_start;
+    *at_line_start = piece.endsWith('\n');
+    return starts_a_line && isCompleteFromLine(piece);
 }
 
 bool MboxParser::isCompleteFromLine(const QByteArray& line) {

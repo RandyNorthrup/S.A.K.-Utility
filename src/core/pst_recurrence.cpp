@@ -233,6 +233,35 @@ bool isDaylightAt(const PstTimeZone& zone, const QDateTime& wall) {
     return wall >= begins || wall < ends;
 }
 
+/// The same question of a true UTC instant, which has one answer even in the hour a change repeats:
+/// whichever change came last. Daylight begins at a wall-clock time in standard time, and ends at
+/// one in daylight time. Next year is looked at too, for a change that falls on New Year's Eve.
+bool isDaylightInstant(const PstTimeZone& zone, const QDateTime& utc) {
+    if (zone.to_daylight.month == 0 || zone.to_standard.month == 0) {
+        return false;
+    }
+    QDateTime latest;
+    bool daylight = false;
+    const auto consider = [&](const QDateTime& change, bool becomes_daylight) {
+        if (change.isValid() && change <= utc && (!latest.isValid() || change > latest)) {
+            latest = change;
+            daylight = becomes_daylight;
+        }
+    };
+    const int year = utc.date().year();
+    for (int each = year - 1; each <= year + 1; ++each) {
+        consider(transitionIn(each, zone.to_daylight)
+                     .addSecs(-static_cast<qint64>(zone.standard_offset_minutes) *
+                              kSecondsPerMinute),
+                 true);
+        consider(transitionIn(each, zone.to_standard)
+                     .addSecs(-static_cast<qint64>(zone.daylight_offset_minutes) *
+                              kSecondsPerMinute),
+                 false);
+    }
+    return daylight;
+}
+
 QString weekdayToken(int bit) {
     static const std::array<const char*, kDaysPerWeek> kTokens = {
         "SU", "MO", "TU", "WE", "TH", "FR", "SA"};
@@ -852,13 +881,19 @@ QDateTime zoneUtcToWallClock(const PstTimeZone& zone, const QDateTime& utc) {
     if (!zone.known) {
         return utc;
     }
-    // Read as standard time first: that lands in the right season except within the hour of a
-    // change, which the daylight check below settles.
+    const QDateTime instant = utc.toUTC();
     const QDateTime as_standard =
-        utc.toUTC().addSecs(static_cast<qint64>(zone.standard_offset_minutes) * kSecondsPerMinute);
+        instant.addSecs(static_cast<qint64>(zone.standard_offset_minutes) * kSecondsPerMinute);
     const QDateTime as_daylight =
-        utc.toUTC().addSecs(static_cast<qint64>(zone.daylight_offset_minutes) * kSecondsPerMinute);
-    return isDaylightAt(zone, as_daylight) ? as_daylight : as_standard;
+        instant.addSecs(static_cast<qint64>(zone.daylight_offset_minutes) * kSecondsPerMinute);
+    return isDaylightInstant(zone, instant) ? as_daylight : as_standard;
+}
+
+QDate allDayDate(const PstTimeZone& zone, const QDateTime& utc) {
+    constexpr qint64 kSecondsToNearestMidnight = 12LL * 60 * 60;
+    // An exact half-day rounds forward: that is midnight at 12 hours ahead of UTC, New Zealand's
+    // standard time, and 12 hours behind has nobody living in it.
+    return zoneUtcToWallClock(zone, utc).toUTC().addSecs(kSecondsToNearestMidnight).date();
 }
 
 PstRecurrence parseAppointmentRecurrence(const QByteArray& blob,

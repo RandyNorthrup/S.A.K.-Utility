@@ -6,6 +6,7 @@
 
 #include "sak/email_constants.h"
 #include "sak/error_codes.h"
+#include "sak/mbox_header_parser.h"
 #include "sak/mbox_parser.h"
 
 #include <QFuture>
@@ -95,7 +96,14 @@ private Q_SLOTS:
     void boundaryPrefixLineNotTreatedAsBoundary();
 
     // -- CODEX_REVIEW_2 remediation --------------------------------------
-    void summaryAttachmentHeuristicBroadened();
+    void aVeryLongLineIsNotCutIntoFalseMessages();
+    void summaryHasAttachmentsIsWhatTheMessageHolds();
+    void encodedWords_data();
+    void encodedWords();
+    void encodedWordsInEachCharset_data();
+    void encodedWordsInEachCharset();
+    void listAndDetailShowDecodedHeaders();
+    void aBodyInAnotherCharsetOpens();
     void aPartThatNamesAFileIsAnAttachmentNotTheBody();
     void aSinglePartThatNamesAFileIsAnAttachment();
     void aTextPartThatNamesNoFileIsStillTheBody();
@@ -1104,9 +1112,8 @@ void TestMboxParser::boundaryPrefixLineNotTreatedAsBoundary() {
     parser.close();
 }
 
-// Summary has_attachments must match what parseMimeMessage would surface: any multipart, an
-// explicit attachment disposition, or a lone non-text part -- not just multipart/mixed.
-void TestMboxParser::summaryAttachmentHeuristicBroadened() {
+namespace {
+QByteArray mailboxOfEveryShapeOfMessage() {
     QByteArray content;
     content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
     content += "Subject: plain\r\n";
@@ -1120,6 +1127,63 @@ void TestMboxParser::summaryAttachmentHeuristicBroadened() {
     content += "Subject: related\r\n";
     content += "Content-Type: multipart/related; boundary=\"B\"\r\n\r\n";
     content += "--B\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n--B--\r\n\r\n";
+    // What nearly all mail looks like, and what the old check called an attachment.
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: alternative\r\n";
+    content += "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n";
+    content += "--A\r\nContent-Type: text/plain\r\n\r\nx\r\n";
+    content += "--A\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n--A--\r\n\r\n";
+    // A file two levels down.
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: nested\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"O\"\r\n\r\n";
+    content += "--O\r\nContent-Type: multipart/related; boundary=\"I\"\r\n\r\n";
+    content += "--I\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n";
+    content += "--I\r\nContent-Type: image/png\r\n\r\nPNG\r\n--I--\r\n--O--\r\n\r\n";
+    // A text part that names a file is a file.
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: named text\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"N\"\r\n\r\n";
+    content += "--N\r\nContent-Type: text/plain\r\n\r\nbody\r\n";
+    content += "--N\r\nContent-Type: text/plain; name=\"a.txt\"\r\n\r\nfile\r\n--N--\r\n\r\n";
+    // A multipart with no boundary reads as plain text.
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: no boundary\r\n";
+    content += "Content-Type: multipart/mixed\r\n\r\nx\r\n\r\n";
+    return content;
+}
+}  // namespace
+
+// Indexing reads a very long line in pieces. A piece that happens to start like a separator is the
+// middle of a line, and a real separator after it still counts.
+void TestMboxParser::aVeryLongLineIsNotCutIntoFalseMessages() {
+    const QByteArray separator = "From a@e.com Mon Jan  1 00:00:00 2024\n";
+    // The index reads 65535 bytes at a time, so these put the look-alike at the start of a piece.
+    constexpr qsizetype kPieceBytes = 65'535;
+    for (const qsizetype padding : {kPieceBytes, kPieceBytes * 2, kPieceBytes + 1}) {
+        QByteArray content = separator;
+        content += "Subject: long\n\n";
+        content += QByteArray(padding, 'x');
+        content += separator;  // Still the same line: no newline came before it.
+        content += "\n" + separator + "Subject: second\n\nx\n";
+        QTemporaryFile f;
+        QVERIFY(f.open());
+        f.write(content);
+        f.close();
+        MboxParser parser;
+        parser.open(f.fileName());
+        QVERIFY(parser.isOpen());
+        parser.indexMessages();
+        QCOMPARE(parser.messageCount(), 2);
+        const auto second = parser.readMessageDetail(1);
+        QVERIFY(second.has_value());
+        QCOMPARE(second->subject, QStringLiteral("second"));
+    }
+}
+
+// The list's has_attachments says what the message really holds: the same answer opening it gives.
+void TestMboxParser::summaryHasAttachmentsIsWhatTheMessageHolds() {
+    const QByteArray content = mailboxOfEveryShapeOfMessage();
 
     QTemporaryFile f;
     QVERIFY(f.open());
@@ -1130,11 +1194,11 @@ void TestMboxParser::summaryAttachmentHeuristicBroadened() {
     parser.open(f.fileName());
     QVERIFY(parser.isOpen());
     parser.indexMessages();
-    QCOMPARE(parser.messageCount(), 3);
+    QCOMPARE(parser.messageCount(), 7);
 
     auto msgs = parser.readMessages(0, 10);
     QVERIFY(msgs.has_value());
-    QCOMPARE(msgs->size(), 3);
+    QCOMPARE(msgs->size(), 7);
     // Nothing tied a row to its message, so returning them as [plain, related, pdf] -- a
     // permutation of the two `true` rows -- left the false/true/true pattern unchanged. The
     // whole point of the broadened heuristic is that it classifies the RIGHT message.
@@ -1146,8 +1210,163 @@ void TestMboxParser::summaryAttachmentHeuristicBroadened() {
     QVERIFY(msgs->at(1).has_attachments);  // lone non-text part
     QCOMPARE(msgs->at(2).message_index, 2);
     QCOMPARE(msgs->at(2).subject, QStringLiteral("related"));
-    QVERIFY(msgs->at(2).has_attachments);  // multipart/related (old code missed this)
+    QVERIFY(!msgs->at(2).has_attachments);  // multipart, and only a body inside
+    QVERIFY(!msgs->at(3).has_attachments);  // both bodies of an ordinary message
+    QVERIFY(msgs->at(4).has_attachments);   // a picture inside a nested multipart
+    QVERIFY(msgs->at(5).has_attachments);   // a text part naming a file
+    QVERIFY(!msgs->at(6).has_attachments);  // read as plain text
+    for (const sak::MboxMessage& message : *msgs) {
+        const auto detail = parser.readMessageDetail(message.message_index);
+        QVERIFY(detail.has_value());
+        QVERIFY2(message.has_attachments == !detail->attachments.isEmpty(),
+                 qPrintable(message.subject));
+    }
     parser.close();
+}
+
+void TestMboxParser::encodedWords_data() {
+    QTest::addColumn<QString>("raw");
+    QTest::addColumn<QString>("shown");
+    const auto row = [](const char* name, const char* raw, const QString& shown) {
+        QTest::newRow(name) << QString::fromLatin1(raw) << shown;
+    };
+    row("no words", "Plain subject", QStringLiteral("Plain subject"));
+    row("base64 UTF-8", "=?UTF-8?B?Q2Fmw6k=?=", QStringLiteral("Caf\u00E9"));
+    row("base64 no padding", "=?UTF-8?B?Q2Fmw6k?=", QStringLiteral("Caf\u00E9"));
+    row("lower-case b", "=?utf-8?b?Q2Fmw6k=?=", QStringLiteral("Caf\u00E9"));
+    row("Q UTF-8", "=?UTF-8?Q?Caf=C3=A9_au_lait?=", QStringLiteral("Caf\u00E9 au lait"));
+    row("lower-case hex", "=?UTF-8?q?Caf=c3=a9?=", QStringLiteral("Caf\u00E9"));
+    row("Latin-1", "=?ISO-8859-1?Q?Caf=E9?=", QStringLiteral("Caf\u00E9"));
+    row("a language tag", "=?UTF-8*fr?Q?Caf=C3=A9?=", QStringLiteral("Caf\u00E9"));
+    row("text around a word",
+        "Re: =?UTF-8?B?Q2Fmw6k=?= today",
+        QStringLiteral("Re: Caf\u00E9 today"));
+    row("a sender",
+        "=?UTF-8?B?Q2Fmw6k=?= <a@example.test>",
+        QStringLiteral("Caf\u00E9 <a@example.test>"));
+    row("two words joined", "=?UTF-8?Q?Caf?= =?UTF-8?Q?=C3=A9?=", QStringLiteral("Caf\u00E9"));
+    row("a character split across words",
+        "=?UTF-8?B?Q2Fmww==?= =?UTF-8?B?qQ==?=",
+        QStringLiteral("Caf\u00E9"));
+    row("folded, as the parser joins it",
+        "=?UTF-8?Q?Caf?=  =?UTF-8?Q?=C3=A9?=",
+        QStringLiteral("Caf\u00E9"));
+    row("two charsets joined",
+        "=?ISO-8859-1?Q?Caf=E9?= =?UTF-8?Q?_=C3=A9?=",
+        QStringLiteral("Caf\u00E9 \u00E9"));
+    row("words apart keep the text between",
+        "=?UTF-8?Q?a?= and =?UTF-8?Q?b?=",
+        QStringLiteral("a and b"));
+    row("a bad charset stays as written",
+        "=?NOT-A-CHARSET?Q?Caf=C3=A9?=",
+        QStringLiteral("=?NOT-A-CHARSET?Q?Caf=C3=A9?="));
+    row("broken base64 stays as written", "=?UTF-8?B?***?=", QStringLiteral("=?UTF-8?B?***?="));
+    row("a stray = stays as written", "=?UTF-8?Q?Caf=ZZ?=", QStringLiteral("=?UTF-8?Q?Caf=ZZ?="));
+    row("a cut-off escape stays as written",
+        "=?UTF-8?Q?Caf=C?=",
+        QStringLiteral("=?UTF-8?Q?Caf=C?="));
+    row("bytes that are not UTF-8 stay as written",
+        "=?UTF-8?Q?Caf=E9?=",
+        QStringLiteral("=?UTF-8?Q?Caf=E9?="));
+    row("a good word beside a broken one",
+        "=?UTF-8?Q?ok?= =?UTF-8?B?***?=",
+        QStringLiteral("ok =?UTF-8?B?***?="));
+    row("not a word at all", "=?UTF-8?Q?", QStringLiteral("=?UTF-8?Q?"));
+    row("a line break smuggled in", "=?UTF-8?Q?a=0D=0Ab?=", QStringLiteral("a  b"));
+}
+
+void TestMboxParser::encodedWords() {
+    QFETCH(QString, raw);
+    QFETCH(QString, shown);
+    QCOMPARE(sak::mbox::decodeEncodedWords(raw), shown);
+}
+
+// The charsets real mail uses. Each has to decode: a word Qt cannot decode stays raw, and a body in
+// one fails to open.
+void TestMboxParser::encodedWordsInEachCharset_data() {
+    QTest::addColumn<QString>("charset");
+    QTest::addColumn<QByteArray>("bytes");
+    QTest::addColumn<QString>("text");
+    QTest::newRow("windows-1252") << "windows-1252" << QByteArray("\xE9")
+                                  << QStringLiteral("\u00E9");
+    QTest::newRow("iso-8859-2") << "iso-8859-2" << QByteArray("\xB3") << QStringLiteral("\u0142");
+    QTest::newRow("windows-1251") << "windows-1251" << QByteArray("\xC4")
+                                  << QStringLiteral("\u0414");
+    QTest::newRow("koi8-r") << "koi8-r" << QByteArray("\xE4") << QStringLiteral("\u0414");
+    QTest::newRow("shift_jis") << "shift_jis" << QByteArray("\x93\xFA") << QStringLiteral("\u65E5");
+    QTest::newRow("iso-2022-jp") << "iso-2022-jp" << QByteArray("\x1B$BF|\x1B(B")
+                                 << QStringLiteral("\u65E5");
+    QTest::newRow("gb2312") << "gb2312" << QByteArray("\xC8\xD5") << QStringLiteral("\u65E5");
+    QTest::newRow("big5") << "big5" << QByteArray("\xA4\xE9") << QStringLiteral("\u65E5");
+    QTest::newRow("euc-kr") << "euc-kr" << QByteArray("\xC0\xCF") << QStringLiteral("\uC77C");
+}
+
+void TestMboxParser::encodedWordsInEachCharset() {
+    QFETCH(QString, charset);
+    QFETCH(QByteArray, bytes);
+    QFETCH(QString, text);
+    const QString word =
+        QStringLiteral("=?%1?B?%2?=").arg(charset, QString::fromLatin1(bytes.toBase64()));
+    QCOMPARE(sak::mbox::decodeEncodedWords(word), text);
+}
+
+// Every header the Inspector shows, through the real reads, folded the way real mail folds.
+void TestMboxParser::listAndDetailShowDecodedHeaders() {
+    QByteArray content;
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: =?UTF-8?Q?Caf?=\r\n =?UTF-8?Q?=C3=A9?=\r\n";
+    content += "From: =?UTF-8?B?Q2Fmw6k=?= <from@example.test>\r\n";
+    content += "To: =?UTF-8?B?Q2Fmw6k=?= <to@example.test>\r\n";
+    content += "Cc: =?UTF-8?B?Q2Fmw6k=?= <cc@example.test>\r\n";
+    content += "Bcc: =?UTF-8?B?Q2Fmw6k=?= <bcc@example.test>\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    content += "--B\r\nContent-Type: text/plain\r\n\r\nbody\r\n";
+    content += "--B\r\nContent-Type: application/pdf\r\n";
+    content += "Content-Disposition: attachment; filename=\"=?UTF-8?B?Q2Fmw6k=?=.pdf\"\r\n\r\n";
+    content += "X\r\n--B--\r\n\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(content);
+    f.close();
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    const auto listed = parser.readMessages(0, 1);
+    QVERIFY(listed.has_value());
+    const QString cafe = QStringLiteral("Caf\u00E9");
+    QCOMPARE(listed->first().subject, cafe);
+    QCOMPARE(listed->first().from, cafe + QStringLiteral(" <from@example.test>"));
+    QCOMPARE(listed->first().to, cafe + QStringLiteral(" <to@example.test>"));
+    QCOMPARE(listed->first().cc, cafe + QStringLiteral(" <cc@example.test>"));
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->subject, cafe);
+    QCOMPARE(detail->from, cafe + QStringLiteral(" <from@example.test>"));
+    QCOMPARE(detail->to, cafe + QStringLiteral(" <to@example.test>"));
+    QCOMPARE(detail->cc, cafe + QStringLiteral(" <cc@example.test>"));
+    QCOMPARE(detail->bcc, cafe + QStringLiteral(" <bcc@example.test>"));
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, cafe + QStringLiteral(".pdf"));
+    // The raw-headers view is the one place that shows what the file really says.
+    QVERIFY(detail->raw_headers.contains(QStringLiteral("=?UTF-8?Q?Caf?=")));
+}
+
+// A body in a charset Qt knows only by name has to open, for the same reason as a subject.
+void TestMboxParser::aBodyInAnotherCharsetOpens() {
+    QByteArray content;
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: body\r\n";
+    content += "Content-Type: text/plain; charset=shift_jis\r\n\r\n";
+    content += "\x93\xFA\r\n\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(content);
+    f.close();
+    MboxParser parser;
+    parser.open(f.fileName());
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QVERIFY2(detail->body_plain.contains(QStringLiteral("\u65E5")), qPrintable(detail->body_plain));
 }
 
 // A quoted filename containing spaces must survive intact (old regex truncated at the first space).

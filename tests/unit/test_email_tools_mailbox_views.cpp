@@ -836,6 +836,39 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(panel.m_item_list->rowCount(), 6, kWaitMs);
     }
 
+    // What the list says of a message: its real subject, and that it has a file only if it does.
+    void theMboxListShowsRealSubjectsAndRealAttachments() {
+        QByteArray box;
+        box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+        box += "From: =?UTF-8?B?Q2Fmw6k=?= <a@example.test>\nSubject: =?UTF-8?B?Q2Fmw6k=?=\n";
+        box += "Content-Type: multipart/alternative; boundary=\"A\"\n\n";
+        box += "--A\nContent-Type: text/plain\n\nx\n--A\nContent-Type: text/html\n\n<p>x</p>\n";
+        box += "--A--\n\n";
+        box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+        box += "From: a@example.test\nSubject: With a file\n";
+        box += "Content-Type: multipart/mixed; boundary=\"M\"\n\n";
+        box += "--M\nContent-Type: text/plain\n\nx\n";
+        box += "--M\nContent-Type: application/pdf\n";
+        box += "Content-Disposition: attachment; filename=\"f.pdf\"\n\nX\n--M--\n\n";
+        sak::EmailInspectorPanel panel;
+        openAndWait(panel, writeFile(QStringLiteral(".mbox"), box));
+        panel.onFolderTreeItemClicked(panel.m_folder_tree->topLevelItem(0), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.m_item_list->rowCount(), 2, kWaitMs);
+        panel.m_item_list->setSortingEnabled(false);
+        QHash<QString, QString> tool_tip_by_subject;
+        for (int row = 0; row < panel.m_item_list->rowCount(); ++row) {
+            tool_tip_by_subject.insert(
+                panel.m_item_list->item(row, sak::EmailInspectorPanel::ColSubject)->text(),
+                panel.m_item_list->item(row, sak::EmailInspectorPanel::ColType)->toolTip());
+        }
+        QCOMPARE(tool_tip_by_subject.size(), 2);
+        const QString cafe = QStringLiteral("Caf\u00E9");
+        QVERIFY(tool_tip_by_subject.contains(cafe));
+        QVERIFY(tool_tip_by_subject.value(cafe).isEmpty());
+        QCOMPARE(tool_tip_by_subject.value(QStringLiteral("With a file")),
+                 QStringLiteral("Has attachments"));
+    }
+
     // Tasks and notes were promised by the header, and hidden with contacts and calendars.
     void tasksAndNotesAreBrowsableAndContactsStayInTheirWindow() {
         BuilderMessage note;
@@ -1149,6 +1182,58 @@ private Q_SLOTS:
         QCOMPARE(event.location, QStringLiteral("Front kitchen"));
         QVERIFY(dialog.m_date_index.contains(start.toLocalTime().date()));
         QVERIFY(!dialog.m_date_index.contains(start.addDays(-21).toLocalTime().date()));
+    }
+
+    // Outlook stores an all-day start as midnight where it was made, in UTC. Stores written east
+    // and west of UTC, with no zone, each show the day the event is on.
+    void anAllDayEventIsOnItsOwnDate_data() {
+        QTest::addColumn<QDateTime>("start");
+        QTest::addColumn<QDate>("date");
+        QTest::newRow("written in India")
+            << QDateTime(QDate(2026, 3, 14), QTime(18, 30), QTimeZone::UTC) << QDate(2026, 3, 15);
+        QTest::newRow("written in Pacific time")
+            << QDateTime(QDate(2026, 3, 15), QTime(8, 0), QTimeZone::UTC) << QDate(2026, 3, 15);
+    }
+
+    void anAllDayEventIsOnItsOwnDate() {
+        QFETCH(QDateTime, start);
+        QFETCH(QDate, date);
+        BuilderFolder calendar = calendarFolder(start);
+        calendar.messages[0].named_props.append({kSetAppointment,
+                                                 sak::pst::kLidAppointmentSubType,
+                                                 sak::email::kPropTypeBoolean,
+                                                 QByteArray(1, char{1})});
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("all_day.pst"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(PstStoreBuilder{}.build({calendar}));
+        file.close();
+
+        EmailInspectorController controller;
+        sak::PstFolderTree tree;
+        QObject::connect(&controller,
+                         &EmailInspectorController::folderTreeLoaded,
+                         &controller,
+                         [&tree](const sak::PstFolderTree& loaded) { tree = loaded; });
+        controller.openFile(path);
+        QVERIFY(controller.isFileOpen());
+        const sak::PstFolder* folder = findByClass(tree, QStringLiteral("IPF.Appointment"));
+        QVERIFY(folder != nullptr);
+
+        sak::EmailCalendarDialog dialog(&controller, {folder->node_id});
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.m_all_events.size(), 1, kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(dialog.m_all_events.first().detail_loaded, kWaitMs);
+        QVERIFY(dialog.m_all_events.first().is_all_day);
+        QTRY_VERIFY_WITH_TIMEOUT(dialog.m_date_index.contains(date), kWaitMs);
+        QCOMPARE(dialog.m_date_index.size(), 1);
+
+        dialog.displayEventSummary(dialog.m_all_events[0]);
+        const QString shown = dialog.m_detail_browser->toPlainText();
+        const QString on_screen = date.toString(QStringLiteral("ddd, MMM d yyyy"));
+        QVERIFY2(shown.contains(on_screen), qPrintable(shown));
+        QVERIFY2(shown.contains(QStringLiteral("All Day Event")), qPrintable(shown));
     }
 
     void anEventShowsItsPeopleAndHowItRepeats() {

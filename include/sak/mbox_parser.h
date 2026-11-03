@@ -208,6 +208,10 @@ private:
     /// Check that a separator has both a valid shape and a complete line terminator.
     [[nodiscard]] static bool isCompleteFromLine(const QByteArray& line);
 
+    /// Whether @p piece, the next read of the index, is a separator. Tracks in @p at_line_start
+    /// whether the next piece starts a line, which a very long line's next piece does not.
+    [[nodiscard]] static bool isSeparatorPiece(const QByteArray& piece, bool* at_line_start);
+
 public:
     /// Whether a file begins like a mailbox. Thunderbird's mailboxes have no file extension, so
     /// this is how they are told apart from everything else in its profile folders.

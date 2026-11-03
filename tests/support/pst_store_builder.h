@@ -989,7 +989,8 @@ private:
     static QByteArray makeIndexPage(uint8_t ptype,
                                     int page_offset,
                                     uint64_t page_bid,
-                                    const QVector<IndexChild>& children) {
+                                    const QVector<IndexChild>& children,
+                                    int level) {
         QByteArray page(kPageSize, '\0');
         const int trailer = kPageSize - kTrailerSize;
         const int meta = trailer - kMetaPad - kMetaSize;
@@ -1004,7 +1005,7 @@ private:
         page[meta] = static_cast<char>(children.size());
         page[meta + 1] = static_cast<char>(kBuilderIndexPerPage);
         page[meta + 2] = static_cast<char>(kBuilderIndexEntrySize);
-        page[meta + 3] = 1;  // cLevel 1: index page
+        page[meta + 3] = static_cast<char>(level);  // cLevel: above the leaves, which are 0
         page[trailer] = static_cast<char>(ptype);
         page[trailer + 1] = static_cast<char>(ptype);
         writeLe16(page, trailer + 2, computeSig(static_cast<uint64_t>(page_offset), page_bid));
@@ -1020,8 +1021,8 @@ private:
         int per_page = 0;
     };
 
-    /// Append leaf pages over @p entries, each entry key-first and already in key order, and an
-    /// index page above them when they need more than one leaf.
+    /// Append leaf pages over @p entries, each entry key-first and already in key order, and as
+    /// many levels of index page above them as it takes to reach one root.
     static BTreeRoot appendBTree(QByteArray& file,
                                  const BTreeShape& shape,
                                  const QVector<QByteArray>& entries,
@@ -1043,14 +1044,19 @@ private:
             leaves.append({first_key, page_bid, offset});
             file.append(makeLeafPageAt(ptype, entry_size, {offset, page_bid}, body, count));
         }
-        if (leaves.size() == 1) {
-            return {leaves.first().page_bid, leaves.first().page_offset};
+        QVector<IndexChild> level = leaves;
+        for (int height = 1; level.size() > 1; ++height) {
+            QVector<IndexChild> above;
+            for (int start = 0; start < level.size(); start += kBuilderIndexPerPage) {
+                const QVector<IndexChild> children = level.mid(start, kBuilderIndexPerPage);
+                const int offset = static_cast<int>(file.size());
+                const uint64_t page_bid = next_page_bid++;
+                above.append({children.first().first_key, page_bid, offset});
+                file.append(makeIndexPage(ptype, offset, page_bid, children, height));
+            }
+            level = above;
         }
-        Q_ASSERT(leaves.size() <= kBuilderIndexPerPage);
-        const int root = static_cast<int>(file.size());
-        const uint64_t root_bid = next_page_bid++;
-        file.append(makeIndexPage(ptype, root, root_bid, leaves));
-        return {root_bid, root};
+        return {level.first().page_bid, level.first().page_offset};
     }
 
     [[nodiscard]] QByteArray assembleFile() const {

@@ -18,6 +18,8 @@
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 class TestEmailSearchWorker : public QObject {
     Q_OBJECT
 
@@ -59,6 +61,10 @@ private Q_SLOTS:
     void anMboxHasOnlyEmailToFind();
     void mboxDateAndAttachmentFilters();
     void theResultLimitCountsWhatIsLeftAfterFiltering();
+    void theResultLimitCountsWhatIsLeftInAPstToo();
+    void aSearchFindsTheRealTextOfAnEncodedHeader();
+    void aDateRangeFindsAnAllDayEventOnItsOwnDate_data();
+    void aDateRangeFindsAnAllDayEventOnItsOwnDate();
 };
 
 namespace {
@@ -916,6 +922,103 @@ void TestEmailSearchWorker::theResultLimitCountsWhatIsLeftAfterFiltering() {
     sak::EmailSearchCriteria filtered = plain;
     filtered.has_attachment_only = true;
     QCOMPARE(mboxHitSubjects(parser, filtered), QStringList{QStringLiteral("needle last")});
+}
+
+// The same on a PST, whose search walks folders and not a file: the limit stops a plain search
+// short of the last item, and a filter reaches it.
+void TestEmailSearchWorker::theResultLimitCountsWhatIsLeftInAPstToo() {
+    constexpr int kMessagesPerFolder = 250;
+    QVector<BuilderFolder> folders;
+    for (int left = sak::email::kMaxSearchResults + 5; left > 0; left -= kMessagesPerFolder) {
+        BuilderFolder folder;
+        folder.name = QStringLiteral("Folder %1").arg(folders.size());
+        for (int i = 0; i < std::min(left, kMessagesPerFolder); ++i) {
+            folder.messages.append(filterMail(QStringLiteral("needle plain"), dayOf(3, 1)));
+        }
+        folders.append(folder);
+    }
+    folders.last().messages.append(filterMail(QStringLiteral("needle last"), dayOf(3, 2), true));
+
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(PstStoreBuilder{}.build(folders), QStringLiteral(".pst"), dir));
+    QVERIFY(parser.isOpen());
+    sak::EmailSearchCriteria plain;
+    plain.query_text = QStringLiteral("needle");
+    plain.search_body = false;
+    const QStringList capped = hitSubjects(parser, plain);
+    QCOMPARE(capped.size(), sak::email::kMaxSearchResults);
+    QVERIFY(!capped.contains(QStringLiteral("needle last")));
+
+    sak::EmailSearchCriteria filtered = plain;
+    filtered.has_attachment_only = true;
+    QCOMPARE(hitSubjects(parser, filtered), QStringList{QStringLiteral("needle last")});
+}
+
+void TestEmailSearchWorker::aDateRangeFindsAnAllDayEventOnItsOwnDate_data() {
+    QTest::addColumn<QDateTime>("stored");
+    QTest::newRow("written in India")
+        << QDateTime(QDate(2026, 3, 14), QTime(18, 30), QTimeZone::UTC);
+    QTest::newRow("written in Pacific time")
+        << QDateTime(QDate(2026, 3, 15), QTime(8, 0), QTimeZone::UTC);
+}
+
+// The range is one day on this PC's calendar, and the event is on its own date.
+void TestEmailSearchWorker::aDateRangeFindsAnAllDayEventOnItsOwnDate() {
+    QFETCH(QDateTime, stored);
+    BuilderMessage event =
+        ofClass(QStringLiteral("IPM.Appointment"), QStringLiteral("Holiday"), {});
+    event.named_props = {{0x02,
+                          sak::pst::kLidAppointmentStartWhole,
+                          sak::email::kPropTypeSysTime,
+                          builderFiletime(stored)},
+                         {0x02,
+                          sak::pst::kLidAppointmentSubType,
+                          sak::email::kPropTypeBoolean,
+                          QByteArray(1, char{1})}};
+    BuilderFolder calendar;
+    calendar.name = QStringLiteral("Calendar");
+    calendar.container_class = QStringLiteral("IPF.Appointment");
+    calendar.messages = {event};
+
+    QTemporaryDir dir;
+    PstParser parser;
+    parser.open(writeTemp(PstStoreBuilder{}.build({calendar}), QStringLiteral(".pst"), dir));
+    QVERIFY(parser.isOpen());
+    sak::EmailSearchCriteria on_the_day;
+    on_the_day.date_from = QDate(2026, 3, 15).startOfDay();
+    on_the_day.date_to = QDate(2026, 3, 15).endOfDay();
+    QCOMPARE(hitSubjects(parser, on_the_day), QStringList{QStringLiteral("Holiday")});
+    sak::EmailSearchCriteria the_day_before;
+    the_day_before.date_from = QDate(2026, 3, 14).startOfDay();
+    the_day_before.date_to = QDate(2026, 3, 14).endOfDay();
+    QVERIFY(hitSubjects(parser, the_day_before).isEmpty());
+}
+
+void TestEmailSearchWorker::aSearchFindsTheRealTextOfAnEncodedHeader() {
+    QByteArray box;
+    box += "From a@example.test Mon Jan  1 00:00:00 2024\n";
+    box += "From: =?UTF-8?B?Q2Fmw6k=?= <a@example.test>\n";
+    box += "Subject: =?UTF-8?Q?Caf?=\n =?UTF-8?Q?=C3=A9_menu?=\n\nx\n\n";
+    box += "From b@example.test Mon Jan  1 00:00:00 2024\n";
+    box += "From: b@example.test\nSubject: Something else\n\nx\n\n";
+    QTemporaryDir dir;
+    MboxParser parser;
+    parser.open(writeTemp(box, QStringLiteral(".mbox"), dir));
+    QVERIFY(parser.isOpen());
+    sak::EmailSearchCriteria by_subject;
+    by_subject.query_text = QStringLiteral("Caf\u00E9 menu");
+    by_subject.search_body = false;
+    QCOMPARE(mboxHitSubjects(parser, by_subject), QStringList{QStringLiteral("Caf\u00E9 menu")});
+    sak::EmailSearchCriteria by_sender;
+    by_sender.query_text = QStringLiteral("Caf\u00E9 <a@");
+    by_sender.search_body = false;
+    QCOMPARE(mboxHitSubjects(parser, by_sender), QStringList{QStringLiteral("Caf\u00E9 menu")});
+    // What the file really says is no longer what is searched.
+    sak::EmailSearchCriteria raw;
+    raw.query_text = QStringLiteral("=?UTF-8?");
+    raw.search_body = false;
+    QVERIFY(mboxHitSubjects(parser, raw).isEmpty());
 }
 
 QTEST_MAIN(TestEmailSearchWorker)

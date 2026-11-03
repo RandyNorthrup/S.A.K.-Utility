@@ -66,6 +66,10 @@ struct CalendarEvent {
     int attachment_count = 0;
 };
 
+/// The date an event sits on in the calendar. An all-day event's stored time is midnight where it
+/// was made, which is often not the same date in UTC.
+[[nodiscard]] QDate calendarDate(const CalendarEvent& event);
+
 // ============================================================================
 // Forward declarations for view widgets (defined in .cpp)
 // ============================================================================

@@ -339,16 +339,15 @@ void appendSeries(QByteArray& out, const PstItemDetail& event, const QByteArray&
 
 void appendSingleEvent(QByteArray& out, const PstItemDetail& event, const QByteArray& stamp) {
     beginEvent(out, event, stamp);
-    // An all-day event starts at local midnight, so its dates are real only in its own zone.
-    if (event.is_all_day && event.time_zone.known && event.start_time.isValid()) {
-        const SeriesTimes dates{.date_only = true, .zone_name = {}};
-        appendLine(out,
-                   dates.line(QStringLiteral("DTSTART"),
-                              pst::zoneUtcToWallClock(event.time_zone, event.start_time)));
-        if (event.end_time.isValid()) {
-            appendLine(out,
-                       dates.line(QStringLiteral("DTEND"),
-                                  pst::zoneUtcToWallClock(event.time_zone, event.end_time)));
+    // An all-day event is a date, not a moment. See allDayDate for how a stored time becomes one.
+    if (event.is_all_day && event.start_time.isValid()) {
+        const QDate start = pst::allDayDate(event.time_zone, event.start_time);
+        appendLine(out, QStringLiteral("DTSTART;VALUE=DATE:") + start.toString(kDateFormat));
+        // DTEND is exclusive and must be later. With none, a date event is that one day.
+        const QDate end =
+            event.end_time.isValid() ? pst::allDayDate(event.time_zone, event.end_time) : QDate();
+        if (end > start) {
+            appendLine(out, QStringLiteral("DTEND;VALUE=DATE:") + end.toString(kDateFormat));
         }
     } else {
         if (event.start_time.isValid()) {

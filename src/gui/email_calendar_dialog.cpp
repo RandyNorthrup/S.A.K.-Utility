@@ -14,6 +14,7 @@
 #include "sak/io_write_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
+#include "sak/pst_recurrence.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
@@ -1257,7 +1258,7 @@ void EmailCalendarDialog::rebuildDateIndex() {
         if (!matchesSearch(evt) || !matchesFilter(evt)) {
             continue;
         }
-        m_date_index[evt.start_time.date()].append(idx);
+        m_date_index[calendarDate(evt)].append(idx);
     }
 
     updateStatusLabel();
@@ -1487,7 +1488,7 @@ void EmailCalendarDialog::showEventContextMenu(const QPoint& global_pos, uint64_
     menu.addAction(tr("View Details"), this, [this, node_id]() { onEventClicked(node_id); });
     menu.addAction(tr("View in Day"), this, [this, node_id, evt]() {
         if (evt.start_time.isValid()) {
-            setCurrentDate(evt.start_time.date());
+            setCurrentDate(calendarDate(evt));
         }
         setViewMode(ViewMode::Day);
         onEventClicked(node_id);
@@ -1577,13 +1578,18 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
 
 void EmailCalendarDialog::copyEventDetailsToClipboard(const CalendarEvent& evt) {
     QString text = evt.subject + QStringLiteral("\n");
-    if (evt.start_time.isValid()) {
-        text += tr("Start: %1\n")
-                    .arg(evt.start_time.toString(QStringLiteral("ddd, MMM d yyyy h:mm AP")));
-    }
-    if (evt.end_time.isValid()) {
-        text +=
-            tr("End: %1\n").arg(evt.end_time.toString(QStringLiteral("ddd, MMM d yyyy h:mm AP")));
+    if (evt.is_all_day && evt.start_time.isValid()) {
+        text += tr("Date: %1 (all day)\n")
+                    .arg(calendarDate(evt).toString(QStringLiteral("ddd, MMM d yyyy")));
+    } else {
+        if (evt.start_time.isValid()) {
+            text += tr("Start: %1\n")
+                        .arg(evt.start_time.toString(QStringLiteral("ddd, MMM d yyyy h:mm AP")));
+        }
+        if (evt.end_time.isValid()) {
+            text += tr("End: %1\n")
+                        .arg(evt.end_time.toString(QStringLiteral("ddd, MMM d yyyy h:mm AP")));
+        }
     }
     if (!evt.location.isEmpty()) {
         text += tr("Location: %1\n").arg(evt.location);
@@ -1820,7 +1826,7 @@ QString EmailCalendarDialog::buildDateHtml(const CalendarEvent& evt) {
     if (!evt.start_time.isValid()) {
         return {};
     }
-    QString date_str = evt.start_time.toString(QStringLiteral("ddd, MMM d yyyy"));
+    QString date_str = calendarDate(evt).toString(QStringLiteral("ddd, MMM d yyyy"));
     if (!evt.is_all_day) {
         date_str += QStringLiteral(" at ") +
                     evt.start_time.time().toString(QStringLiteral("h:mm AP"));
@@ -1941,6 +1947,11 @@ void EmailCalendarDialog::populateDayEventList(const QDate& date) {
 // ============================================================================
 // Data query helpers
 // ============================================================================
+
+QDate calendarDate(const CalendarEvent& event) {
+    return event.is_all_day ? pst::allDayDate(event.time_zone, event.start_time)
+                            : event.start_time.date();
+}
 
 QVector<const CalendarEvent*> EmailCalendarDialog::eventsForDate(const QDate& date) const {
     QVector<const CalendarEvent*> result;

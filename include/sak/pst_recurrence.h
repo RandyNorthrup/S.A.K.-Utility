@@ -33,6 +33,12 @@ namespace sak::pst {
 /// The wall-clock time @p utc falls on in @p zone, held in a UTC QDateTime.
 [[nodiscard]] QDateTime zoneUtcToWallClock(const PstTimeZone& zone, const QDateTime& utc);
 
+/// The date an all-day event's start or end falls on. Outlook stores those as midnight where the
+/// event was made, in UTC, so on a PC east of UTC the UTC date is the day before. Rounds to the
+/// nearest midnight, in the event's own zone when @p zone is known and otherwise from UTC itself,
+/// which is right for any zone from 11 hours behind UTC to 12 ahead.
+[[nodiscard]] QDate allDayDate(const PstTimeZone& zone, const QDateTime& utc);
+
 /// Read an AppointmentRecur blob. Never fails: what could not be read comes back Unreadable, with
 /// the reason in plain words.
 [[nodiscard]] PstRecurrence parseAppointmentRecurrence(const QByteArray& blob,

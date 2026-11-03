@@ -17,6 +17,7 @@
 #include "sak/mbox_parser.h"
 #include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
+#include "sak/pst_recurrence.h"
 
 #include <QDir>
 #include <QFile>
@@ -377,20 +378,21 @@ void addContactCsvFields(CsvFieldMap& map) {
     map.insert(QStringLiteral("Home Phone"), [](const auto& it) { return it.home_phone; });
 }
 
+/// A calendar item's start or end. An all-day event's is a date, not a moment.
+QString eventTimeText(const sak::PstItemDetail& item, const QDateTime& time) {
+    if (!time.isValid()) {
+        return {};
+    }
+    return item.is_all_day ? sak::pst::allDayDate(item.time_zone, time).toString(Qt::ISODate)
+                           : time.toString(Qt::ISODate);
+}
+
 /// Register calendar and task CSV field extractors
 void addCalendarTaskCsvFields(CsvFieldMap& map) {
-    map.insert(QStringLiteral("Start"), [](const auto& it) -> QString {
-        if (!it.start_time.isValid()) {
-            return {};
-        }
-        return it.start_time.toString(Qt::ISODate);
-    });
-    map.insert(QStringLiteral("End"), [](const auto& it) -> QString {
-        if (!it.end_time.isValid()) {
-            return {};
-        }
-        return it.end_time.toString(Qt::ISODate);
-    });
+    map.insert(QStringLiteral("Start"),
+               [](const auto& it) { return eventTimeText(it, it.start_time); });
+    map.insert(QStringLiteral("End"),
+               [](const auto& it) { return eventTimeText(it, it.end_time); });
     map.insert(QStringLiteral("Location"), [](const auto& it) { return it.location; });
     map.insert(QStringLiteral("All Day"), [](const auto& it) -> QString {
         return it.is_all_day ? QStringLiteral("Yes") : QStringLiteral("No");

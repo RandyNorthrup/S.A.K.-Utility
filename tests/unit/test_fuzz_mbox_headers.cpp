@@ -59,6 +59,18 @@ std::vector<QByteArray> headerCorpus() {
 // The parser's output contract: every header name is non-empty, lower-cased, and trimmed.
 QString headerInvariant(const QByteArray& input) {
     const QMap<QString, QString> headers = sak::mbox::parseRfc5322Headers(input);
+    // Every value goes through the encoded-word decoder on its way to the screen. A header value
+    // stays on one line, and a value with no encoded word in it comes back as it went in.
+    for (const QString& value : headers) {
+        const QString decoded = sak::mbox::decodeEncodedWords(value);
+        if (!value.contains(QStringLiteral("=?"))) {
+            if (decoded != value) {
+                return QStringLiteral("a value with no encoded word changed");
+            }
+        } else if (decoded.contains(QLatin1Char('\n')) || decoded.contains(QLatin1Char('\r'))) {
+            return QStringLiteral("a decoded header value broke across lines");
+        }
+    }
     for (auto it = headers.constBegin(); it != headers.constEnd(); ++it) {
         const QString& key = it.key();
         if (key.isEmpty()) {
