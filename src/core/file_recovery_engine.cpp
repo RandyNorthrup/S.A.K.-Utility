@@ -169,10 +169,19 @@ std::optional<uint64_t> pdfSizeAt(const QByteArray& data,
     return std::nullopt;
 }
 
+// Whether a signature can start with this byte. This runs on every byte of the source, so it is
+// what decides how long a whole drive takes.
+bool canStartSignature(char byte) {
+    return byte == kPngSignature[0] || byte == '\xff' || byte == '%';
+}
+
 std::optional<CandidateMatch> matchAt(const QByteArray& data,
                                       qsizetype offset,
                                       uint64_t maxCandidateBytes,
                                       uint64_t* work) {
+    if (!canStartSignature(data.constData()[offset])) {
+        return std::nullopt;
+    }
     if (const auto size = pngSizeAt(data, offset, maxCandidateBytes, work)) {
         return CandidateMatch{.format = QStringLiteral("PNG image"),
                               .extension = QStringLiteral("png"),
