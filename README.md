@@ -39,9 +39,9 @@ Select a tool to see what it does.
 
 - Guided backup and restore wizards with smart filters
 - Optional AES-256 encryption and compression
-- Backups can include the installed-app list, app data, and WiFi and Ethernet settings
-- Restore maps users, merges into existing profiles, resolves conflicts, and restores NTFS permissions
-- Quick Tools: Screenshot Settings and BitLocker Key Backup
+- Backups can include the installed-app list, app data such as browser profiles and Outlook signatures, and WiFi and Ethernet settings
+- Restore maps users, merges into existing profiles, resolves conflicts, and handles permissions (strip, assign, or preserve)
+- Quick Tools: Screenshot Settings and BitLocker Key Backup, which warns you if the drive cannot restrict who reads the keys
 
 Guides: [back up a profile](https://sakutility.com/wiki/back-up-user-profile), [restore a profile](https://sakutility.com/wiki/restore-user-profile)
 </details>
@@ -77,7 +77,7 @@ Guides: [check drive health](https://sakutility.com/wiki/check-drive-health), [s
 - **App Installation:** search Chocolatey packages or use a preset, then install the whole queue
 - **Offline Deploy:** Full or Thin bundles for air-gapped machines, install from a bundle, direct installer downloads
 - **Advanced Uninstall:** Win32, Microsoft Store, and provisioned apps, bloatware candidates, orphaned entries, forced uninstall, batch queues, and leftover scans rated by risk
-- **Vulnerability Scanner:** checks installed software against CISA KEV, NVD, GitHub Advisories, and OSV, with CSV and JSON export
+- **Vulnerability Scanner:** checks installed apps against CISA KEV with NVD detail, and looks up one package in CISA KEV, NVD, GitHub Advisories, and OSV, with CSV and JSON export
 
 Guides: [install apps in bulk](https://sakutility.com/wiki/bulk-install-apps), [uninstall with leftover cleanup](https://sakutility.com/wiki/uninstall-with-leftover-cleanup), [scan for vulnerabilities](https://sakutility.com/wiki/scan-software-for-vulnerabilities)
 </details>
@@ -109,20 +109,20 @@ Guides: [File Explorer](https://sakutility.com/wiki/file-explorer), [find duplic
 <details>
 <summary><b>Network Management</b>: find out why a network is slow or down</summary>
 
-- **Network Diagnostics:** ping, traceroute, MTR, DNS with Compare Servers, port scan, iPerf3 and HTTP bandwidth, WiFi analysis, connections, firewall audit, shares, and LAN Transfer, a speed test between two PCs
-- **Network Adapters:** details, static IP and DNS, rename, enable or disable, reset the network stack, and back up or restore IP, DNS, gateway, and DHCP settings
+- **Network Diagnostics:** ping, traceroute, MTR, DNS with Compare Servers, port scan, iPerf3 and HTTP bandwidth, WiFi analysis, connections, firewall audit, shares, and LAN Transfer, a speed test between two PCs. Results save as an HTML or JSON report
+- **Network Adapters:** details, static IP and DNS, rename, enable or disable, reset the network stack, and back up or restore IP, DNS, gateway, and DHCP settings on any adapter
 - **WiFi Manager:** QR codes singly or in batches, Windows setup scripts, and macOS mobileconfig profiles
 
 Guides: [ping, traceroute, and MTR](https://sakutility.com/wiki/ping-traceroute-mtr), [reset the network](https://sakutility.com/wiki/reset-network), [WiFi QR codes](https://sakutility.com/wiki/wifi-qr-codes)
 </details>
 
 <details>
-<summary><b>Email Tools</b>: open PST, OST, and MBOX archives without Outlook</summary>
+<summary><b>Email Tools</b>: open PST, OST, NST, and MBOX archives without Outlook</summary>
 
-- **Email Inspector:** folders, messages, headers, properties, attachments, contacts, calendars, tasks, and notes
-- Search subjects, bodies, and senders, and scan a PC for email files
-- Export to EML, HTML, TXT, PDF, CSV, VCF, and ICS, and extract attachments in bulk
-- **OST Converter:** OST or PST to MBOX, with deleted item recovery and date, sender, and recipient filters
+- **Email Inspector:** folders, messages, headers, properties, attachments, contacts, calendars, tasks, notes, and journal entries
+- Search subjects, bodies, senders, recipients, and attachment names, filter by date, attachment, and item type, and scan a PC for email files
+- Export to EML, HTML, TXT, PDF, CSV, VCF, and ICS with attendees and repeating events, and extract attachments in bulk
+- **OST Converter:** OST, PST, or NST to MBOX, every real email wherever it is filed, with deleted item recovery, date, sender, and recipient filters, and a count of what it left out by message class
 
 Guides: [open a PST without Outlook](https://sakutility.com/wiki/open-pst-without-outlook), [convert OST to MBOX](https://sakutility.com/wiki/convert-ost-to-mbox)
 </details>
@@ -136,7 +136,7 @@ The assistant is optional. It needs your own OpenAI API key, which OpenAI bills 
 |---|---|
 | Chat and Research | Runs nothing on the PC |
 | Assisted Full Access | Asks before each command |
-| Unattended Full Access | Runs without asking each time, and offers a restore point for risky work. Catastrophic commands always ask |
+| Unattended Full Access | Asks you to confirm when you turn it on, then runs without asking each time, and offers a restore point for risky work. Catastrophic commands always ask |
 
 It can run PowerShell, cmd, and programs, take screenshots, download over HTTPS, search the web, use S.A.K.'s own tools, and control Chrome through a browser extension. Memory is kept per chat. Reports come out as HTML, Markdown, or plain text.
 
