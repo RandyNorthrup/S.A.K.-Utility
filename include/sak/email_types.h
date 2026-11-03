@@ -174,6 +174,7 @@ struct PstAttachmentInfo {
 struct PstItemSummary {
     uint64_t node_id = 0;
     EmailItemType item_type = EmailItemType::Unknown;
+    QString message_class;  ///< What the store calls it, as item_type's source (PR_MESSAGE_CLASS)
     QString subject;
     QString sender_name;
     QString sender_email;

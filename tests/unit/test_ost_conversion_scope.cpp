@@ -16,6 +16,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <numeric>
+
 using namespace sak::pst_fixture;
 
 namespace {
@@ -145,9 +147,49 @@ private Q_SLOTS:
         QCOMPARE(run.result.skipped_tasks, 1);
         QCOMPARE(run.result.skipped_notes, 1);
         QCOMPARE(run.result.skipped_other, 0);
+        const QMap<QString, int> expected{{QStringLiteral("IPM.Contact"), 1},
+                                          {QStringLiteral("IPM.DistList"), 1},
+                                          {QStringLiteral("IPM.Appointment"), 1},
+                                          {QStringLiteral("IPM.Task"), 1},
+                                          {QStringLiteral("IPM.StickyNote"), 1}};
+        QCOMPARE(run.result.left_out_by_class, expected);
         QCOMPARE(sak::OstConverterController::classifyOutcome(run.result),
                  sak::OstConversionJob::Status::Complete);
         QCOMPARE(mailboxMessageCount(run.output), 3);
+    }
+
+    // Largest first, and a store cannot grow the report without bound or put a control character
+    // in it: the name comes from a file anyone could have written.
+    void leftOutClassesAreBoundedAndPrintable() {
+        // The two odd names come first, so the cap on how many names are kept cannot hide them.
+        QVector<BuilderMessage> rows;
+        rows.append(nonMail(QStringLiteral("IPM.Bad\x01Name"), QStringLiteral("Control")));
+        rows.append(nonMail(QStringLiteral("IPM.") + QString(300, QLatin1Char('L')),
+                            QStringLiteral("Long")));
+        for (int index = 0; index < 205; ++index) {
+            rows.append(nonMail(QStringLiteral("IPM.Odd.%1").arg(index),
+                                QStringLiteral("Row %1").arg(index)));
+        }
+        rows.append(nonMail(QStringLiteral("IPM.Odd.0"), QStringLiteral("Second of its class")));
+        const Run run =
+            convert(PstStoreBuilder{}.build({folder(QStringLiteral("Files"), QString(), rows)}));
+
+        QVERIFY2(run.result.errors.isEmpty(), qPrintable(run.result.errors.join(QLatin1Char('|'))));
+        QCOMPARE(run.result.itemsSkipped(), 208);
+        const QMap<QString, int>& classes = run.result.left_out_by_class;
+        QCOMPARE(classes.value(QStringLiteral("IPM.Odd.0")), 2);
+        QCOMPARE(classes.value(QStringLiteral("IPM.BadName")), 1);
+        QCOMPARE(classes.value(QStringLiteral("IPM.") + QString(124, QLatin1Char('L'))), 1);
+        QVERIFY(classes.size() <= 201);
+        QVERIFY(classes.value(QStringLiteral("(more classes than listed)")) > 0);
+        const QList<int> counts = classes.values();
+        QCOMPARE(std::accumulate(counts.begin(), counts.end(), 0), 208);
+        for (auto it = classes.cbegin(); it != classes.cend(); ++it) {
+            QVERIFY2(it.key().size() <= 128, qPrintable(it.key()));
+            QVERIFY2(!it.key().contains(QChar(1)), qPrintable(it.key()));
+        }
+        QVERIFY2(run.result.leftOutByClassText().startsWith(QStringLiteral("(more classes than")),
+                 qPrintable(run.result.leftOutByClassText().left(80)));
     }
 
     // Real mail turned up in system folders and was left out, while a contact filed in Deleted
@@ -184,6 +226,12 @@ private Q_SLOTS:
         QCOMPARE(run.result.skipped_calendar, 1);
         QCOMPARE(run.result.skipped_tasks, 1);
         QCOMPARE(run.result.skipped_other, 1);
+        // "Other" says nothing a technician can repeat to a customer; its class name does.
+        QCOMPARE(run.result.left_out_by_class.value(QStringLiteral("IPM.Configuration.X")), 1);
+        QVERIFY(!run.result.left_out_by_class.contains(QStringLiteral("IPM.Note")));
+        // Every left-out item is in exactly one class row.
+        const QList<int> by_class = run.result.left_out_by_class.values();
+        QCOMPARE(std::accumulate(by_class.begin(), by_class.end(), 0), run.result.itemsSkipped());
         // Every row is accounted for, one way or the other.
         const int rows = 1 + 4 + 2 + 0 + 1 + 1;
         QCOMPARE(run.result.items_converted + run.result.items_failed + run.result.itemsSkipped(),

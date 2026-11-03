@@ -9,11 +9,15 @@
 #include "sak/layout_constants.h"
 
 #include <QDateTime>
+#include <QList>
+#include <QMap>
 #include <QMetaType>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
+#include <algorithm>
 #include <cstdint>
 #include <type_traits>
 
@@ -119,6 +123,9 @@ struct OstConversionResult {
     int skipped_tasks = 0;
     int skipped_notes = 0;
     int skipped_other = 0;
+    /// The same items by the message class the store gives them, so a technician can say why a
+    /// mailbox's count differs. Class names and counts only: nothing from the items themselves.
+    QMap<QString, int> left_out_by_class;
     /// False when the deleted-item scan could not enumerate every candidate (a non-cancel read
     /// error truncated the Recoverable Items walk, or an orphan node could not be read), so
     /// items_recovered is a floor and NOT the count of what the source holds. An empty or small
@@ -137,6 +144,22 @@ struct OstConversionResult {
 
     [[nodiscard]] int itemsSkipped() const {
         return skipped_contacts + skipped_calendar + skipped_tasks + skipped_notes + skipped_other;
+    }
+
+    /// left_out_by_class on one line, largest count first: "IPM.Contact: 12, IPM.Task: 3".
+    [[nodiscard]] QString leftOutByClassText() const {
+        QList<QPair<QString, int>> rows;
+        for (auto it = left_out_by_class.cbegin(); it != left_out_by_class.cend(); ++it) {
+            rows.append({it.key(), it.value()});
+        }
+        std::ranges::stable_sort(rows,
+                                 [](const auto& a, const auto& b) { return a.second > b.second; });
+        QStringList parts;
+        parts.reserve(rows.size());
+        for (const auto& [name, count] : rows) {
+            parts.append(QStringLiteral("%1: %2").arg(name).arg(count));
+        }
+        return parts.join(QStringLiteral(", "));
     }
 };
 

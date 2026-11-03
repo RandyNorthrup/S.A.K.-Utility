@@ -170,6 +170,43 @@ private Q_SLOTS:
         QVERIFY(content.contains("Corrupted file header"));
     }
 
+    // A technician explains a smaller mailbox from this table: one row per file and class. The
+    // class name comes from the store, so it is escaped like every other value from there.
+    void reportListsLeftOutItemsByClass() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::OstConversionBatchResult batch;
+        batch.files_total = 2;
+        sak::OstConversionResult r1;
+        r1.source_path = QStringLiteral("one.ost");
+        r1.left_out_by_class.insert(QStringLiteral("IPM.Configuration.X"), 268);
+        r1.left_out_by_class.insert(QStringLiteral("IPM.<b>Odd"), 2);
+        batch.file_results.append(r1);
+        sak::OstConversionResult r2;
+        r2.source_path = QStringLiteral("two.ost");
+        batch.file_results.append(r2);
+
+        QFile file(sak::ConversionReportGenerator::generateHtmlReport(batch, temp_dir.path()));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(content.contains("Left Out, by Message Class"));
+        QVERIFY(
+            content.contains("<tr><td>one.ost</td><td>IPM.Configuration.X</td><td>268</td></tr>"));
+        QVERIFY(content.contains("<tr><td>one.ost</td><td>IPM.&lt;b&gt;Odd</td><td>2</td></tr>"));
+        QVERIFY(!content.contains("IPM.<b>Odd"));
+
+        // Nothing left out, no section.
+        sak::OstConversionBatchResult clean;
+        clean.file_results.append(r2);
+        QTemporaryDir clean_dir;
+        QVERIFY(clean_dir.isValid());
+        QFile clean_file(
+            sak::ConversionReportGenerator::generateHtmlReport(clean, clean_dir.path()));
+        QVERIFY(clean_file.open(QIODevice::ReadOnly));
+        QVERIFY(!clean_file.readAll().contains("Left Out, by Message Class"));
+    }
+
     // ====================================================================
     // B7-17: CSV cells are attacker-controlled -- neutralize spreadsheet
     // formula injection and quote per RFC 4180.

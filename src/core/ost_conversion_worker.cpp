@@ -135,6 +135,11 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
             source_path.toStdString(),
             std::to_string(result.items_converted),
             std::to_string(result.items_failed));
+    if (result.itemsSkipped() > 0) {
+        logInfo("OST Converter: left out {} items that are not mail, by message class: {}",
+                std::to_string(result.itemsSkipped()),
+                result.leftOutByClassText().toStdString());
+    }
 
     Q_EMIT conversionFinished(result);
 }
@@ -302,8 +307,31 @@ bool isSearchFolder(const PstFolder& folder) {
     return (folder.node_id & kNidTypeMask) == email::kNidTypeSearchFolder;
 }
 
-void recordSkippedItem(EmailItemType type, OstConversionResult& result) {
-    switch (type) {
+// A store's class name is read as it stands, from a file anyone could have written, so the report
+// and the log get a bounded, printable copy. A real mailbox has a few dozen classes at most.
+constexpr qsizetype kMaxLeftOutClassNameChars = 128;
+constexpr int kMaxLeftOutClassNames = 200;
+
+void recordLeftOutClass(const QString& message_class, OstConversionResult& result) {
+    QString name;
+    for (const QChar character : message_class.left(kMaxLeftOutClassNameChars)) {
+        if (character.isPrint()) {
+            name.append(character);
+        }
+    }
+    if (name.isEmpty()) {
+        name = QStringLiteral("(no class)");
+    }
+    if (!result.left_out_by_class.contains(name) &&
+        result.left_out_by_class.size() >= kMaxLeftOutClassNames) {
+        name = QStringLiteral("(more classes than listed)");
+    }
+    ++result.left_out_by_class[name];
+}
+
+void recordSkippedItem(const PstItemSummary& item, OstConversionResult& result) {
+    recordLeftOutClass(item.message_class, result);
+    switch (item.item_type) {
     case EmailItemType::Contact:
     case EmailItemType::DistList:
         ++result.skipped_contacts;
@@ -451,7 +479,7 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
         if (isRealEmail(item_summary.item_type)) {
             processItemInFolder(item_summary, parser, folder_path, config, result);
         } else {
-            recordSkippedItem(item_summary.item_type, result);
+            recordSkippedItem(item_summary, result);
         }
     }
 }

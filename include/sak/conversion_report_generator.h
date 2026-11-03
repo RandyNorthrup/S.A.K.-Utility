@@ -45,6 +45,8 @@ private:
     [[nodiscard]] static QString buildFileResultsTableHtml(const OstConversionBatchResult& batch);
 
     [[nodiscard]] static QString buildErrorLogHtml(const OstConversionBatchResult& batch);
+    /// What each file left out, by message class. Empty when nothing was.
+    [[nodiscard]] static QString buildLeftOutHtml(const OstConversionBatchResult& batch);
 
     [[nodiscard]] static int writeCsvDataRows(QTextStream& out,
                                               const QVector<PstItemDetail>& items,

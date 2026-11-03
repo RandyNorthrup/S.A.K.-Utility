@@ -710,6 +710,7 @@ static const QHash<uint16_t, SummarySetter>& summarySetters() {
          }},
         {sak::email::kPropIdMessageClass,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
+             item.message_class = col.display_value;
              item.item_type = PstParser::classifyMessageClass(col.display_value);
          }},
     };
@@ -3539,7 +3540,8 @@ void PstParser::scanBthForSubjectAndClass(const BthLeafResult& bth,
             need_subject = false;
         }
         if (need_class && prop_id == sak::email::kPropIdMessageClass) {
-            item.item_type = classifyMessageClass(readBthRecordValue(bth, ctx, rec_offset));
+            item.message_class = readBthRecordValue(bth, ctx, rec_offset);
+            item.item_type = classifyMessageClass(item.message_class);
             need_class = false;
         }
         if (!need_subject && !need_class) {

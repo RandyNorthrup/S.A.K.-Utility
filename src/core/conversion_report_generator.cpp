@@ -389,6 +389,27 @@ QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchRes
     return html;
 }
 
+QString ConversionReportGenerator::buildLeftOutHtml(const OstConversionBatchResult& batch) {
+    QString rows;
+    for (const auto& result : batch.file_results) {
+        for (auto it = result.left_out_by_class.cbegin(); it != result.left_out_by_class.cend();
+             ++it) {
+            rows += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td></tr>")
+                        .arg(result.source_path.toHtmlEscaped(), it.key().toHtmlEscaped())
+                        .arg(it.value());
+        }
+    }
+    if (rows.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral(
+               "<h2>Left Out, by Message Class</h2>"
+               "<p>An MBOX holds mail. These are not mail, so they were not converted and are not "
+               "failures.</p>"
+               "<table><tr><th>Source File</th><th>Message Class</th><th>Items</th></tr>%1</table>")
+        .arg(rows);
+}
+
 QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResult& batch) {
     qint64 duration_ms = 0;
     if (batch.batch_started.isValid() && batch.batch_finished.isValid()) {
@@ -411,6 +432,7 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
     html += QStringLiteral("</div>");
 
     html += buildFileResultsTableHtml(batch);
+    html += buildLeftOutHtml(batch);
     html += buildErrorLogHtml(batch);
 
     html += QStringLiteral(
