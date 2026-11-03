@@ -968,6 +968,44 @@ private Q_SLOTS:
         QCOMPARE(folderNamed(tree, QStringLiteral("Inbox"))->system_folder_emails, 0);
     }
 
+    // Past a few hundred messages the rows no longer fit in the table's heap. Outlook keeps them in
+    // a sub-node over several blocks, each padded to its end, so reading the bytes straight through
+    // would land inside the padding and call the rest of the folder garbage.
+    void aFolderOfHundredsOfMessagesListsEveryOne() {
+        constexpr int kMessages = 320;
+        BuilderFolder inbox;
+        inbox.name = QStringLiteral("Inbox");
+        inbox.spanning_table = true;
+        QStringList expected;
+        for (int i = 0; i < kMessages; ++i) {
+            expected.append(QStringLiteral("Message %1").arg(i, 3, 10, QLatin1Char('0')));
+            inbox.messages.append(plainMessage(expected.last()));
+        }
+        PstParser parser;
+        parser.open(writeStore(PstStoreBuilder{}.build({inbox})));
+        QVERIFY(parser.isOpen());
+        const auto* folder = folderNamed(parser.folderTree(), QStringLiteral("Inbox"));
+        QVERIFY(folder != nullptr);
+        QCOMPARE(folder->content_count, kMessages);
+
+        const auto items = parser.readFolderItems(folder->node_id, 0, 0);
+        QVERIFY(items.has_value());
+        QCOMPARE(static_cast<int>(items->size()), kMessages);
+        QStringList seen;
+        for (const auto& item : *items) {
+            const auto detail = parser.readItemDetail(item.node_id);
+            QVERIFY(detail.has_value());
+            seen.append(detail->subject);
+        }
+        seen.sort();
+        QCOMPARE(seen, expected);
+
+        // A page that starts in the last block, past two blocks' padding.
+        const auto last_page = parser.readFolderItems(folder->node_id, kMessages - 10, 50);
+        QVERIFY(last_page.has_value());
+        QCOMPARE(static_cast<int>(last_page->size()), 10);
+    }
+
     // A table that leaves out the class column says nothing about what the row is.
     void aTableWithNoClassColumnIsNotTakenForBookkeeping() {
         BuilderFolder inbox;

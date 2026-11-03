@@ -2337,6 +2337,41 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
     m_controller->backupEthernetSettings(adapter.name, file_path);
 }
 
+QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters) {
+    // If there's only one adapter, use it directly
+    if (adapters.size() == 1) {
+        return adapters.first();
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Select Target Adapter"));
+    dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addWidget(
+        new QLabel(tr("Select the adapter to apply the backup settings to:"), &dialog));
+
+    auto* adapter_combo = new QComboBox(&dialog);
+    for (const auto& name : adapters) {
+        adapter_combo->addItem(name);
+    }
+    // Right-clicking an adapter means that adapter. The list is alphabetical, so leaving the first
+    // one chosen would quietly aim this at another adapter.
+    if (const auto* selected = selectedAdapter(); selected != nullptr) {
+        adapter_combo->setCurrentText(selected->name);
+    }
+    layout->addWidget(adapter_combo);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                            &dialog);
+    layout->addWidget(button_box);
+
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    return dialog.exec() == QDialog::Accepted ? adapter_combo->currentText() : QString();
+}
+
 void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
     Q_ASSERT(m_controller);
     QString file_path = QFileDialog::getOpenFileName(this,
@@ -2358,37 +2393,9 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
         return;
     }
 
-    // If there's only one adapter, use it directly
-    QString target_adapter;
-    if (adapters.size() == 1) {
-        target_adapter = adapters.first();
-    } else {
-        // Show selection dialog
-        QDialog dialog(this);
-        dialog.setWindowTitle(tr("Select Target Adapter"));
-        dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
-
-        auto* layout = new QVBoxLayout(&dialog);
-        layout->addWidget(
-            new QLabel(tr("Select the adapter to apply the backup settings to:"), &dialog));
-
-        auto* adapter_combo = new QComboBox(&dialog);
-        for (const auto& name : adapters) {
-            adapter_combo->addItem(name);
-        }
-        layout->addWidget(adapter_combo);
-
-        auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                                &dialog);
-        layout->addWidget(button_box);
-
-        connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-        if (dialog.exec() != QDialog::Accepted) {
-            return;
-        }
-        target_adapter = adapter_combo->currentText();
+    const QString target_adapter = chooseRestoreTarget(adapters);
+    if (target_adapter.isEmpty()) {
+        return;
     }
 
     auto result =

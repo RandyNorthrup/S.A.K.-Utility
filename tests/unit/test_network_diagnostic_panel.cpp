@@ -7,10 +7,12 @@
 #include "sak/accessible_name_rule.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QFile>
 #include <QFileDialog>
@@ -115,6 +117,136 @@ private:
     QTimer m_timer;
 };
 
+/// Stands in for the PowerShell scans and netsh, so a click on an adapter's menu goes all the way
+/// through and nothing on this PC is read or changed.
+class FakeAdapterCommands {
+public:
+    FakeAdapterCommands()
+        : m_injector([this](const QString& program,
+                            const QStringList& args) -> std::optional<sak::ProcessResult> {
+            return answer(program, args);
+        }) {}
+
+    [[nodiscard]] QList<QStringList> netshCalls() const { return m_netsh_calls; }
+
+private:
+    std::optional<sak::ProcessResult> answer(const QString& program, const QStringList& args) {
+        sak::ProcessResult result;
+        result.exit_code = 0;
+        if (program.endsWith(QStringLiteral("netsh.exe"), Qt::CaseInsensitive)) {
+            m_netsh_calls.append(args);
+            result.std_out = QStringLiteral("Ok.");
+            return result;
+        }
+        const QString script = args.join(QLatin1Char(' '));
+        if (script.contains(QStringLiteral("Get-NetIPConfiguration"))) {
+            result.std_out = QStringLiteral(
+                R"([{"Name":"Ethernet","Dhcp":"Disabled","IPv4":"192.168.1.50","Prefix":24,)"
+                R"("Gateway":"192.168.1.1","Dns":["1.1.1.1"]},)"
+                R"({"Name":"Wi-Fi","Dhcp":"Enabled","IPv4":"10.0.0.9","Prefix":16,)"
+                R"("Gateway":"10.0.0.1","Dns":["10.0.0.1"]}])");
+            return result;
+        }
+        if (script.contains(QStringLiteral("Get-NetAdapter"))) {
+            result.std_out = QStringLiteral(R"(["Ethernet","Wi-Fi"])");
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    QList<QStringList> m_netsh_calls;
+    sak::ScopedProcessFaultInjector m_injector;
+};
+
+/// Answers what Backup Settings and Restore Settings open: the file, the target adapter, and the
+/// boxes that confirm and report. Polls, because each runs its own event loop inside the click.
+class AdapterDialogDriver : public QObject {
+public:
+    AdapterDialogDriver(QString path, QMessageBox::StandardButton confirm_with)
+        : m_path(std::move(path)), m_confirm_with(confirm_with) {
+        m_timer.setInterval(kDialogPollMs);
+        connect(&m_timer, &QTimer::timeout, this, [this]() { answerOpenDialog(); });
+        m_timer.start();
+        QTimer::singleShot(kDialogTimeoutMs, &m_timer, &QTimer::stop);
+    }
+    QStringList boxes_seen;
+    QStringList adapters_offered;
+    QString adapter_chosen_first;
+
+private:
+    void answerOpenDialog() {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* file_dialog = qobject_cast<QFileDialog*>(modal)) {
+            const QFileInfo target(m_path);
+            file_dialog->setDirectory(target.absolutePath());
+            auto* name_edit = file_dialog->findChild<QLineEdit*>(QStringLiteral("fileNameEdit"));
+            if (name_edit != nullptr) {
+                name_edit->setText(target.fileName());
+                static_cast<QDialog*>(file_dialog)->accept();
+            }
+            return;
+        }
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            boxes_seen.append(box->windowTitle());
+            auto* button = box->button(m_confirm_with);
+            if (button != nullptr) {
+                button->click();
+            } else {
+                box->accept();
+            }
+            return;
+        }
+        auto* dialog = qobject_cast<QDialog*>(modal);
+        auto* combo = dialog != nullptr ? dialog->findChild<QComboBox*>() : nullptr;
+        if (combo != nullptr) {
+            for (int index = 0; index < combo->count(); ++index) {
+                adapters_offered.append(combo->itemText(index));
+            }
+            adapter_chosen_first = combo->currentText();
+            dialog->accept();
+        }
+    }
+
+    QString m_path;
+    QMessageBox::StandardButton m_confirm_with;
+    QTimer m_timer;
+};
+
+/// Opens the real right-click menu for one adapter and clicks one entry, as a person does.
+void clickAdapterMenuEntry(sak::NetworkDiagnosticPanel& panel,
+                           const QString& adapter_name,
+                           const QString& adapter_type,
+                           const QString& entry,
+                           bool* found) {
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo adapter;
+    adapter.name = adapter_name;
+    adapter.adapterType = adapter_type;
+    adapter.isConnected = true;
+    Q_EMIT controller->adaptersScanComplete({adapter});
+    auto* table = panel.adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    QTimer::singleShot(0, &panel, [entry, found]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        for (QAction* action : menu->actions()) {
+            if (action->text() == entry) {
+                *found = true;
+                menu->setActiveAction(action);
+                QTest::keyClick(menu, Qt::Key_Return);
+                return;
+            }
+        }
+        menu->close();
+    });
+    QVERIFY(
+        QMetaObject::invokeMethod(&panel, "showAdapterContextMenu", Q_ARG(QPoint, QPoint(1, 1))));
+}
+
 /// The panel queues an adapter scan as it is built, so "nothing is running" is not yet true until
 /// that scan has come back.
 bool waitForStartupScan(sak::NetworkDiagnosticPanel& panel) {
@@ -217,6 +349,9 @@ private Q_SLOTS:
     void backupAndRestoreDoNotPromiseEthernetOnly();
     void adapterMenuOffersBackupAndRestoreWhereTheyWork_data();
     void adapterMenuOffersBackupAndRestoreWhereTheyWork();
+    void backupOnAWifiAdapterSavesThatAdapter();
+    void restoreOnAWifiAdapterAppliesItThereOnceConfirmed();
+    void restoreDeclinedChangesNothing();
     void accessibleNameHoldsLabel_data();
     void accessibleNameHoldsLabel();
     void everyButtonsNameHoldsItsLabel();
@@ -625,6 +760,111 @@ void NetworkDiagnosticPanelTests::adapterMenuOffersBackupAndRestoreWhereTheyWork
     QVERIFY2(actions.contains(QStringLiteral("Status...")), qPrintable(actions.join(u',')));
     QCOMPARE(actions.contains(QStringLiteral("Backup Settings...")), offered);
     QCOMPARE(actions.contains(QStringLiteral("Restore Settings...")), offered);
+}
+
+// The menu entry reached end to end: the file written holds the adapter that was right-clicked,
+// read from the scan by its own name, and backing up changes nothing.
+void NetworkDiagnosticPanelTests::backupOnAWifiAdapterSavesThatAdapter() {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString backup = dir.filePath(QStringLiteral("wifi.json"));
+    FakeAdapterCommands commands;
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+
+    AdapterDialogDriver driver(backup, QMessageBox::Ok);
+    bool found = false;
+    clickAdapterMenuEntry(panel,
+                          QStringLiteral("Wi-Fi"),
+                          QStringLiteral("WiFi"),
+                          QStringLiteral("Backup Settings..."),
+                          &found);
+    QVERIFY(found);
+    QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Backup Complete")),
+                             kDialogTimeoutMs);
+
+    QFile written(backup);
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QJsonObject saved = QJsonDocument::fromJson(written.readAll()).object();
+    QCOMPARE(saved.value(QStringLiteral("adapterName")).toString(), QStringLiteral("Wi-Fi"));
+    QCOMPARE(saved.value(QStringLiteral("dhcpEnabled")).toBool(), true);
+    QCOMPARE(saved.value(QStringLiteral("ipv4Address")).toString(), QStringLiteral("10.0.0.9"));
+    QVERIFY(commands.netshCalls().isEmpty());
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+}
+
+// Restore lists every adapter, asks which, asks to confirm, and only then runs netsh, on the
+// adapter chosen.
+void NetworkDiagnosticPanelTests::restoreOnAWifiAdapterAppliesItThereOnceConfirmed() {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString backup = dir.filePath(QStringLiteral("wifi.json"));
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"adapterName":"Wi-Fi","backupTimestamp":"2026-11-02T10:00:00",)"
+               R"("dhcpEnabled":true,"computerName":"PC"})");
+    file.close();
+    FakeAdapterCommands commands;
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+
+    AdapterDialogDriver driver(backup, QMessageBox::Yes);
+    bool found = false;
+    clickAdapterMenuEntry(panel,
+                          QStringLiteral("Wi-Fi"),
+                          QStringLiteral("WiFi"),
+                          QStringLiteral("Restore Settings..."),
+                          &found);
+    QVERIFY(found);
+    QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Restore Complete")),
+                             kDialogTimeoutMs);
+
+    QCOMPARE(driver.adapters_offered,
+             QStringList({QStringLiteral("Ethernet"), QStringLiteral("Wi-Fi")}));
+    // The adapter right-clicked, not the first in the list, which would be the wired one.
+    QCOMPARE(driver.adapter_chosen_first, QStringLiteral("Wi-Fi"));
+    QVERIFY(driver.boxes_seen.contains(QStringLiteral("Confirm Restore")));
+    QVERIFY(!commands.netshCalls().isEmpty());
+    const QStringList first_call = commands.netshCalls().first();
+    QVERIFY2(first_call.contains(QStringLiteral("name=Wi-Fi")),
+             qPrintable(first_call.join(QLatin1Char(' '))));
+    QVERIFY2(first_call.contains(QStringLiteral("source=dhcp")),
+             qPrintable(first_call.join(QLatin1Char(' '))));
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+}
+
+void NetworkDiagnosticPanelTests::restoreDeclinedChangesNothing() {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString backup = dir.filePath(QStringLiteral("wifi.json"));
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"adapterName":"Wi-Fi","backupTimestamp":"2026-11-02T10:00:00",)"
+               R"("dhcpEnabled":true,"computerName":"PC"})");
+    file.close();
+    FakeAdapterCommands commands;
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+
+    AdapterDialogDriver driver(backup, QMessageBox::No);
+    bool found = false;
+    clickAdapterMenuEntry(panel,
+                          QStringLiteral("Wi-Fi"),
+                          QStringLiteral("WiFi"),
+                          QStringLiteral("Restore Settings..."),
+                          &found);
+    QVERIFY(found);
+    QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Confirm Restore")),
+                             kDialogTimeoutMs);
+    QCoreApplication::processEvents();
+    QVERIFY(commands.netshCalls().isEmpty());
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
 }
 
 void NetworkDiagnosticPanelTests::accessibleNameHoldsLabel_data() {

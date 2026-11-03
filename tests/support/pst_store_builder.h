@@ -151,6 +151,9 @@ struct BuilderFolder {
     QVector<BuilderFolder> children;
     int declared_count = -1;     ///< PR_CONTENT_COUNT to state; -1 states the real count
     bool minimal_table = false;  ///< Contents table with only the row-id column (for large folders)
+    /// Rows too large for the heap: a matrix in a sub-node over several padded blocks, as Outlook
+    /// writes a folder of a few hundred messages. The row-id column plus filler, so the rows span.
+    bool spanning_table = false;
     bool search_folder = false;  ///< A search folder: its rows are copies of mail filed elsewhere
 };
 
@@ -422,10 +425,46 @@ private:
         writeLe32(allocs[0], kTcinfoHidRowIndexOffset, header_hid);
     }
 
+    /// A contents table whose rows live in a sub-node. Each block holds whole rows and is padded to
+    /// its end, because a row never crosses a block (MS-PST 2.3.4.4.1), so a row's place in the
+    /// matrix is not its place in the bytes.
+    uint64_t addSpanningRowTable(const QVector<uint32_t>& nids, uint64_t* sub_bid_out) {
+        constexpr int kFillerColumns = 3;
+        constexpr int kFillerSize = 16;
+        constexpr uint16_t kFirstFillerId = 0x6701;
+        constexpr uint32_t kRowsNid = (1U << 5) | 0x1FU;
+        const int ceb = kTcRowCellSize + (kFillerColumns * kFillerSize);
+        const int row_size = ceb + 1;
+        const int rows_per_block = kBuilderBlockDataLimit / row_size;
+        QVector<TcColumn> cols{{sak::email::kPropTypeInt32, kPidTagLtpRowId, 0, kTcRowCellSize, 0}};
+        for (int i = 0; i < kFillerColumns; ++i) {
+            cols.append({sak::email::kPropTypeGuid,
+                         static_cast<uint16_t>(kFirstFillerId + i),
+                         kTcRowCellSize + (i * kFillerSize),
+                         kFillerSize,
+                         i + 1});
+        }
+        QByteArray matrix;
+        for (int i = 0; i < nids.size(); ++i) {
+            QByteArray row(row_size, '\xAA');
+            writeLe32(row, 0, nids[i]);
+            row[ceb] = static_cast<char>(0xF0);
+            matrix += row;
+            const bool block_full = (i + 1) % rows_per_block == 0;
+            if (block_full && i + 1 < nids.size()) {
+                matrix += QByteArray(kBuilderBlockDataLimit - (rows_per_block * row_size), '\x55');
+            }
+        }
+        *sub_bid_out = addSubnodeBlock({{kRowsNid, addDataTree(matrix), 0}});
+        return addDataTree(buildTable(cols, {ceb, row_size, kRowsNid}, {}, {}, nids));
+    }
+
     /// Where a row's cell-existence bitmap starts, and how long the row is.
     struct TcRowLayout {
         int ceb_offset = 0;
         int row_size = 0;
+        uint32_t rows_in_subnode =
+            0;  ///< The sub-node holding the rows, if they are not in the heap
     };
 
     /// A table context over @p rows of already-formatted row bytes (cells + CEB), with the TCROWID
@@ -442,7 +481,10 @@ private:
         writeLe16(tcinfo, kTcinfoRgib2bOffset, static_cast<uint16_t>(layout.ceb_offset));
         writeLe16(tcinfo, kTcinfoRgib1bOffset, static_cast<uint16_t>(layout.ceb_offset));
         writeLe16(tcinfo, kTcinfoRgibBmOffset, static_cast<uint16_t>(layout.row_size));
-        writeLe32(tcinfo, kTcinfoHnidRowsOffset, rows.isEmpty() ? 0 : kTcHnidRows);
+        writeLe32(tcinfo,
+                  kTcinfoHnidRowsOffset,
+                  layout.rows_in_subnode != 0 ? layout.rows_in_subnode
+                                              : (rows.isEmpty() ? 0 : kTcHnidRows));
         for (int i = 0; i < cols.size(); ++i) {
             writeTcColDesc(tcinfo,
                            kTcinfoHeaderLen + (i * kTcColDescLen),
@@ -538,6 +580,16 @@ private:
         return flags;
     }
 
+    uint64_t addFolderContents(const BuilderFolder& folder,
+                               const QVector<uint32_t>& message_nids,
+                               uint64_t* sub_bid_out) {
+        if (folder.spanning_table) {
+            return addSpanningRowTable(message_nids, sub_bid_out);
+        }
+        return folder.minimal_table ? addRowIdTable(message_nids)
+                                    : addContentsTable(message_nids, folder.messages);
+    }
+
     void addFolderNode(const BuilderFolder& folder, uint32_t nid, uint32_t parent) {
         const auto base = nid & ~static_cast<uint32_t>(kNidTypeFolderMask);
 
@@ -547,10 +599,10 @@ private:
             addMessageNode(msg, msg_nid, nid);
             message_nids.append(msg_nid);
         }
-        const uint64_t contents_bid = folder.minimal_table
-                                          ? addRowIdTable(message_nids)
-                                          : addContentsTable(message_nids, folder.messages);
-        m_nodes.push_back({base | sak::email::kNidTypeContentsTable, contents_bid, 0, nid});
+        uint64_t contents_sub_bid = 0;
+        const uint64_t contents_bid = addFolderContents(folder, message_nids, &contents_sub_bid);
+        m_nodes.push_back(
+            {base | sak::email::kNidTypeContentsTable, contents_bid, contents_sub_bid, nid});
 
         QVector<uint32_t> child_nids;
         for (int i = 0; i < folder.children.size(); ++i) {

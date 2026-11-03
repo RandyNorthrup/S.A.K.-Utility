@@ -273,6 +273,9 @@ private:
 
     // -- Adapter context menu helpers --
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
+    /// The adapter a backup is restored to: the only one there is, or the user's choice from a list
+    /// that starts on the selected adapter. Empty if they cancel.
+    [[nodiscard]] QString chooseRestoreTarget(const QStringList& adapters);
     // Runs ONE adapter operation from sak/network_adapter_admin.h on a worker thread and reports
     // its outcome back on the GUI thread. This panel supplies the thread, the confirmation dialogs
     // and the reporting; it does not build or run the command. Per the owner's R5-IDX-19b ruling
