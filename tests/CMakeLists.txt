@@ -3544,25 +3544,6 @@ add_test(NAME test_elevation_manager COMMAND test_elevation_manager
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_elevation_manager")
 
-# test_elevation_tier - tier classification, feature lookup, table integrity
-add_executable(test_elevation_tier
-    unit/test_elevation_tier.cpp
-)
-set_target_properties(test_elevation_tier PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_elevation_tier PRIVATE
-    Qt6::Core Qt6::Test
-)
-target_include_directories(test_elevation_tier PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_elevation_tier COMMAND test_elevation_tier
-         -o "${TEST_OUTPUT_DIR}/test_elevation_tier.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_elevation_tier")
-
 # test_elevated_pipe_protocol - wire protocol framing, parsing, pipe name generation
 add_executable(test_elevated_pipe_protocol
     unit/test_elevated_pipe_protocol.cpp
@@ -3650,7 +3631,6 @@ message(STATUS "Added unit test: test_elevation_ux")
 # test_elevation_hardening - Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
 add_executable(test_elevation_hardening
     unit/test_elevation_hardening.cpp
-    ../include/sak/elevation_tier.h
     ../include/sak/elevation_gate.h
     ../include/sak/elevated_pipe_protocol.h
 )

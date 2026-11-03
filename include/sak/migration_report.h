@@ -18,9 +18,6 @@ namespace sak {
  */
 class MigrationReport {
 public:
-    MigrationReport();
-    ~MigrationReport() = default;
-
     /**
      * @brief Migration entry - combines app info with match result
      */
@@ -52,25 +49,7 @@ public:
         QDateTime executed_at;
     };
 
-    /**
-     * @brief Report metadata
-     */
-    struct ReportMetadata {
-        QString source_machine;
-        QString source_os;
-        QString source_os_version;
-        QString created_by;
-        QDateTime created_at;
-        int total_apps{0};
-        int matched_apps{0};
-        int selected_apps{0};
-        double match_rate{0.0};
-        QString report_version;  // Format version for compatibility
-    };
-
     void addEntry(const MigrationEntry& entry);
-
-    void selectAll();
 
     // Accessors
     const std::vector<MigrationEntry>& getEntries() const { return m_entries; }
@@ -99,25 +78,8 @@ public:
         return m_entries[static_cast<size_t>(index)];
     }
 
-    int getEntryCount() const { return static_cast<int>(m_entries.size()); }
-    int getSelectedCount() const;
-    int getMatchedCount() const;
-    int getUnmatchedCount() const;
-
-    const ReportMetadata& getMetadata() const { return m_metadata; }
-    ReportMetadata& getMetadata() { return m_metadata; }
-
-    // Clear
-    void clear();
-
 private:
-    // Helper methods
-    static QString getComputerName();
-    static QString getCurrentUser();
-
-    // Data members
     std::vector<MigrationEntry> m_entries;
-    ReportMetadata m_metadata;
 };
 
 }  // namespace sak

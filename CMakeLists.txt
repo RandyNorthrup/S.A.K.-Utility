@@ -522,7 +522,6 @@ set(SAK_CORE_SOURCES
     include/sak/encryption.h
     include/sak/keep_awake.h
     include/sak/elevation_gate.h
-    include/sak/elevation_tier.h
     include/sak/elevated_pipe_protocol.h
     include/sak/elevation_broker.h
     src/core/elevation_broker.cpp
