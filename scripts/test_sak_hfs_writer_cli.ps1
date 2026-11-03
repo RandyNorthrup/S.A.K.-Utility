@@ -194,22 +194,28 @@ if (-not $invalidBlockers.Contains("Unable to open HFS+ filesystem")) {
 # --- The refusal is written to stderr before the target is ever opened, so assert on the
 # --- refusal text: a bare "nonzero exit" is equally satisfied by the missing-confirmation
 # --- or non-HFS guard and would not prove the OS-disk guard fired at all.
-if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) {
-    Fail "SystemDrive is not set; the OS volume-alias guard cannot be exercised"
-}
-$rawDriveOutput = (& $CliPath delete-file-image --target "\\.\PhysicalDrive0" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
-if ($LASTEXITCODE -eq 0) {
-    Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
-}
-if (-not $rawDriveOutput.Contains("Refusing raw")) {
-    Fail "PhysicalDrive0 target was refused by another guard, not the OS-disk guard: $rawDriveOutput"
-}
-$rawVolumeOutput = (& $CliPath delete-file-image --target "\\.\$($env:SystemDrive)" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
-if ($LASTEXITCODE -eq 0) {
-    Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
-}
-if (-not $rawVolumeOutput.Contains("Refusing raw")) {
-    Fail "OS volume-alias target was refused by another guard, not the OS-disk guard: $rawVolumeOutput"
+# --- These two aim a writer at this PC's own disk, and this CLI has no test hardware guard, so
+# --- they run only in CI, where the disk is a runner's. See tests/support/test_hardware_guard.h.
+if ($env:SAK_TEST_ALLOW_REAL_HARDWARE -eq '1') {
+    if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+        Fail "SystemDrive is not set; the OS volume-alias guard cannot be exercised"
+    }
+    $rawDriveOutput = (& $CliPath delete-file-image --target "\\.\PhysicalDrive0" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
+    }
+    if (-not $rawDriveOutput.Contains("Refusing raw")) {
+        Fail "PhysicalDrive0 target was refused by another guard, not the OS-disk guard: $rawDriveOutput"
+    }
+    $rawVolumeOutput = (& $CliPath delete-file-image --target "\\.\$($env:SystemDrive)" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
+    }
+    if (-not $rawVolumeOutput.Contains("Refusing raw")) {
+        Fail "OS volume-alias target was refused by another guard, not the OS-disk guard: $rawVolumeOutput"
+    }
+} else {
+    Write-Host "Skipped the raw OS-disk guard checks: they aim the writer at this PC's own disk. CI only."
 }
 
 # --- Regression (review finding 7): create-empty-files-image must fail closed on a

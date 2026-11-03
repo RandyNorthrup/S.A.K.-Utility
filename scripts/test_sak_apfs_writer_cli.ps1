@@ -126,11 +126,17 @@ New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 # --- must be the guard's own (see Assert-RawTargetGuardRefused). --confirm-target is
 # --- deliberately NOT passed: the guard runs first in main(), so the confirm gate stays
 # --- behind it as a second wall and a regression here still cannot format this machine.
-$guardOutput = (& $CliPath format-raw --target "\\.\PhysicalDrive0" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
-Assert-RawTargetGuardRefused -Label "raw OS-disk guard (PhysicalDrive0 target)" -Output $guardOutput -ExitCode $LASTEXITCODE
+# --- These two aim a writer at this PC's own disk, and this CLI has no test hardware guard, so
+# --- they run only in CI, where the disk is a runner's. See tests/support/test_hardware_guard.h.
+if ($env:SAK_TEST_ALLOW_REAL_HARDWARE -eq '1') {
+    $guardOutput = (& $CliPath format-raw --target "\\.\PhysicalDrive0" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
+    Assert-RawTargetGuardRefused -Label "raw OS-disk guard (PhysicalDrive0 target)" -Output $guardOutput -ExitCode $LASTEXITCODE
 
-$guardOutput = (& $CliPath format-raw --target "\\.\$($env:SystemDrive)" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
-Assert-RawTargetGuardRefused -Label "raw OS-disk guard (OS volume-alias target \\.\$($env:SystemDrive))" -Output $guardOutput -ExitCode $LASTEXITCODE
+    $guardOutput = (& $CliPath format-raw --target "\\.\$($env:SystemDrive)" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
+    Assert-RawTargetGuardRefused -Label "raw OS-disk guard (OS volume-alias target \\.\$($env:SystemDrive))" -Output $guardOutput -ExitCode $LASTEXITCODE
+} else {
+    Write-Host "Skipped the raw OS-disk guard checks: they aim the writer at this PC's own disk. CI only."
+}
 
 $sizeBytes = 67108864
 $imagePath = Join-Path $runRoot "generated.apfs"

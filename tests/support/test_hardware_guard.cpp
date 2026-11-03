@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cwctype>
@@ -28,6 +29,8 @@ namespace {
 constexpr int kLowestAbsentDriveNumber = 32;
 constexpr int kDecimalBase = 10;
 constexpr int kMostOfACommandToPrint = 300;
+// That much path, " access=0x00000000 share=0x00000000", and the terminator.
+constexpr int kMostOfADetail = kMostOfACommandToPrint + 40;
 
 // Text whose presence on a command line means the process would query a drive, scan or repair
 // this Windows install, or change the network. Lower case; matched anywhere.
@@ -69,6 +72,9 @@ constexpr auto kBlockedCommandText = std::to_array<std::wstring_view>({
     L"/flushdns",
     L"set-dnsclientserveraddress",
     L"netsh interface ip set",
+    L"advfirewall firewall add",
+    L"advfirewall firewall delete",
+    L"advfirewall firewall set",
 });
 
 // The same, for short names that are only a command when they stand alone.
@@ -144,10 +150,13 @@ constexpr auto kBlockedDeviceText = std::to_array<std::wstring_view>({
 }
 
 // True for "x:" and "x:\", the volume itself. "\\.\x:\folder\file" is an ordinary path.
+[[nodiscard]] bool isVolumeAlias(std::wstring_view tail) {
+    return (tail.size() == 2 || (tail.size() == 3 && tail[2] == L'\\')) && tail[1] == L':' &&
+           std::iswalpha(tail[0]) != 0;
+}
+
 [[nodiscard]] bool isForeignVolumeAlias(std::wstring_view tail) {
-    const bool alias = (tail.size() == 2 || (tail.size() == 3 && tail[2] == L'\\')) &&
-                       tail[1] == L':' && std::iswalpha(tail[0]) != 0;
-    return alias && !isOsDriveLetter(tail[0]);
+    return isVolumeAlias(tail) && !isOsDriveLetter(tail[0]);
 }
 
 // One line per attempt, so a run's logs say exactly what its tests tried to reach.
@@ -155,16 +164,28 @@ void reportRefusal(const wchar_t* what, std::wstring_view detail) {
     std::fwprintf(stderr,
                   L"SAK TEST HARDWARE GUARD: refused to %ls: %.*ls\n",
                   what,
-                  std::min(static_cast<int>(detail.size()), kMostOfACommandToPrint),
+                  std::min(static_cast<int>(detail.size()), kMostOfADetail),
                   detail.data());
     std::fflush(stderr);
 }
 
-[[nodiscard]] bool refusesPath(const wchar_t* path) {
-    if (path == nullptr || sak::test::blockedDevicePath(path).empty()) {
+// What was asked for matters as much as where: access 0 only queries a drive, GENERIC_WRITE could
+// change it. The numbers are the raw dwDesiredAccess and dwShareMode, so a log can be counted.
+[[nodiscard]] bool refusesOpen(const wchar_t* path, DWORD access, DWORD share) {
+    if (path == nullptr || (sak::test::blockedDevicePath(path).empty() &&
+                            !sak::test::writesToSystemVolume(path, access))) {
         return false;
     }
-    reportRefusal(L"open a real drive or volume", path);
+    std::array<wchar_t, kMostOfADetail> detail{};
+    const int written = std::swprintf(detail.data(),
+                                      detail.size(),
+                                      L"%.*ls access=0x%08lX share=0x%08lX",
+                                      kMostOfACommandToPrint,
+                                      path,
+                                      access,
+                                      share);
+    reportRefusal(L"open a real drive or volume",
+                  std::wstring_view(detail.data(), static_cast<size_t>(std::max(written, 0))));
     return true;
 }
 
@@ -196,12 +217,12 @@ decltype(&ShellExecuteExW) g_shell_execute_ex_w = nullptr;
 // The rest of each signature is Windows' own and passes straight through, so it is deduced from the
 // function the guard stands in for.
 template <typename... Rest>
-HANDLE WINAPI guardedCreateFileW(LPCWSTR name, Rest... rest) {
-    if (refusesPath(name)) {
+HANDLE WINAPI guardedCreateFileW(LPCWSTR name, DWORD access, DWORD share, Rest... rest) {
+    if (refusesOpen(name, access, share)) {
         SetLastError(ERROR_ACCESS_DENIED);
         return INVALID_HANDLE_VALUE;
     }
-    return g_create_file_w(name, rest...);
+    return g_create_file_w(name, access, share, rest...);
 }
 
 template <typename... Rest>
@@ -221,30 +242,24 @@ BOOL WINAPI guardedShellExecuteExW(SHELLEXECUTEINFOW* info) {
     return g_shell_execute_ex_w(info);
 }
 
-void patchSlot(ULONG_PTR* slot, ULONG_PTR replacement) {
-    DWORD previous = 0;
-    if (VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &previous) != 0) {
-        *slot = replacement;
-        VirtualProtect(slot, sizeof(*slot), previous, &previous);
-    }
-}
-
-void patchImport(const char* name, ULONG_PTR* slot) {
+void patchImport(const char* name, std::uintptr_t* slot) {
     if (std::strcmp(name, "CreateFileW") == 0) {
         g_create_file_w = reinterpret_cast<decltype(&CreateFileW)>(*slot);
         const decltype(&CreateFileW) guarded = guardedCreateFileW;
-        patchSlot(slot, reinterpret_cast<ULONG_PTR>(guarded));
+        sak::test::setImportSlot(slot, reinterpret_cast<std::uintptr_t>(guarded));
     } else if (std::strcmp(name, "CreateProcessW") == 0) {
         g_create_process_w = reinterpret_cast<decltype(&CreateProcessW)>(*slot);
         const decltype(&CreateProcessW) guarded = guardedCreateProcessW;
-        patchSlot(slot, reinterpret_cast<ULONG_PTR>(guarded));
+        sak::test::setImportSlot(slot, reinterpret_cast<std::uintptr_t>(guarded));
     } else if (std::strcmp(name, "ShellExecuteExW") == 0) {
         g_shell_execute_ex_w = reinterpret_cast<decltype(&ShellExecuteExW)>(*slot);
-        patchSlot(slot, reinterpret_cast<ULONG_PTR>(&guardedShellExecuteExW));
+        sak::test::setImportSlot(slot, reinterpret_cast<std::uintptr_t>(&guardedShellExecuteExW));
     }
 }
 
-void patchImportsFrom(const char* base, const IMAGE_IMPORT_DESCRIPTOR* descriptor) {
+void visitImportsFrom(const char* base,
+                      const IMAGE_IMPORT_DESCRIPTOR* descriptor,
+                      sak::test::ImportVisitor visit) {
     if (descriptor->OriginalFirstThunk == 0) {
         return;
     }
@@ -258,34 +273,15 @@ void patchImportsFrom(const char* base, const IMAGE_IMPORT_DESCRIPTOR* descripto
         }
         const auto* by_name =
             reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
-        patchImport(by_name->Name, reinterpret_cast<ULONG_PTR*>(&slots->u1.Function));
-    }
-}
-
-void patchModule(HMODULE module) {
-    if (module == nullptr) {
-        return;
-    }
-    const auto* base = reinterpret_cast<const char*>(module);
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-    const IMAGE_DATA_DIRECTORY& imports =
-        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (imports.VirtualAddress == 0) {
-        return;
-    }
-    const auto* descriptor =
-        reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + imports.VirtualAddress);
-    for (; descriptor->Name != 0; ++descriptor) {
-        patchImportsFrom(base, descriptor);
+        visit(by_name->Name, reinterpret_cast<std::uintptr_t*>(&slots->u1.Function));
     }
 }
 
 bool installGuard() {
     if (!sak::test::realHardwareAllowed()) {
-        patchModule(GetModuleHandleW(nullptr));
-        patchModule(GetModuleHandleW(L"Qt6Core.dll"));
-        patchModule(GetModuleHandleW(L"Qt6Cored.dll"));
+        sak::test::visitImports(GetModuleHandleW(nullptr), patchImport);
+        sak::test::visitImports(GetModuleHandleW(L"Qt6Core.dll"), patchImport);
+        sak::test::visitImports(GetModuleHandleW(L"Qt6Cored.dll"), patchImport);
     }
     return true;
 }
@@ -296,6 +292,33 @@ bool installGuard() {
 }  // namespace
 
 namespace sak::test {
+
+void visitImports(const void* module, ImportVisitor visit) {
+    if (module == nullptr) {
+        return;
+    }
+    const auto* base = static_cast<const char*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& imports =
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (imports.VirtualAddress == 0) {
+        return;
+    }
+    const auto* descriptor =
+        reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + imports.VirtualAddress);
+    for (; descriptor->Name != 0; ++descriptor) {
+        visitImportsFrom(base, descriptor, visit);
+    }
+}
+
+void setImportSlot(std::uintptr_t* slot, std::uintptr_t replacement) {
+    DWORD previous = 0;
+    if (VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &previous) != 0) {
+        *slot = replacement;
+        VirtualProtect(slot, sizeof(*slot), previous, &previous);
+    }
+}
 
 bool realHardwareAllowed() {
     std::array<wchar_t, 2> value{};
@@ -323,6 +346,17 @@ std::wstring blockedDevicePath(std::wstring_view path) {
         }
     }
     return {};
+}
+
+bool writesToSystemVolume(std::wstring_view path, unsigned long access) {
+    constexpr DWORD kWriteAccess = GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED | FILE_WRITE_DATA |
+                                   FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES |
+                                   DELETE | WRITE_DAC | WRITE_OWNER;
+    if ((access & kWriteAccess) == 0) {
+        return false;
+    }
+    const std::wstring tail = deviceNamespaceTail(normalizedPath(path));
+    return !tail.empty() && isVolumeAlias(tail) && isOsDriveLetter(tail[0]);
 }
 
 std::wstring blockedCommand(std::wstring_view command_line) {

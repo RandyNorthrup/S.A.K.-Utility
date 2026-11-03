@@ -203,7 +203,9 @@ and starting a process that would query a drive, scan or repair Windows, change 
 the application fails, and each attempt prints a `SAK TEST HARDWARE GUARD` line. Give a new test a fake (for a process,
 `ScopedProcessFaultInjector`), or start it with `SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED()` if only
 the real thing proves it. A PowerShell test that runs the application exits 77, which CTest reports
-as skipped. Do not set that variable on a person's PC.
+as skipped, and one that aims a writer or certifier at a real drive, to prove it refuses, leaves that
+check out. The guard is not in those programs, so a script test that names a real drive needs the
+same test of the variable. Do not set that variable on a person's PC.
 
 Capture the build exit code in its own statement and read it before believing any test result:
 

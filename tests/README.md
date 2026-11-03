@@ -38,16 +38,19 @@ A test may not reach the real drives of the PC it runs on, and on a person's PC 
 sets `SAK_TEST_ALLOW_REAL_HARDWARE=1`, which only the CI workflows do, it refuses these and prints one
 `SAK TEST HARDWARE GUARD` line for each:
 
-- opening a physical drive, or a volume other than the system drive's, from product code or Qt;
+- opening a physical drive, or a volume other than the system drive's, from product code or Qt, and
+  opening the system drive's volume for write. The line ends with the access mask and share mode the
+  open asked for, so a run's logs can be counted for write requests;
 - starting a process whose command line would query a drive, scan or repair Windows, change the
-  network, or run the application;
+  network or the firewall, or run the application;
 - asking for elevation, which is how the application reaches the helper that reads raw disks.
 
 The refused call fails with access denied, as it can on any PC, so a panel that lists drives as it
 starts carries on with none. Give a test that needs an answer a fake (`ScopedProcessFaultInjector` for
 a process), or start it with `SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED()` if only the real thing proves
 it. The PowerShell tests that run the application exit 77 without the variable, which CTest reports as
-skipped. `test_hardware_guard` drills each route with paths and commands that are harmless if the
+skipped. The APFS and HFS writer CLI tests and the live certifier test leave out, without it, the checks
+that aim those programs at this PC's own disk to prove they refuse: the guard is not linked into them. `test_hardware_guard` drills each route with paths and commands that are harmless if the
 guard is broken.
 
 ### Labels and tiers
@@ -192,13 +195,13 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_elevation_ux | `elevation_banner`, `shield_icon` | Injected elevated/standard banner decisions, deterministic layout/content, and required Windows shield rendering |
-| test_elevation_hardening | `elevation_gate`, `elevation_tier` | Pure elevated/standard gate preflight, feature-tier completeness, IPC, and dispatcher hardening |
+| test_elevation_hardening | `elevation_gate` | Pure elevated/standard gate preflight, IPC, and dispatcher hardening |
 | test_mixed_tier_operations | `permission_manager`, `user_profile_backup_worker` | Pure ownership-elevation refusal, ACL operations, path accessibility, and elevated task dispatch |
 
 ### Deployment & Migration
 | Test | Module Under Test | Coverage |
 |---|---|---|
-| test_migration_report | `migration_report` | The install queue's entries and counts |
+| test_migration_report | `migration_report` | The install queue's entries, with bounds-checked access |
 | test_email_inspector_panel | `email_inspector_panel` | Search scope, fields searched, and hits listed in the item table |
 | test_main_window_help | `main_window` | Where the Help tab's links go and what the About tab claims |
 | test_package_matcher | `package_matcher` | App-to-Chocolatey matching on real display names |

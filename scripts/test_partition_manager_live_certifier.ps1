@@ -164,12 +164,16 @@ function Test-RejectedCliContracts {
     Assert-Rejected "duplicate proof mode" ($baseArguments + @(
         "--proof-mode", "restore", "--proof-mode", "offline-restore")) "Duplicate option"
     Assert-Rejected "unvalued proof mode" ($baseArguments + @("--proof-mode")) "Missing value"
-    $rawArguments = @(
-        "--source-vhd", $Script:SourcePath, "--target-vhd", "\\.\PhysicalDrive0",
-        "--output-dir", $Script:CaseRoot, "--run-id", $Script:RunId,
-        "--confirm-disposable-vhds"
-    )
-    Assert-Rejected "raw disk path" $rawArguments "Every path must be literal"
+    # This aims the certifier at this PC's own disk, and the certifier has no test hardware guard, so
+    # it runs only in CI, where the disk is a runner's. See tests/support/test_hardware_guard.h.
+    if ($env:SAK_TEST_ALLOW_REAL_HARDWARE -eq '1') {
+        $rawArguments = @(
+            "--source-vhd", $Script:SourcePath, "--target-vhd", "\\.\PhysicalDrive0",
+            "--output-dir", $Script:CaseRoot, "--run-id", $Script:RunId,
+            "--confirm-disposable-vhds"
+        )
+        Assert-Rejected "raw disk path" $rawArguments "Every path must be literal"
+    }
     $sameArguments = @(
         "--source-vhd", $Script:SourcePath, "--target-vhd", $Script:SourcePath.ToUpperInvariant(),
         "--output-dir", $Script:CaseRoot, "--run-id", $Script:RunId,

@@ -32,10 +32,10 @@ const QString kGuardLine = QStringLiteral("SAK TEST HARDWARE GUARD");
 // Below the guard's floor for "no PC has this many drives", and in practice no PC does either.
 constexpr auto kAbsentDrivePath = L"\\\\.\\PhysicalDrive31";
 const QString kPrintsAWord = QStringLiteral("Write-Output Get-PhysicalDisk");
+constexpr DWORD kShareBoth = FILE_SHARE_READ | FILE_SHARE_WRITE;
 
-int openWithWin32(const wchar_t* path) {
-    HANDLE handle = CreateFileW(
-        path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+int openWithWin32(const wchar_t* path, DWORD access = 0, DWORD share = kShareBoth) {
+    HANDLE handle = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, 0, nullptr);
     const DWORD error = GetLastError();
     if (handle != INVALID_HANDLE_VALUE) {
         CloseHandle(handle);
@@ -82,6 +82,9 @@ int openThisFile() {
 int runRoute(const QByteArray& route) {
     if (route == "win32-drive") {
         return openWithWin32(kAbsentDrivePath);
+    }
+    if (route == "win32-drive-for-write") {
+        return openWithWin32(kAbsentDrivePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ);
     }
     if (route == "win32-volume") {
         return openWithWin32(L"\\\\?\\Volume{00000000-0000-0000-0000-000000000000}\\");
@@ -135,11 +138,15 @@ class HardwareGuardTests : public QObject {
 private Q_SLOTS:
     void stopsEveryRoute_data();
     void stopsEveryRoute();
+    void sayWhatEachOpenAskedFor_data();
+    void sayWhatEachOpenAskedFor();
     void leavesOrdinaryWorkAlone_data();
     void leavesOrdinaryWorkAlone();
     void standsDownOnlyWhenTheMachineSaysSo();
     void devicePaths_data();
     void devicePaths();
+    void systemVolumeWrites_data();
+    void systemVolumeWrites();
     void commands_data();
     void commands();
 };
@@ -147,6 +154,7 @@ private Q_SLOTS:
 void HardwareGuardTests::stopsEveryRoute_data() {
     QTest::addColumn<QByteArray>("route");
     QTest::newRow("CreateFileW on a physical drive") << QByteArray("win32-drive");
+    QTest::newRow("CreateFileW on a drive, for write") << QByteArray("win32-drive-for-write");
     QTest::newRow("CreateFileW on a volume") << QByteArray("win32-volume");
     QTest::newRow("QFile on a physical drive") << QByteArray("qt-drive");
     QTest::newRow("QProcess running a drive query") << QByteArray("qprocess-drive-query");
@@ -158,6 +166,29 @@ void HardwareGuardTests::stopsEveryRoute() {
     const ChildResult child = runChild(route, false);
     QCOMPARE(child.exit_code, kRefused);
     QVERIFY2(child.std_err.contains(kGuardLine), qPrintable(child.std_err));
+}
+
+// A run's logs have to answer whether anything asked to write, not just what it tried to reach.
+void HardwareGuardTests::sayWhatEachOpenAskedFor_data() {
+    QTest::addColumn<QByteArray>("route");
+    QTest::addColumn<QString>("asked");
+    QTest::newRow("a query") << QByteArray("win32-drive")
+                             << QStringLiteral("access=0x00000000 share=0x00000003");
+    QTest::newRow("a write") << QByteArray("win32-drive-for-write")
+                             << QStringLiteral("access=0xC0000000 share=0x00000001");
+    QTest::newRow("a read through Qt")
+        << QByteArray("qt-drive") << QStringLiteral("access=0x80000000 share=0x00000003");
+}
+
+void HardwareGuardTests::sayWhatEachOpenAskedFor() {
+    QFETCH(QByteArray, route);
+    QFETCH(QString, asked);
+    const ChildResult child = runChild(route, false);
+    QCOMPARE(child.exit_code, kRefused);
+    const QString line = child.std_err.trimmed();
+    QVERIFY2(line.contains(QString::fromWCharArray(kAbsentDrivePath), Qt::CaseInsensitive),
+             qPrintable(line));
+    QVERIFY2(line.endsWith(asked), qPrintable(line));
 }
 
 void HardwareGuardTests::leavesOrdinaryWorkAlone_data() {
@@ -212,6 +243,35 @@ void HardwareGuardTests::devicePaths() {
     QCOMPARE(!sak::test::blockedDevicePath(path.toStdWString()).empty(), blocked);
 }
 
+// Decided here and never opened: a broken guard would otherwise reach this PC's own volume.
+void HardwareGuardTests::systemVolumeWrites_data() {
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<qulonglong>("access");
+    QTest::addColumn<bool>("blocked");
+    const QString drive = qEnvironmentVariable("SystemDrive");
+    const QString volume = QStringLiteral("\\\\.\\") + drive;
+    QTest::newRow("for write") << volume << qulonglong(GENERIC_WRITE) << true;
+    QTest::newRow("for both") << volume << qulonglong(GENERIC_READ | GENERIC_WRITE) << true;
+    QTest::newRow("slash") << volume + QLatin1Char('\\') << qulonglong(GENERIC_WRITE) << true;
+    QTest::newRow("write data only") << volume << qulonglong(FILE_WRITE_DATA) << true;
+    QTest::newRow("delete") << volume << qulonglong(DELETE) << true;
+    QTest::newRow("all access") << volume << qulonglong(GENERIC_ALL) << true;
+    QTest::newRow("read") << volume << qulonglong(GENERIC_READ) << false;
+    QTest::newRow("a query") << volume << qulonglong(0) << false;
+    QTest::newRow("a file on it") << volume + QStringLiteral("\\folder\\file.txt")
+                                  << qulonglong(GENERIC_WRITE) << false;
+    QTest::newRow("not a device path") << drive << qulonglong(GENERIC_WRITE) << false;
+}
+
+void HardwareGuardTests::systemVolumeWrites() {
+    QFETCH(QString, path);
+    QFETCH(qulonglong, access);
+    QFETCH(bool, blocked);
+    QCOMPARE(sak::test::writesToSystemVolume(path.toStdWString(),
+                                             static_cast<unsigned long>(access)),
+             blocked);
+}
+
 void HardwareGuardTests::commands_data() {
     QTest::addColumn<QString>("command");
     QTest::addColumn<bool>("blocked");
@@ -231,6 +291,13 @@ void HardwareGuardTests::commands_data() {
     QTest::newRow("chkdsk") << QStringLiteral("chkdsk C:") << true;
     QTest::newRow("the application") << QStringLiteral("D:\\b\\sak_utility.exe --flag") << true;
     QTest::newRow("flush DNS") << QStringLiteral("ipconfig.exe /flushdns") << true;
+    QTest::newRow("a firewall rule")
+        << QStringLiteral("netsh.exe advfirewall firewall add rule name=x dir=in") << true;
+    QTest::newRow("removing one") << QStringLiteral(
+                                         "netsh.exe advfirewall firewall delete rule name=x")
+                                  << true;
+    QTest::newRow("reading the rules")
+        << QStringLiteral("netsh.exe advfirewall firewall show rule name=all dir=in") << false;
     QTest::newRow("an echo") << powershell("Write-Output hello") << false;
     QTest::newRow("a word inside a name") << QStringLiteral("tool.exe sfcdata dismiss") << false;
     QTest::newRow("CPU heat") << powershell("Get-CimInstance MSAcpi_ThermalZone") << false;
