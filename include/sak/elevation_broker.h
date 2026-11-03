@@ -91,8 +91,7 @@ public:
     ///       static (inline) for unit testing without a live process.
     [[nodiscard]] static bool imagePathsMatch(const QString& expectedImagePath,
                                               const QString& actualImagePath) {
-        return !expectedImagePath.isEmpty() && !actualImagePath.isEmpty() &&
-               QString::compare(expectedImagePath, actualImagePath, Qt::CaseInsensitive) == 0;
+        return sameImagePath(expectedImagePath, actualImagePath);
     }
 
     /// @brief Shut down the helper process gracefully

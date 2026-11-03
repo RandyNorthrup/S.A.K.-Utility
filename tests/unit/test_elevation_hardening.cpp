@@ -62,6 +62,7 @@ private Q_SLOTS:
     // Identity binding -- fail-closed client/server verification seams
     // ====================================================================
     void identity_clientPidFailsClosedOnMissingParent();
+    void identity_imageChecksCompareTheFileNotTheSlashes();
     void identity_clientImageFailsClosedOnEmpty();
     void identity_clientImageMatchIsCaseInsensitive();
     void identity_clientImageRejectsDifferentExecutable();
@@ -254,6 +255,30 @@ void TestElevationHardening::identity_clientPidFailsClosedOnMissingParent() {
     QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(0, 1234));
     QVERIFY(sak::ElevatedPipeServer::clientPidMatchesParent(1234, 1234));
     QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(1234, 5678));
+}
+
+// One side of each check comes from Qt with forward slashes and the other from Windows with
+// backslashes. Compared as they stood, they matched nothing, so from an unelevated app every
+// administrator task failed with a helper connection error, and only a run in the VM showed it.
+void TestElevationHardening::identity_imageChecksCompareTheFileNotTheSlashes() {
+    const QString from_qt = QStringLiteral("C:/SAK/sak_elevated_helper.exe");
+    const QString from_windows = QStringLiteral("C:\\SAK\\sak_elevated_helper.exe");
+    QVERIFY(sak::ElevationBroker::imagePathsMatch(from_qt, from_windows));
+    QVERIFY(sak::ElevatedPipeServer::clientImageMatchesExpected(from_qt, from_windows));
+    QVERIFY(sak::ElevationBroker::imagePathsMatch(from_windows, from_qt));
+    QVERIFY(sak::ElevatedPipeServer::clientImageMatchesExpected(from_windows, from_qt));
+    // Still a different file in a different folder, however it is spelled.
+    const QString elsewhere = QStringLiteral("C:\\Temp\\sak_elevated_helper.exe");
+    QVERIFY(!sak::ElevationBroker::imagePathsMatch(from_qt, elsewhere));
+    QVERIFY(!sak::ElevatedPipeServer::clientImageMatchesExpected(from_qt, elsewhere));
+    // The real path Qt gives for this program, against the one Windows reports for it.
+    wchar_t module[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, module, MAX_PATH);
+    QVERIFY(length > 0 && length < MAX_PATH);
+    const QString reported = QString::fromWCharArray(module, static_cast<int>(length));
+    QVERIFY2(sak::ElevationBroker::imagePathsMatch(QCoreApplication::applicationFilePath(),
+                                                   reported),
+             qPrintable(reported));
 }
 
 void TestElevationHardening::identity_clientImageFailsClosedOnEmpty() {

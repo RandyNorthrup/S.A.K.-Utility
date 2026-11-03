@@ -116,8 +116,7 @@ public:
     ///       server implementation.
     [[nodiscard]] static bool clientImageMatchesExpected(const QString& expectedImagePath,
                                                          const QString& clientImagePath) {
-        return !expectedImagePath.isEmpty() && !clientImagePath.isEmpty() &&
-               QString::compare(expectedImagePath, clientImagePath, Qt::CaseInsensitive) == 0;
+        return sameImagePath(expectedImagePath, clientImagePath);
     }
 
     /// @brief Decoded 5-byte frame header: the little-endian payload length and type

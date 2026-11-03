@@ -13,6 +13,7 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
@@ -73,6 +74,20 @@ inline constexpr int kPipeIoTimeoutMs = 30'000;
 inline constexpr int kTaskHeartbeatIntervalMs = 10'000;
 static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
               "a running task must send at least two heartbeats inside the client's read timeout");
+
+/// @brief Whether two paths name the same executable: the check each end of the pipe makes on the
+///        other's image.
+///
+/// One side of each comparison comes from Qt, with forward slashes, and the other from
+/// QueryFullProcessImageNameW, with backslashes. Comparing them as they stood matched nothing, so
+/// the app and its helper refused each other on every run. Fail-closed: an empty path matches
+/// nothing.
+[[nodiscard]] inline bool sameImagePath(const QString& first, const QString& second) {
+    return !first.isEmpty() && QString::compare(QDir::toNativeSeparators(first),
+                                                QDir::toNativeSeparators(second),
+                                                Qt::CaseInsensitive) == 0;
+}
+
 inline constexpr uint32_t kPipeFrameByteMask = 0xFF;
 inline constexpr int kPipeFrameByteShift1 = 8;
 inline constexpr int kPipeFrameByteShift2 = 16;

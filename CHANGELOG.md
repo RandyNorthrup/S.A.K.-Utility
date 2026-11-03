@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Administrator tasks run from an unelevated app again** - Since 2026-08-02 each end of the connection
+  between the app and its administrator helper checked which program was on the other end, and compared
+  a path written with forward slashes against one written with backslashes. They never matched, so
+  every task handed to the helper failed with a connection error. A run in a VM found it; no test had
+  ever connected the two for real. The check now compares the file, and still refuses any other program.
 - **BitLocker keys can go to a FAT32 or exFAT drive, after a warning** - These were refused outright,
   which got in the way of a technician carrying keys across to another device. BitLocker Key Backup
   now says what such a drive means: it cannot restrict who reads files, so anyone with the drive can
