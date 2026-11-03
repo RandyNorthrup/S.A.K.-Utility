@@ -847,8 +847,10 @@ void TestPstParser::reusableFolderedFixtureReachesChildViaHierarchyTable() {
     QVERIFY2(error_spy.isEmpty(),
              qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
     QVERIFY(parser.isOpen());
-    QCOMPARE(parser.folderTree().size(), 1);
-    const sak::PstFolder& root = parser.folderTree().first();
+    // folderTree() returns a copy, so the reference below needs one that outlives this line.
+    const sak::PstFolderTree tree = parser.folderTree();
+    QCOMPARE(tree.size(), 1);
+    const sak::PstFolder& root = tree.first();
     QCOMPARE(root.node_id, static_cast<uint64_t>(sak::email::kNidRootFolder));
     QCOMPARE(root.children.size(), 1);
     QCOMPARE(root.children.first().node_id,

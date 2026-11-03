@@ -20,6 +20,7 @@
 
 #include <windows.h>
 
+#include <crtdbg.h>
 #include <shellapi.h>
 
 namespace {
@@ -277,7 +278,22 @@ void visitImportsFrom(const char* base,
     }
 }
 
+// A crash box or an assert box waits for someone to close it, on a person's screen or on a runner
+// with nobody there, and the test sits on it until it times out. A binary that cannot load at all
+// never gets this far: that one is scripts/run_ctest_no_dialogs.ps1's.
+void sendBoxesToTheLog() {
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX |
+                 SEM_NOOPENFILEERRORBOX);
+#ifdef _DEBUG
+    for (const int kind : {_CRT_ASSERT, _CRT_ERROR}) {
+        _CrtSetReportMode(kind, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(kind, _CRTDBG_FILE_STDERR);
+    }
+#endif
+}
+
 bool installGuard() {
+    sendBoxesToTheLog();
     if (!sak::test::realHardwareAllowed()) {
         sak::test::visitImports(GetModuleHandleW(nullptr), patchImport);
         sak::test::visitImports(GetModuleHandleW(L"Qt6Core.dll"), patchImport);

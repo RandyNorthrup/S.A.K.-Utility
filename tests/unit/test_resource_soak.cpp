@@ -119,7 +119,13 @@ void ResourceSoakTests::processLaunchers_noResourceGrowthOverLongSession() {
     // generous ceiling that still catches a gross per-launch retention accumulating
     // across the soak, while tolerating benign heap-arena noise.
     const qint64 workingSetDelta = after.workingSetBytes - before.workingSetBytes;
+#ifdef __SANITIZE_ADDRESS__
+    // AddressSanitizer holds freed memory in its quarantine, which counts as working set: 30 MB
+    // measured on this soak, in a run with no leak.
+    constexpr qint64 kWorkingSetCeiling = 64LL * 1024 * 1024;
+#else
     constexpr qint64 kWorkingSetCeiling = 16LL * 1024 * 1024;
+#endif
     QVERIFY2(workingSetDelta <= kWorkingSetCeiling,
              qPrintable(QStringLiteral("working-set growth %1 bytes").arg(workingSetDelta)));
 }

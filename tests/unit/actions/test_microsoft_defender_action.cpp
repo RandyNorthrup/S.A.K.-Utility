@@ -164,7 +164,7 @@ void MicrosoftDefenderActionTests::platformVersionFolderResolvesMpCmdRun() {
         QStringLiteral("C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.25070.5-0\\"),
         kPlatformRoot,
         kProgramRoot);
-    QVERIFY2(path.has_value(), qPrintable(path.error()));
+    QVERIFY2(path.has_value(), qPrintable(path ? QString() : path.error()));
     QCOMPARE(*path,
              QStringLiteral("C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\"
                             "4.18.25070.5-0\\MpCmdRun.exe"));
@@ -179,7 +179,7 @@ void MicrosoftDefenderActionTests::platformVersionFolderResolvesMpCmdRun() {
 void MicrosoftDefenderActionTests::inboxProgramFolderResolvesMpCmdRun() {
     const auto path = MicrosoftDefenderAction::mpCmdRunPathFromInstallLocation(
         QStringLiteral("C:\\Program Files\\Windows Defender\\"), kPlatformRoot, kProgramRoot);
-    QVERIFY2(path.has_value(), qPrintable(path.error()));
+    QVERIFY2(path.has_value(), qPrintable(path ? QString() : path.error()));
     QCOMPARE(*path, QStringLiteral("C:\\Program Files\\Windows Defender\\MpCmdRun.exe"));
 }
 

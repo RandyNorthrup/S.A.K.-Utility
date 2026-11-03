@@ -99,6 +99,9 @@ ctest --test-dir build -C Release -R "test_encryption"
 ctest --test-dir build -C Release -N -L product
 ```
 
+On a PC someone is working at, run `scripts/run_ctest_no_dialogs.ps1` with the same arguments in place of
+`ctest`, so no test can put a dialog or a window on their screen.
+
 Run the suite from a standard (non-elevated) shell. The app runs as a standard user and elevates
 per task, and several suites assert exactly that (an ordinary PowerShell child is not elevated, a
 new file belongs to the user rather than `BUILTIN\Administrators`, the AI policy sees an

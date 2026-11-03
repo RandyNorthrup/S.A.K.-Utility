@@ -1857,6 +1857,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
     )
+    # This one file passes the object format's section limit in Debug (C1128), which stopped the
+    # nightly's Debug build. Release's optimizer folds enough sections to stay under it.
+    target_compile_options(test_ai_assistant_panel_tool_dispatch PRIVATE $<$<CONFIG:Debug>:/bigobj>)
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
         sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
@@ -6781,6 +6784,11 @@ foreach(_sak_ps_test test_pack_extension test_register_native_host)
     set_tests_properties(${_sak_ps_test} PROPERTIES TIMEOUT 300)
 endforeach()
 
+add_test(NAME test_run_ctest_no_dialogs
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
+set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
+
 # scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
 # verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
 # was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
@@ -7099,7 +7107,7 @@ set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_depende
     test_verify_authenticode_signatures)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
-    test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
+    test_run_ctest_no_dialogs test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix)
 set(_sak_labels_tooling_extended
@@ -7257,6 +7265,18 @@ message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
 # Debug / sanitizer run environment
 # ============================================================================
 #
+# Debug test binaries run from tests/Debug, not beside sak_utility as Release's do, and the suites
+# that use a bundled tool look beside the executable.
+set(_sak_stage_tools_for_debug_tests
+    "${CMAKE_COMMAND}"
+    "-DSAK_TOOLS_SOURCE=${CMAKE_SOURCE_DIR}/tools"
+    "-DSAK_TOOLS_DESTINATION=${CMAKE_CURRENT_BINARY_DIR}/Debug/tools"
+    -P "${CMAKE_SOURCE_DIR}/cmake/copy_tools_bundle.cmake")
+add_custom_target(sak_stage_tools_for_debug_tests ALL
+    COMMAND "$<$<CONFIG:Debug>:${_sak_stage_tools_for_debug_tests}>"
+    COMMAND_EXPAND_LISTS
+    VERBATIM)
+
 # Release test binaries find their Qt DLLs because the packaging step stages
 # them next to the executables. The Debug configuration has no such step, so a
 # Debug test binary imports Qt6Cored.dll / Qt6Testd.dll and dies with
@@ -7279,11 +7299,14 @@ if(_sak_qt_core_location)
     # live in a different directory and had no such step, so every test would
     # have died with STATUS_DLL_NOT_FOUND. Staged here so the fix covers all
     # tests at once instead of per target.
+    #
+    # vcpkg keeps Debug's own DLLs (zd.dll, bz2d.dll) under debug/bin, and a Debug binary imports
+    # those names, so each configuration needs its own directory.
     set(_sak_test_path_dirs "${_sak_qt_bin_dir}")
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-        set(_sak_vcpkg_bin_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-        if(EXISTS "${_sak_vcpkg_bin_dir}")
-            list(APPEND _sak_test_path_dirs "${_sak_vcpkg_bin_dir}")
+        set(_sak_vcpkg_root "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+        if(EXISTS "${_sak_vcpkg_root}/bin")
+            list(APPEND _sak_test_path_dirs "${_sak_vcpkg_root}/$<$<CONFIG:Debug>:debug/>bin")
         endif()
     endif()
 

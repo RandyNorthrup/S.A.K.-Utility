@@ -207,6 +207,13 @@ as skipped, and one that aims a writer or certifier at a real drive, to prove it
 check out. The guard is not in those programs, so a script test that names a real drive needs the
 same test of the variable. Do not set that variable on a person's PC.
 
+On a PC someone is working at, run suites through `scripts/run_ctest_no_dialogs.ps1`, which takes
+ctest's own arguments. A plain `ctest` resets the error mode its children inherit, whatever its parent
+set, so a test binary missing a DLL puts a "System Error" box on the person's screen and waits for them
+to close it. The script uses ctest's non-interactive mode and the offscreen platform for every test,
+including the real-desktop and clipboard suites, which otherwise open windows and write to the person's
+clipboard. CI does not use it.
+
 Capture the build exit code in its own statement and read it before believing any test result:
 
 ```powershell

@@ -18,6 +18,7 @@
 
 #include <windows.h>
 
+#include <crtdbg.h>
 #include <shellapi.h>
 
 namespace {
@@ -143,6 +144,7 @@ private Q_SLOTS:
     void leavesOrdinaryWorkAlone_data();
     void leavesOrdinaryWorkAlone();
     void standsDownOnlyWhenTheMachineSaysSo();
+    void nothingWaitsOnABox();
     void devicePaths_data();
     void devicePaths();
     void systemVolumeWrites_data();
@@ -212,6 +214,19 @@ void HardwareGuardTests::standsDownOnlyWhenTheMachineSaysSo() {
         QCOMPARE(child.exit_code, kReachedIt);
         QVERIFY2(!child.std_err.contains(kGuardLine), qPrintable(child.std_err));
     }
+}
+
+// A box waits for someone to close it, and the test waits with it. ctest's non-interactive mode
+// sets the first two flags itself, and never SEM_NOOPENFILEERRORBOX, so that one proves the guard
+// ran.
+void HardwareGuardTests::nothingWaitsOnABox() {
+    const UINT mode = GetErrorMode();
+    QVERIFY((mode & SEM_FAILCRITICALERRORS) != 0);
+    QVERIFY((mode & SEM_NOGPFAULTERRORBOX) != 0);
+    QVERIFY((mode & SEM_NOOPENFILEERRORBOX) != 0);
+#ifdef _DEBUG
+    QCOMPARE(_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_REPORT_MODE), _CRTDBG_MODE_FILE);
+#endif
 }
 
 void HardwareGuardTests::devicePaths_data() {
