@@ -9,6 +9,8 @@
 #include "sak/io_write_utils.h"
 #include "sak/mbox_writer.h"
 
+#include "../support/mime_tree.h"
+
 #include <QBuffer>
 #include <QDir>
 #include <QFile>
@@ -20,6 +22,24 @@
 
 #include <tuple>
 
+static sak::PstItemDetail nestingItem(const QString& plain, const QString& html) {
+    sak::PstItemDetail item;
+    item.subject = QStringLiteral("Nesting");
+    item.sender_email = QStringLiteral("a@example.test");
+    item.date = QDateTime(QDate(2026, 1, 2), QTime(3, 4), QTimeZone::UTC);
+    item.body_plain = plain;
+    item.body_html = html;
+    sak::PstAttachmentInfo picture;
+    picture.long_filename = QStringLiteral("front.png");
+    picture.content_id = QStringLiteral("<front@x>");
+    picture.mime_type = QStringLiteral("image/png");
+    sak::PstAttachmentInfo file;
+    file.long_filename = QStringLiteral("menu.pdf");
+    file.mime_type = QStringLiteral("application/pdf");
+    item.attachments = {picture, file};
+    return item;
+}
+
 class TestMboxWriter : public QObject {
     Q_OBJECT
 
@@ -28,6 +48,62 @@ private Q_SLOTS:
     // ====================================================================
     // Happy Path -- Write single message
     // ====================================================================
+
+    void partsNestTheWayAReaderExpects_data() {
+        QTest::addColumn<QString>("plain");
+        QTest::addColumn<QString>("html");
+        QTest::addColumn<bool>("shown_picture");
+        QTest::addColumn<bool>("attached_file");
+        QTest::addColumn<QString>("tree");
+        const QString plain = QStringLiteral("Plain");
+        const QString shows = QStringLiteral("<img src=\"cid:front@x\">");
+        const QString none = QStringLiteral("<p>No picture</p>");
+        QTest::newRow("everything")
+            << plain << shows << true << true
+            << QStringLiteral(
+                   "mixed(related(alternative(text/plain,text/html),image/png),application/pdf)");
+        QTest::newRow("a picture and no file")
+            << plain << shows << true << false
+            << QStringLiteral("related(alternative(text/plain,text/html),image/png)");
+        QTest::newRow("HTML alone with its picture")
+            << QString() << shows << true << false
+            << QStringLiteral("related(text/html,image/png)");
+        QTest::newRow("a file and no picture")
+            << plain << none << false << true
+            << QStringLiteral("mixed(alternative(text/plain,text/html),application/pdf)");
+        QTest::newRow("plain text and a file")
+            << plain << QString() << false << true
+            << QStringLiteral("mixed(text/plain,application/pdf)");
+        QTest::newRow("both bodies and nothing else")
+            << plain << none << false << false
+            << QStringLiteral("alternative(text/plain,text/html)");
+        QTest::newRow("a picture the HTML does not show is a file")
+            << plain << none << true << false
+            << QStringLiteral("mixed(alternative(text/plain,text/html),image/png)");
+    }
+
+    // Thunderbird, reading what this writer wrote: with a shown picture in multipart/mixed, it
+    // showed the alt text in the message, warned of remote content, and put the picture after the
+    // message.
+    void partsNestTheWayAReaderExpects() {
+        QFETCH(QString, plain);
+        QFETCH(QString, html);
+        QFETCH(bool, shown_picture);
+        QFETCH(bool, attached_file);
+        QFETCH(QString, tree);
+        const sak::PstItemDetail item = nestingItem(plain, html);
+        QVector<QPair<QString, QByteArray>> attachments;
+        if (shown_picture) {
+            attachments.append({QStringLiteral("front.png"), "png"});
+        }
+        if (attached_file) {
+            attachments.append({QStringLiteral("menu.pdf"), "pdf"});
+        }
+        const auto mime =
+            sak::MboxWriter::buildMimeMessage(item, item.sender_email, item.date, attachments);
+        QVERIFY(mime.has_value());
+        QCOMPARE(sak::test::mimeTree(*mime), tree);
+    }
 
     // Real stores give ordinary attachments a Content-ID. Only what the body shows is inline.
     void onlyWhatTheBodyShowsIsInline() {

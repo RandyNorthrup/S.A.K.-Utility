@@ -7,6 +7,7 @@
 #include "sak/mbox_writer.h"
 
 #include "sak/email_content_id.h"
+#include "sak/email_mime_layout.h"
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/partition_export_containment.h"
@@ -224,16 +225,6 @@ QByteArray sanitizedMimeType(const QString& mime_type) {
 
 // Metadata the source declared for the attachment written under @p name. The caller names an
 // attachment by its long filename when it has one, so match the same way.
-const PstAttachmentInfo* findAttachmentInfo(const PstItemDetail& item, const QString& name) {
-    for (const auto& att : item.attachments) {
-        const QString declared = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-        if (declared == name) {
-            return &att;
-        }
-    }
-    return nullptr;
-}
-
 // filename="..." is ASCII-only: a non-ASCII name is emitted RFC 2231 style so strict readers
 // neither reject the part nor mis-decode the name.
 void appendFilenameParam(QByteArray& message, const QString& name) {
@@ -272,12 +263,12 @@ void appendAttachmentPart(QByteArray& message,
                           const PstItemDetail& item,
                           const QString& name,
                           const QByteArray& data) {
-    const PstAttachmentInfo* info = findAttachmentInfo(item, name);
+    const PstAttachmentInfo* info = attachmentInfoNamed(item, name);
     const QByteArray content_type = (info != nullptr) ? sanitizedMimeType(info->mime_type)
                                                       : QByteArray("application/octet-stream");
     const QByteArray content_id = (info != nullptr) ? usableContentId(info->content_id)
                                                     : QByteArray();
-    const bool inline_part = htmlCitesContentId(item.body_html, content_id);
+    const bool inline_part = attachmentIsShownInBody(item, name);
 
     message.append("--" + boundary.toUtf8() + "\r\n");
     message.append("Content-Type: " + content_type + "\r\n");
@@ -293,30 +284,36 @@ void appendAttachmentPart(QByteArray& message,
     message.append(base64Wrapped(data));  // ends with CRLF
 }
 
-// Emit the message bodies. A non-empty @p alt_boundary means the plain/HTML alternatives are
-// nested in their own multipart/alternative inside the mixed container that carries attachments.
-void appendBodyParts(QByteArray& message,
-                     const PstItemDetail& item,
-                     const QString& boundary,
-                     const QString& alt_boundary) {
-    const bool nested = !alt_boundary.isEmpty();
-    if (nested) {
-        message.append("--" + boundary.toUtf8() + "\r\n");
-        message.append("Content-Type: multipart/alternative;\r\n");
-        message.append(" boundary=\"" + alt_boundary.toUtf8() + "\"\r\n");
-        message.append("\r\n");
+// Starts one multipart container inside @p parent. Nothing when the message does not need it.
+void openContainer(QByteArray& message,
+                   const QString& parent,
+                   const char* type,
+                   const QString& boundary) {
+    if (boundary.isEmpty()) {
+        return;
     }
-    const QString& body_boundary = nested ? alt_boundary : boundary;
-    // Emit BOTH bodies when present: dropping the plain-text alternative whenever HTML exists
-    // silently loses content the source message carried.
+    if (!parent.isEmpty()) {
+        message.append("--" + parent.toUtf8() + "\r\n");
+    }
+    message.append("Content-Type: ");
+    message.append(type);
+    message.append(";\r\n boundary=\"" + boundary.toUtf8() + "\"\r\n\r\n");
+}
+
+void closeContainer(QByteArray& message, const QString& boundary) {
+    if (!boundary.isEmpty()) {
+        message.append("--" + boundary.toUtf8() + "--\r\n");
+    }
+}
+
+// Emit the message bodies. BOTH when present: dropping the plain-text alternative whenever HTML
+// exists silently loses content the source message carried.
+void appendBodyParts(QByteArray& message, const PstItemDetail& item, const QString& boundary) {
     if (!item.body_plain.isEmpty()) {
-        appendTextPart(message, body_boundary, "text/plain", item.body_plain);
+        appendTextPart(message, boundary, "text/plain", item.body_plain);
     }
     if (!item.body_html.isEmpty()) {
-        appendTextPart(message, body_boundary, "text/html", item.body_html);
-    }
-    if (nested) {
-        message.append("--" + alt_boundary.toUtf8() + "--\r\n");
+        appendTextPart(message, boundary, "text/html", item.body_html);
     }
 }
 
@@ -721,29 +718,34 @@ void MboxWriter::appendMessageHeaders(QByteArray& message,
 
 void MboxWriter::appendMultipartBody(QByteArray& message,
                                      const PstItemDetail& item,
-                                     const QString& boundary,
-                                     const QString& alt_boundary,
+                                     const MimeBoundaries& boundaries,
                                      const QVector<QPair<QString, QByteArray>>& attachments) {
     // Plain and HTML are ALTERNATIVES of one another, not two documents, so they go in a
-    // multipart/alternative -- nested inside the mixed container when the message also has
-    // attachments (RFC 2046). Emitted as siblings of multipart/mixed, clients show the message
-    // twice.
-    const bool both_bodies = !item.body_plain.isEmpty() && !item.body_html.isEmpty();
-    const QByteArray outer_type = (both_bodies && attachments.isEmpty())
-                                      ? QByteArrayLiteral("multipart/alternative")
-                                      : QByteArrayLiteral("multipart/mixed");
+    // multipart/alternative (RFC 2046). Emitted as siblings of multipart/mixed, clients show the
+    // message twice. See MimeLayout for the rest of the nesting.
+    const QString& around_alternative = boundaries.related.isEmpty() ? boundaries.mixed
+                                                                     : boundaries.related;
+    const QString& around_body = boundaries.alternative.isEmpty() ? around_alternative
+                                                                  : boundaries.alternative;
 
     message.append("MIME-Version: 1.0\r\n");
-    message.append("Content-Type: " + outer_type + ";\r\n");
-    message.append(" boundary=\"" + boundary.toUtf8() + "\"\r\n");
-    message.append("\r\n");
-
-    appendBodyParts(message, item, boundary, alt_boundary);
-
+    openContainer(message, {}, "multipart/mixed", boundaries.mixed);
+    openContainer(message, boundaries.mixed, "multipart/related", boundaries.related);
+    openContainer(message, around_alternative, "multipart/alternative", boundaries.alternative);
+    appendBodyParts(message, item, around_body);
+    closeContainer(message, boundaries.alternative);
     for (const auto& [att_name, att_data] : attachments) {
-        appendAttachmentPart(message, boundary, item, att_name, att_data);
+        if (attachmentIsShownInBody(item, att_name)) {
+            appendAttachmentPart(message, boundaries.related, item, att_name, att_data);
+        }
     }
-    message.append("--" + boundary.toUtf8() + "--\r\n");
+    closeContainer(message, boundaries.related);
+    for (const auto& [att_name, att_data] : attachments) {
+        if (!attachmentIsShownInBody(item, att_name)) {
+            appendAttachmentPart(message, boundaries.mixed, item, att_name, att_data);
+        }
+    }
+    closeContainer(message, boundaries.mixed);
 }
 
 std::expected<QByteArray, error_code> MboxWriter::buildMimeMessage(
@@ -765,20 +767,25 @@ std::expected<QByteArray, error_code> MboxWriter::buildMimeMessage(
         return message;
     }
 
-    const QString boundary = makeUniqueBoundary(item);
-    if (boundary.isEmpty()) {
-        // No collision-free boundary could be produced: fail closed rather than emit a
-        // multipart whose delimiter might appear in the body and corrupt the structure.
+    MimeLayout layout = mimeLayoutFor(item, attachments);
+    if (!layout.alternative && !layout.related) {
+        layout.mixed = true;  // One body and no attachments still needs its container here.
+    }
+    MimeBoundaries boundaries;
+    // No collision-free boundary could be produced: fail closed rather than emit a multipart whose
+    // delimiter might appear in the body and corrupt the structure.
+    const auto boundaryFor = [&item](bool needed, QString& boundary) {
+        if (needed) {
+            boundary = makeUniqueBoundary(item);
+        }
+        return !needed || !boundary.isEmpty();
+    };
+    if (!boundaryFor(layout.mixed, boundaries.mixed) ||
+        !boundaryFor(layout.related, boundaries.related) ||
+        !boundaryFor(layout.alternative, boundaries.alternative)) {
         return std::unexpected(error_code::internal_error);
     }
-    QString alt_boundary;
-    if (!item.body_plain.isEmpty() && !item.body_html.isEmpty() && !attachments.isEmpty()) {
-        alt_boundary = makeUniqueBoundary(item);
-        if (alt_boundary.isEmpty() || alt_boundary == boundary) {
-            return std::unexpected(error_code::internal_error);
-        }
-    }
-    appendMultipartBody(message, item, boundary, alt_boundary, attachments);
+    appendMultipartBody(message, item, boundaries, attachments);
     return message;
 }
 

@@ -26,6 +26,14 @@ def decoded(value):
     return "".join(parts)
 
 
+def structure(part):
+    """How the parts nest, as the writer tests spell it: mixed(alternative(text/plain,text/html))."""
+    if not part.is_multipart():
+        return part.get_content_type()
+    children = ",".join(structure(child) for child in part.get_payload())
+    return part.get_content_subtype() + "(" + children + ")"
+
+
 def describe(message):
     """The fields the test compares, for one message."""
     attachments = []
@@ -55,6 +63,7 @@ def describe(message):
         "has_separator": message.get_from() is not None,
         "body": body,
         "attachments": attachments,
+        "structure": structure(message),
     }
 
 

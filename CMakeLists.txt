@@ -664,6 +664,7 @@ set(SAK_CORE_SOURCES
     src/core/pst_recurrence.cpp
     src/core/email_ics_writer.cpp
     include/sak/email_content_id.h
+    include/sak/email_mime_layout.h
     src/core/pst_rtf_body.cpp
     src/core/mbox_parser.cpp
     src/core/email_search_worker.cpp

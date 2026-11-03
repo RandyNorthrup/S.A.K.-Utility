@@ -7,6 +7,7 @@
 #include "sak/eml_writer.h"
 
 #include "sak/email_content_id.h"
+#include "sak/email_mime_layout.h"
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/io_write_utils.h"
@@ -189,22 +190,18 @@ void appendBodyPart(QByteArray& eml,
 }
 
 // What the source says about the attachment written under @p name, if anything.
-const PstAttachmentInfo* attachmentInfoFor(const PstItemDetail& item, const QString& name) {
-    for (const auto& att : item.attachments) {
-        if ((att.long_filename.isEmpty() ? att.filename : att.long_filename) == name) {
-            return &att;
-        }
-    }
-    return nullptr;
-}
-
+// The attachments the body shows, or the ones it does not. @p boundary is the container they go in.
 void appendAttachmentParts(QByteArray& eml,
                            const QByteArray& boundary,
                            const PstItemDetail& item,
-                           const QVector<QPair<QString, QByteArray>>& attachments) {
+                           const QVector<QPair<QString, QByteArray>>& attachments,
+                           bool shown_in_body) {
     for (const auto& [name, data] : attachments) {
+        if (attachmentIsShownInBody(item, name) != shown_in_body) {
+            continue;
+        }
         const QByteArray safe_name = sanitizeQuotedParam(name).toUtf8();
-        const PstAttachmentInfo* info = attachmentInfoFor(item, name);
+        const PstAttachmentInfo* info = attachmentInfoNamed(item, name);
         const QByteArray content_id = (info != nullptr) ? usableContentId(info->content_id)
                                                         : QByteArray();
         const QByteArray type = (info != nullptr && !info->mime_type.isEmpty())
@@ -214,10 +211,9 @@ void appendAttachmentParts(QByteArray& eml,
         eml.append("Content-Type: " + type + "; name=\"" + safe_name + "\"\r\n");
         eml.append("Content-Transfer-Encoding: base64\r\n");
         // A picture the body shows is inline and keeps its Content-ID, or the body's cid: reference
-        // finds nothing. Stores give ordinary attachments a Content-ID too, and those stay
-        // attachments.
+        // finds nothing.
         eml.append("Content-Disposition: ");
-        eml.append(htmlCitesContentId(item.body_html, content_id) ? "inline" : "attachment");
+        eml.append(shown_in_body ? "inline" : "attachment");
         eml.append("; filename=\"" + safe_name + "\"\r\n");
         if (!content_id.isEmpty()) {
             eml.append("Content-ID: <" + content_id + ">\r\n");
@@ -227,34 +223,73 @@ void appendAttachmentParts(QByteArray& eml,
     }
 }
 
-// Emit a multipart body. Returns false when no collision-free boundary could be
-// produced, so the caller fails closed rather than emit a corruptible structure.
+// Starts one multipart container inside @p parent. Nothing when the message does not need it.
+void openContainer(QByteArray& eml,
+                   const QByteArray& parent,
+                   const char* type,
+                   const QByteArray& boundary) {
+    if (boundary.isEmpty()) {
+        return;
+    }
+    if (!parent.isEmpty()) {
+        eml.append("--" + parent + "\r\n");
+    }
+    eml.append("Content-Type: ");
+    eml.append(type);
+    eml.append("; boundary=\"" + boundary + "\"\r\n\r\n");
+}
+
+void closeContainer(QByteArray& eml, const QByteArray& boundary) {
+    if (!boundary.isEmpty()) {
+        eml.append("--" + boundary + "--\r\n");
+    }
+}
+
+/// A boundary for a container the message needs. False when no collision-free one could be
+/// produced, so the caller fails closed rather than emit a corruptible structure.
+[[nodiscard]] bool boundaryIfNeeded(const PstItemDetail& item, bool needed, QByteArray* boundary) {
+    if (needed) {
+        *boundary = emlBoundary(item);
+    }
+    return !needed || !boundary->isEmpty();
+}
+
+// Emit a multipart body, nested as MimeLayout says. Returns false when no collision-free boundary
+// could be produced.
 [[nodiscard]] bool appendMultipartMessage(QByteArray& eml,
                                           const PstItemDetail& item,
                                           const QVector<QPair<QString, QByteArray>>& attachments) {
-    const QByteArray boundary = emlBoundary(item);
-    if (boundary.isEmpty()) {
+    MimeLayout layout = mimeLayoutFor(item, attachments);
+    if (!layout.mixed && !layout.related) {
+        layout.alternative = true;  // One body and no attachments still needs its container here.
+    }
+    QByteArray mixed;
+    QByteArray related;
+    QByteArray alternative;
+    if (!boundaryIfNeeded(item, layout.mixed, &mixed) ||
+        !boundaryIfNeeded(item, layout.related, &related) ||
+        !boundaryIfNeeded(item, layout.alternative, &alternative)) {
         return false;
     }
-    const bool has_attachments = !attachments.isEmpty();
+    const QByteArray& around_alternative = related.isEmpty() ? mixed : related;
+    const QByteArray& around_body = alternative.isEmpty() ? around_alternative : alternative;
 
     eml.append("MIME-Version: 1.0\r\n");
-    if (has_attachments) {
-        eml.append("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n");
-    } else {
-        eml.append("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n");
-    }
-    eml.append("\r\n");
-
+    openContainer(eml, {}, "multipart/mixed", mixed);
+    openContainer(eml, mixed, "multipart/related", related);
+    openContainer(eml, around_alternative, "multipart/alternative", alternative);
     if (!item.body_plain.isEmpty()) {
-        appendBodyPart(eml, boundary, "Content-Type: text/plain; charset=utf-8", item.body_plain);
+        appendBodyPart(
+            eml, around_body, "Content-Type: text/plain; charset=utf-8", item.body_plain);
     }
     if (!item.body_html.isEmpty()) {
-        appendBodyPart(eml, boundary, "Content-Type: text/html; charset=utf-8", item.body_html);
+        appendBodyPart(eml, around_body, "Content-Type: text/html; charset=utf-8", item.body_html);
     }
-
-    appendAttachmentParts(eml, boundary, item, attachments);
-    eml.append("--" + boundary + "--\r\n");
+    closeContainer(eml, alternative);
+    appendAttachmentParts(eml, related, item, attachments, true);
+    closeContainer(eml, related);
+    appendAttachmentParts(eml, mixed, item, attachments, false);
+    closeContainer(eml, mixed);
     return true;
 }
 

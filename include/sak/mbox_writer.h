@@ -102,12 +102,15 @@ private:
                                      const PstItemDetail& item,
                                      const QString& sender,
                                      const QDateTime& date);
-    /// @param alt_boundary Delimiter of the nested multipart/alternative that carries the plain and
-    ///        HTML alternatives when the message also has attachments; empty when not nested.
+    /// The delimiter of each container a message has, per MimeLayout. Empty: it has no such one.
+    struct MimeBoundaries {
+        QString mixed;
+        QString related;
+        QString alternative;
+    };
     static void appendMultipartBody(QByteArray& message,
                                     const PstItemDetail& item,
-                                    const QString& boundary,
-                                    const QString& alt_boundary,
+                                    const MimeBoundaries& boundaries,
                                     const QVector<QPair<QString, QByteArray>>& attachments);
 
     [[nodiscard]] static QByteArray escapeFromLines(const QByteArray& content);

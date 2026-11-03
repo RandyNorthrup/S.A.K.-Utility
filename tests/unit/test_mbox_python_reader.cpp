@@ -10,6 +10,7 @@
 
 #include "sak/email_constants.h"
 #include "sak/mbox_parser.h"
+#include "sak/mbox_writer.h"
 #include "sak/ost_conversion_worker.h"
 
 #include "../support/pst_store_builder.h"
@@ -172,6 +173,43 @@ private Q_SLOTS:
         QCOMPARE(field(3, "subject").toString(), QStringLiteral("Draft"));
         QVERIFY(field(3, "date_utc").isNull());
         QCOMPARE(field(4, "subject").toString(), QStringLiteral("Inline file"));
+    }
+
+    // An independent reader sees the shown picture beside the body and the file outside both, which
+    // is what lets a mail program resolve the picture's cid: reference.
+    void pythonSeesThePictureWithTheBodyAndTheFileApart() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Newsletter");
+        item.sender_email = QStringLiteral("news@example.invalid");
+        item.date = QDateTime(QDate(2026, 3, 9), QTime(14, 5), QTimeZone::UTC);
+        item.body_plain = QStringLiteral("Plain");
+        item.body_html = QStringLiteral("<img src=\"cid:logo@example.invalid\">");
+        sak::PstAttachmentInfo picture;
+        picture.long_filename = QStringLiteral("logo.png");
+        picture.content_id = QStringLiteral("<logo@example.invalid>");
+        picture.mime_type = QStringLiteral("image/png");
+        sak::PstAttachmentInfo file;
+        file.long_filename = QStringLiteral("menu.pdf");
+        file.mime_type = QStringLiteral("application/pdf");
+        item.attachments = {picture, file};
+        sak::MboxWriter writer(dir.path(), false);
+        QVERIFY(writer
+                    .writeMessage(item,
+                                  {{QStringLiteral("logo.png"), "picture"},
+                                   {QStringLiteral("menu.pdf"), "document"}},
+                                  QString())
+                    .has_value());
+        writer.finalize();
+
+        const QJsonObject report = readWithPython(dir.filePath(QStringLiteral("mailbox.mbox")));
+        const QJsonArray messages = report.value(QStringLiteral("messages")).toArray();
+        QCOMPARE(messages.size(), 1);
+        QCOMPARE(
+            messages.first().toObject().value(QStringLiteral("structure")).toString(),
+            QStringLiteral(
+                "mixed(related(alternative(text/plain,text/html),image/png),application/pdf)"));
     }
 
     // The app's own reader and Python's agree on what a message carries, message by message.
