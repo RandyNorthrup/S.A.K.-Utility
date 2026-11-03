@@ -681,6 +681,7 @@ set(SAK_CORE_SOURCES
     include/sak/email_ics_writer.h
     include/sak/pst_rtf_body.h
     include/sak/mbox_parser.h
+    include/sak/reused_line_buffer.h
     include/sak/email_search_worker.h
     include/sak/email_export_worker.h
     include/sak/email_folder_selection.h

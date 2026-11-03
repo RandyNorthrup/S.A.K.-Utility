@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_secret_redaction.h"
+#include "sak/reused_line_buffer.h"
 
 #include <QDir>
 #include <QFile>
@@ -399,9 +400,11 @@ QVector<Event> loadJsonLines(const QString& path,
 
     qint64 line_number = 0;
     qint64 loaded_bytes = 0;
+    // One byte past the cap, so a line over it is seen and refused.
+    QByteArray line_buffer = sak::makeLineBuffer(kMaxJsonlLineBytes + 1);
     while (!file.atEnd()) {
         ++line_number;
-        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes + 1);
+        const QByteArray raw_line = sak::readLineIntoBuffer(file, line_buffer);
         const QString line_error =
             validateJsonlLine(&file, raw_line, label, line_number, &loaded_bytes);
         if (!line_error.isEmpty()) {

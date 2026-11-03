@@ -9,6 +9,7 @@
 #include "sak/app_action_guards.h"
 #include "sak/cleanup_worker.h"
 #include "sak/logger.h"
+#include "sak/reused_line_buffer.h"
 #include "sak/windows_reserved_names.h"
 
 #include <QDir>
@@ -788,9 +789,11 @@ bool visitJsonLineObjects(const JsonlVisitRequest& request, Consumer&& consume) 
     }
     qint64 loaded_bytes = 0;
     qint64 line_number = 0;
+    // One byte past the cap, so a line over it is seen and refused.
+    QByteArray line_buffer = sak::makeLineBuffer(kMaxSessionJsonlLineBytes + 1);
     while (!file.atEnd()) {
         ++line_number;
-        const QByteArray raw_line = file.readLine(kMaxSessionJsonlLineBytes + 1);
+        const QByteArray raw_line = sak::readLineIntoBuffer(file, line_buffer);
         loaded_bytes += raw_line.size();
         const QString line_error = validateJsonlLine(raw_line, &file, request.label, line_number);
         if (!line_error.isEmpty()) {

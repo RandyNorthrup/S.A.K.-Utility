@@ -12,6 +12,7 @@
 #include "sak/logger.h"
 #include "sak/mbox_header_parser.h"
 #include "sak/mbox_transfer_decoder.h"
+#include "sak/reused_line_buffer.h"
 
 #include <QMutex>
 #include <QRegularExpression>
@@ -112,13 +113,11 @@ std::expected<MboxMessageByteRange, error_code> messageByteRange(const QVector<q
     return MboxMessageByteRange{start_offset, end_offset};
 }
 
-/// The next line of a mailbox, into @p buffer, which is kept between calls: QFile::readLine(max)
-/// allocates all of max for every line, which took minutes on a large mailbox. A line longer than
-/// the buffer comes back in pieces, and only one that ends in a newline ends the line.
+/// The next line of a mailbox, with the read errors readLineIntoBuffer leaves to its caller.
 std::expected<std::optional<QByteArray>, error_code> readIndexLine(QFile* file,
                                                                    QByteArray* buffer) {
-    const qint64 length = file->readLine(buffer->data(), buffer->size());
-    if (length <= 0) {
+    const QByteArray line = sak::readLineIntoBuffer(*file, *buffer);
+    if (line.isEmpty()) {
         if (file->error() != QFileDevice::NoError || !file->atEnd()) {
             return std::unexpected(error_code::read_error);
         }
@@ -127,7 +126,7 @@ std::expected<std::optional<QByteArray>, error_code> readIndexLine(QFile* file,
     if (file->error() != QFileDevice::NoError) {
         return std::unexpected(error_code::read_error);
     }
-    return std::optional<QByteArray>{QByteArray::fromRawData(buffer->constData(), length)};
+    return std::optional<QByteArray>{line};
 }
 
 std::expected<qint64, error_code> prepareIndexScan(QFile* file) {

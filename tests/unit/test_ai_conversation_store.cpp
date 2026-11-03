@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_conversation_store.h"
 
+#include "../support/large_allocation_counter.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -35,6 +37,7 @@ private Q_SLOTS:
     void openSession_refusesManifestGrowthDuringRead();
     void appendTranscript_loadsDisplayLines();
     void loadTranscriptLines_rejectsMalformedJsonWithoutPartialData();
+    void loadTranscriptLines_setsAsideOneLineBufferNotOnePerLine();
     void latestAssistantResponseId_returnsLastAssistantMetadata();
     void latestAssistantResponseId_rejectsMalformedTranscript();
     void listPromptedSessions_filtersUnpromptedSessions();
@@ -483,6 +486,27 @@ void AiConversationStoreTests::loadTranscriptLines_rejectsMalformedJsonWithoutPa
     const QStringList lines = store.loadTranscriptLines(store.currentSessionId(), &error);
     QVERIFY(lines.isEmpty());
     QCOMPARE(error, QStringLiteral("Transcript line 2 is not a valid JSON object"));
+}
+
+// QFile::readLine(max) allocates all of max for every line. At the 4 MB line cap that is 4 MB set
+// aside and given back for each line of a transcript, however short the line is.
+void AiConversationStoreTests::loadTranscriptLines_setsAsideOneLineBufferNotOnePerLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Long Transcript"), &error));
+    constexpr int kLines = 200;
+    for (int line = 0; line < kLines; ++line) {
+        QVERIFY2(store.appendTranscript(QStringLiteral("You"), QStringLiteral("line"), {}, &error),
+                 qPrintable(error));
+    }
+
+    const sak::test::LargeAllocationCounter large_allocations;
+    const QStringList lines = store.loadTranscriptLines(store.currentSessionId(), &error);
+    QCOMPARE(lines.size(), kLines);
+    QVERIFY2(sak::test::LargeAllocationCounter::count() <= sak::test::kFewLargeAllocations,
+             qPrintable(QString::number(sak::test::LargeAllocationCounter::count())));
 }
 
 void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMetadata() {

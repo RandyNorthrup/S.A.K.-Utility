@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_trace_store.h"
 
+#include "../support/large_allocation_counter.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -73,6 +75,8 @@ class AiTraceStoreTests : public QObject {
 
 private Q_SLOTS:
     void appendActivityEvent_writesActivityJsonl();
+    void loadActivityEvents_setsAsideOneLineBufferNotOnePerLine();
+    void largeAllocationCounter_seesWhatQtSetsAside();
     void loadActivityEvents_rejectsMalformedLine();
     void loadActivityEvents_rejectsUnsupportedSchema();
     void loadActivityEvents_rejectsTruncatedLine();
@@ -123,6 +127,45 @@ void AiTraceStoreTests::appendActivityEvent_writesActivityJsonl() {
     const QString activity_id = obj.value(QStringLiteral("activity_id")).toString();
     QVERIFY(activity_id.startsWith(QStringLiteral("act_")));
     QCOMPARE(activity_id.size(), static_cast<qsizetype>(16));
+}
+
+// QFile::readLine(max) allocates all of max for every line, here 4 MB for each short audit line.
+void AiTraceStoreTests::loadActivityEvents_setsAsideOneLineBufferNotOnePerLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    constexpr int kLines = 200;
+    for (int line = 0; line < kLines; ++line) {
+        file.write(activityLine(QStringLiteral("run_%1").arg(line)));
+    }
+    file.close();
+
+    const sak::test::LargeAllocationCounter large_allocations;
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(events.size(), kLines);
+    QVERIFY2(sak::test::LargeAllocationCounter::count() <= sak::test::kFewLargeAllocations,
+             qPrintable(QString::number(sak::test::LargeAllocationCounter::count())));
+}
+
+// The tests above mean nothing unless the counter can see an allocation at all.
+void AiTraceStoreTests::largeAllocationCounter_seesWhatQtSetsAside() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QFile file(temp.filePath(QStringLiteral("lines.txt")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("one\ntwo\nthree\n");
+    file.close();
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    constexpr qint64 kReadLineMax = 4LL * 1024 * 1024;
+    const sak::test::LargeAllocationCounter large_allocations;
+    while (!file.atEnd()) {
+        QVERIFY(!file.readLine(kReadLineMax).isEmpty());
+    }
+    QCOMPARE(sak::test::LargeAllocationCounter::count(), 3);
 }
 
 void AiTraceStoreTests::loadActivityEvents_rejectsMalformedLine() {
