@@ -74,8 +74,12 @@ QByteArray attachmentMboxFixture() {
     content += "Content-Type: text/plain; charset=UTF-8\r\n";
     content += "\r\n";
     content += "Body text.\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: text/html; charset=UTF-8\r\n";
+    content += "\r\n";
+    content += "<p>Body text.</p><img src=\"cid:logo@example.com\">\r\n";
     // image/* is non-text, so MboxParser routes this to appendAttachment despite the
-    // "inline" disposition, and records the Content-ID that marks it inline.
+    // "inline" disposition, and records the Content-ID. The HTML above is what makes it inline.
     content += "--BOUND\r\n";
     content += "Content-Type: image/png; name=\"logo.png\"\r\n";
     content += "Content-Transfer-Encoding: base64\r\n";

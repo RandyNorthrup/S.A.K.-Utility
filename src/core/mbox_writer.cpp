@@ -6,6 +6,7 @@
 
 #include "sak/mbox_writer.h"
 
+#include "sak/email_content_id.h"
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/partition_export_containment.h"
@@ -52,8 +53,6 @@ constexpr int kImportanceHigh = 2;
 // Extra capacity reserved for base64Wrapped output beyond data + one separator per line, covering
 // the final line's CRLF; reserve is only a hint, so an approximate slack is sufficient.
 constexpr qsizetype kBase64ReserveSlackBytes = 2;
-// The two enclosing angle brackets ("<" and ">") stripped from a Content-ID value.
-constexpr qsizetype kAngleBracketPairLength = 2;
 // First numeric suffix used to disambiguate a colliding mbox filename ("base (2).mbox").
 constexpr int kFirstDisambiguationSuffix = 2;
 
@@ -223,17 +222,6 @@ QByteArray sanitizedMimeType(const QString& mime_type) {
                                              : QByteArray("application/octet-stream");
 }
 
-// A Content-ID is an addr-spec-like token inside <>; a value with spaces, brackets or controls
-// would break the header, so an unusable one is dropped rather than emitted.
-QByteArray sanitizedContentId(const QString& content_id) {
-    QString id = content_id;
-    if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>')) && id.size() > 1) {
-        id = id.mid(1, id.size() - kAngleBracketPairLength);
-    }
-    static const QRegularExpression kCid(QStringLiteral("^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.@-]+$"));
-    return kCid.match(id).hasMatch() ? id.toLatin1() : QByteArray();
-}
-
 // Metadata the source declared for the attachment written under @p name. The caller names an
 // attachment by its long filename when it has one, so match the same way.
 const PstAttachmentInfo* findAttachmentInfo(const PstItemDetail& item, const QString& name) {
@@ -276,9 +264,9 @@ void appendTextPart(QByteArray& message,
     message.append("\r\n");
 }
 
-// One attachment part, preserving the declared media type and, for a part the HTML body
-// references by cid:, its inline disposition and Content-ID (without them the exported message
-// renders with the picture missing).
+// One attachment part, preserving the declared media type and Content-ID. A part the HTML body
+// shows is inline (without that the exported message renders with the picture missing). Stores give
+// ordinary attachments a Content-ID too, and those stay attachments.
 void appendAttachmentPart(QByteArray& message,
                           const QString& boundary,
                           const PstItemDetail& item,
@@ -287,13 +275,14 @@ void appendAttachmentPart(QByteArray& message,
     const PstAttachmentInfo* info = findAttachmentInfo(item, name);
     const QByteArray content_type = (info != nullptr) ? sanitizedMimeType(info->mime_type)
                                                       : QByteArray("application/octet-stream");
-    const QByteArray content_id = (info != nullptr) ? sanitizedContentId(info->content_id)
+    const QByteArray content_id = (info != nullptr) ? usableContentId(info->content_id)
                                                     : QByteArray();
+    const bool inline_part = htmlCitesContentId(item.body_html, content_id);
 
     message.append("--" + boundary.toUtf8() + "\r\n");
     message.append("Content-Type: " + content_type + "\r\n");
     message.append("Content-Disposition: ");
-    message.append(content_id.isEmpty() ? "attachment" : "inline");
+    message.append(inline_part ? "inline" : "attachment");
     appendFilenameParam(message, name);
     message.append("\r\n");
     if (!content_id.isEmpty()) {

@@ -6,6 +6,7 @@
 
 #include "sak/eml_writer.h"
 
+#include "sak/email_content_id.h"
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/io_write_utils.h"
@@ -197,18 +198,6 @@ const PstAttachmentInfo* attachmentInfoFor(const PstItemDetail& item, const QStr
     return nullptr;
 }
 
-// A Content-ID is a token inside angle brackets; one with spaces or controls would break the
-// header.
-QByteArray usableContentId(const QString& content_id) {
-    QString id = content_id;
-    if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>'))) {
-        constexpr qsizetype kAngleBracketPairLength = 2;
-        id = id.mid(1, id.size() - kAngleBracketPairLength);
-    }
-    static const QRegularExpression kToken(QStringLiteral("^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.@-]+$"));
-    return kToken.match(id).hasMatch() ? id.toLatin1() : QByteArray();
-}
-
 void appendAttachmentParts(QByteArray& eml,
                            const QByteArray& boundary,
                            const PstItemDetail& item,
@@ -224,9 +213,11 @@ void appendAttachmentParts(QByteArray& eml,
         eml.append("--" + boundary + "\r\n");
         eml.append("Content-Type: " + type + "; name=\"" + safe_name + "\"\r\n");
         eml.append("Content-Transfer-Encoding: base64\r\n");
-        // An inline picture keeps its Content-ID, or the body's cid: reference finds nothing.
+        // A picture the body shows is inline and keeps its Content-ID, or the body's cid: reference
+        // finds nothing. Stores give ordinary attachments a Content-ID too, and those stay
+        // attachments.
         eml.append("Content-Disposition: ");
-        eml.append(content_id.isEmpty() ? "attachment" : "inline");
+        eml.append(htmlCitesContentId(item.body_html, content_id) ? "inline" : "attachment");
         eml.append("; filename=\"" + safe_name + "\"\r\n");
         if (!content_id.isEmpty()) {
             eml.append("Content-ID: <" + content_id + ">\r\n");

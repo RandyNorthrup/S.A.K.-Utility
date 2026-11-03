@@ -29,6 +29,40 @@ private Q_SLOTS:
     // Happy Path -- Write single message
     // ====================================================================
 
+    // Real stores give ordinary attachments a Content-ID. Only what the body shows is inline.
+    void onlyWhatTheBodyShowsIsInline() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Storefront");
+        item.sender_email = QStringLiteral("a@example.test");
+        item.date = QDateTime(QDate(2026, 1, 2), QTime(3, 4), QTimeZone::UTC);
+        item.body_html = QStringLiteral("<img src=\"cid:front@x\"><p>The menu is attached</p>");
+        sak::PstAttachmentInfo shown;
+        shown.long_filename = QStringLiteral("front.png");
+        shown.content_id = QStringLiteral("<front@x>");
+        sak::PstAttachmentInfo attached;
+        attached.long_filename = QStringLiteral("menu.pdf");
+        attached.content_id = QStringLiteral("<menu@x>");
+        item.attachments = {shown, attached};
+        const auto written = writer.writeMessage(item,
+                                                 {{QStringLiteral("front.png"), "png"},
+                                                  {QStringLiteral("menu.pdf"), "pdf"}},
+                                                 QString());
+        QVERIFY(written.has_value());
+        writer.finalize();
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY2(bytes.contains("Content-Disposition: inline; filename=\"front.png\""),
+                 bytes.constData());
+        QVERIFY2(bytes.contains("Content-Disposition: attachment; filename=\"menu.pdf\""),
+                 bytes.constData());
+        QVERIFY(bytes.contains("Content-ID: <front@x>"));
+        QVERIFY(bytes.contains("Content-ID: <menu@x>"));
+    }
+
     void testWriteSingleMessage() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());

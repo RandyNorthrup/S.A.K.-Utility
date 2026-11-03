@@ -4,6 +4,7 @@
 /// @file test_eml_writer.cpp
 /// @brief Unit tests for EmlWriter RFC 5322 output
 
+#include "sak/email_content_id.h"
 #include "sak/email_types.h"
 #include "sak/eml_writer.h"
 #include "sak/error_codes.h"
@@ -18,6 +19,67 @@ class TestEmlWriter : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // Real stores give ordinary attachments a Content-ID. Only what the body shows is inline.
+    void anAttachmentTheBodyDoesNotShowIsNotInline() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Storefront");
+        item.body_html = QStringLiteral("<img src=\"cid:front@x\"><p>The menu is attached</p>");
+        sak::PstAttachmentInfo shown;
+        shown.long_filename = QStringLiteral("front.png");
+        shown.content_id = QStringLiteral("<front@x>");
+        sak::PstAttachmentInfo attached;
+        attached.long_filename = QStringLiteral("menu.pdf");
+        attached.content_id = QStringLiteral("<menu@x>");
+        item.attachments = {shown, attached};
+        const auto written = writer.writeMessage(item,
+                                                 {{QStringLiteral("front.png"), "png"},
+                                                  {QStringLiteral("menu.pdf"), "pdf"}},
+                                                 QString());
+        QVERIFY(written.has_value());
+        QFile file(*written);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.contains("Content-Disposition: inline; filename=\"front.png\""));
+        QVERIFY(bytes.contains("Content-Disposition: attachment; filename=\"menu.pdf\""));
+        QVERIFY(bytes.contains("Content-ID: <menu@x>"));
+    }
+
+    void whatCountsAsTheBodyShowingAPart_data() {
+        QTest::addColumn<QString>("html");
+        QTest::addColumn<QByteArray>("id");
+        QTest::addColumn<bool>("cited");
+        QTest::newRow("cited") << "<img src=\"cid:a@b\">" << QByteArray("a@b") << true;
+        QTest::newRow("single quotes") << "<img src='cid:a@b'>" << QByteArray("a@b") << true;
+        QTest::newRow("no quotes") << "<img src=cid:a@b>" << QByteArray("a@b") << true;
+        QTest::newRow("a style url") << "url(cid:a@b)" << QByteArray("a@b") << true;
+        QTest::newRow("another case") << "<img src=\"CID:a@b\">" << QByteArray("a@b") << true;
+        QTest::newRow("percent-encoded") << "<img src=\"cid:a%40b\">" << QByteArray("a@b") << true;
+        QTest::newRow("not there") << "<p>nothing</p>" << QByteArray("a@b") << false;
+        QTest::newRow("no HTML") << "" << QByteArray("a@b") << false;
+        QTest::newRow("a longer id") << "<img src=\"cid:a@bc\">" << QByteArray("a@b") << false;
+        QTest::newRow("a shorter id") << "<img src=\"cid:a\">" << QByteArray("a@b") << false;
+        QTest::newRow("no id") << "<img src=\"cid:\">" << QByteArray() << false;
+        QTest::newRow("the id as words") << "<p>a@b</p>" << QByteArray("a@b") << false;
+    }
+
+    void whatCountsAsTheBodyShowingAPart() {
+        QFETCH(QString, html);
+        QFETCH(QByteArray, id);
+        QFETCH(bool, cited);
+        QCOMPARE(sak::htmlCitesContentId(html, id), cited);
+    }
+
+    void aContentIdAHeaderCannotCarryIsDropped() {
+        QCOMPARE(sak::usableContentId(QStringLiteral("<a@b>")), QByteArray("a@b"));
+        QCOMPARE(sak::usableContentId(QStringLiteral("a@b")), QByteArray("a@b"));
+        QVERIFY(sak::usableContentId(QStringLiteral("a b")).isEmpty());
+        QVERIFY(sak::usableContentId(QStringLiteral("a\r\nX: y")).isEmpty());
+        QVERIFY(sak::usableContentId(QString()).isEmpty());
+    }
+
     // The body's cid: reference finds nothing unless the picture's part keeps its Content-ID.
     void keepsAnInlinePictureAsInlineWithItsContentId() {
         QTemporaryDir temp_dir;

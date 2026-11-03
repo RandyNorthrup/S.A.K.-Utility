@@ -7,6 +7,7 @@
 #include "sak/html_email_writer.h"
 
 #include "sak/email_attachment_saver.h"
+#include "sak/email_content_id.h"
 #include "sak/email_html_sanitizer.h"
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
@@ -161,8 +162,8 @@ bool targetWithinRoot(const QString& output_dir, const QString& target_dir) {
 }  // namespace
 
 bool isInlineBodyImage(const PstItemDetail& item, const QString& name) {
-    const QString cid = contentIdForAttachmentName(item, name);
-    return !cid.isEmpty() && item.body_html.contains(QStringLiteral("cid:") + cid);
+    return htmlCitesContentId(item.body_html,
+                              usableContentId(contentIdForAttachmentName(item, name)));
 }
 
 QString embedInlineImagesInHtml(const PstItemDetail& item,
