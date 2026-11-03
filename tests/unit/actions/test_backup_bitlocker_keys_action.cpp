@@ -8,11 +8,16 @@
 ///        signal, and the recovery-password accounting helpers.
 
 #include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/process_runner.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 using sak::BackupBitlockerKeysAction;
 
@@ -24,6 +29,51 @@ class BackupBitlockerKeysActionTests : public QObject {
     using Action = BackupBitlockerKeysAction;
     using KeyGate = BackupBitlockerKeysAction::KeyGate;
     using KeyProtectorInfo = BackupBitlockerKeysAction::KeyProtectorInfo;
+
+    /// The action on a drive of the test's choosing: no CI runner has an exFAT drive.
+    class ActionOnDrive final : public BackupBitlockerKeysAction {
+    public:
+        explicit ActionOnDrive(const QString& location, const QString& file_system)
+            : BackupBitlockerKeysAction(location) {
+            setDrive(file_system);
+        }
+        void setDrive(const QString& file_system) {
+            m_drive.file_system = file_system;
+            m_drive.keeps_permissions = file_system == QStringLiteral("NTFS");
+        }
+
+    private:
+        DestinationDrive destinationDrive(const QString& path) const override {
+            static_cast<void>(path);
+            return m_drive;
+        }
+        DestinationDrive m_drive;
+    };
+
+    /// One recovery key, on a volume the destination is not on.
+    static void addVolumeWithKey(BackupBitlockerKeysAction& action) {
+        KeyProtectorInfo password;
+        password.protector_id = QStringLiteral("{guid-1}");
+        password.protector_type = QStringLiteral("Numerical Password (Recovery Password)");
+        password.recovery_password =
+            QStringLiteral("111111-222222-333333-444444-555555-666666-777777-888888");
+        BackupBitlockerKeysAction::VolumeInfo volume;
+        volume.drive_letter = QStringLiteral("Y:");
+        volume.key_protectors = {password};
+        action.m_volumes = {volume};
+    }
+
+    /// Answers the lock-down script, counting how often it is asked to run.
+    static sak::ProcessFaultInjector lockDownAnswers(const std::shared_ptr<int>& asked,
+                                                     int failing_call) {
+        return [asked, failing_call](const QString&, const QStringList&) {
+            ++*asked;
+            sak::ProcessResult result;
+            result.exit_code = *asked == failing_call ? 1 : 0;
+            result.std_out = *asked == failing_call ? QString() : QStringLiteral("SUCCESS");
+            return std::optional<sak::ProcessResult>(result);
+        };
+    }
 
 private Q_SLOTS:
     void sameVolumeRefusal_keepsKeysOffTheVolumesTheyUnlock();
@@ -50,7 +100,14 @@ private Q_SLOTS:
     void screenBackupLocation_refusesUnsafeDestinations();
     void screenBackupLocation_canonicalizesAcceptedLocation();
     void fileSystemRefusal_namesTheDriveAndTheFix();
-    void screenBackupLocation_refusesAnAttachedDriveThatKeepsNoPermissions();
+    void outputFolderWarning_saysWhatTheDriveMeans();
+    void destinationDrive_readsTheRealDrive();
+    void unprotectedDrive_withNoOneAskedWritesNothing();
+    void unprotectedDrive_afterTheWarningSavesAndSaysSo();
+    void lockedDownDrive_acceptingAWarningChangesNothing();
+    void lockedDownDrive_aFailedFirstLockDownWritesNoKeys();
+    void lockedDownDrive_aFailedLastLockDownRemovesTheKeys();
+    void aRunOnAnUnprotectedDriveDoesNotCarryOverToTheNextRun();
     // Recovery-password accounting used by the gate and per-volume file writer.
     void recoveryPasswordHelpers_countAndDetect();
     // Enum formatters the recovery document depends on.
@@ -600,32 +657,218 @@ void BackupBitlockerKeysActionTests::sameVolumeRefusal_keepsKeysOffTheVolumesThe
 }
 
 void BackupBitlockerKeysActionTests::fileSystemRefusal_namesTheDriveAndTheFix() {
-    QVERIFY(Action::fileSystemRefusal(QStringLiteral("E:/Keys"), QStringLiteral("NTFS"), true)
-                .isEmpty());
+    const QString location = QStringLiteral("E:/Keys");
+    const QString ntfs = QStringLiteral("NTFS");
+    const QString exfat = QStringLiteral("exFAT");
+    QVERIFY(Action::fileSystemRefusal(location, ntfs, true, false).isEmpty());
+    QVERIFY(Action::fileSystemRefusal(location, ntfs, true, true).isEmpty());
+    // A person read the warning and went on.
+    QVERIFY(Action::fileSystemRefusal(location, exfat, false, true).isEmpty());
 
-    const QString refusal =
-        Action::fileSystemRefusal(QStringLiteral("E:/Keys"), QStringLiteral("exFAT"), false);
+    // No one was asked: an assistant call or a run queued from anywhere with no person behind it.
+    const QString refusal = Action::fileSystemRefusal(location, exfat, false, false);
     QVERIFY2(refusal.contains(QStringLiteral("E:\\Keys")), qPrintable(refusal));
-    QVERIFY2(refusal.contains(QStringLiteral("exFAT")), qPrintable(refusal));
-    QVERIFY2(refusal.contains(QStringLiteral("NTFS")), qPrintable(refusal));
+    QVERIFY2(refusal.contains(exfat), qPrintable(refusal));
+    QVERIFY2(refusal.contains(ntfs), qPrintable(refusal));
+    QVERIFY2(refusal.contains(QStringLiteral("nothing was written")), qPrintable(refusal));
+    QVERIFY2(refusal.contains(QStringLiteral("Backup and Restore")), qPrintable(refusal));
 }
 
-// The rule above decides on what it is told. This asks Windows about whatever is attached, so on a
-// machine with a FAT32 or exFAT drive it proves the whole check; on one without, it has nothing to
-// visit and the rule's own test stands alone.
-void BackupBitlockerKeysActionTests::
-    screenBackupLocation_refusesAnAttachedDriveThatKeepsNoPermissions() {
-    for (const QStorageInfo& volume : QStorageInfo::mountedVolumes()) {
-        const QString file_system = QString::fromLatin1(volume.fileSystemType());
-        if (file_system.compare(QStringLiteral("exFAT"), Qt::CaseInsensitive) != 0 &&
-            !file_system.startsWith(QStringLiteral("FAT"), Qt::CaseInsensitive)) {
-            continue;
-        }
-        QString reason;
-        const QString location = volume.rootPath() + QStringLiteral("BitLockerKeys");
-        QVERIFY(Action::screenBackupLocation(location, reason).isEmpty());
-        QVERIFY2(reason.contains(file_system), qPrintable(reason));
+void BackupBitlockerKeysActionTests::outputFolderWarning_saysWhatTheDriveMeans() {
+    const QString folder = QStringLiteral("E:/Keys");
+    ActionOnDrive action(folder, QStringLiteral("exFAT"));
+    const QString warning = action.outputFolderWarning(folder);
+    QVERIFY2(warning.contains(QStringLiteral("E:\\Keys")), qPrintable(warning));
+    QVERIFY2(warning.contains(QStringLiteral("exFAT")), qPrintable(warning));
+    QVERIFY2(warning.contains(QStringLiteral("cannot restrict who reads files")),
+             qPrintable(warning));
+    QVERIFY2(warning.contains(QStringLiteral("anyone with the drive can read")),
+             qPrintable(warning));
+    QVERIFY2(warning.contains(QStringLiteral("move them somewhere secure")), qPrintable(warning));
+    QVERIFY2(warning.contains(QStringLiteral("delete them from this drive")), qPrintable(warning));
+
+    action.setDrive(QStringLiteral("NTFS"));
+    QVERIFY(action.outputFolderWarning(folder).isEmpty());
+}
+
+// The seam above is told what the drive is. This is the one read Windows answers, on the ordinary
+// folder a test already uses, so no other drive on the machine is addressed. A real exFAT drive is
+// run in the VM.
+void BackupBitlockerKeysActionTests::destinationDrive_readsTheRealDrive() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const BackupBitlockerKeysAction action(folder.path());
+    const QString expected = QString::fromLatin1(QStorageInfo(folder.path()).fileSystemType());
+    const Action::DestinationDrive drive = action.destinationDrive(folder.path());
+    QCOMPARE(drive.file_system, expected);
+    QCOMPARE(action.outputFolderWarning(folder.path()).isEmpty(), drive.keeps_permissions);
+
+    // A drive that cannot be asked reads as fine here: creating the folder there fails, and says
+    // so.
+    QVERIFY(action.destinationDrive(QStringLiteral("\\\\server\\share")).keeps_permissions);
+}
+
+void BackupBitlockerKeysActionTests::unprotectedDrive_withNoOneAskedWritesNothing() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("exFAT"));
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 0));
+
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(!action.executeSaveKeyFiles(
+        QDateTime::currentDateTime(), backup_dir, key_files, permissions_set));
+
+    QVERIFY(backup_dir.isEmpty());
+    QVERIFY(QDir(folder.path()).isEmpty());
+    QCOMPARE(*asked, 0);
+    QVERIFY(!action.lastExecutionResult().success);
+    QVERIFY2(action.lastExecutionResult().message.contains(QStringLiteral("nothing was written")),
+             qPrintable(action.lastExecutionResult().message));
+}
+
+void BackupBitlockerKeysActionTests::unprotectedDrive_afterTheWarningSavesAndSaysSo() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("FAT32"));
+    action.setOutputFolderWarningAccepted(true);
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 0));
+
+    const QDateTime start = QDateTime::currentDateTime();
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(action.executeSaveKeyFiles(start, backup_dir, key_files, permissions_set));
+
+    // Everything is there, and nothing pretended to lock it down.
+    QCOMPARE(key_files, 1);
+    QVERIFY(!permissions_set);
+    QCOMPARE(*asked, 0);
+    const QDir backup(backup_dir);
+    QVERIFY(QFile::exists(backup.filePath(QStringLiteral("BitLocker_Recovery_Keys.txt"))));
+    QVERIFY(QFile::exists(backup.filePath(QStringLiteral("BitLocker Recovery Key Y.txt"))));
+    QVERIFY(QFile::exists(backup.filePath(QStringLiteral("bitlocker_keys.json"))));
+
+    Action::BitlockerReportData data;
+    data.total_keys_found = 1;
+    data.total_recovery_passwords = 1;
+    data.backup_dir_path = backup_dir;
+    data.key_files_written = key_files;
+    data.permissions_set = permissions_set;
+    action.executeBuildReport(start, data);
+
+    // Saved, and said to be unprotected: in the message, in what the panel shows, and in the log.
+    const auto& result = action.lastExecutionResult();
+    QVERIFY(result.success);
+    QCOMPARE(result.output_path, backup_dir);
+    for (const QString& text : {result.message, result.warning}) {
+        QVERIFY2(text.contains(QStringLiteral("NOT protected")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("FAT32")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("delete them from this drive")), qPrintable(text));
     }
+    QVERIFY2(result.log.contains(QStringLiteral("File permissions: NOT restricted")),
+             qPrintable(result.log));
+    QVERIFY2(!result.log.contains(QStringLiteral("Restricted to current user")),
+             qPrintable(result.log));
+}
+
+// The warning speaks only for a drive that has no permissions to set. On one that has, a run a
+// person agreed to is locked down like any other, and a failed lock-down stays a failure.
+void BackupBitlockerKeysActionTests::lockedDownDrive_acceptingAWarningChangesNothing() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("NTFS"));
+    action.setOutputFolderWarningAccepted(true);
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 0));
+
+    const QDateTime start = QDateTime::currentDateTime();
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(action.executeSaveKeyFiles(start, backup_dir, key_files, permissions_set));
+    QVERIFY(permissions_set);
+    QCOMPARE(*asked, 2);  // before any key is written, and again over the files
+
+    Action::BitlockerReportData data;
+    data.backup_dir_path = backup_dir;
+    data.permissions_set = permissions_set;
+    action.executeBuildReport(start, data);
+    const auto& result = action.lastExecutionResult();
+    QVERIFY(result.warning.isEmpty());
+    QVERIFY2(!result.message.contains(QStringLiteral("NOT protected")), qPrintable(result.message));
+    QVERIFY2(result.log.contains(QStringLiteral("Restricted to current user")),
+             qPrintable(result.log));
+}
+
+void BackupBitlockerKeysActionTests::lockedDownDrive_aFailedFirstLockDownWritesNoKeys() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("NTFS"));
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 1));
+
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(!action.executeSaveKeyFiles(
+        QDateTime::currentDateTime(), backup_dir, key_files, permissions_set));
+    QCOMPARE(key_files, 0);
+    QVERIFY(QDir(folder.path()).isEmpty());
+    QVERIFY(!action.lastExecutionResult().success);
+    QCOMPARE(action.lastExecutionResult().message,
+             QStringLiteral("Failed to secure backup directory"));
+}
+
+void BackupBitlockerKeysActionTests::lockedDownDrive_aFailedLastLockDownRemovesTheKeys() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("NTFS"));
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 2));
+
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(!action.executeSaveKeyFiles(
+        QDateTime::currentDateTime(), backup_dir, key_files, permissions_set));
+    QVERIFY(!permissions_set);
+    QVERIFY(QDir(folder.path()).isEmpty());
+    QCOMPARE(action.lastExecutionResult().message,
+             QStringLiteral("Failed to secure the recovery key backup"));
+}
+
+// The panel's action object stays registered between runs. A run on exFAT must not leave the next
+// run, on a drive that can be locked down, skipping its lock-down.
+void BackupBitlockerKeysActionTests::aRunOnAnUnprotectedDriveDoesNotCarryOverToTheNextRun() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    ActionOnDrive action(folder.path(), QStringLiteral("exFAT"));
+    action.setOutputFolderWarningAccepted(true);
+    addVolumeWithKey(action);
+    auto asked = std::make_shared<int>(0);
+    const sak::ScopedProcessFaultInjector injector(lockDownAnswers(asked, 0));
+
+    QString backup_dir;
+    int key_files = 0;
+    bool permissions_set = false;
+    QVERIFY(action.executeSaveKeyFiles(
+        QDateTime::currentDateTime(), backup_dir, key_files, permissions_set));
+    QCOMPARE(*asked, 0);
+
+    action.setDrive(QStringLiteral("NTFS"));
+    QVERIFY(action.executeSaveKeyFiles(
+        QDateTime::currentDateTime(), backup_dir, key_files, permissions_set));
+    QCOMPARE(*asked, 2);
+    QVERIFY(permissions_set);
 }
 
 QTEST_GUILESS_MAIN(BackupBitlockerKeysActionTests)

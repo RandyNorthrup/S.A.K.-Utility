@@ -211,8 +211,8 @@ try {
 
     Set-Acl -LiteralPath $path -AclObject $acl
 
-    # Read it back. On exFAT and FAT32 Set-Acl reports nothing and stores nothing, and the folder
-    # stays open to everyone, so a quiet Set-Acl proves nothing.
+    # Read it back: a quiet Set-Acl proves nothing. On exFAT and FAT32 it stores nothing and says
+    # nothing. The action checks the drive first, so failing here means something else went wrong.
     if (-not (Get-Acl -LiteralPath $path).AreAccessRulesProtected) {
         throw 'The permissions did not stay on this folder.'
     }
@@ -792,8 +792,8 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     Q_EMIT executionProgress("Writing per-volume key files...", progress::kStep80);
     if (!writePerVolumeKeyFiles(backup_dir_path, key_files_written)) {
         emitFailWithCleanup("Failed to write a per-volume recovery key file",
-                            "A recovery key file could not be durably written; the incomplete "
-                            "backup was not certified.",
+                            "A recovery key file could not be durably written, so this backup "
+                            "is incomplete.",
                             backup_dir_path,
                             start_time);
         return false;
@@ -837,7 +837,7 @@ QString BackupBitlockerKeysAction::sameVolumeRefusal(const QString& location,
         return QStringLiteral(
                    "The backup location %1 is on BitLocker volume %2:, whose recovery key is in "
                    "this backup. If that volume is ever locked, its key would be locked with it. "
-                   "Choose a folder on another drive formatted as NTFS.")
+                   "Choose a folder on another drive.")
             .arg(QDir::toNativeSeparators(canonical))
             .arg(letter);
     }
@@ -846,15 +846,55 @@ QString BackupBitlockerKeysAction::sameVolumeRefusal(const QString& location,
 
 QString BackupBitlockerKeysAction::fileSystemRefusal(const QString& location,
                                                      const QString& file_system,
-                                                     bool keeps_permissions) {
-    if (keeps_permissions) {
+                                                     bool keeps_permissions,
+                                                     bool warning_accepted) {
+    if (keeps_permissions || warning_accepted) {
         return {};
     }
     return QStringLiteral(
-               "%1 is on a drive formatted as %2, which cannot limit who reads a file, and "
-               "recovery keys are saved as readable text. Choose a folder on a drive formatted "
-               "as NTFS.")
+               "%1 is on a drive formatted as %2, which cannot restrict who reads files, and "
+               "recovery keys are saved as readable text. No one was asked about that on this "
+               "run, so nothing was written. Run BitLocker Key Backup from Backup and Restore to "
+               "be asked, or choose a folder on a drive formatted as NTFS.")
         .arg(QDir::toNativeSeparators(location), file_system);
+}
+
+QString BackupBitlockerKeysAction::unprotectedDriveWarning(const QString& location,
+                                                           const QString& file_system) {
+    return QStringLiteral(
+               "%1 is on a drive formatted as %2.\n\n"
+               "This drive cannot restrict who reads files, so anyone with the drive can read the "
+               "recovery keys.\n\n"
+               "If you save them here, move them somewhere secure and delete them from this drive "
+               "as soon as you can.")
+        .arg(QDir::toNativeSeparators(location), file_system);
+}
+
+QString BackupBitlockerKeysAction::unprotectedResultWarning(const QString& file_system) {
+    return QStringLiteral(
+               "The keys are NOT protected: this %1 drive cannot restrict who reads files, so "
+               "anyone with the drive can read them. Move them somewhere secure and delete them "
+               "from this drive.")
+        .arg(file_system);
+}
+
+BackupBitlockerKeysAction::DestinationDrive BackupBitlockerKeysAction::destinationDrive(
+    const QString& path) const {
+    const RootFileSystem root = rootFileSystem(path);
+    return {.file_system = root.name, .keeps_permissions = root.keeps_permissions};
+}
+
+QString BackupBitlockerKeysAction::outputFolderWarning(const QString& folder) const {
+    const DestinationDrive drive = destinationDrive(folder);
+    return drive.keeps_permissions ? QString() : unprotectedDriveWarning(folder, drive.file_system);
+}
+
+QString BackupBitlockerKeysAction::screenDestinationDrive(const QString& location) {
+    const DestinationDrive drive = destinationDrive(location);
+    m_writing_unprotected = !drive.keeps_permissions;
+    m_unprotected_file_system = m_writing_unprotected ? drive.file_system : QString();
+    return fileSystemRefusal(
+        location, drive.file_system, drive.keeps_permissions, outputFolderWarningAccepted());
 }
 
 QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_location,
@@ -896,11 +936,6 @@ QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_locat
                   canonical;
         return {};
     }
-    const RootFileSystem file_system = rootFileSystem(canonical);
-    refusal = fileSystemRefusal(canonical, file_system.name, file_system.keeps_permissions);
-    if (!refusal.isEmpty()) {
-        return {};
-    }
     return canonical;
 }
 
@@ -922,6 +957,11 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
     const QString same_volume = sameVolumeRefusal(location, m_volumes);
     if (!same_volume.isEmpty()) {
         emitFailedResult(same_volume, same_volume, start_time);
+        return false;
+    }
+    const QString drive_refusal = screenDestinationDrive(location);
+    if (!drive_refusal.isEmpty()) {
+        emitFailedResult(drive_refusal, drive_refusal, start_time);
         return false;
     }
 
@@ -947,6 +987,18 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
                          start_time);
         return false;
     }
+    return lockDownNewBackupDirectory(start_time, backup_dir_path);
+}
+
+bool BackupBitlockerKeysAction::lockDownNewBackupDirectory(const QDateTime& start_time,
+                                                           const QString& backup_dir_path) {
+    // A person agreed to a drive that cannot hold permissions, so there is nothing to apply.
+    if (m_writing_unprotected) {
+        Q_EMIT logMessage(QStringLiteral("Saving recovery keys to a %1 drive after the warning: "
+                                         "their permissions cannot be restricted")
+                              .arg(m_unprotected_file_system));
+        return true;
+    }
     // Harden the ACL BEFORE any plaintext recovery key is written into the
     // directory, so there is never a window where secrets sit under the default
     // inherited ACL. Child files created afterwards inherit this protected ACL.
@@ -968,6 +1020,10 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
 bool BackupBitlockerKeysAction::secureBackupDirectory(const QDateTime& start_time,
                                                       const QString& backup_dir_path,
                                                       bool& permissions_set) {
+    if (m_writing_unprotected) {
+        permissions_set = false;  // The result says so; see executeBuildReport.
+        return true;
+    }
     Q_EMIT executionProgress("Securing backup files...", progress::kStep90);
 
     permissions_set = restrictFilePermissions(backup_dir_path);
@@ -1060,6 +1116,10 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     result.message = QString("Backed up %1 recovery key(s) from %2 volume(s)")
                          .arg(data.total_recovery_passwords)
                          .arg(m_volumes.size());
+    if (m_writing_unprotected) {
+        result.warning = unprotectedResultWarning(m_unprotected_file_system);
+        result.message += QStringLiteral(". ") + result.warning;
+    }
 
     QStringList log_lines;
     log_lines.reserve(kBitlockerSummaryLineReserve);
@@ -1074,6 +1134,9 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     log_lines.append(QString("Backup size: %1 bytes (%2 files)").arg(total_bytes).arg(total_files));
     if (data.permissions_set) {
         log_lines.append("File permissions: Restricted to current user + Administrators");
+    }
+    if (m_writing_unprotected) {
+        log_lines.append(QStringLiteral("File permissions: NOT restricted. ") + result.warning);
     }
     log_lines.append("");
     log_lines.append("IMPORTANT: Store this backup in a secure location.");

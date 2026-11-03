@@ -101,6 +101,7 @@ public:
     void execute() override {
         const int run = m_runs.fetch_add(1) + 1;
         m_seen_folder = outputFolder();
+        m_seen_warning_accepted = outputFolderWarningAccepted();
         while (!m_released.load() && !isCancelled()) {
             QThread::msleep(2);
         }
@@ -121,6 +122,7 @@ public:
 
     /// The output folder the latest run started with (read after it finished).
     [[nodiscard]] QString seenFolder() const { return m_seen_folder; }
+    [[nodiscard]] bool seenWarningAccepted() const { return m_seen_warning_accepted; }
     void numberRuns() { m_number_runs = true; }
 
 private:
@@ -132,6 +134,7 @@ private:
     std::atomic_bool m_released{false};
     std::atomic<int> m_runs{0};
     QString m_seen_folder;
+    bool m_seen_warning_accepted{false};
     bool m_number_runs{false};
 };
 
@@ -177,6 +180,7 @@ private Q_SLOTS:
     void registerQuickActionsInto_stopReachesTheAction();
     void stopWorkerOnCancel_settlesOnTheWorkersCancelled();
     void runQuickActionSync_carriesItsOutputFolder();
+    void runQuickActionSync_neverAnswersAWarningForAPerson();
     void registerQuickActionsInto_readsTheFolderWhenTheRunIsRequested();
     void outputDirectoryScope_isThePerCallFolderOfItsThread();
     void runQuickActionSync_waitsForItsOwnRunNotAnotherCallers();
@@ -605,6 +609,23 @@ void AppActionServiceTests::runQuickActionSync_carriesItsOutputFolder() {
         &controller, QStringLiteral("Folder Probe"), 30'000, {}, QStringLiteral("C:/staging/a"));
     QVERIFY(result.success);
     QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/a"));
+}
+
+// The assistant's human gate approves running the action. It never shows a warning about the
+// folder, and in Unattended no one is there, so a run from here has agreed to nothing, even when a
+// panel's run of the same action just did.
+void AppActionServiceTests::runQuickActionSync_neverAnswersAWarningForAPerson() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Warning Probe"));
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    raw->release();
+    raw->setOutputFolderWarningAccepted(true);
+
+    const AppActionResult result = runQuickActionSync(
+        &controller, QStringLiteral("Warning Probe"), 30'000, {}, QStringLiteral("C:/staging/a"));
+    QVERIFY(result.success);
+    QVERIFY(!raw->seenWarningAccepted());
 }
 
 // The registry thunk asks for the folder when it requests the run, so the folder the assistant

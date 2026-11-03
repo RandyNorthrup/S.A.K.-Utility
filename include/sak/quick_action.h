@@ -70,6 +70,9 @@ public:
         /// It ran, but this app could not read what it found. Not a pass, so success stays false,
         /// and not a failure, so nothing tells the person it failed.
         bool inconclusive{false};
+        /// It worked, and what it left behind still needs the person's attention. Shown with the
+        /// outcome, wherever the outcome is shown.
+        QString warning;
     };
 
     /**
@@ -184,6 +187,27 @@ public:
      */
     void setOutputFolder(const QString& folder) { m_output_folder = folder; }
     [[nodiscard]] const QString& outputFolder() const { return m_output_folder; }
+
+    /**
+     * @brief What a person must read and agree to before this action writes into @p folder
+     *
+     * Empty when nothing needs saying. A caller with a person at hand asks them and says so in
+     * QuickActionRun::output_folder_warning_accepted. A caller with no one to ask leaves that
+     * false, and the action refuses what it would have warned about.
+     */
+    [[nodiscard]] virtual QString outputFolderWarning(const QString& folder) const {
+        static_cast<void>(folder);
+        return {};
+    }
+
+    /// Whether a person agreed to outputFolderWarning() for this run. Set before execute() runs
+    /// and read only by that run, like the folder itself.
+    void setOutputFolderWarningAccepted(bool accepted) {
+        m_output_folder_warning_accepted = accepted;
+    }
+    [[nodiscard]] bool outputFolderWarningAccepted() const {
+        return m_output_folder_warning_accepted;
+    }
 
 Q_SIGNALS:
     /**
@@ -306,6 +330,7 @@ private:
     ExecutionResult m_execution_result;
     std::atomic<bool> m_cancelled{false};
     QString m_output_folder;
+    bool m_output_folder_warning_accepted{false};
 };
 
 }  // namespace sak

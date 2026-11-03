@@ -23,7 +23,8 @@ class ElevationBroker;
 
 [[nodiscard]] QString elevatedTaskIdForQuickAction(const QString& action_name);
 [[nodiscard]] QJsonObject buildElevatedActionPayload(const QString& task_id,
-                                                     const QString& output_folder);
+                                                     const QString& output_folder,
+                                                     bool output_folder_warning_accepted = false);
 
 /**
  * @brief One request to run a quick action, and everything that belongs to that run alone.
@@ -41,6 +42,10 @@ struct QuickActionRun {
     /// Where this run writes its files (report, screenshots, recovery keys). Empty for an action
     /// that writes none; an action that needs one refuses to run without it.
     QString output_folder;
+    /// A person read QuickAction::outputFolderWarning() for this folder and chose to go on. Only a
+    /// caller that really asked someone sets this: the assistant has no one to ask, so its runs
+    /// leave it false and the action refuses instead of writing.
+    bool output_folder_warning_accepted{false};
 };
 
 /**
@@ -191,7 +196,8 @@ void connectRunsOf(QuickActionController& controller,
                    QuickActionRunHandlers handlers);
 
 /// "Completed: <action>", "Cancelled: <action>" or "Failed: <action> - <message>", followed by
-/// " - saved to <path>" whenever the run left a file or folder behind (even a failed one).
+/// " - saved to <path>" whenever the run left a file or folder behind (even a failed one), and by
+/// the run's warning when it has one.
 [[nodiscard]] QString quickActionOutcomeText(const QuickActionRun& run,
                                              const QuickAction::ExecutionResult& result,
                                              QuickAction::ActionStatus status);

@@ -27,7 +27,10 @@ namespace sak {
  * Requires administrator privileges to access BitLocker WMI providers.
  *
  * Security: Recovery keys are sensitive. The backup is written to the
- * user-specified backup location with restricted file permissions.
+ * user-specified backup location with restricted file permissions. A drive
+ * that cannot restrict who reads a file (FAT32, exFAT) is written to only after
+ * a person has read a warning and chosen to go on, and the result then says the
+ * keys are not protected. With no person to ask, such a drive is refused.
  * Keys are never logged to the application log -- only key protector IDs
  * are logged for audit purposes.
  */
@@ -52,7 +55,21 @@ public:
 
     void execute() override;
 
+    /// Says what a drive that cannot restrict who reads a file means for the keys. Empty for any
+    /// other drive, and for one that cannot be asked: creating the folder there fails, and says so.
+    [[nodiscard]] QString outputFolderWarning(const QString& folder) const override;
+
 private:
+    /// What the drive holding the backup can do for it.
+    struct DestinationDrive {
+        QString file_system;
+        bool keeps_permissions{true};
+    };
+
+    /// What Windows reports for the drive holding @p path. A drive that cannot be asked reads as
+    /// fine here: creating the folder on it fails next, and says so.
+    [[nodiscard]] virtual DestinationDrive destinationDrive(const QString& path) const;
+
     /**
      * @brief Information about a BitLocker key protector
      */
@@ -200,6 +217,12 @@ private:
         bool permissions_set = false;
     };
 
+    /// True while this run writes to a drive that cannot restrict who reads a file, after a person
+    /// agreed to it. No permissions are set or read back on such a drive: there is nothing there
+    /// to hold them, and the result says so.
+    bool m_writing_unprotected{false};
+    QString m_unprotected_file_system;
+
     // execute() helpers -- split to stay under the 70-line function gate
     bool executeDiscoverVolumes(const QDateTime& start_time);
     bool executeExtractKeys(const QDateTime& start_time,
@@ -229,20 +252,34 @@ private:
     /// about to hold PLAINTEXT BitLocker recovery keys. So it is validated here rather than
     /// trusted: a UNC/device root, a relative path, a leaf-or-ancestor symlink/junction
     /// redirect, and a mapped network drive are all refused, and what survives is returned
-    /// lexically canonicalized.
+    /// lexically canonicalized. The drive's file system is a separate question, see
+    /// screenDestinationDrive().
     ///
     /// @param raw_location Destination as supplied by the caller.
     /// @param refusal      Out: the human-readable reason when the location is refused.
     /// @return The canonical absolute location, or an EMPTY string when refused (fail
     ///         closed -- the caller must not create or write anything).
-    /// @brief Why a folder on a drive of this kind cannot hold plaintext keys, or empty if it can.
-    /// Pure, so the rule can be tested on a machine with no FAT32 or exFAT drive attached.
-    [[nodiscard]] static QString fileSystemRefusal(const QString& location,
-                                                   const QString& file_system,
-                                                   bool keeps_permissions);
-
     [[nodiscard]] static QString screenBackupLocation(const QString& raw_location,
                                                       QString& refusal);
+
+    /// @brief Why a folder on a drive of this kind cannot hold plaintext keys on this run, or
+    /// empty if it can: a drive that cannot restrict who reads a file, with no one having agreed to
+    /// that. Pure, so the rule can be tested on a machine with no FAT32 or exFAT drive attached.
+    [[nodiscard]] static QString fileSystemRefusal(const QString& location,
+                                                   const QString& file_system,
+                                                   bool keeps_permissions,
+                                                   bool warning_accepted);
+
+    /// @brief What a person reads before keys go to a drive of this kind.
+    [[nodiscard]] static QString unprotectedDriveWarning(const QString& location,
+                                                         const QString& file_system);
+
+    /// @brief What the result says about keys saved on a drive of this kind.
+    [[nodiscard]] static QString unprotectedResultWarning(const QString& file_system);
+
+    /// @brief Decide this run's @p location by what its drive can do, recording whether the keys
+    /// will be written unprotected. @return The refusal to report, or empty to carry on.
+    [[nodiscard]] QString screenDestinationDrive(const QString& location);
 
     /// @brief Why @p location must not hold this backup (empty when it may): it is on a volume in
     ///        @p volumes whose recovery key is being backed up -- the key would sit on the very
@@ -253,6 +290,9 @@ private:
     /// @brief Create a fresh, uniquely named backup directory (fail closed on
     /// any collision so a prior backup is never reopened and truncated).
     bool createBackupDirectory(const QDateTime& start_time, QString& backup_dir_path);
+    /// @brief Restrict a new, empty backup directory before any key goes in, unless a person agreed
+    /// to a drive that cannot hold permissions. On failure, removes it and fails closed.
+    bool lockDownNewBackupDirectory(const QDateTime& start_time, const QString& backup_dir_path);
     /// @brief Harden the backup directory ACL; on failure, delete the exposed
     /// key backup and fail closed rather than leaving plaintext keys readable.
     bool secureBackupDirectory(const QDateTime& start_time,

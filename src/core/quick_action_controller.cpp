@@ -35,6 +35,8 @@ constexpr auto kBackupLocationPayloadKey = "backup_location";
 constexpr auto kMessageResultKey = "message";
 constexpr auto kLogResultKey = "log";
 constexpr auto kInconclusiveResultKey = "inconclusive";
+constexpr auto kWarningResultKey = "warning";
+constexpr auto kOutputPathResultKey = "output_path";
 constexpr auto kStatusResultKey = "status";
 
 // What an elevated execution thread hands back. Shared between the thread, which writes it
@@ -111,6 +113,8 @@ QuickAction::ExecutionResult makeElevatedActionResult(
     result.log = broker_result->data[QString::fromLatin1(kLogResultKey)].toString();
     result.inconclusive = !result.success &&
                           broker_result->data[QString::fromLatin1(kInconclusiveResultKey)].toBool();
+    result.warning = broker_result->data[QString::fromLatin1(kWarningResultKey)].toString();
+    result.output_path = broker_result->data[QString::fromLatin1(kOutputPathResultKey)].toString();
 
     // Decode the status defensively: never cast an out-of-range integer to the enum, and
     // never surface a status that contradicts the authoritative success flag. A malformed
@@ -153,7 +157,9 @@ QString elevatedTaskIdForQuickAction(const QString& action_name) {
     return match == mappings.end() ? QString() : QString::fromLatin1(match->second);
 }
 
-QJsonObject buildElevatedActionPayload(const QString& task_id, const QString& output_folder) {
+QJsonObject buildElevatedActionPayload(const QString& task_id,
+                                       const QString& output_folder,
+                                       bool output_folder_warning_accepted) {
     QJsonObject payload;
     if (task_id != QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId)) {
         return payload;
@@ -163,6 +169,10 @@ QJsonObject buildElevatedActionPayload(const QString& task_id, const QString& ou
         return payload;
     }
     payload[QString::fromLatin1(kBackupLocationPayloadKey)] = backup_location;
+    if (output_folder_warning_accepted) {
+        payload[QString::fromLatin1(quick_action_elevation::kOutputFolderWarningAcceptedKey)] =
+            true;
+    }
     return payload;
 }
 
@@ -355,6 +365,7 @@ void QuickActionController::startRun(const QuickActionRun& run) {
     // This run's own folder, applied as it starts: a run queued behind another caller's never
     // writes into the folder that caller chose.
     action->setOutputFolder(run.output_folder);
+    action->setOutputFolderWarningAccepted(run.output_folder_warning_accepted);
     Q_EMIT runStarted(run);
     logRun(run, QStringLiteral("Execution started"));
     if (m_current_elevated) {
@@ -434,7 +445,8 @@ void QuickActionController::startElevated(QuickAction* action) {
         finishCurrent(result, QuickAction::ActionStatus::Failed);
         return;
     }
-    const QJsonObject payload = buildElevatedActionPayload(task_id, m_current->output_folder);
+    const QJsonObject payload = buildElevatedActionPayload(
+        task_id, m_current->output_folder, m_current->output_folder_warning_accepted);
     Q_EMIT runProgress(*m_current,
                        QStringLiteral("Requesting administrator approval..."),
                        kElevationRequestProgress);
@@ -600,6 +612,9 @@ QString quickActionOutcomeText(const QuickActionRun& run,
     // Output saved even partly says where it went.
     if (!result.output_path.isEmpty()) {
         text += QStringLiteral(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
+    if (!result.warning.isEmpty()) {
+        text += QStringLiteral(" - %1").arg(result.warning);
     }
     return text;
 }

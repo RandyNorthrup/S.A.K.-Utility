@@ -97,6 +97,27 @@ void chooseFolderInNextDialog(const QString& folder, bool* asked, QString* start
     });
 }
 
+/// Runs @p handle on the warning box that appears after a folder dialog closes.
+void handleWarningBoxAfterFolderDialog(const std::function<void(QMessageBox*)>& handle,
+                                       int tries_left = 200) {
+    QTimer::singleShot(1, qApp, [handle, tries_left]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            handle(box);
+        } else if (tries_left > 0) {
+            handleWarningBoxAfterFolderDialog(handle, tries_left - 1);
+        }
+    });
+}
+
+QPushButton* boxButtonNamed(QMessageBox* box, const QString& text) {
+    for (QAbstractButton* button : box->buttons()) {
+        if (button->text() == text) {
+            return qobject_cast<QPushButton*>(button);
+        }
+    }
+    return nullptr;
+}
+
 QStringList texts(const QSignalSpy& spy) {
     QStringList out;
     for (const auto& arguments : spy) {
@@ -130,6 +151,8 @@ private Q_SLOTS:
     void userMigrationScreenshotWithNoFolderRunsNothing();
     void userMigrationBitLockerAsksForAFolderAndHandsItToTheHelper();
     void userMigrationBitLockerWithNoFolderRunsNothing();
+    void userMigrationBitLockerWarningDefaultsToCancelAndCancelRunsNothing();
+    void userMigrationBitLockerWarningAcceptedSaysSoToTheHelper();
     void diagnosticsRunsEachMaintenanceActionThroughTheController();
     void diagnosticsVerifySystemFilesDeclinedRunsNothing();
     void diagnosticsInventoryReportSavesWhereTheUserChose();
@@ -248,6 +271,82 @@ void QuickActionPanelTests::userMigrationBitLockerAsksForAFolderAndHandsItToTheH
                                  .value(QStringLiteral("backup_location"))
                                  .toString()),
              QDir::cleanPath(destination.path()));
+    // No warning was shown, so no one agreed to anything.
+    QVERIFY(!m_system->elevatedPayloads().constFirst().contains(
+        QString::fromLatin1(sak::quick_action_elevation::kOutputFolderWarningAcceptedKey)));
+}
+
+void QuickActionPanelTests::userMigrationBitLockerWarningDefaultsToCancelAndCancelRunsNothing() {
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    m_system->output_folder_warning = QStringLiteral("%1 cannot restrict who reads files");
+    sak::QuickActionController controller;
+    QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
+    sak::UserMigrationPanel panel(controller);
+    QSignalSpy status(&panel, &sak::UserMigrationPanel::statusMessage);
+    QSignalSpy log(&panel, &sak::UserMigrationPanel::logOutput);
+    QPushButton* button = buttonNamed(panel, QStringLiteral("BitLocker Key Backup"));
+    QVERIFY(button != nullptr);
+
+    bool asked = false;
+    bool warned = false;
+    bool cancel_is_default = false;
+    QString warning_text;
+    chooseFolderInNextDialog(destination.path(), &asked, nullptr);
+    handleWarningBoxAfterFolderDialog([&](QMessageBox* box) {
+        warned = true;
+        warning_text = box->text();
+        const QPushButton* const cancel =
+            qobject_cast<QPushButton*>(box->button(QMessageBox::Cancel));
+        cancel_is_default = box->defaultButton() == cancel && box->escapeButton() == cancel;
+        box->button(QMessageBox::Cancel)->click();
+    });
+    button->click();
+    QVERIFY(asked);
+    QVERIFY2(warned, "a drive that cannot restrict who reads files must warn before anything runs");
+    QVERIFY2(warning_text.contains(destination.path()), qPrintable(warning_text));
+    QVERIFY2(cancel_is_default, "Enter and Esc must both land on Cancel");
+    QTest::qWait(50);
+    QVERIFY(!anyStartsWith(status, QStringLiteral("Running: ")));
+    QVERIFY(m_system->elevatedTasks().isEmpty());
+    const QStringList lines = texts(log);
+    QVERIFY(std::ranges::any_of(lines, [](const QString& line) {
+        return line.endsWith(QStringLiteral(": nothing was written"));
+    }));
+}
+
+void QuickActionPanelTests::userMigrationBitLockerWarningAcceptedSaysSoToTheHelper() {
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    m_system->output_folder_warning = QStringLiteral("%1 cannot restrict who reads files");
+    sak::QuickActionController controller;
+    QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
+    sak::UserMigrationPanel panel(controller);
+    QSignalSpy status(&panel, &sak::UserMigrationPanel::statusMessage);
+    QPushButton* button = buttonNamed(panel, QStringLiteral("BitLocker Key Backup"));
+    QVERIFY(button != nullptr);
+
+    bool asked = false;
+    bool warned = false;
+    chooseFolderInNextDialog(destination.path(), &asked, nullptr);
+    handleWarningBoxAfterFolderDialog([&](QMessageBox* box) {
+        QPushButton* const go_ahead = boxButtonNamed(box, QStringLiteral("Save Here Anyway"));
+        if (go_ahead != nullptr) {
+            warned = true;
+            go_ahead->click();
+        }
+    });
+    button->click();
+    QVERIFY(asked);
+    QVERIFY(warned);
+    QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(status, QStringLiteral("Completed: ") + kBitLocker),
+                             kRunTimeoutMs);
+    QCOMPARE(m_system->elevatedPayloads()
+                 .constFirst()
+                 .value(QString::fromLatin1(
+                     sak::quick_action_elevation::kOutputFolderWarningAcceptedKey))
+                 .toBool(false),
+             true);
 }
 
 void QuickActionPanelTests::userMigrationBitLockerWithNoFolderRunsNothing() {

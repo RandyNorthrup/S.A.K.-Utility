@@ -22,6 +22,8 @@ constexpr char kResetNetworkName[] = "Reset Network Settings";
 constexpr char kResetNetworkTaskId[] = "Reset Network";
 constexpr char kBackupBitLockerKeysName[] = "BitLocker Key Backup";
 constexpr char kBackupBitLockerKeysTaskId[] = "Backup BitLocker Keys";
+/// In a helper task's payload: a person agreed to the action's output folder warning.
+constexpr char kOutputFolderWarningAcceptedKey[] = "output_folder_warning_accepted";
 constexpr char kDefenderQuickScanName[] = "Microsoft Defender Quick Scan";
 constexpr char kDefenderQuickScanTaskId[] = "Defender Quick Scan";
 constexpr char kDefenderFullScanName[] = "Microsoft Defender Full Scan";

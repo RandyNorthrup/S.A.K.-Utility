@@ -60,6 +60,8 @@ struct FakeSystem {
     std::atomic<bool> helper_cancel_pending{false};
     /// When set, the helper reports this result instead of plain success.
     std::optional<sak::ElevatedTaskResult> elevated_result;
+    /// What every fake action says about its output folder, when set.
+    QString output_folder_warning;
 
     QStringList inProcessRuns() {
         const std::lock_guard<std::mutex> lock(mutex);
@@ -87,6 +89,12 @@ public:
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     QIcon icon() const override { return {}; }
     bool requiresAdmin() const override { return m_admin; }
+    QString outputFolderWarning(const QString& folder) const override {
+        const std::lock_guard<std::mutex> lock(m_system->mutex);
+        return m_system->output_folder_warning.isEmpty()
+                   ? QString()
+                   : m_system->output_folder_warning.arg(folder);
+    }
 
     void execute() override {
         setStatus(ActionStatus::Running);

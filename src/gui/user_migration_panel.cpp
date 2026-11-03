@@ -329,8 +329,8 @@ QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_
         // folder on a BitLocker volume whose key it is backing up.
         const QString destination = QFileDialog::getExistingDirectory(
             this,
-            tr("Choose where to save the BitLocker recovery keys (use another drive formatted as "
-               "NTFS)"),
+            tr("Choose where to save the BitLocker recovery keys (use another drive; NTFS can "
+               "restrict who reads them)"),
             QString(),
             QFileDialog::ShowDirsOnly);
         if (destination.isEmpty()) {
@@ -351,9 +351,31 @@ QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_
     return folder;
 }
 
+bool UserMigrationPanel::confirmOutputFolderWarning(const QString& action_name,
+                                                    const QString& warning) {
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(action_name);
+    box.setText(warning);
+    const QPushButton* const go_ahead = box.addButton(tr("Save Here Anyway"),
+                                                      QMessageBox::AcceptRole);
+    QPushButton* const cancel = box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    return box.clickedButton() == go_ahead;
+}
+
 void UserMigrationPanel::onQuickActionClicked(const QString& action_name) {
     const QString folder = chooseQuickActionOutputFolder(action_name);
     if (folder.isEmpty()) {
+        return;
+    }
+    const QuickAction* const action = m_quick_actions.getAction(action_name);
+    const QString warning = action != nullptr ? action->outputFolderWarning(folder) : QString();
+    if (!warning.isEmpty() && !confirmOutputFolderWarning(action_name, warning)) {
+        appendLog(tr("%1 cancelled at the warning about %2: nothing was written")
+                      .arg(action_name, QDir::toNativeSeparators(folder)));
         return;
     }
     appendLog(QString("Executing: %1").arg(action_name));
@@ -361,7 +383,8 @@ void UserMigrationPanel::onQuickActionClicked(const QString& action_name) {
     m_action_progress_bar->setValue(0);
     m_action_progress_bar->setVisible(true);
     // The folder travels with this run: one queued behind another caller's still writes here.
-    m_quick_actions.requestRun({action_name, QString::fromLatin1(kQuickActionOwner), folder});
+    m_quick_actions.requestRun(
+        {action_name, QString::fromLatin1(kQuickActionOwner), folder, !warning.isEmpty()});
 }
 
 void UserMigrationPanel::onQuickActionFinished(const QuickActionRun& run,

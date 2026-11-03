@@ -157,6 +157,40 @@ bool configurePortableRuntimeDirs() {
 // Quick Action Task Handler
 // ======================================================================
 
+/// @brief What the helper reports about a finished action.
+sak::TaskHandlerResult quickActionTaskResult(const sak::QuickAction& action, bool cancelled) {
+    sak::TaskHandlerResult result;
+    const auto& exec_result = action.lastExecutionResult();
+    // A cancellation that raced the action's completion must not be reported as a success: the
+    // requester asked for the work to stop, so the outcome is "cancelled", not "done".
+    result.success = exec_result.success && !cancelled;
+
+    QJsonObject data;
+    data["message"] = exec_result.message;
+    data["log"] = exec_result.log;
+    data["inconclusive"] = exec_result.inconclusive;
+    data["warning"] = exec_result.warning;
+    data["output_path"] = exec_result.output_path;
+    data["status"] = static_cast<int>(action.status());
+    data["cancelled"] = cancelled;
+    result.data = data;
+
+    // Never return a failure with no error at all: the client would see "failed" and have
+    // nothing to report or log.
+    if (!result.success) {
+        if (cancelled) {
+            result.error_message = QStringLiteral("Task cancelled");
+        } else if (exec_result.message.isEmpty()) {
+            result.error_message = QStringLiteral("Quick action failed with status %1")
+                                       .arg(static_cast<int>(action.status()));
+        } else {
+            result.error_message = exec_result.message;
+        }
+    }
+
+    return result;
+}
+
 /// @brief Generic handler that instantiates a QuickAction, runs it, and
 ///        relays progress back through the pipe.
 template <typename ActionT, typename... CtorArgs>
@@ -164,8 +198,6 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
                                       sak::ProgressCallback progress,
                                       sak::CancelCheck is_cancelled,
                                       CtorArgs&&... ctor_args) {
-    (void)payload;
-
     // Synchronous pre-cancel check: the poller below can only relay a cancel that arrives after
     // execute() has begun, so a cancel that was already requested must stop the privileged work
     // from starting at all.
@@ -176,6 +208,12 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
     }
 
     auto action = std::make_unique<ActionT>(std::forward<CtorArgs>(ctor_args)...);
+    // Only a real JSON true counts, and only the person's own client sends it.
+    action->setOutputFolderWarningAccepted(
+        payload
+            .value(
+                QString::fromLatin1(sak::quick_action_elevation::kOutputFolderWarningAcceptedKey))
+            .toBool(false));
 
     // Connect action progress to the progress callback
     QObject::connect(action.get(),
@@ -200,35 +238,7 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
     action->execute();
     cancel_poller.request_stop();
 
-    sak::TaskHandlerResult result;
-    auto exec_result = action->lastExecutionResult();
-    // A cancellation that raced the action's completion must not be reported as a success: the
-    // requester asked for the work to stop, so the outcome is "cancelled", not "done".
-    const bool cancelled = is_cancelled();
-    result.success = exec_result.success && !cancelled;
-
-    QJsonObject data;
-    data["message"] = exec_result.message;
-    data["log"] = exec_result.log;
-    data["inconclusive"] = exec_result.inconclusive;
-    data["status"] = static_cast<int>(action->status());
-    data["cancelled"] = cancelled;
-    result.data = data;
-
-    // Never return a failure with no error at all: the client would see "failed" and have
-    // nothing to report or log.
-    if (!result.success) {
-        if (cancelled) {
-            result.error_message = QStringLiteral("Task cancelled");
-        } else if (exec_result.message.isEmpty()) {
-            result.error_message = QStringLiteral("Quick action failed with status %1")
-                                       .arg(static_cast<int>(action->status()));
-        } else {
-            result.error_message = exec_result.message;
-        }
-    }
-
-    return result;
+    return quickActionTaskResult(*action, is_cancelled());
 }
 
 // ======================================================================

@@ -133,6 +133,10 @@ private Q_SLOTS:
     void testNoDuplicateRegistration();
     void testElevatedTaskIdsAndPayloadUseHelperContract();
     void testBitLockerPayloadHasNoDefaultDestination();
+    void testBitLockerPayloadCarriesAnAcceptedWarningOnlyWhenAsked();
+    void testAcceptedWarningReachesThisRunAndNoOther();
+    void testOutcomeTextCarriesTheWarning();
+    void testElevatedResultCarriesItsWarningAndWhereItSaved();
 
     // -- Per-run context ----------------------------------------
     void queuedRunsKeepTheirOwnOutputFolders();
@@ -225,6 +229,76 @@ void TestQuickActionController::testBitLockerPayloadHasNoDefaultDestination() {
     const QJsonObject payload = buildElevatedActionPayload(
         QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId), QString());
     QVERIFY(payload.isEmpty());
+}
+
+void TestQuickActionController::testBitLockerPayloadCarriesAnAcceptedWarningOnlyWhenAsked() {
+    const QString task = QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId);
+    const QString key =
+        QString::fromLatin1(quick_action_elevation::kOutputFolderWarningAcceptedKey);
+    const QString folder = QStringLiteral("E:/keys");
+    QVERIFY(!buildElevatedActionPayload(task, folder).contains(key));
+    QVERIFY(!buildElevatedActionPayload(task, folder, false).contains(key));
+    QCOMPARE(buildElevatedActionPayload(task, folder, true).value(key).toBool(false), true);
+    // No other helper task has an output folder, so none has a warning either.
+    QVERIFY(buildElevatedActionPayload(
+                QString::fromLatin1(quick_action_elevation::kCheckDiskErrorsTaskId), folder, true)
+                .isEmpty());
+}
+
+// One caller's answer belongs to its own run. The action object is shared, so an answer that stuck
+// to it would let the next caller, who asked no one, write keys to an unprotected drive.
+void TestQuickActionController::testAcceptedWarningReachesThisRunAndNoOther() {
+    QTemporaryDir keys;
+    QVERIFY(keys.isValid());
+    QVERIFY(registerFakes(*m_ctrl, m_system, {kBitLocker}));
+    FinishedRuns finished;
+    finished.watch(*m_ctrl);
+    const QString key =
+        QString::fromLatin1(quick_action_elevation::kOutputFolderWarningAcceptedKey);
+
+    m_ctrl->requestRun({kBitLocker, QStringLiteral("backup_restore"), keys.path(), true});
+    m_ctrl->requestRun({kBitLocker, QStringLiteral("assistant#1"), keys.path()});
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, kRunTimeoutMs);
+
+    const QList<QJsonObject> payloads = m_system->elevatedPayloads();
+    QCOMPARE(payloads.size(), 2);
+    QCOMPARE(payloads.at(0).value(key).toBool(false), true);
+    QVERIFY(!payloads.at(1).contains(key));
+    QCOMPARE(m_ctrl->getAction(kBitLocker)->outputFolderWarningAccepted(), false);
+}
+
+void TestQuickActionController::testOutcomeTextCarriesTheWarning() {
+    QuickAction::ExecutionResult result;
+    result.success = true;
+    result.output_path = QStringLiteral("E:/keys/run");
+    const QuickActionRun run{kBitLocker, QStringLiteral("backup_restore"), {}};
+    const QString plain = quickActionOutcomeText(run, result, QuickAction::ActionStatus::Success);
+    QCOMPARE(plain, QStringLiteral("Completed: %1 - saved to E:\\keys\\run").arg(kBitLocker));
+
+    result.warning = QStringLiteral("The keys are NOT protected");
+    QCOMPARE(quickActionOutcomeText(run, result, QuickAction::ActionStatus::Success),
+             plain + QStringLiteral(" - The keys are NOT protected"));
+}
+
+// The helper reports over its pipe, so what the panel shows has to survive the trip: where to find
+// the keys, and that they are not protected.
+void TestQuickActionController::testElevatedResultCarriesItsWarningAndWhereItSaved() {
+    QTemporaryDir keys;
+    QVERIFY(keys.isValid());
+    QVERIFY(registerFakes(*m_ctrl, m_system, {kBitLocker}));
+    FinishedRuns finished;
+    finished.watch(*m_ctrl);
+    sak::ElevatedTaskResult helper;
+    helper.success = true;
+    helper.data = QJsonObject{{QStringLiteral("message"), QStringLiteral("saved")},
+                              {QStringLiteral("warning"), QStringLiteral("not protected")},
+                              {QStringLiteral("output_path"), QStringLiteral("E:/keys/run")}};
+    m_system->elevated_result = helper;
+
+    m_ctrl->requestRun({kBitLocker, QStringLiteral("backup_restore"), keys.path(), true});
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kRunTimeoutMs);
+    QCOMPARE(finished.results.at(0).warning, QStringLiteral("not protected"));
+    QCOMPARE(finished.results.at(0).output_path, QStringLiteral("E:/keys/run"));
 }
 
 // ============================================================================
