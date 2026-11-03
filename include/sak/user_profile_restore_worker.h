@@ -110,8 +110,11 @@ public:
     /// True if @p profileRelativePath falls under an app-data source in @p sources
     /// that the user unchecked (longest path-segment prefix wins). An empty
     /// @p sources never excludes. Pure decision, exposed for unit testing.
+    /// @p is_file: a row that splits its path with another speaks only for its own files, never
+    /// for a folder, which may hold files of both.
     [[nodiscard]] static bool isAppDataPathExcluded(const QString& profileRelativePath,
-                                                    const QVector<AppDataSourceInfo>& sources);
+                                                    const QVector<AppDataSourceInfo>& sources,
+                                                    bool is_file = false);
 
     /// What a check of one restored file found.
     enum class RestoredFileCheck {

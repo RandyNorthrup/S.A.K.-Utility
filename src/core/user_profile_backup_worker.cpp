@@ -378,10 +378,7 @@ void UserProfileBackupWorker::addAppDataFolder(UserProfile& user, const AppDataS
         return;
     }
     const AppDataMeasure measure =
-        measureAppDataSource(user.profile_path + QLatin1Char('/') + source.relative_path,
-                             *m_appDataFilter,
-                             user.profile_path,
-                             &m_cancelled);
+        measureAppDataSource(source, user.profile_path, *m_appDataFilter, &m_cancelled);
     if (!measure.exists) {
         return;  // This user does not have that program's data, which is not a failure.
     }
@@ -390,6 +387,8 @@ void UserProfileBackupWorker::addAppDataFolder(UserProfile& user, const AppDataS
     folder.display_name = source.name;
     folder.relative_path = source.relative_path;
     folder.selected = true;
+    folder.include_patterns = source.include_patterns;
+    folder.exclude_patterns = source.exclude_patterns;
     folder.size_bytes = measure.size_bytes;
     folder.file_count = measure.file_count;
     user.folder_selections.append(folder);
@@ -686,6 +685,11 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
                                                  int depth) {
     const QFileInfo itemInfo(sourceItem);
     const QString destItem = destDir + "/" + itemInfo.fileName();
+
+    // Another row's file, when two rows split this folder. That row's own pass deals with it.
+    if (!itemInfo.isDir() && !backupFolderTakesFile(folderConfig, itemInfo.fileName())) {
+        return;
+    }
 
     // Never follow a reparse point (junction/symlink), whether it is a directory OR a file: a
     // directory one can loop back into the profile or point outside it (foreign/privileged data),

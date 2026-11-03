@@ -76,6 +76,8 @@ constexpr int kAppDataColumnPath = 1;
 constexpr int kAppDataColumnSize = 2;
 // The exact size rides on the row, so it reaches the manifest with the selection.
 constexpr int kAppDataSizeRole = Qt::UserRole;
+constexpr int kAppDataIncludeRole = Qt::UserRole + 1;
+constexpr int kAppDataExcludeRole = Qt::UserRole + 2;
 constexpr int kEthernetColumnSelect = 0;
 constexpr int kEthernetColumnAdapter = 1;
 constexpr int kEthernetColumnDhcp = 2;
@@ -1576,6 +1578,8 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
             item->setText(kAppDataColumnPath, source->relative_path);
             item->setText(kAppDataColumnSize, formatBytes(source->size_bytes));
             item->setData(kAppDataColumnSize, kAppDataSizeRole, source->size_bytes);
+            item->setData(kAppDataColumnName, kAppDataIncludeRole, source->include_patterns);
+            item->setData(kAppDataColumnName, kAppDataExcludeRole, source->exclude_patterns);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, source->selected ? Qt::Checked : Qt::Unchecked);
             if (source->selected) {
@@ -1618,6 +1622,10 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
             info.category = category->text(0);
             info.relative_path = app_item->text(1);
             info.size_bytes = app_item->data(kAppDataColumnSize, kAppDataSizeRole).toLongLong();
+            info.include_patterns =
+                app_item->data(kAppDataColumnName, kAppDataIncludeRole).toStringList();
+            info.exclude_patterns =
+                app_item->data(kAppDataColumnName, kAppDataExcludeRole).toStringList();
             info.exists = true;
             info.selected = true;
             selected_bytes += info.size_bytes;

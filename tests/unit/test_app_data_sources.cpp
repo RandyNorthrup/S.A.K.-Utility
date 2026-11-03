@@ -33,6 +33,14 @@ const sak::AppDataSourceInfo* findPath(const QVector<sak::AppDataSourceInfo>& so
     return it != sources.end() ? &(*it) : nullptr;
 }
 
+const sak::AppDataSourceInfo* findName(const QVector<sak::AppDataSourceInfo>& sources,
+                                       const QString& name) {
+    const auto it = std::ranges::find_if(sources, [&](const sak::AppDataSourceInfo& source) {
+        return source.name == name;
+    });
+    return it != sources.end() ? &(*it) : nullptr;
+}
+
 sak::UserProfile selectedUser(const QString& name, const QString& profile_path) {
     sak::UserProfile user;
     user.username = name;
@@ -42,6 +50,7 @@ sak::UserProfile selectedUser(const QString& name, const QString& profile_path) 
 }
 
 const QString kChrome = QStringLiteral("AppData/Local/Google/Chrome/User Data");
+const QString kOutlook = QStringLiteral("AppData/Local/Microsoft/Outlook");
 
 }  // namespace
 
@@ -52,6 +61,10 @@ private Q_SLOTS:
     void listIncludesWhatTheWizardPromises();
     void everySourceIsAPathTheWorkerAccepts();
     void secretsAreOptIn();
+    void outlookPstIsTickedAndItsCacheIsNot();
+    void outlookRowsSplitTheFolderBetweenThem();
+    void outlookPstRowAppearsOnlyWhereThereIsAPst();
+    void splitRowsAreToldApartInABackup();
     void runningProgramsNameTheirSources();
     void scanAddsUpSizesAndLeavesCachesOut();
     void scanSkipsUsersNotSelected();
@@ -82,11 +95,104 @@ void AppDataSourcesTests::secretsAreOptIn() {
     const auto* ssh = findPath(sources, QStringLiteral(".ssh"));
     QVERIFY(ssh != nullptr);
     QVERIFY(!ssh->selected);
-    const auto* outlook_data = findPath(sources, QStringLiteral("AppData/Local/Microsoft/Outlook"));
-    QVERIFY(outlook_data != nullptr);
-    QVERIFY(!outlook_data->selected);
     QVERIFY(findPath(sources, kChrome)->selected);
     QVERIFY(findPath(sources, QStringLiteral("AppData/Roaming/Microsoft/Signatures"))->selected);
+}
+
+// A technician ticking through a migration must not leave a PST behind: in this folder it may be
+// the only copy of a customer's mail. An OST beside it is what the mail server still has.
+void AppDataSourcesTests::outlookPstIsTickedAndItsCacheIsNot() {
+    const auto sources = sak::commonAppDataSources();
+    const auto* pst = findName(sources, QStringLiteral("Outlook Archives (PST)"));
+    const auto* cache = findName(sources, QStringLiteral("Outlook Cache (OST)"));
+    QVERIFY(pst != nullptr && cache != nullptr);
+    QVERIFY(pst->selected);
+    QVERIFY(!cache->selected);
+    QCOMPARE(pst->relative_path, kOutlook);
+    QCOMPARE(cache->relative_path, kOutlook);
+}
+
+void AppDataSourcesTests::outlookRowsSplitTheFolderBetweenThem() {
+    const auto sources = sak::commonAppDataSources();
+    const auto* pst = findName(sources, QStringLiteral("Outlook Archives (PST)"));
+    const auto* cache = findName(sources, QStringLiteral("Outlook Cache (OST)"));
+    QVERIFY(pst != nullptr && cache != nullptr);
+    const auto takes = [](const sak::AppDataSourceInfo& row, const QString& name) {
+        return sak::appDataPatternsTakeFile(name, row.include_patterns, row.exclude_patterns);
+    };
+    for (const QString& name : {QStringLiteral("archive.pst"), QStringLiteral("OLD.PST")}) {
+        QVERIFY2(takes(*pst, name), qPrintable(name));
+        QVERIFY2(!takes(*cache, name), qPrintable(name));
+    }
+    for (const QString& name : {QStringLiteral("me@example.com.ost"),
+                                QStringLiteral("group.nst"),
+                                QStringLiteral("profile.xml"),
+                                QStringLiteral("archive.pst.tmp")}) {
+        QVERIFY2(!takes(*pst, name), qPrintable(name));
+        QVERIFY2(takes(*cache, name), qPrintable(name));
+    }
+
+    // Each row's size is its own files', so the choice shows what it costs.
+    QTemporaryDir alice;
+    QVERIFY(alice.isValid());
+    QVERIFY(writeFile(alice.filePath(kOutlook + QStringLiteral("/archive.pst")), 100));
+    QVERIFY(writeFile(alice.filePath(kOutlook + QStringLiteral("/older/archive2.pst")), 20));
+    QVERIFY(writeFile(alice.filePath(kOutlook + QStringLiteral("/me.ost")), 5000));
+    QVERIFY(writeFile(alice.filePath(kOutlook + QStringLiteral("/profile.xml")), 7));
+    const auto found = sak::scanAppDataSources(
+        {selectedUser(QStringLiteral("Alice"), alice.path())}, sak::SmartFilter{}, nullptr);
+    QCOMPARE(findName(found, QStringLiteral("Outlook Archives (PST)"))->size_bytes, qint64(120));
+    QCOMPARE(findName(found, QStringLiteral("Outlook Cache (OST)"))->size_bytes, qint64(5007));
+}
+
+void AppDataSourcesTests::outlookPstRowAppearsOnlyWhereThereIsAPst() {
+    QTemporaryDir alice;
+    QVERIFY(alice.isValid());
+    QVERIFY(writeFile(alice.filePath(kOutlook + QStringLiteral("/me.ost")), 5000));
+    const auto found = sak::scanAppDataSources(
+        {selectedUser(QStringLiteral("Alice"), alice.path())}, sak::SmartFilter{}, nullptr);
+    QVERIFY(findName(found, QStringLiteral("Outlook Archives (PST)")) == nullptr);
+    QVERIFY(findName(found, QStringLiteral("Outlook Cache (OST)")) != nullptr);
+}
+
+// Two rows on one path: each is stored only if its own copy is there, with its own size. A row's
+// copy must not read as the other row's, or the restore page offers data the backup does not hold.
+void AppDataSourcesTests::splitRowsAreToldApartInABackup() {
+    const auto sources = sak::commonAppDataSources();
+    const auto* pst = findName(sources, QStringLiteral("Outlook Archives (PST)"));
+    const auto* cache = findName(sources, QStringLiteral("Outlook Cache (OST)"));
+    QVERIFY(pst != nullptr && cache != nullptr);
+
+    sak::BackupManifest manifest;
+    sak::AppDataSourceInfo whole_folder;
+    whole_folder.name = QStringLiteral("Outlook Data");
+    whole_folder.relative_path = kOutlook;
+    manifest.app_data_sources = {*pst, *cache, whole_folder};
+    sak::FolderSelection stored;
+    stored.type = sak::FolderType::ApplicationData;
+    stored.relative_path = kOutlook;
+    stored.include_patterns = pst->include_patterns;
+    stored.exclude_patterns = pst->exclude_patterns;
+    stored.size_bytes = 120;
+    sak::BackupUserData user;
+    user.backed_up_folders = {stored};
+    manifest.users = {user};
+
+    const auto listed = sak::appDataStoredInBackup(manifest);
+    QCOMPARE(listed.size(), 1);
+    QCOMPARE(listed.first().name, pst->name);
+    QCOMPARE(listed.first().size_bytes, qint64(120));
+
+    // The patterns survive the trip through the manifest, and a row with none writes none, which
+    // keeps the checksum of a manifest from before they existed.
+    const auto round_trip = sak::AppDataSourceInfo::fromJson(pst->toJson());
+    QCOMPARE(round_trip.include_patterns, pst->include_patterns);
+    QCOMPARE(round_trip.exclude_patterns, pst->exclude_patterns);
+    const auto cache_round_trip = sak::AppDataSourceInfo::fromJson(cache->toJson());
+    QCOMPARE(cache_round_trip.exclude_patterns, cache->exclude_patterns);
+    const auto* chrome = findPath(sources, kChrome);
+    QVERIFY(!chrome->toJson().contains(QStringLiteral("include_patterns")));
+    QVERIFY(!chrome->toJson().contains(QStringLiteral("exclude_patterns")));
 }
 
 void AppDataSourcesTests::runningProgramsNameTheirSources() {
@@ -101,7 +207,12 @@ void AppDataSourcesTests::runningProgramsNameTheirSources() {
     }
     const QStringList outlook = sak::appDataSourcesHeldOpen(sources, {QStringLiteral("olk.exe")});
     QCOMPARE(outlook,
-             QStringList({QStringLiteral("Outlook Data"), QStringLiteral("Outlook Signatures")}));
+             QStringList({QStringLiteral("Outlook Archives (PST)"),
+                          QStringLiteral("Outlook Cache (OST)"),
+                          QStringLiteral("Outlook Signatures")}));
+
+    // Two rows share a folder, and so a program, which is still named once.
+    QCOMPARE(sak::appDataSourceProcessNames(kOutlook).size(), 2);
 
     // A source that is not selected does not need its program closed.
     for (auto& source : sources) {

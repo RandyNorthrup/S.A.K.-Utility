@@ -6,6 +6,7 @@
 ///        restored by the restore worker. Each worker is tested on its own elsewhere; what only
 ///        this file can catch is the two of them disagreeing about what a backup is.
 
+#include "sak/app_data_sources.h"
 #include "sak/backup_file_codec.h"
 #include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_restore_worker.h"
@@ -14,8 +15,10 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -207,6 +210,34 @@ bool seedAppData(const QString& profile) {
            writeFile(root.filePath(kGitConfigPath), QByteArrayLiteral("[user]\nname = Pat\n"));
 }
 
+const QString kOutlookPath = QStringLiteral("AppData/Local/Microsoft/Outlook");
+constexpr int kArchiveBytes = 4096;
+constexpr int kOlderPstBytes = 1024;
+constexpr int kPstBytes = kArchiveBytes + kOlderPstBytes;
+
+bool seedOutlook(const QString& profile) {
+    const QDir root(QDir(profile).filePath(kOutlookPath));
+    return writeFile(root.filePath(QStringLiteral("archive.pst")),
+                     QByteArray(kArchiveBytes, 'p')) &&
+           writeFile(root.filePath(QStringLiteral("older/2019.PST")),
+                     QByteArray(kOlderPstBytes, 'q')) &&
+           writeFile(root.filePath(QStringLiteral("me@example.com.ost")), QByteArray(8192, 'o')) &&
+           writeFile(root.filePath(QStringLiteral("profile.xml")), QByteArrayLiteral("<xml/>"));
+}
+
+/// The two Outlook rows as the Application Data page offers them, only the ones asked for.
+QVector<sak::AppDataSourceInfo> outlookRows(bool archives, bool cache) {
+    QVector<sak::AppDataSourceInfo> rows;
+    for (const sak::AppDataSourceInfo& source : sak::commonAppDataSources()) {
+        if ((archives && source.name == QStringLiteral("Outlook Archives (PST)")) ||
+            (cache && source.name == QStringLiteral("Outlook Cache (OST)"))) {
+            rows.append(source);
+            rows.last().selected = true;
+        }
+    }
+    return rows;
+}
+
 QVector<sak::AppDataSourceInfo> seededSources() {
     return {appDataSource(kChromePath),
             appDataSource(kSignaturesPath),
@@ -254,6 +285,13 @@ private Q_SLOTS:
     void appDataInsideASelectedFolderIsNotRestoredTwice();
     void appDataPastMaxPathRoundTrips();
     void lockedFileIsNamedAndTheRestIsCopied();
+
+    // A technician ticking through a migration: a PST travels, the cache beside it does not.
+    void outlookDefaultsCopyThePstAndLeaveTheCache();
+    void outlookBothRowsRestoreEachFileOnce();
+    void outlookRowUntickedAtRestoreKeepsTheOtherRow();
+    void outlookLockedPstIsNamedAndTheRunSaysSo();
+    void pstUnderDocumentsIsCoveredByTheUserFolders();
 
     // What the Select Folders page does must not look like damage to the backup.
     void untickedFolderStaysOutAndTheManifestStillVerifies();
@@ -766,6 +804,183 @@ void UserProfileRoundTripTests::appDataPastMaxPathRoundTrips() {
 
 // What a running browser does to its Cookies database: open it so that even a shared read is
 // refused. The backup must say which file it could not copy, keep going, and not call it clean.
+// What the Application Data page starts with on a PC holding these files.
+void UserProfileRoundTripTests::outlookDefaultsCopyThePstAndLeaveTheCache() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QTemporaryDir system_drive;
+    QVERIFY(profile.isValid() && backup.isValid() && system_drive.isValid());
+    qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+    QVERIFY(seedOutlook(profile.path()));
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.folder_selections.clear();
+    const QVector<sak::AppDataSourceInfo> ticked = outlookRows(true, false);
+    QCOMPARE(ticked.size(), 1);
+    const RunResult backed_up = runBackup(user, backup.path(), backupOptions(false, false), ticked);
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+
+    const QDir stored(QDir(backup.path()).filePath(kUser + QLatin1Char('/') + kOutlookPath));
+    QVERIFY(QFile::exists(stored.filePath(QStringLiteral("archive.pst"))));
+    QVERIFY(QFile::exists(stored.filePath(QStringLiteral("older/2019.PST"))));
+    QVERIFY(!QFile::exists(stored.filePath(QStringLiteral("me@example.com.ost"))));
+    QVERIFY(!QFile::exists(stored.filePath(QStringLiteral("profile.xml"))));
+
+    // And it comes back, with what the page will offer agreeing.
+    const sak::BackupManifest manifest =
+        BackupManifest::loadFromFile(backup.filePath(QStringLiteral("manifest.json")));
+    const QVector<sak::AppDataSourceInfo> offered = sak::appDataStoredInBackup(manifest);
+    QCOMPARE(offered.size(), 1);
+    QCOMPARE(offered.first().name, QStringLiteral("Outlook Archives (PST)"));
+    QCOMPARE(offered.first().size_bytes, qint64(kPstBytes));
+    const RunResult restored =
+        runRestore(backup.path(),
+                   {mappingTo(MergeMode::CreateNewUser)},
+                   verifiedRestore(ConflictResolution::SkipDuplicate, false));
+    QVERIFY2(restored.completed && restored.success, qPrintable(restored.message));
+    const QDir landed(QDir(profileUnder(system_drive)).filePath(kOutlookPath));
+    QCOMPARE(readFile(landed.filePath(QStringLiteral("archive.pst"))).size(), kArchiveBytes);
+    QVERIFY(!QFile::exists(landed.filePath(QStringLiteral("me@example.com.ost"))));
+}
+
+// Ticking both copies both, and each pass restores its own files. A second pass over the same files
+// would conflict with the first and leave a .sakbak of what it had just restored.
+void UserProfileRoundTripTests::outlookBothRowsRestoreEachFileOnce() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QTemporaryDir system_drive;
+    QVERIFY(profile.isValid() && backup.isValid() && system_drive.isValid());
+    qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+    QVERIFY(seedOutlook(profile.path()));
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.folder_selections.clear();
+    const RunResult backed_up =
+        runBackup(user, backup.path(), backupOptions(false, false), outlookRows(true, true));
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+
+    const RunResult restored =
+        runRestore(backup.path(),
+                   {mappingTo(MergeMode::CreateNewUser)},
+                   verifiedRestore(ConflictResolution::SkipDuplicate, false));
+    QVERIFY2(restored.completed && restored.success, qPrintable(restored.message));
+    const QDir landed(QDir(profileUnder(system_drive)).filePath(kOutlookPath));
+    QVERIFY(QFile::exists(landed.filePath(QStringLiteral("archive.pst"))));
+    QVERIFY(QFile::exists(landed.filePath(QStringLiteral("older/2019.PST"))));
+    QVERIFY(QFile::exists(landed.filePath(QStringLiteral("me@example.com.ost"))));
+    QVERIFY(QFile::exists(landed.filePath(QStringLiteral("profile.xml"))));
+    QDirIterator all(landed.absolutePath(), QDir::Files, QDirIterator::Subdirectories);
+    int files = 0;
+    while (all.hasNext()) {
+        const QString file = all.next();
+        QVERIFY2(!file.endsWith(QStringLiteral(".sakbak")), qPrintable(file));
+        ++files;
+    }
+    QCOMPARE(files, 4);
+}
+
+// The restore page lists the two rows apart, so either can stay behind while the other comes.
+void UserProfileRoundTripTests::outlookRowUntickedAtRestoreKeepsTheOtherRow() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    QVERIFY(seedOutlook(profile.path()));
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.folder_selections.clear();
+    const RunResult backed_up =
+        runBackup(user, backup.path(), backupOptions(false, false), outlookRows(true, true));
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+
+    // Neither row: no pass runs, so not even their folder appears.
+    {
+        QTemporaryDir system_drive;
+        QVERIFY(system_drive.isValid());
+        qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+        UserProfileRestoreWorker::RestoreSelections selections;
+        selections.app_data_sources = outlookRows(true, true);
+        selections.app_data_sources[0].selected = false;
+        selections.app_data_sources[1].selected = false;
+        const RunResult restored =
+            runRestore(backup.path(),
+                       {mappingTo(MergeMode::CreateNewUser)},
+                       verifiedRestore(ConflictResolution::SkipDuplicate, false),
+                       selections);
+        QVERIFY2(restored.completed && restored.success, qPrintable(restored.message));
+        QVERIFY(!QDir(QDir(profileUnder(system_drive)).filePath(kOutlookPath)).exists());
+    }
+
+    for (const bool keep_pst : {true, false}) {
+        QTemporaryDir system_drive;
+        QVERIFY(system_drive.isValid());
+        qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+        UserProfileRestoreWorker::RestoreSelections selections;
+        selections.app_data_sources = outlookRows(true, true);
+        selections.app_data_sources[0].selected = keep_pst;
+        selections.app_data_sources[1].selected = !keep_pst;
+        const RunResult restored =
+            runRestore(backup.path(),
+                       {mappingTo(MergeMode::CreateNewUser)},
+                       verifiedRestore(ConflictResolution::SkipDuplicate, false),
+                       selections);
+        QVERIFY2(restored.completed && restored.success, qPrintable(restored.message));
+        const QDir landed(QDir(profileUnder(system_drive)).filePath(kOutlookPath));
+        QCOMPARE(QFile::exists(landed.filePath(QStringLiteral("archive.pst"))), keep_pst);
+        QCOMPARE(QFile::exists(landed.filePath(QStringLiteral("older/2019.PST"))), keep_pst);
+        QCOMPARE(QFile::exists(landed.filePath(QStringLiteral("me@example.com.ost"))), !keep_pst);
+        QCOMPARE(QFile::exists(landed.filePath(QStringLiteral("profile.xml"))), !keep_pst);
+    }
+}
+
+// Outlook left open holds its PST, and the prompt can be declined. Then the file is named and the
+// backup says it did not copy everything.
+void UserProfileRoundTripTests::outlookLockedPstIsNamedAndTheRunSaysSo() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    QVERIFY(seedOutlook(profile.path()));
+    const QString locked_path =
+        QDir(profile.path()).filePath(kOutlookPath + QStringLiteral("/archive.pst"));
+    const HANDLE held = CreateFileW(reinterpret_cast<LPCWSTR>(locked_path.utf16()),
+                                    GENERIC_READ | GENERIC_WRITE,
+                                    0,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    QVERIFY(held != INVALID_HANDLE_VALUE);
+    const auto release = qScopeGuard([held]() { CloseHandle(held); });
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.folder_selections.clear();
+    const RunResult backed_up =
+        runBackup(user, backup.path(), backupOptions(false, false), outlookRows(true, false));
+    QVERIFY(backed_up.completed);
+    QVERIFY2(!backed_up.success, qPrintable(backed_up.message));
+    QVERIFY2(backed_up.message.contains(QStringLiteral("not everything was copied")),
+             qPrintable(backed_up.message));
+    QVERIFY2(backed_up.warnings.join(QLatin1Char('\n')).contains(QStringLiteral("archive.pst")),
+             qPrintable(backed_up.warnings.join(QLatin1Char('\n'))));
+    QVERIFY(QFile::exists(QDir(backup.path())
+                              .filePath(kUser + QLatin1Char('/') + kOutlookPath +
+                                        QStringLiteral("/older/2019.PST"))));
+}
+
+// Since Outlook 2010 a new PST goes under Documents\Outlook Files, and the filters must let it
+// pass.
+void UserProfileRoundTripTests::pstUnderDocumentsIsCoveredByTheUserFolders() {
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QVERIFY(profile.isValid() && backup.isValid());
+    const QString relative = QStringLiteral("Documents/Outlook Files/customer.pst");
+    QVERIFY(writeFile(QDir(profile.path()).filePath(relative), QByteArray(4096, 'p')));
+
+    const RunResult backed_up =
+        runBackup(sourceProfile(profile.path()), backup.path(), backupOptions(false, false));
+    QVERIFY2(backed_up.completed && backed_up.success, qPrintable(backed_up.message));
+    QVERIFY(QFile::exists(QDir(backup.path()).filePath(kUser + QLatin1Char('/') + relative)));
+}
+
 void UserProfileRoundTripTests::lockedFileIsNamedAndTheRestIsCopied() {
     QTemporaryDir profile;
     QTemporaryDir backup;

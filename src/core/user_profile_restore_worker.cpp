@@ -6,6 +6,7 @@
 #endif
 #include "sak/user_profile_restore_worker.h"
 
+#include "sak/app_data_sources.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/backup_file_codec.h"
 #include "sak/layout_constants.h"
@@ -564,7 +565,21 @@ bool UserProfileRestoreWorker::restoreUserFolders(const UserMapping& mapping,
 }
 
 bool UserProfileRestoreWorker::folderIsToBeRestored(const FolderSelection& folder) const {
-    return folder.selected && !isAppDataPathExcluded(folder.relative_path, m_appDataSources);
+    if (!folder.selected) {
+        return false;
+    }
+    // Rows that split a path are chosen one by one; the path alone cannot tell them apart.
+    if (folder.type == FolderType::ApplicationData &&
+        (!folder.include_patterns.isEmpty() || !folder.exclude_patterns.isEmpty())) {
+        const auto row =
+            std::ranges::find_if(m_appDataSources, [&](const AppDataSourceInfo& source) {
+                return backupPathKey(source.relative_path) == backupPathKey(folder.relative_path) &&
+                       source.include_patterns == folder.include_patterns &&
+                       source.exclude_patterns == folder.exclude_patterns;
+            });
+        return row == m_appDataSources.end() || row->selected;
+    }
+    return !isAppDataPathExcluded(folder.relative_path, m_appDataSources);
 }
 
 bool UserProfileRestoreWorker::insideAnotherRestoredFolder(const BackupUserData& user,
@@ -727,7 +742,7 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
 
         // Honor the AppData page: an entry under an app-data source the user
         // unchecked is intentionally skipped (not an error).
-        if (isAppDataPathExcluded(entryRelative, m_appDataSources)) {
+        if (isAppDataPathExcluded(entryRelative, m_appDataSources, entry.isFile())) {
             m_filesSkipped++;
             continue;
         }
@@ -773,7 +788,9 @@ void UserProfileRestoreWorker::copyDirectoryEntry(const QFileInfo& entry,
         return;
     }
 
-    if (entry.isFile()) {
+    // When two rows split this folder, each pass restores its own files, so neither overwrites what
+    // the other just put there and leaves a pointless .sakbak of it.
+    if (entry.isFile() && backupFolderTakesFile(folderConfig, entry.fileName())) {
         copyFileWithConflictResolution(sourceItem, destItem, entry.size());
     }
 }
@@ -1242,8 +1259,21 @@ QString UserProfileRestoreWorker::resolveSystem32Netsh() {
     return QDir::toNativeSeparators(fromOs);
 }
 
+namespace {
+
+// A row that splits its path with another speaks only for its own files, never for a folder, which
+// may hold files of both.
+bool appDataRowSpeaksFor(const AppDataSourceInfo& row, const QString& path, bool is_file) {
+    return !row.splitsItsPath() || (is_file && appDataPatternsTakeFile(QFileInfo(path).fileName(),
+                                                                       row.include_patterns,
+                                                                       row.exclude_patterns));
+}
+
+}  // namespace
+
 bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelativePath,
-                                                     const QVector<AppDataSourceInfo>& sources) {
+                                                     const QVector<AppDataSourceInfo>& sources,
+                                                     bool is_file) {
     // No AppData selection forwarded (legacy backup, or the page was never shown)
     // means restore everything -- the filter only ever removes, never adds.
     if (sources.isEmpty()) {
@@ -1258,6 +1288,9 @@ bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelat
             base.chop(1);
         }
         if (base.isEmpty()) {
+            continue;
+        }
+        if (!appDataRowSpeaksFor(src, norm, is_file)) {
             continue;
         }
         // Segment-aware prefix match: the path is the source root or lives under

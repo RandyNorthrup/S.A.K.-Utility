@@ -283,6 +283,15 @@ struct AppDataSourceInfo {
     qint64 size_bytes{0};
     bool exists{false};
     bool selected{true};
+    /// Which files under the path this row takes, by file name ("*.pst"). Both empty takes them
+    /// all. Two rows can share a path and split it this way, as Outlook's archives and cache do.
+    QStringList include_patterns;
+    QStringList exclude_patterns;
+
+    /// Whether this row splits its path with another. Such a row is told apart by its patterns.
+    [[nodiscard]] bool splitsItsPath() const {
+        return !include_patterns.isEmpty() || !exclude_patterns.isEmpty();
+    }
 
     QJsonObject toJson() const;
     static AppDataSourceInfo fromJson(const QJsonObject& json);

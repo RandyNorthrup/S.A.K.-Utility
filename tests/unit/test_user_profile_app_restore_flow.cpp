@@ -6,6 +6,7 @@
 ///        backup page, installed_apps.json on disk, restore page, list handed to Chocolatey.
 
 #include "sak/app_data_program_prompt.h"
+#include "sak/app_data_sources.h"
 #include "sak/backup_file_codec.h"
 #include "sak/elevation_manager.h"
 #include "sak/format_utils.h"
@@ -144,6 +145,7 @@ private Q_SLOTS:
     void restoreInstallAsksForAdministratorFirst();
     void appDataSizeTravelsToTheManifestAndTheRestorePage();
     void restorePageOffersOnlyStoredAppData();
+    void wizardPagesKeepARowsPatterns();
     void restoreFolderPageLeavesAppDataToItsOwnPage();
     void restoreFolderPageRecordsTheChoiceWithoutTouchingTheManifest();
     void runningProgramStopsTheBackupUntilAnswered();
@@ -383,6 +385,59 @@ void UserProfileAppRestoreFlowTests::restorePageOffersOnlyStoredAppData() {
     QCOMPARE(page->m_appDataTree->topLevelItemCount(), 0);
     QVERIFY2(page->m_statusLabel->text().contains(QStringLiteral("older version")),
              qPrintable(page->m_statusLabel->text()));
+}
+
+// Each page rebuilds its rows from its tree. A row that lost its patterns there would copy the
+// whole Outlook folder, cache and all, on a backup, and could not be told from its twin on a
+// restore.
+void UserProfileAppRestoreFlowTests::wizardPagesKeepARowsPatterns() {
+    sak::AppDataSourceInfo archives;
+    sak::AppDataSourceInfo cache;
+    for (const sak::AppDataSourceInfo& source : sak::commonAppDataSources()) {
+        if (source.name == QStringLiteral("Outlook Archives (PST)")) {
+            archives = source;
+        } else if (source.name == QStringLiteral("Outlook Cache (OST)")) {
+            cache = source;
+        }
+    }
+    QVERIFY(archives.splitsItsPath() && cache.splitsItsPath());
+
+    sak::UserProfileBackupWizard backup_wizard;
+    auto* backup_page = backup_wizard.findChild<sak::UserProfileBackupAppDataPage*>();
+    QVERIFY(backup_page != nullptr);
+    backup_page->populateTree({archives, cache});
+    QCOMPARE(backup_wizard.appDataSources().size(), 1);  // the cache starts unticked
+    QCOMPARE(backup_wizard.appDataSources().first().name, archives.name);
+    QCOMPARE(backup_wizard.appDataSources().first().include_patterns, archives.include_patterns);
+
+    sak::FolderSelection stored_archives;
+    stored_archives.type = sak::FolderType::ApplicationData;
+    stored_archives.relative_path = archives.relative_path;
+    stored_archives.include_patterns = archives.include_patterns;
+    sak::FolderSelection stored_cache = stored_archives;
+    stored_cache.include_patterns.clear();
+    stored_cache.exclude_patterns = cache.exclude_patterns;
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    user.backed_up_folders = {stored_archives, stored_cache};
+    sak::BackupManifest manifest;
+    manifest.app_data_sources = {archives, cache};
+    manifest.users = {user};
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    auto* restore_page = restore_wizard.findChild<sak::UserProfileRestoreAppDataPage*>();
+    QVERIFY(restore_page != nullptr);
+    restore_page->loadAppDataSources();
+    QVERIFY(restore_page->validatePage());
+    const QVector<sak::AppDataSourceInfo> chosen = restore_wizard.appDataSources();
+    QCOMPARE(chosen.size(), 2);
+    for (const sak::AppDataSourceInfo& row : chosen) {
+        const sak::AppDataSourceInfo& expected = row.name == archives.name ? archives : cache;
+        QCOMPARE(row.include_patterns, expected.include_patterns);
+        QCOMPARE(row.exclude_patterns, expected.exclude_patterns);
+    }
 }
 
 void UserProfileAppRestoreFlowTests::restoreFolderPageLeavesAppDataToItsOwnPage() {

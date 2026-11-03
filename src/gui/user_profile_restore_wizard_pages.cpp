@@ -68,6 +68,8 @@ enum EthernetColumn {
 
 constexpr int kTreePackageColumn = 2;
 constexpr int kTreeDetailColumn = 2;
+constexpr int kAppDataIncludeRole = Qt::UserRole + 1;
+constexpr int kAppDataExcludeRole = Qt::UserRole + 2;
 constexpr int kSizeDisplayPrecision = 2;
 constexpr int kMegabyteDisplayPrecision = 1;
 
@@ -800,6 +802,8 @@ bool UserProfileRestoreAppDataPage::validatePage() {
             info.name = leaf->text(0);
             info.relative_path = leaf->text(1);
             info.category = category->text(0);
+            info.include_patterns = leaf->data(0, kAppDataIncludeRole).toStringList();
+            info.exclude_patterns = leaf->data(0, kAppDataExcludeRole).toStringList();
             info.selected = leaf->checkState(0) == Qt::Checked;
             sources.append(info);
         }
@@ -834,6 +838,8 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
             item->setText(0, source->name);
             item->setText(1, source->relative_path);
             item->setText(kTreeDetailColumn, formatBytes(source->size_bytes));
+            item->setData(0, kAppDataIncludeRole, source->include_patterns);
+            item->setData(0, kAppDataExcludeRole, source->exclude_patterns);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, Qt::Checked);  // All selected by default
             cat_selected++;

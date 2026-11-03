@@ -17,6 +17,15 @@
 namespace sak {
 
 namespace {
+
+QStringList arrayToStringList(const QJsonArray& arr) {
+    QStringList list;
+    list.reserve(arr.size());
+    for (const auto& val : arr) {
+        list << val.toString();
+    }
+    return list;
+}
 // Streaming read size for directory-tree hashing (B7-13).
 constexpr qint64 kDirHashChunkBytes = 64 * 1024;
 
@@ -202,14 +211,6 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
         qint64FromJson(json, "max_folder_size", filter.max_folder_size_bytes);
     filter.exclude_cache_paths = json.value("exclude_cache_paths").toBool(true);
 
-    auto arrayToStringList = [](const QJsonArray& arr) {
-        QStringList list;
-        for (const auto& val : arr) {
-            list << val.toString();
-        }
-        return list;
-    };
-
     // Only override a list when the JSON actually carries an array for it; a missing
     // or non-array value keeps the default so partial/legacy manifests don't clear
     // the exclusion rules.
@@ -256,14 +257,6 @@ FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
     sel.selected = json["selected"].toBool();
     sel.size_bytes = qint64FromJson(json, "size_bytes");
     sel.file_count = json["file_count"].toInt();
-
-    auto arrayToStringList = [](const QJsonArray& arr) {
-        QStringList list;
-        for (const auto& val : arr) {
-            list << val.toString();
-        }
-        return list;
-    };
 
     sel.include_patterns = arrayToStringList(json["include_patterns"].toArray());
     sel.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
@@ -741,6 +734,13 @@ QJsonObject AppDataSourceInfo::toJson() const {
     obj["size_bytes"] = static_cast<double>(size_bytes);
     obj["exists"] = exists;
     obj["selected"] = selected;
+    // Only when set, so a manifest from before these existed still matches its checksum.
+    if (!include_patterns.isEmpty()) {
+        obj["include_patterns"] = QJsonArray::fromStringList(include_patterns);
+    }
+    if (!exclude_patterns.isEmpty()) {
+        obj["exclude_patterns"] = QJsonArray::fromStringList(exclude_patterns);
+    }
     return obj;
 }
 
@@ -752,6 +752,8 @@ AppDataSourceInfo AppDataSourceInfo::fromJson(const QJsonObject& json) {
     info.size_bytes = qint64FromJson(json, "size_bytes");
     info.exists = json["exists"].toBool(false);
     info.selected = json["selected"].toBool(true);
+    info.include_patterns = arrayToStringList(json["include_patterns"].toArray());
+    info.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
     return info;
 }
 

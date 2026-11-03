@@ -6,6 +6,7 @@
 #include "sak/active_connections_monitor.h"
 #include "sak/backup_destination_guard.h"
 
+#include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QSet>
@@ -24,6 +25,8 @@ struct CommonSource {
     const char* relative_path{};
     std::span<const char* const> processes{};
     bool selected{true};
+    std::span<const char* const> include_files{};
+    std::span<const char* const> exclude_files{};
 };
 
 constexpr std::array kChrome{"chrome.exe"};
@@ -52,6 +55,8 @@ constexpr std::array kWinScp{"winscp.exe"};
 constexpr std::array kFileZilla{"filezilla.exe"};
 constexpr std::array kTerminal{"windowsterminal.exe"};
 
+constexpr std::array kPstFiles{"*.pst"};
+
 // Firefox and Thunderbird keep profiles.ini beside their Profiles folder. It names which profile to
 // open, so the parent folder is the source: a restored Profiles folder without it would sit unused
 // while the program opened a new, empty profile.
@@ -64,9 +69,24 @@ const std::array kCommonSources = std::to_array<CommonSource>({
     {"Vivaldi Profiles", "Browsers", "AppData/Local/Vivaldi/User Data", kVivaldi},
 
     {"Thunderbird Profiles", "Email", "AppData/Roaming/Thunderbird", kThunderbird},
-    // An OST is a copy of the mailbox the server still has, tied to this Outlook profile, and it
-    // can run to tens of gigabytes. Worth having only if someone asks.
-    {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", kOutlook, false},
+    // One folder, two very different things. Older Outlook keeps PST archives here, and one may be
+    // the only copy of a customer's mail. An OST or NST is a copy of what the server still has,
+    // tied to this Outlook profile, and can run to tens of gigabytes: worth having only if someone
+    // asks.
+    {"Outlook Archives (PST)",
+     "Email",
+     "AppData/Local/Microsoft/Outlook",
+     kOutlook,
+     true,
+     kPstFiles,
+     {}},
+    {"Outlook Cache (OST)",
+     "Email",
+     "AppData/Local/Microsoft/Outlook",
+     kOutlook,
+     false,
+     {},
+     kPstFiles},
     {"Outlook Signatures", "Email", "AppData/Roaming/Microsoft/Signatures", kOutlook},
 
     {"VS Code Settings", "Development", "AppData/Roaming/Code/User", kVsCode},
@@ -112,6 +132,13 @@ const std::array kCommonSources = std::to_array<CommonSource>({
 }  // namespace
 
 QVector<AppDataSourceInfo> commonAppDataSources() {
+    const auto toList = [](std::span<const char* const> names) {
+        QStringList list;
+        for (const char* name : names) {
+            list.append(QString::fromLatin1(name));
+        }
+        return list;
+    };
     QVector<AppDataSourceInfo> sources;
     sources.reserve(static_cast<qsizetype>(kCommonSources.size()));
     for (const CommonSource& common : kCommonSources) {
@@ -120,9 +147,25 @@ QVector<AppDataSourceInfo> commonAppDataSources() {
         info.category = QString::fromLatin1(common.category);
         info.relative_path = QString::fromLatin1(common.relative_path);
         info.selected = common.selected;
+        info.include_patterns = toList(common.include_files);
+        info.exclude_patterns = toList(common.exclude_files);
         sources.append(info);
     }
     return sources;
+}
+
+bool appDataPatternsTakeFile(const QString& file_name,
+                             const QStringList& include_patterns,
+                             const QStringList& exclude_patterns) {
+    if (!include_patterns.isEmpty() && !QDir::match(include_patterns, file_name)) {
+        return false;
+    }
+    return exclude_patterns.isEmpty() || !QDir::match(exclude_patterns, file_name);
+}
+
+bool backupFolderTakesFile(const FolderSelection& folder, const QString& file_name) {
+    return folder.type != FolderType::ApplicationData ||
+           appDataPatternsTakeFile(file_name, folder.include_patterns, folder.exclude_patterns);
 }
 
 QStringList appDataSourceProcessNames(const QString& relative_path) {
@@ -135,6 +178,7 @@ QStringList appDataSourceProcessNames(const QString& relative_path) {
             names.append(QString::fromLatin1(process));
         }
     }
+    names.removeDuplicates();  // Two rows can share a path, and so a program.
     return names;
 }
 
@@ -165,16 +209,17 @@ QStringList appDataSourcesHeldOpen(const QVector<AppDataSourceInfo>& sources,
     return held;
 }
 
-AppDataMeasure measureAppDataSource(const QString& absolute_path,
-                                    const SmartFileFilter& filter,
+AppDataMeasure measureAppDataSource(const AppDataSourceInfo& source,
                                     const QString& profile_path,
+                                    const SmartFileFilter& filter,
                                     const std::atomic_bool* cancel) {
     AppDataMeasure measure;
+    const QString absolute_path = profile_path + QLatin1Char('/') + source.relative_path;
     const QFileInfo info(absolute_path);
     if (!info.exists()) {
         return measure;
     }
-    measure.exists = true;
+    measure.exists = !source.splitsItsPath();
     if (!info.isDir()) {
         if (!filter.shouldExcludeFile(info, profile_path)) {
             measure.size_bytes = info.size();
@@ -191,6 +236,13 @@ AppDataMeasure measureAppDataSource(const QString& absolute_path,
         }
         it.next();
         const QFileInfo file = it.fileInfo();
+        if (!appDataPatternsTakeFile(
+                file.fileName(), source.include_patterns, source.exclude_patterns)) {
+            continue;
+        }
+        // Before the filter: a PST over a size limit is still there, and the copy says it skipped
+        // it.
+        measure.exists = true;
         if (!filter.shouldExcludeFile(file, profile_path)) {
             measure.size_bytes += file.size();
             ++measure.file_count;
@@ -213,10 +265,7 @@ QVector<AppDataSourceInfo> scanAppDataSources(const QVector<UserProfile>& users,
                 continue;
             }
             const AppDataMeasure measure =
-                measureAppDataSource(user.profile_path + QLatin1Char('/') + source.relative_path,
-                                     filter,
-                                     user.profile_path,
-                                     cancel);
+                measureAppDataSource(source, user.profile_path, filter, cancel);
             source.exists = source.exists || measure.exists;
             source.size_bytes += measure.size_bytes;
         }
@@ -236,10 +285,14 @@ void noteStoredCopies(const AppDataSourceInfo& source,
                       bool& inside_a_folder,
                       qint64& stored_bytes) {
     for (const FolderSelection& folder : user.backed_up_folders) {
-        if (folder.type == FolderType::ApplicationData &&
-            backupPathKey(folder.relative_path) == backupPathKey(source.relative_path)) {
-            copied = true;
-            stored_bytes += folder.size_bytes;
+        if (folder.type == FolderType::ApplicationData) {
+            // Two rows can share a path, so the patterns say whose copy this is.
+            if (backupPathKey(folder.relative_path) == backupPathKey(source.relative_path) &&
+                folder.include_patterns == source.include_patterns &&
+                folder.exclude_patterns == source.exclude_patterns) {
+                copied = true;
+                stored_bytes += folder.size_bytes;
+            }
         } else if (folder.selected &&
                    backupPathIsWithin(source.relative_path, folder.relative_path)) {
             inside_a_folder = true;
