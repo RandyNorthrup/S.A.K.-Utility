@@ -13,6 +13,13 @@
 #include <stdexcept>
 #include <thread>
 
+namespace {
+// The deadline fires on the monitor's own thread, and a loaded machine can hold that thread back
+// for longer than any fixed sleep: finish() then claims the run first and fired() is rightly false.
+// So each test waits for the outcome itself. Only a monitor that never fires reaches this bound.
+constexpr int kFireBoundMs = 15'000;
+}  // namespace
+
 class TestDeadlineCanceller : public QObject {
     Q_OBJECT
 
@@ -32,7 +39,7 @@ void TestDeadlineCanceller::firesAndInvokesCallbackOnceOnTimeout() {
     std::atomic<int> calls{0};
     {
         sak::DeadlineCanceller canceller([&calls]() { ++calls; }, 1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        QTRY_VERIFY_WITH_TIMEOUT(canceller.fired(), kFireBoundMs);
         canceller.finish();
         QVERIFY(canceller.fired());
         QCOMPARE(canceller.callbackFailure(), sak::DeadlineCanceller::CallbackFailure::None);
@@ -44,7 +51,7 @@ void TestDeadlineCanceller::firesAndInvokesCallbackOnceOnTimeout() {
 // configuration error through the same no-throw observation seam.
 void TestDeadlineCanceller::missingCallbackIsObservable() {
     sak::DeadlineCanceller canceller({}, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    QTRY_VERIFY_WITH_TIMEOUT(canceller.fired(), kFireBoundMs);
     canceller.finish();
 
     QVERIFY(canceller.fired());
@@ -55,7 +62,7 @@ void TestDeadlineCanceller::missingCallbackIsObservable() {
 // monitor thread or disappear: finish() joins it, then callbackFailure() reports the exact class.
 void TestDeadlineCanceller::standardCallbackFailureIsObservable() {
     sak::DeadlineCanceller canceller([]() { throw std::runtime_error("cancel failed"); }, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    QTRY_VERIFY_WITH_TIMEOUT(canceller.fired(), kFireBoundMs);
     canceller.finish();
 
     QVERIFY(canceller.fired());
@@ -67,7 +74,7 @@ void TestDeadlineCanceller::standardCallbackFailureIsObservable() {
 // values. That failure class must also remain observable instead of escaping to std::terminate.
 void TestDeadlineCanceller::unknownCallbackFailureIsObservable() {
     sak::DeadlineCanceller canceller([]() { throw 7; }, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    QTRY_VERIFY_WITH_TIMEOUT(canceller.fired(), kFireBoundMs);
     canceller.finish();
 
     QVERIFY(canceller.fired());
@@ -121,8 +128,7 @@ void TestDeadlineCanceller::destructorWithoutFinishDoesNotFire() {
 void TestDeadlineCanceller::finishAfterTimeoutStaysFired() {
     std::atomic<int> calls{0};
     sak::DeadlineCanceller canceller([&calls]() { ++calls; }, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
-    QVERIFY(canceller.fired());
+    QTRY_VERIFY_WITH_TIMEOUT(canceller.fired(), kFireBoundMs);
     canceller.finish();
     QVERIFY(canceller.fired());  // still a timeout
     QCOMPARE(calls.load(), 1);
