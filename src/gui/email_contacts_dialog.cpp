@@ -94,6 +94,7 @@ void EmailContactsDialog::setupHeader(QVBoxLayout* layout) {
 
     auto* search_row = new QHBoxLayout();
     m_search_edit = new QLineEdit(this);
+    m_search_edit->setAccessibleName(tr("Search contacts"));
     m_search_edit->setPlaceholderText(tr("Search contacts by name, email, or company..."));
     m_search_edit->setClearButtonEnabled(true);
     connect(
@@ -107,6 +108,7 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_splitter->setChildrenCollapsible(false);
 
     m_contact_table = new QTableWidget(this);
+    m_contact_table->setAccessibleName(tr("Contacts"));
     m_contact_table->setColumnCount(ColCount);
     m_contact_table->setHorizontalHeaderLabels(
         {tr("Name"), tr("Email"), tr("Company"), tr("Phone")});
@@ -125,6 +127,7 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
 
     // Detail panel
     m_detail_browser = new QTextBrowser(this);
+    m_detail_browser->setAccessibleName(tr("Contact details"));
     m_detail_browser->setOpenExternalLinks(false);
     m_detail_browser->setMinimumWidth(email::kContactsDetailMinWidth);
     m_detail_browser->setPlaceholderText(tr("Select a contact to view details"));

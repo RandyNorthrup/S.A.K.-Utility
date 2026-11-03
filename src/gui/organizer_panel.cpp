@@ -468,7 +468,7 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     m_dir_summary_label = plainTextLabel(tr("No directory selected"), this);
     m_dir_summary_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
-    m_dir_summary_label->setAccessibleName(QStringLiteral("Directory Summary"));
+    m_dir_summary_label->setAccessibleDescription(QStringLiteral("Directory Summary"));
     group_layout->addWidget(m_dir_summary_label);
 
     return group;
@@ -682,7 +682,7 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     m_dedup_summary_label = plainTextLabel(tr("No directories added"), this);
     m_dedup_summary_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
-    m_dedup_summary_label->setAccessibleName(QStringLiteral("Scan Directories Summary"));
+    m_dedup_summary_label->setAccessibleDescription(QStringLiteral("Scan Directories Summary"));
     group_layout->addWidget(m_dedup_summary_label);
 
     return group;
@@ -765,7 +765,7 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     m_dedup_results_label = new QLabel(this);
     m_dedup_results_label->setWordWrap(true);
     m_dedup_results_label->setVisible(false);
-    m_dedup_results_label->setAccessibleName(QStringLiteral("Last Scan Results Summary"));
+    m_dedup_results_label->setAccessibleDescription(QStringLiteral("Last Scan Results Summary"));
     layout->addWidget(m_dedup_results_label);
 
     // Progress bar

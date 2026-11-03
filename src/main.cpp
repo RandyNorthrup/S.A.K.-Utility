@@ -4,7 +4,7 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
-#include "sak/accessible_name_rule.h"
+#include "sak/accessibility_audit.h"
 #include "sak/app_paths.h"
 #include "sak/crash_reporter.h"
 #include "sak/elevation_manager.h"
@@ -20,13 +20,8 @@
 #include "sak/win32mcp/win32_mcp_entry.h"
 #include "sak/windows11_theme.h"
 
-#include <QAbstractButton>
-#include <QAbstractItemView>
-#include <QAbstractSlider>
-#include <QAbstractSpinBox>
 #include <QApplication>
 #include <QByteArray>
-#include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -34,15 +29,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
-#include <QHeaderView>
 #include <QIcon>
-#include <QLineEdit>
 #include <QMessageBox>
-#include <QPlainTextEdit>
-#include <QScrollBar>
 #include <QStringList>
-#include <QTabWidget>
-#include <QTextEdit>
 #include <QTextStream>
 #include <QTimer>
 #include <QWidget>
@@ -67,7 +56,6 @@
 
 namespace {
 
-constexpr int kAccessibilityParentDepthLimit = 5;
 constexpr int kAccessibilityOutputWriteFailureExitCode = 3;
 constexpr int kAccessibilityMissingNamesExitCode = 2;
 // How often the GUI thread re-checks the background font warmup while it keeps pumping.
@@ -200,122 +188,8 @@ void writeAccessibilityAuditStatus(const QString& status) {
     writeAccessibilityAuditStatusTo(accessibilityAuditOutputPath(), status);
 }
 
-bool isKnownQtInternalWidget(const QWidget* widget) {
-    if (widget == nullptr) {
-        return true;
-    }
-    if ((qobject_cast<const QScrollBar*>(widget) != nullptr) ||
-        (qobject_cast<const QHeaderView*>(widget) != nullptr)) {
-        return true;
-    }
-    if ((qobject_cast<const QLineEdit*>(widget) != nullptr) &&
-        (qobject_cast<const QComboBox*>(widget->parentWidget()) != nullptr)) {
-        return true;
-    }
-    const QString class_name = QString::fromLatin1(widget->metaObject()->className());
-    const QString object_name = widget->objectName();
-    static const QStringList kInternalClasses = {QStringLiteral("QTableCornerButton"),
-                                                 QStringLiteral("QComboBoxListView"),
-                                                 QStringLiteral("QLineEditIconButton"),
-                                                 QStringLiteral("CheckHeaderView")};
-    static const QStringList kInternalObjects = {QStringLiteral("qt_spinbox_lineedit"),
-                                                 QStringLiteral("qt_menubar_ext_button")};
-    return kInternalClasses.contains(class_name) || kInternalObjects.contains(object_name);
-}
-
-bool isAuditedInteractiveWidget(const QWidget* widget) {
-    if (qobject_cast<const QAbstractButton*>(widget) != nullptr) {
-        return true;
-    }
-    if ((qobject_cast<const QLineEdit*>(widget) != nullptr) ||
-        (qobject_cast<const QComboBox*>(widget) != nullptr)) {
-        return true;
-    }
-    if ((qobject_cast<const QAbstractSpinBox*>(widget) != nullptr) ||
-        (qobject_cast<const QAbstractSlider*>(widget) != nullptr)) {
-        return true;
-    }
-    if ((qobject_cast<const QTextEdit*>(widget) != nullptr) ||
-        (qobject_cast<const QPlainTextEdit*>(widget) != nullptr)) {
-        return true;
-    }
-    return (qobject_cast<const QAbstractItemView*>(widget) != nullptr) ||
-           (qobject_cast<const QTabWidget*>(widget) != nullptr);
-}
-
-bool requiresExplicitAccessibleName(const QWidget* widget) {
-    return !isKnownQtInternalWidget(widget) && isAuditedInteractiveWidget(widget);
-}
-
-QString objectDebugLabel(const QObject* object) {
-    QString label = QString::fromLatin1(object->metaObject()->className());
-    if (!object->objectName().isEmpty()) {
-        label += QStringLiteral("#%1").arg(object->objectName());
-    }
-    return label;
-}
-
-QString textDebugLabel(const QWidget* widget) {
-    if (const auto* button = qobject_cast<const QAbstractButton*>(widget);
-        (button != nullptr) && !button->text().trimmed().isEmpty()) {
-        return QStringLiteral(" text=\"%1\"").arg(button->text());
-    }
-    if (const auto* line_edit = qobject_cast<const QLineEdit*>(widget);
-        (line_edit != nullptr) && !line_edit->placeholderText().trimmed().isEmpty()) {
-        return QStringLiteral(" placeholder=\"%1\"").arg(line_edit->placeholderText());
-    }
-    if (const auto* text_edit = qobject_cast<const QTextEdit*>(widget);
-        (text_edit != nullptr) && !text_edit->placeholderText().trimmed().isEmpty()) {
-        return QStringLiteral(" placeholder=\"%1\"").arg(text_edit->placeholderText());
-    }
-    return {};
-}
-
-QString parentDebugLabel(const QWidget* widget) {
-    QStringList parents;
-    const QObject* parent = widget->parent();
-    while ((parent != nullptr) && parents.size() < kAccessibilityParentDepthLimit) {
-        parents << objectDebugLabel(parent);
-        parent = parent->parent();
-    }
-    return parents.isEmpty()
-               ? QString{}
-               : QStringLiteral(" parent=\"%1\"").arg(parents.join(QStringLiteral(" > ")));
-}
-
-QString accessibilityAuditLabel(const QWidget* widget) {
-    return objectDebugLabel(widget) + textDebugLabel(widget) + parentDebugLabel(widget);
-}
-
-struct AccessibilityFindings {
-    QStringList missing;
-    QStringList mislabeled;
-    [[nodiscard]] bool passed() const { return missing.isEmpty() && mislabeled.isEmpty(); }
-};
-
-AccessibilityFindings collectAccessibilityFindings(const QList<QWidget*>& widgets) {
-    AccessibilityFindings findings;
-    for (const QWidget* widget : widgets) {
-        if (!requiresExplicitAccessibleName(widget)) {
-            continue;
-        }
-        if (widget->accessibleName().trimmed().isEmpty()) {
-            findings.missing << accessibilityAuditLabel(widget);
-            continue;
-        }
-        const auto* button = qobject_cast<const QAbstractButton*>(widget);
-        if ((button != nullptr) &&
-            !sak::accessibleNameHoldsLabel(button->accessibleName(), button->text())) {
-            findings.mislabeled << accessibilityAuditLabel(widget) +
-                                       QStringLiteral(" name=\"%1\"").arg(button->accessibleName());
-        }
-    }
-    return findings;
-}
-
 bool writeAccessibilityAuditFile(const QString& output_path,
-                                 const AccessibilityFindings& findings,
-                                 qsizetype checked) {
+                                 const sak::AccessibilityFindings& findings) {
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
         return false;
@@ -323,24 +197,29 @@ bool writeAccessibilityAuditFile(const QString& output_path,
     QTextStream out(&file);
     out << (findings.passed() ? "SAK_ACCESSIBILITY_AUDIT_OK" : "SAK_ACCESSIBILITY_AUDIT_FAILED")
         << " missing=" << findings.missing.size() << " mislabeled=" << findings.mislabeled.size()
-        << " checked=" << checked << "\n";
+        << " hides_text=" << findings.hides_text.size()
+        << " undescribed_image=" << findings.undescribed_image.size()
+        << " checked=" << findings.checked << "\n";
     for (const auto& entry : findings.missing) {
         out << entry << "\n";
     }
     for (const auto& entry : findings.mislabeled) {
         out << "mislabeled: " << entry << "\n";
     }
+    for (const auto& entry : findings.hides_text) {
+        out << "hides its text: " << entry << "\n";
+    }
+    for (const auto& entry : findings.undescribed_image) {
+        out << "image with no description: " << entry << "\n";
+    }
     return true;
 }
 
-int runAccessibilityAudit(sak::MainWindow& main_window) {
-    auto widgets = main_window.findChildren<QWidget*>();
-    widgets.prepend(&main_window);
-    const AccessibilityFindings findings = collectAccessibilityFindings(widgets);
+int runAccessibilityAudit(const sak::MainWindow& main_window) {
+    const sak::AccessibilityFindings findings = sak::auditApplication(main_window);
 
     const QString output_path = accessibilityAuditOutputPath();
-    if (!output_path.isEmpty() &&
-        !writeAccessibilityAuditFile(output_path, findings, widgets.size())) {
+    if (!output_path.isEmpty() && !writeAccessibilityAuditFile(output_path, findings)) {
         return kAccessibilityOutputWriteFailureExitCode;
     }
     return findings.passed() ? 0 : kAccessibilityMissingNamesExitCode;

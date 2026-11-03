@@ -908,7 +908,7 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     // Keyboard operability (R5-G20-6): the quick-jump labels were mouse-only.
     // StrongFocus makes them Tab-reachable; the eventFilter handles Enter/Space.
     m_month_label->setFocusPolicy(Qt::StrongFocus);
-    m_month_label->setAccessibleName(tr("Select month"));
+    m_month_label->setAccessibleDescription(tr("Select month"));
     m_month_label->installEventFilter(this);
     layout->addWidget(m_month_label);
 
@@ -917,7 +917,7 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     m_year_label->setCursor(Qt::PointingHandCursor);
     m_year_label->setToolTip(tr("Click or press Enter to select year"));
     m_year_label->setFocusPolicy(Qt::StrongFocus);
-    m_year_label->setAccessibleName(tr("Select year"));
+    m_year_label->setAccessibleDescription(tr("Select year"));
     m_year_label->installEventFilter(this);
     layout->addWidget(m_year_label);
 }

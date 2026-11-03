@@ -748,6 +748,8 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     ctl.previewLabel->setStyleSheet(
         sak::ui::borderedPreviewStyle(sak::ui::kColorBorderDefault, sak::ui::kColorBgWhite));
     ctl.previewLabel->setAccessibleName(QStringLiteral("QR code preview"));
+    ctl.previewLabel->setAccessibleDescription(
+        QStringLiteral("How the QR code for this network will look"));
 
     auto* opt_widget = new QWidget(page);
     auto* opt_layout = new QVBoxLayout(opt_widget);
@@ -1158,6 +1160,8 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int network_cou
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
     ui.img_lbl->setFixedSize(kQrDisplaySize, kQrDisplaySize);
     ui.img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    ui.img_lbl->setAccessibleDescription(
+        QStringLiteral("Scan it with a phone to join this network"));
     layout->addWidget(ui.img_lbl, 0, Qt::AlignHCenter);
 
     auto* hint_lbl = new QLabel(
@@ -1534,6 +1538,7 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
     img_lbl->setStyleSheet(
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
     img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    img_lbl->setAccessibleDescription(QStringLiteral("Scan it with a phone to join this network"));
     layout->addWidget(img_lbl);
 
     auto* hint_lbl = new QLabel(

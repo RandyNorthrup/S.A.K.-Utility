@@ -47,7 +47,6 @@ inline QLabel* createHeaderTitleLabel(QWidget* parent, const QString& title) {
     title_font.setPointSize(ui::kFontSizeSection);
     title_font.setBold(true);
     title_label->setFont(title_font);
-    title_label->setAccessibleName(title);
     return title_label;
 }
 
@@ -55,7 +54,6 @@ inline QLabel* createHeaderSubtitleLabel(QWidget* parent, const QString& subtitl
     auto* subtitle_label = new QLabel(subtitle, parent);
     subtitle_label->setWordWrap(true);
     subtitle_label->setStyleSheet(ui::panelSubtitleStyle());
-    subtitle_label->setAccessibleName(subtitle);
     return subtitle_label;
 }
 
@@ -75,6 +73,7 @@ inline PanelHeaderWidgets createPanelHeaderImpl(QWidget* parent,
         iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
         iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
         iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+        iconLabel->setAccessibleDescription(QStringLiteral("The icon for ") + title);
         headerRow->addWidget(iconLabel);
         headerRow->addLayout(titleLayout, 1);
         layout->addLayout(headerRow);
@@ -149,14 +148,13 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
         hw.iconLabel->setPixmap(
             QIcon(iconPath).pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
         hw.iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+        hw.iconLabel->setAccessibleDescription(QStringLiteral("The icon for ") + title);
     }
     if (hw.titleLabel) {
         hw.titleLabel->setText(title);
-        hw.titleLabel->setAccessibleName(title);
     }
     if (hw.subtitleLabel) {
         hw.subtitleLabel->setText(subtitle);
-        hw.subtitleLabel->setAccessibleName(subtitle);
     }
 }
 
@@ -205,19 +203,18 @@ inline QString actionCardDescriptionStyle() {
     logo->setAlignment(Qt::AlignCenter);
     logo->setStyleSheet(ui::kTransparentWidgetStyle);
     logo->setAccessibleName(title + QStringLiteral(" icon"));
+    logo->setAccessibleDescription(QStringLiteral("The icon for ") + title);
     layout->addWidget(logo);
 
     auto* titleLabel = new QLabel(title, card);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setStyleSheet(actionCardTitleStyle());
-    titleLabel->setAccessibleName(title);
     layout->addWidget(titleLabel);
 
     auto* descLabel = new QLabel(description, card);
     descLabel->setWordWrap(true);
     descLabel->setAlignment(Qt::AlignCenter);
     descLabel->setStyleSheet(actionCardDescriptionStyle());
-    descLabel->setAccessibleName(description);
     layout->addWidget(descLabel);
 
     layout->addStretch();

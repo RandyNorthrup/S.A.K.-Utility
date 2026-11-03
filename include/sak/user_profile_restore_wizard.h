@@ -194,6 +194,7 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupAppTree(QVBoxLayout* layout);
     void loadApps();
     void populateTree(const QVector<RestoreAppInfo>& apps);
     /// @brief Populate one category's app items; returns count of selected apps

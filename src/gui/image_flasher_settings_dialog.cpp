@@ -73,6 +73,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
         verification_group);
     verification_layout->addWidget(val_label_widget, 0, 0);
     m_validationModeCombo = new QComboBox(verification_group);
+    m_validationModeCombo->setAccessibleName(tr("Verification mode"));
     m_validationModeCombo->addItem("Full Verification (Slowest, Most Reliable)", "full");
     m_validationModeCombo->addItem("Quick Check (Faster, Less Thorough)", "quick");
     m_validationModeCombo->addItem("No Verification (Fastest, No Checking)", "none");
@@ -101,6 +102,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
         performance_group);
     performance_layout->addWidget(buf_label_widget, 0, 0);
     m_bufferSizeSpin = new QSpinBox(performance_group);
+    m_bufferSizeSpin->setAccessibleName(tr("Buffer size"));
     m_bufferSizeSpin->setRange(kBufferSizeMinimumMb, kBufferSizeMaximumMb);
     m_bufferSizeSpin->setSingleStep(kBufferSizeStepMb);
     m_bufferSizeSpin->setSuffix(" MB");
@@ -112,6 +114,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
         performance_group);
     performance_layout->addWidget(conc_label_widget, 1, 0);
     m_maxConcurrentWritesSpin = new QSpinBox(performance_group);
+    m_maxConcurrentWritesSpin->setAccessibleName(tr("Concurrent writes"));
     m_maxConcurrentWritesSpin->setRange(kConcurrentWritesMinimum, kConcurrentWritesMaximum);
     performance_layout->addWidget(m_maxConcurrentWritesSpin, 1, 1);
 
@@ -157,6 +160,7 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* main_layou
         "internal HDDs",
         safety_group));
     m_largeDriveThresholdSpin = new QSpinBox(safety_group);
+    m_largeDriveThresholdSpin->setAccessibleName(tr("Large drive threshold"));
     m_largeDriveThresholdSpin->setRange(kLargeDriveThresholdMinimumGb,
                                         kLargeDriveThresholdMaximumGb);
     m_largeDriveThresholdSpin->setSingleStep(kLargeDriveThresholdStepGb);

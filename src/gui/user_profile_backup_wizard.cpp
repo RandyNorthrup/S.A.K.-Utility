@@ -236,6 +236,7 @@ void UserProfileBackupSelectUsersPage::setupScanControls(QVBoxLayout* layout) {
 
 void UserProfileBackupSelectUsersPage::setupUserTable(QVBoxLayout* layout) {
     m_userTable = new QTableWidget(0, UserProfileColCount, this);
+    m_userTable->setAccessibleName(tr("Users to back up"));
     m_userTable->setHorizontalHeaderLabels(
         {tr("?"), tr("Username"), tr("Profile Path"), tr("Est. Size")});
     m_userTable->horizontalHeader()->setStretchLastSection(false);

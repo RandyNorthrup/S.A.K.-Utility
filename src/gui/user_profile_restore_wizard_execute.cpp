@@ -99,6 +99,7 @@ void UserProfileRestoreExecutePage::setupUi() {
     auto* log_label = new QLabel(tr("Operation Log:"), this);
     layout->addWidget(log_label);
     m_logText = new QTextEdit(this);
+    m_logText->setAccessibleName(tr("Restore log"));
     m_logText->setReadOnly(true);
     m_logText->setMaximumHeight(sak::kLogAreaMaxH);
     layout->addWidget(m_logText);

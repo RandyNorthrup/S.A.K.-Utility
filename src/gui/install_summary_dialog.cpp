@@ -71,6 +71,7 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
 
     // Per-package table
     m_job_table = new QTableWidget(this);
+    m_job_table->setAccessibleName(tr("Install results"));
     m_job_table->setColumnCount(ColCount);
     m_job_table->setHorizontalHeaderLabels(
         {tr("Package"), tr("Status"), tr("Duration"), tr("Error")});

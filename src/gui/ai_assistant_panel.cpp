@@ -4095,7 +4095,7 @@ void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layo
     m_browserExtensionStatusLabel = new QLabel(pane);
     m_browserExtensionStatusLabel->setWordWrap(true);
     m_browserExtensionStatusLabel->setToolTip(tr("Browser-control extension setup status"));
-    setAccessible(m_browserExtensionStatusLabel, tr("Browser-control extension status"));
+    m_browserExtensionStatusLabel->setAccessibleDescription(tr("Browser-control extension status"));
     layout->addWidget(m_browserExtensionStatusLabel);
 
     refreshBrowserExtensionStatus();
@@ -4401,7 +4401,7 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
 
     m_accessStatusLabel = new QLabel(pane);
     m_accessStatusLabel->setToolTip(tr("Current local execution mode"));
-    setAccessible(m_accessStatusLabel, tr("Access mode status"));
+    m_accessStatusLabel->setAccessibleDescription(tr("Access mode status"));
     layout->addWidget(m_accessStatusLabel);
 }
 
@@ -4425,12 +4425,12 @@ void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QW
     m_connectionStatusIconLabel->setFixedWidth(kConnectionStatusIconWidth);
     m_connectionStatusIconLabel->setAlignment(Qt::AlignCenter);
     m_connectionStatusIconLabel->setToolTip(tr("OpenAI API key status indicator"));
-    setAccessible(m_connectionStatusIconLabel, tr("OpenAI key status indicator"));
+    m_connectionStatusIconLabel->setAccessibleDescription(tr("OpenAI key status indicator"));
     key_status_row->addWidget(m_connectionStatusIconLabel);
 
     m_connectionStatusLabel = new QLabel(pane);
     m_connectionStatusLabel->setToolTip(tr("OpenAI API key status"));
-    setAccessible(m_connectionStatusLabel, tr("AI connection status"));
+    m_connectionStatusLabel->setAccessibleDescription(tr("AI connection status"));
     key_status_row->addWidget(m_connectionStatusLabel, 1);
     layout->addLayout(key_status_row);
     setApiKeyStatus(tr("Not loaded"),
@@ -4498,9 +4498,8 @@ void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* 
     m_agentActivityLabel->setToolTip(tr("Background subagent activity for the current run"));
     m_agentActivityLabel->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextMuted));
-    setAccessible(m_agentActivityLabel,
-                  tr("AI background agents"),
-                  tr("Shows active and completed background subagents"));
+    m_agentActivityLabel->setAccessibleDescription(
+        tr("AI background agents: active and completed background subagents"));
     status_row->addWidget(m_agentActivityLabel);
     updateRunTelemetryLabels();
     layout->addLayout(status_row);
@@ -4671,9 +4670,9 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* action_row, QWidget
     m_contextWindowLabel->setToolTip(tr("Exact context window usage for the selected model"));
     m_contextWindowLabel->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextMuted));
-    setAccessible(m_contextWindowLabel,
-                  tr("AI context window usage"),
-                  tr("Shows exact input tokens used against selected model context window"));
+    m_contextWindowLabel->setAccessibleDescription(
+        tr("AI context window usage: exact input tokens used against the selected model's "
+           "context window"));
     action_row->addWidget(m_contextWindowLabel);
 
     m_sendButton = new QPushButton(tr("Send"), composer);
@@ -12519,7 +12518,6 @@ void AiAssistantPanel::showRunDetails() {
     title->setStyleSheet(sak::ui::fontSizeWeightColorStyle(
         sak::ui::kFontSizeSection, kFontWeightBold, sak::ui::kColorTextHeading));
     title->setToolTip(tr("Current or most recent AI run state"));
-    setAccessible(title, tr("AI run details title"));
     layout->addWidget(title);
 
     auto* body = new QTextBrowser(dialog);

@@ -931,19 +931,19 @@ void FileManagementExplorerPanel::buildStatusRow(QVBoxLayout* root_layout) {
     // Files StatusBar.xaml col0: item count | selected count | selection size.
     m_items_count_label = new QLabel(row);
     m_items_count_label->setObjectName(QStringLiteral("fileExplorerItemsCountLabel"));
-    m_items_count_label->setAccessibleName(tr("Folder item count"));
+    m_items_count_label->setAccessibleDescription(tr("Folder item count"));
     row_layout->addWidget(m_items_count_label, 0);
 
     m_selection_count_label = new QLabel(row);
     m_selection_count_label->setObjectName(QStringLiteral("fileExplorerSelectionCountLabel"));
-    m_selection_count_label->setAccessibleName(tr("Selected item count and size"));
+    m_selection_count_label->setAccessibleDescription(tr("Selected item count and size"));
     m_selection_count_label->setVisible(false);
     row_layout->addWidget(m_selection_count_label, 0);
 
     m_summary_label = new QLabel(tr("No target selected"), row);
     m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
     m_summary_label->setWordWrap(false);
-    m_summary_label->setAccessibleName(tr("Explorer target summary"));
+    m_summary_label->setAccessibleDescription(tr("Explorer target summary"));
     row_layout->addStretch(1);
     row_layout->addWidget(m_summary_label, 0);
 
@@ -5105,7 +5105,6 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
         ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
     size_layout->setSpacing(ui::kSpacingSmall);
     auto* size_label = new QLabel(tr("Item size"), size_row);
-    size_label->setAccessibleName(tr("Explorer item size label"));
     auto* size_slider = new QSlider(Qt::Horizontal, size_row);
     size_slider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
     size_slider->setAccessibleName(tr("Explorer item size"));
@@ -6319,7 +6318,6 @@ void FileManagementExplorerPanel::buildFilterHeader(QVBoxLayout* layout) {
         ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
     row->setSpacing(ui::kSpacingSmall);
     auto* label = new QLabel(tr("Filtering for"), m_filter_header);
-    label->setAccessibleName(tr("Folder filter label"));
     row->addWidget(label);
     m_filter_box = new QLineEdit(m_filter_header);
     m_filter_box->setObjectName(QStringLiteral("fileExplorerFilterBox"));

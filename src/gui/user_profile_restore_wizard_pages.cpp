@@ -150,6 +150,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
 
     // Mapping table
     m_mappingTable = new QTableWidget(0, KMappingColumnCount, this);
+    m_mappingTable->setAccessibleName(tr("User mapping"));
     m_mappingTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("Source User"), tr("->"), tr("Destination User"), tr("Merge Mode")});
     m_mappingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -223,6 +224,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
 
         // Destination user combo
         auto* dest_combo = new QComboBox();
+        dest_combo->setAccessibleName(tr("Destination user"));
         dest_combo->addItem(tr("(New Folder, No Account)"), QString());
         for (const auto& dest_user : m_destinationUsers) {
             dest_combo->addItem(dest_user.username, dest_user.username);
@@ -231,6 +233,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
 
         // Merge mode combo
         auto* mode_combo = new QComboBox();
+        mode_combo->setAccessibleName(tr("Merge mode"));
         mode_combo->addItem(tr("Replace Destination"),
                             static_cast<int>(MergeMode::ReplaceDestination));
         mode_combo->addItem(tr("Merge Into Destination"),
@@ -443,6 +446,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
 
     // Folder table
     m_folderTable = new QTableWidget(0, KFolderColumnCount, this);
+    m_folderTable->setAccessibleName(tr("Folders"));
     m_folderTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("User"), tr("Folder"), tr("Size"), tr("Files")});
     m_folderTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -656,6 +660,7 @@ void UserProfileRestoreAppDataPage::setupUi() {
     layout->addWidget(m_statusLabel);
 
     m_appDataTree = new QTreeWidget(this);
+    m_appDataTree->setAccessibleName(tr("Application data"));
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
@@ -960,6 +965,7 @@ void UserProfileRestoreNetworksPage::setupUi() {
     layout->addWidget(m_statusLabel);
 
     m_networkTree = new QTreeWidget(this);
+    m_networkTree->setAccessibleName(tr("Known networks"));
     m_networkTree->setHeaderLabels({tr("Network Name (SSID)"), tr("Security Type")});
     m_networkTree->setAlternatingRowColors(true);
     m_networkTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -1184,6 +1190,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     layout->addWidget(m_statusLabel);
 
     m_ethernetTable = new QTableWidget(0, KEthernetColumnCount, this);
+    m_ethernetTable->setAccessibleName(tr("Ethernet settings"));
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),
@@ -1410,6 +1417,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
 
     perm_layout->addWidget(new QLabel(tr("Permission Mode:"), perm_group), 0, 0);
     m_permissionModeCombo = new QComboBox(perm_group);
+    m_permissionModeCombo->setAccessibleName(tr("Permission handling"));
     m_permissionModeCombo->addItem(tr("Strip All ACLs (Safest)"),
                                    static_cast<int>(PermissionMode::StripAll));
     m_permissionModeCombo->addItem(tr("Assign to Destination User"),
@@ -1428,6 +1436,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
 
     conflict_layout->addWidget(new QLabel(tr("Conflict Resolution:"), conflict_group), 0, 0);
     m_conflictResolutionCombo = new QComboBox(conflict_group);
+    m_conflictResolutionCombo->setAccessibleName(tr("Conflict resolution"));
     m_conflictResolutionCombo->addItem(tr("Skip Duplicate"),
                                        static_cast<int>(ConflictResolution::SkipDuplicate));
     m_conflictResolutionCombo->addItem(tr("Rename with Suffix"),
@@ -1714,6 +1723,23 @@ UserProfileRestoreAppRestorePage::UserProfileRestoreAppRestorePage(QWidget* pare
     m_appEmptyState = new sak::ui::ViewEmptyState(m_appTree, tr("No apps found in the backup"));
 }
 
+void UserProfileRestoreAppRestorePage::setupAppTree(QVBoxLayout* layout) {
+    m_appTree = new QTreeWidget(this);
+    m_appTree->setAccessibleName(tr("Applications"));
+    m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Chocolatey Package")});
+    m_appTree->setAlternatingRowColors(true);
+    m_appTree->setRootIsDecorated(true);
+    m_appTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_appTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_appTree->header()->setSectionResizeMode(kTreePackageColumn, QHeaderView::ResizeToContents);
+    m_appTree->setEnabled(false);
+    connect(m_appTree,
+            &QTreeWidget::itemChanged,
+            this,
+            &UserProfileRestoreAppRestorePage::onItemChanged);
+    layout->addWidget(m_appTree);
+}
+
 void UserProfileRestoreAppRestorePage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
@@ -1729,19 +1755,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     m_statusLabel = new QLabel(this);
     layout->addWidget(m_statusLabel);
 
-    m_appTree = new QTreeWidget(this);
-    m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Chocolatey Package")});
-    m_appTree->setAlternatingRowColors(true);
-    m_appTree->setRootIsDecorated(true);
-    m_appTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_appTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_appTree->header()->setSectionResizeMode(kTreePackageColumn, QHeaderView::ResizeToContents);
-    m_appTree->setEnabled(false);
-    connect(m_appTree,
-            &QTreeWidget::itemChanged,
-            this,
-            &UserProfileRestoreAppRestorePage::onItemChanged);
-    layout->addWidget(m_appTree);
+    setupAppTree(layout);
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);

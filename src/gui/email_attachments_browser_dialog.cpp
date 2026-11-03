@@ -138,6 +138,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
     toolbar->setSpacing(ui::kSpacingMedium);
 
     m_search_edit = new QLineEdit(this);
+    m_search_edit->setAccessibleName(tr("Search attachments"));
     m_search_edit->setPlaceholderText(
         tr("\xF0\x9F\x94\x8D Search attachments by filename or email..."));
     m_search_edit->setClearButtonEnabled(true);
@@ -154,6 +155,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
         m_search_timer, &QTimer::timeout, this, &EmailAttachmentsBrowserDialog::onSearchTimerFired);
 
     m_type_filter = new QComboBox(this);
+    m_type_filter->setAccessibleName(tr("Attachment type"));
     m_type_filter->addItems(
         {kFilterAll, kFilterImages, kFilterDocuments, kFilterArchives, kFilterAudio, kFilterOther});
     m_type_filter->setMinimumWidth(email::kAttachmentTypeFilterMinWidth);
@@ -168,6 +170,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
 
 QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table = new QTableWidget(this);
+    m_table->setAccessibleName(tr("Attachments"));
     m_table->setColumnCount(ColCount);
     m_table->setHorizontalHeaderLabels({tr("Select"),
                                         tr("Filename"),
@@ -229,7 +232,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     m_status_label = new QLabel(this);
     m_status_label->setObjectName(QStringLiteral("emailAttachmentBrowserStatus"));
     m_status_label->setTextFormat(Qt::PlainText);
-    m_status_label->setAccessibleName(tr("Attachment browser status"));
+    m_status_label->setAccessibleDescription(tr("Attachment browser status"));
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     buttons->addWidget(m_status_label, 1);
 

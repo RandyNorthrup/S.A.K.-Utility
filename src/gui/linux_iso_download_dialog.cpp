@@ -81,6 +81,7 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* main_layout) {
     auto* filter_row = new QHBoxLayout();
     filter_row->addWidget(new QLabel("Category:", selection_group));
     m_categoryCombo = new QComboBox(selection_group);
+    m_categoryCombo->setAccessibleName(tr("Category"));
     m_categoryCombo->addItem("All Distributions", -1);
 
     auto category_map = LinuxDistroCatalog::categoryNames();
@@ -95,6 +96,7 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* main_layout) {
 
     // Left: List
     m_distroListWidget = new QListWidget(selection_group);
+    m_distroListWidget->setAccessibleName(tr("Distributions"));
     m_distroListWidget->setMinimumWidth(kDistroListMinWidth);
     m_distroListWidget->setMinimumHeight(kDistroListMinHeight);
     content_layout->addWidget(m_distroListWidget, kDistroListStretch);
@@ -138,6 +140,7 @@ void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* main_layout
     auto* save_layout = new QHBoxLayout(save_group);
 
     m_saveLocationEdit = new QLineEdit(save_group);
+    m_saveLocationEdit->setAccessibleName(tr("Save location"));
     m_saveLocationEdit->setPlaceholderText("Select a distribution first...");
     save_layout->addWidget(m_saveLocationEdit);
 

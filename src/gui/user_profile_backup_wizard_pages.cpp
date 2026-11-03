@@ -130,6 +130,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
 
     // User table (2 columns: username, folders selected)
     m_userTable = new QTableWidget(0, kUserFolderColumnCount, this);
+    m_userTable->setAccessibleName(tr("Folders for each user"));
     m_userTable->setHorizontalHeaderLabels({tr("Username"), tr("Folders Selected")});
     m_userTable->horizontalHeader()->setStretchLastSection(true);
     m_userTable->horizontalHeader()->setSectionResizeMode(kUserFolderColumnName,
@@ -329,6 +330,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
     grid_layout->addWidget(m_enableFileSizeLimitCheck, row, 0);
 
     m_maxFileSizeSpinBox = new QSpinBox(this);
+    m_maxFileSizeSpinBox->setAccessibleName(tr("Maximum file size"));
     m_maxFileSizeSpinBox->setRange(kMaxFileSizeMinimumMb, kMaxFileSizeMaximumMb);
     m_maxFileSizeSpinBox->setSuffix(tr(" MB"));
     m_maxFileSizeSpinBox->setValue(kDefaultMaxSingleFileMb);
@@ -348,6 +350,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
     grid_layout->addWidget(m_enableFolderSizeLimitCheck, row, 0);
 
     m_maxFolderSizeSpinBox = new QSpinBox(this);
+    m_maxFolderSizeSpinBox->setAccessibleName(tr("Maximum folder size"));
     m_maxFolderSizeSpinBox->setRange(kMaxFolderSizeMinimumGb, kMaxFolderSizeMaximumGb);
     m_maxFolderSizeSpinBox->setSuffix(tr(" GB"));
     m_maxFolderSizeSpinBox->setValue(kDefaultMaxFolderSizeGb);
@@ -518,6 +521,7 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     content += "</ul>";
 
     auto* text_browser = new QTextEdit(dialog);
+    text_browser->setAccessibleName(tr("Details"));
     text_browser->setReadOnly(true);
     text_browser->setHtml(content);
     text_browser->setStyleSheet(
@@ -583,6 +587,7 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     auto* dest_layout = new QHBoxLayout();
     dest_layout->addWidget(new QLabel(tr("Backup destination:"), this));
     m_destinationEdit = new QLineEdit(this);
+    m_destinationEdit->setAccessibleName(tr("Backup destination"));
     m_destinationEdit->setPlaceholderText(tr("Select backup folder..."));
     connect(m_destinationEdit,
             &QLineEdit::textChanged,
@@ -617,6 +622,7 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     auto* level_layout = new QHBoxLayout();
     level_layout->addWidget(new QLabel(tr("Compression level:"), this));
     m_compressionLevelCombo = new QComboBox(this);
+    m_compressionLevelCombo->setAccessibleName(tr("Compression level"));
     m_compressionLevelCombo->addItem(tr("Fastest"), kCompressionLevelFastest);
     m_compressionLevelCombo->addItem(tr("Balanced"), sak::kBackupDefaultCompressionLevel);
     m_compressionLevelCombo->addItem(tr("Smallest"), kCompressionLevelSmallest);
@@ -631,6 +637,7 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     layout->addWidget(m_encryptCheck);
 
     m_passwordEdit = new QLineEdit(this);
+    m_passwordEdit->setAccessibleName(tr("Password"));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setPlaceholderText(
         tr("Password (at least %1 characters)").arg(kMinBackupPasswordLength));
@@ -638,6 +645,7 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     layout->addWidget(m_passwordEdit);
 
     m_passwordConfirmEdit = new QLineEdit(this);
+    m_passwordConfirmEdit->setAccessibleName(tr("Confirm password"));
     m_passwordConfirmEdit->setEchoMode(QLineEdit::Password);
     m_passwordConfirmEdit->setPlaceholderText(tr("Confirm password"));
     m_passwordConfirmEdit->setEnabled(false);
@@ -722,6 +730,7 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
     auto* perm_layout = new QHBoxLayout();
     perm_layout->addWidget(new QLabel(tr("Permission handling:"), this));
     m_permissionModeCombo = new QComboBox(this);
+    m_permissionModeCombo->setAccessibleName(tr("Permission handling"));
     m_permissionModeCombo->addItem(tr("Strip All (Recommended)"),
                                    static_cast<int>(PermissionMode::StripAll));
     m_permissionModeCombo->addItem(tr("Preserve Original"),
@@ -960,6 +969,7 @@ void UserProfileBackupInstalledAppsPage::setupScanControls(QVBoxLayout* layout) 
 
 void UserProfileBackupInstalledAppsPage::setupAppsTree(QVBoxLayout* layout) {
     m_appTree = new QTreeWidget(this);
+    m_appTree->setAccessibleName(tr("Installed applications"));
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Publisher")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
@@ -1447,6 +1457,7 @@ void UserProfileBackupAppDataPage::setupUi() {
     layout->addWidget(m_scanProgress);
 
     m_appDataTree = new QTreeWidget(this);
+    m_appDataTree->setAccessibleName(tr("Application data"));
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
@@ -1764,6 +1775,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     layout->addWidget(m_scanProgress);
 
     m_networkTree = new QTreeWidget(this);
+    m_networkTree->setAccessibleName(tr("Known networks"));
     m_networkTree->setHeaderLabels({tr("Network Name (SSID)"), tr("Security Type")});
     m_networkTree->setAlternatingRowColors(true);
     m_networkTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -1985,6 +1997,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     layout->addWidget(m_scanProgress);
 
     m_ethernetTable = new QTableWidget(0, kEthernetColumnCount, this);
+    m_ethernetTable->setAccessibleName(tr("Ethernet settings"));
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),

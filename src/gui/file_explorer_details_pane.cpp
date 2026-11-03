@@ -103,7 +103,7 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     m_preview_caption->setTextFormat(Qt::PlainText);
     m_preview_caption->setWordWrap(true);
     m_preview_caption->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_preview_caption->setAccessibleName(tr("Explorer preview caption"));
+    m_preview_caption->setAccessibleDescription(tr("Explorer preview caption"));
     layout->addWidget(m_preview_caption);
 
     m_preview_stack = new QStackedWidget(container);
@@ -117,6 +117,7 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     m_preview_image->setObjectName(QStringLiteral("fileExplorerPreviewImage"));
     m_preview_image->setAlignment(Qt::AlignCenter);
     m_preview_image->setAccessibleName(tr("Explorer image preview"));
+    m_preview_image->setAccessibleDescription(tr("The picture selected in the file list"));
     scroll->setWidget(m_preview_image);
 
     m_preview_stack->addWidget(m_preview_text);

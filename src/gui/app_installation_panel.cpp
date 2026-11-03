@@ -317,7 +317,7 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
 
 void AppInstallationPanel::setupUi_queueProgress(QVBoxLayout* queue_layout) {
     m_progressLabel = new QLabel(this);
-    m_progressLabel->setAccessibleName(QStringLiteral("Installation Progress Status"));
+    m_progressLabel->setAccessibleDescription(QStringLiteral("Installation Progress Status"));
     m_progressLabel->setVisible(false);
     queue_layout->addWidget(m_progressLabel);
 

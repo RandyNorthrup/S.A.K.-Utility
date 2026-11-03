@@ -147,6 +147,7 @@ FileExplorerPropertiesDialog::FileExplorerPropertiesDialog(FileManagementTarget 
 
     auto* layout = new QVBoxLayout(this);
     m_tabs = new QTabWidget(this);
+    m_tabs->setAccessibleName(tr("Properties"));
     m_tabs->setObjectName(QStringLiteral("fileExplorerPropertiesTabs"));
     layout->addWidget(m_tabs, 1);
     buildGeneralPage();
@@ -214,6 +215,7 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
     // timestamps; file system and the on-disk identifier are the S.A.K.
     // raw-evidence additions (size-on-disk and attribute toggles are backlog).
     m_name_edit = new QLineEdit(single ? first.name : tr("%1 items").arg(m_entries.size()), page);
+    m_name_edit->setAccessibleName(tr("Name"));
     m_name_edit->setObjectName(QStringLiteral("fileExplorerPropertiesName"));
     m_name_edit->setReadOnly(!single);
     form->addRow(tr("Name:"), m_name_edit);

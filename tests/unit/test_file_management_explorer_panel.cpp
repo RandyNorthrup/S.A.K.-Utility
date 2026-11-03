@@ -844,7 +844,9 @@ void verifyShellAccessibilityAndIcons(sak::FileManagementExplorerPanel& panel) {
     auto* rename = child<QPushButton>(&panel, "fileExplorerRenameButton");
     auto* deleteButton = child<QPushButton>(&panel, "fileExplorerDeleteButton");
     auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
-    QVERIFY(!summary->accessibleName().isEmpty());
+    // It reads its own text to a screen reader, and says what it is in its description.
+    QVERIFY(summary->accessibleName().isEmpty());
+    QVERIFY(!summary->accessibleDescription().isEmpty());
     QVERIFY(!sidebarToggle->accessibleName().isEmpty());
     QVERIFY(!detailsToggle->toolTip().isEmpty());
     QVERIFY(!search->toolTip().isEmpty());

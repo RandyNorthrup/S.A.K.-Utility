@@ -165,6 +165,7 @@ QString EmailFileScannerDialog::selectedFilePath() const {
 
 void EmailFileScannerDialog::setupResultsTable(QVBoxLayout* layout) {
     m_results_table = new QTableWidget(this);
+    m_results_table->setAccessibleName(tr("Email files found"));
     m_results_table->setColumnCount(FileScanColCount);
     m_results_table->setHorizontalHeaderLabels({tr("File Path"), tr("Type"), tr("Size")});
     m_results_table->setSelectionBehavior(QAbstractItemView::SelectRows);

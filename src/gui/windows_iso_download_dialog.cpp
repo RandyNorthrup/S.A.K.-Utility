@@ -87,12 +87,14 @@ void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* main_layout) {
 
     config_layout->addWidget(new QLabel("Architecture:", config_group), 0, 0);
     m_archCombo = new QComboBox(config_group);
+    m_archCombo->setAccessibleName(tr("Architecture"));
     m_archCombo->addItem("64-bit (x64)", "amd64");
     m_archCombo->addItem("ARM64", "arm64");
     config_layout->addWidget(m_archCombo, 0, 1);
 
     config_layout->addWidget(new QLabel("Channel:", config_group), 1, 0);
     m_channelCombo = new QComboBox(config_group);
+    m_channelCombo->setAccessibleName(tr("Release channel"));
     for (auto ch : UupDumpApi::allChannels()) {
         m_channelCombo->addItem(UupDumpApi::channelToDisplayName(ch), static_cast<int>(ch));
     }
@@ -114,6 +116,7 @@ void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* main_layout) 
     auto* build_layout = new QVBoxLayout(build_group);
 
     m_buildListWidget = new QListWidget(build_group);
+    m_buildListWidget->setAccessibleName(tr("Builds"));
     m_buildListWidget->setMaximumHeight(sak::kListAreaMaxH);
     m_buildListWidget->setEnabled(false);
     build_layout->addWidget(m_buildListWidget);
@@ -133,11 +136,13 @@ void WindowsISODownloadDialog::setupUi_languageEdition(QVBoxLayout* main_layout)
 
     selection_layout->addWidget(new QLabel("Language:", selection_group), 0, 0);
     m_languageCombo = new QComboBox(selection_group);
+    m_languageCombo->setAccessibleName(tr("Language"));
     m_languageCombo->setEnabled(false);
     selection_layout->addWidget(m_languageCombo, 0, 1);
 
     selection_layout->addWidget(new QLabel("Edition:", selection_group), 1, 0);
     m_editionCombo = new QComboBox(selection_group);
+    m_editionCombo->setAccessibleName(tr("Edition"));
     m_editionCombo->setEnabled(false);
     selection_layout->addWidget(m_editionCombo, 1, 1);
 
@@ -149,6 +154,7 @@ void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* main_layout) {
     auto* save_layout = new QHBoxLayout(save_group);
 
     m_saveLocationEdit = new QLineEdit(getDefaultSavePath(), save_group);
+    m_saveLocationEdit->setAccessibleName(tr("Save location"));
     save_layout->addWidget(m_saveLocationEdit);
 
     m_browseSaveButton = new QPushButton("Browse...", save_group);

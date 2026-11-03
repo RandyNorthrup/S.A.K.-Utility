@@ -1263,6 +1263,7 @@ void MainWindow::createAboutPanel() {
     auto* icon_label = new QLabel(about_panel);
     icon_label->setFixedSize(sak::kIconSize, sak::kIconSize);
     icon_label->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
+    icon_label->setAccessibleDescription(QStringLiteral("The S.A.K. Utility logo"));
     loadAboutPanelIcon(icon_label);
     header_layout->addWidget(icon_label);
 

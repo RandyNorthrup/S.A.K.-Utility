@@ -751,6 +751,8 @@ set(SAK_THREADING_SOURCES
 set(SAK_GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/running_work_exit_guard.cpp
+    src/gui/accessibility_audit.cpp
+    include/sak/accessibility_audit.h
     src/gui/view_empty_state.cpp
     include/sak/view_empty_state.h
     src/gui/file_explorer_properties_dialog.cpp

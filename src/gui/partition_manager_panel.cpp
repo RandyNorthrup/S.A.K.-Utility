@@ -3200,7 +3200,7 @@ public:
 
         auto* target = new QLabel(target_identity, this);
         target->setWordWrap(true);
-        target->setAccessibleName(QStringLiteral("Selected partition target"));
+        target->setAccessibleDescription(QStringLiteral("Selected partition target"));
         root->addWidget(target);
 
         m_form = new QFormLayout();
@@ -3214,12 +3214,12 @@ public:
 
         m_preview = new QLabel(this);
         m_preview->setWordWrap(true);
-        m_preview->setAccessibleName(QStringLiteral("Operation preview"));
+        m_preview->setAccessibleDescription(QStringLiteral("Operation preview"));
         root->addWidget(m_preview);
 
         auto* warning = new QLabel(warning_text, this);
         warning->setWordWrap(true);
-        warning->setAccessibleName(QStringLiteral("Operation warning"));
+        warning->setAccessibleDescription(QStringLiteral("Operation warning"));
         root->addWidget(warning);
 
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -4528,7 +4528,7 @@ BackupRestoreWidgets addBackupRestoreControls(PartitionOperationDialog& dialog,
     nameConfirmationBox(widgets.confirmation, confirmation_accessible_name);
     widgets.status = new QLabel(&dialog);
     widgets.status->setWordWrap(true);
-    widgets.status->setAccessibleName(QObject::tr("Backup restore status"));
+    widgets.status->setAccessibleDescription(QObject::tr("Backup restore status"));
     dialog.formLayout()->addRow(QObject::tr("Backup directory:"), backup_row);
     dialog.formLayout()->addRow(QObject::tr("Status:"), widgets.status);
     dialog.formLayout()->addRow(QString(), widgets.confirmation);
@@ -4794,7 +4794,7 @@ AllocateFreeSpaceWidgets addAllocateFreeSpaceControls(PartitionOperationDialog& 
                         QObject::tr("Confirm allocate-free-space backup and restore"));
     widgets.donor_status = new QLabel(&dialog);
     widgets.donor_status->setWordWrap(true);
-    widgets.donor_status->setAccessibleName(QObject::tr("Allocate free space donor status"));
+    widgets.donor_status->setAccessibleDescription(QObject::tr("Allocate free space donor status"));
 
     dialog.formLayout()->addRow(QObject::tr("Amount:"), widgets.amount_mb);
     dialog.formLayout()->addRow(QObject::tr("Amount handle:"), widgets.amount_handle);
@@ -5526,7 +5526,7 @@ void addResizeAdjacentFreeControl(PartitionOperationDialog& dialog,
                                   ResizePartitionWidgets* widgets,
                                   uint64_t adjacent_free_bytes) {
     widgets->adjacent_free_label = new QLabel(formatPartitionBytes(adjacent_free_bytes), &dialog);
-    widgets->adjacent_free_label->setAccessibleName(
+    widgets->adjacent_free_label->setAccessibleDescription(
         QObject::tr("Contiguous free space after selected partition"));
     dialog.formLayout()->addRow(QObject::tr("Adjacent free after:"), widgets->adjacent_free_label);
 }
@@ -5542,7 +5542,7 @@ void addResizeExtAndStatusControls(PartitionOperationDialog& dialog,
     dialog.formLayout()->addRow(QString(), widgets->non_native_confirmation);
     widgets->mode_status = new QLabel(&dialog);
     widgets->mode_status->setWordWrap(true);
-    widgets->mode_status->setAccessibleName(QObject::tr("Move resize support status"));
+    widgets->mode_status->setAccessibleDescription(QObject::tr("Move resize support status"));
     dialog.formLayout()->addRow(QObject::tr("Support:"), widgets->mode_status);
 }
 
@@ -6192,7 +6192,7 @@ std::optional<NonNativeBrowseRequest> showNonNativeBrowseRequestDialog(
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new QFormLayout();
     auto* target = new QLineEdit(state.target_path, &dialog);
-    target->setAccessibleName(QObject::tr("Read-only target path"));
+    target->setAccessibleDescription(QObject::tr("Read-only target path"));
     auto* path = new QLineEdit(QStringLiteral("/"), &dialog);
     path->setAccessibleName(QObject::tr("Non-Windows directory path"));
     form->addRow(QObject::tr("Target:"), target);
@@ -6359,7 +6359,7 @@ void showExtDirectoryListingDialog(QWidget* parent,
         new QLabel(QObject::tr("Target: %1\nPath: %2")
                        .arg(target_path, ext_path.isEmpty() ? QStringLiteral("/") : ext_path),
                    &dialog);
-    summary->setAccessibleName(QObject::tr("ext browser summary"));
+    summary->setAccessibleDescription(QObject::tr("ext browser summary"));
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     layout->addWidget(summary);
 
@@ -6620,7 +6620,7 @@ void addHfsBrowserSummary(QVBoxLayout* layout,
         new QLabel(QObject::tr("Target: %1\nPath: %2")
                        .arg(target_path, hfs_path.isEmpty() ? QStringLiteral("/") : hfs_path),
                    dialog);
-    summary->setAccessibleName(QObject::tr("HFS+ browser summary"));
+    summary->setAccessibleDescription(QObject::tr("HFS+ browser summary"));
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     layout->addWidget(summary);
 }
@@ -6853,7 +6853,7 @@ void addApfsBrowserSummary(QVBoxLayout* layout,
             QObject::tr("\nWarnings: %1").arg(result.warnings.join(QStringLiteral("; "))));
     }
     auto* summary = new QLabel(summary_text, dialog);
-    summary->setAccessibleName(QObject::tr("APFS browser summary"));
+    summary->setAccessibleDescription(QObject::tr("APFS browser summary"));
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     layout->addWidget(summary);
 }
@@ -7603,7 +7603,7 @@ void showSpaceAnalyzerDialog(QWidget* parent, const QString& root_path, const QS
         QObject::tr("Scanning %1...")
             .arg(QDir::toNativeSeparators(root_path).left(kSpaceAnalyzerPathPreviewChars)),
         &dialog);
-    status->setAccessibleName(QObject::tr("Space analyzer status"));
+    status->setAccessibleDescription(QObject::tr("Space analyzer status"));
     status->setWordWrap(true);
     layout->addWidget(status);
 
@@ -7656,7 +7656,7 @@ FileRecoveryScanResult runFileRecoveryScanWithProgress(QWidget* parent,
             .arg(QDir::toNativeSeparators(source_path).left(kSpaceAnalyzerPathPreviewChars)),
         &dialog);
     status->setWordWrap(true);
-    status->setAccessibleName(QObject::tr("Data recovery scan status"));
+    status->setAccessibleDescription(QObject::tr("Data recovery scan status"));
     layout->addWidget(status);
 
     auto* progress = new QProgressBar(&dialog);
@@ -7701,7 +7701,7 @@ FileRecoveryRestoreResult runFileRecoveryRestoreWithProgress(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     auto* status = new QLabel(QObject::tr("Restoring recovered files..."), &dialog);
     status->setWordWrap(true);
-    status->setAccessibleName(QObject::tr("Data recovery restore status"));
+    status->setAccessibleDescription(QObject::tr("Data recovery restore status"));
     layout->addWidget(status);
 
     auto* progress = new QProgressBar(&dialog);
@@ -7771,7 +7771,7 @@ bool showFileRecoveryReviewDialog(QWidget* parent,
             .arg(scan.candidates.size())
             .arg(QDir::toNativeSeparators(source_path), QDir::toNativeSeparators(destination_path)),
         &dialog);
-    summary->setAccessibleName(QObject::tr("Data recovery summary"));
+    summary->setAccessibleDescription(QObject::tr("Data recovery summary"));
     summary->setWordWrap(true);
     layout->addWidget(summary);
     auto* table = createFileRecoveryTable(&dialog);
@@ -7972,7 +7972,7 @@ void addSourcePage(QWizard* wizard, const QString& title, const QString& source_
     auto* layout = new QVBoxLayout(page);
     auto* source = new QLabel(source_text, page);
     source->setWordWrap(true);
-    source->setAccessibleName(QStringLiteral("Wizard source target"));
+    source->setAccessibleDescription(QStringLiteral("Wizard source target"));
     layout->addWidget(source);
     wizard->addPage(page);
 }
@@ -8080,7 +8080,7 @@ void addDiskReviewPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
     review_layout->addWidget(widgets->layout_preview);
     widgets->review = new QLabel(review_page);
     widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleName(QStringLiteral("Wizard review"));
+    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
     review_layout->addWidget(widgets->review);
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target disk will be overwritten."), review_page);
@@ -8249,7 +8249,7 @@ void addPartitionCopyReviewPage(QWizard* wizard, PartitionCopyWizardWidgets* wid
     auto* review_layout = new QVBoxLayout(review_page);
     widgets->review = new QLabel(review_page);
     widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleName(QStringLiteral("Wizard review"));
+    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
     review_layout->addWidget(widgets->review);
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target path or region will be overwritten."),
@@ -8450,7 +8450,7 @@ void addRecoveryReviewPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     auto* review_layout = new QVBoxLayout(review_page);
     widgets->review = new QLabel(review_page);
     widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleName(QStringLiteral("Wizard review"));
+    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
     review_layout->addWidget(widgets->review);
     wizard->addPage(review_page);
 }
@@ -8745,7 +8745,6 @@ QWidget* PartitionManagerPanel::createActionsPane() {
 
 void PartitionManagerPanel::addActionsPaneTitle(QVBoxLayout* layout, QWidget* pane) {
     auto* title = new QLabel(tr("Actions and Wizards"), pane);
-    title->setAccessibleName(tr("Partition actions and wizards"));
     auto title_font = title->font();
     title_font.setBold(true);
     title->setFont(title_font);
@@ -8802,7 +8801,7 @@ void PartitionManagerPanel::addActionSpecSection(QVBoxLayout* layout,
 
 void PartitionManagerPanel::addPendingOperationsSection(QVBoxLayout* layout, QWidget* pane) {
     m_pending_label = new QLabel(tr("0 Operations Pending"), pane);
-    m_pending_label->setAccessibleName(tr("Pending operation count"));
+    m_pending_label->setAccessibleDescription(tr("Pending operation count"));
     layout->addWidget(m_pending_label);
     m_queue_list = new QListWidget(pane);
     m_queue_list->setMinimumHeight(kPendingQueueMinHeight);
@@ -9959,14 +9958,14 @@ std::optional<PartitionQueueReviewToken> PartitionManagerPanel::showApplyReviewD
     auto* review = new QTextEdit(&dialog);
     review->setReadOnly(true);
     review->setPlainText(applyReviewText(operations, m_controller->inventory()));
-    review->setAccessibleName(tr("Pending partition operation review"));
+    review->setAccessibleDescription(tr("Pending partition operation review"));
     layout->addWidget(review);
 
     auto* warning = new QLabel(tr("Applying can permanently change disk layout. Confirm backup and "
                                   "stable power before continuing."),
                                &dialog);
     warning->setWordWrap(true);
-    warning->setAccessibleName(tr("Apply partition operations warning"));
+    warning->setAccessibleDescription(tr("Apply partition operations warning"));
     layout->addWidget(warning);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Cancel,

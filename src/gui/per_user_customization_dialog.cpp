@@ -112,6 +112,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* main_layout
 
     // Folder tree
     m_folderTree = new QTreeWidget();
+    m_folderTree->setAccessibleName(tr("Folders"));
     m_folderTree->setColumnCount(FolderColCount);
     m_folderTree->setHeaderLabels({"Folder", "Size", "Files"});
     m_folderTree->setColumnWidth(FolderColName, kFolderNameColumnWidth);

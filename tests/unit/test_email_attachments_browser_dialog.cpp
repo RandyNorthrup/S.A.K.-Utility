@@ -176,7 +176,8 @@ void EmailAttachmentsBrowserDialogTests::genericErrorIsVisibleWithoutMutatingSta
     QCOMPARE(dialog.m_status_label->text(),
              QStringLiteral("Attachment browser error: generic failure"));
     QCOMPARE(dialog.m_status_label->textFormat(), Qt::PlainText);
-    QCOMPARE(dialog.m_status_label->accessibleName(), QStringLiteral("Attachment browser status"));
+    QCOMPARE(dialog.m_status_label->accessibleDescription(),
+             QStringLiteral("Attachment browser status"));
 }
 
 void EmailAttachmentsBrowserDialogTests::specificAndGenericSaveErrorsCountOnce() {

@@ -7,6 +7,7 @@
 
 #include "sak/view_empty_state.h"
 
+#include <QLabel>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QtTest/QtTest>
@@ -85,11 +86,12 @@ void ViewEmptyStateTests::emptyTextIsShownAndUpdatable() {
     QCOMPARE(empty.overlayText(), QStringLiteral("No packages found"));
     QVERIFY(empty.isOverlayVisible());
 
-    // The message is announced to assistive technology, and the announcement
-    // tracks setEmptyText() instead of going stale on the constructor's text.
-    auto* overlay = table.viewport()->findChild<QWidget*>();
+    // A screen reader reads the label's own text, so what it hears tracks setEmptyText(). A name
+    // set on the label would stand in place of that text.
+    auto* overlay = table.viewport()->findChild<QLabel*>();
     QVERIFY(overlay != nullptr);
-    QCOMPARE(overlay->accessibleName(), QStringLiteral("No packages found"));
+    QCOMPARE(overlay->text(), QStringLiteral("No packages found"));
+    QVERIFY(overlay->accessibleName().isEmpty());
 }
 
 void ViewEmptyStateTests::worksOnListWidget() {

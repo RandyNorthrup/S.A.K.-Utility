@@ -556,7 +556,7 @@ QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {
     m_activityLabel->setToolTip(QObject::tr("Current AI activity"));
     m_activityLabel->setStyleSheet(sak::ui::transparentTextStyle(
         kTranscriptBodyFontPointSize, sak::ui::kFontWeightBold, sak::ui::kStatusColorRunning));
-    setAccessible(m_activityLabel, QObject::tr("AI activity indicator"));
+    m_activityLabel->setAccessibleDescription(QObject::tr("AI activity indicator"));
     bubble_layout->addWidget(m_activityLabel);
 
     row_layout->addWidget(bubble);

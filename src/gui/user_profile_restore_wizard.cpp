@@ -77,6 +77,7 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
     auto* backup_label = new QLabel(tr("Backup Location:"), select_group);
     m_backupPathEdit = new QLineEdit(select_group);
+    m_backupPathEdit->setAccessibleName(tr("Backup location"));
     m_backupPathEdit->setPlaceholderText(tr("Select backup directory or manifest.json file..."));
 
     m_browseButton = new QPushButton(tr("Browse..."), select_group);

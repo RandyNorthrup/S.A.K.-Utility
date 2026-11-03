@@ -1516,6 +1516,31 @@ set_tests_properties(test_window_input PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_window_input")
 
+# test_accessibility_audit - what the audit holds a widget to, and that the app and its dialogs pass
+add_executable(test_accessibility_audit
+    unit/test_accessibility_audit.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_accessibility_audit PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_accessibility_audit PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_accessibility_audit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_accessibility_audit COMMAND test_accessibility_audit
+         -o "${TEST_OUTPUT_DIR}/test_accessibility_audit.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_accessibility_audit PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+message(STATUS "Added unit test: test_accessibility_audit")
+
 # test_main_window_help - where the Help tab's links go and what the About tab claims
 add_executable(test_main_window_help
     unit/test_main_window_help.cpp

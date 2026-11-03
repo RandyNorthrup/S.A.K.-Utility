@@ -100,8 +100,6 @@ void ViewEmptyState::refresh() {
     const bool show = m_loading || rows == 0;
 
     m_label->setText(m_loading ? m_loading_text : m_empty_text);
-    // Announce the empty/loading message to assistive technology.
-    m_label->setAccessibleName(m_label->text());
     m_label->setVisible(show);
     if (show) {
         reposition();

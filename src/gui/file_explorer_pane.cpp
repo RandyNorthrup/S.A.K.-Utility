@@ -34,7 +34,7 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
 void FileExplorerPane::buildStateLabel(QVBoxLayout* layout) {
     m_state_label = new QLabel(this);
     m_state_label->setObjectName(QStringLiteral("fileExplorerStateLabel"));
-    m_state_label->setAccessibleName(tr("Explorer loading, empty, and error state"));
+    m_state_label->setAccessibleDescription(tr("Explorer loading, empty, and error state"));
     m_state_label->setWordWrap(true);
     m_state_label->setVisible(false);
     layout->addWidget(m_state_label);
@@ -131,7 +131,7 @@ void FileExplorerPane::buildItemViews() {
 void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {
     m_status_label = new QLabel(tr("No target selected"), this);
     m_status_label->setObjectName(QStringLiteral("fileExplorerStatusLabel"));
-    m_status_label->setAccessibleName(tr("Explorer status"));
+    m_status_label->setAccessibleDescription(tr("Explorer status"));
     // Status text carries command blockers and target/selection descriptions, which embed paths
     // and names read off the mounted medium; show them verbatim, never as markup.
     m_status_label->setTextFormat(Qt::PlainText);
