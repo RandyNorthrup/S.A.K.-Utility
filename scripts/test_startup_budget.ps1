@@ -576,6 +576,13 @@ Test-StartupFatalRuntime -Source $mainText
 if ($FatalMutationDrill) { Test-StartupFatalMutations -Source $mainText }
 if ($FatalRuntimeOnly) { exit 0 }
 
+# Everything below runs the real application, which lists every drive on the PC and reads their
+# reliability counters. On a person's PC that is their USB drives, so it runs only in CI.
+if ($env:SAK_TEST_ALLOW_REAL_HARDWARE -ne '1') {
+    Write-Host "SKIPPED: runs the real application, which reaches this PC's drives. CI only."
+    exit 77
+}
+
 $gate = Join-Path $ProjectRoot "scripts\check_startup_budget.ps1"
 $capture = Join-Path $ProjectRoot "scripts\process_capture.ps1"
 . (Join-Path $ProjectRoot "scripts\assert_built_target.ps1")

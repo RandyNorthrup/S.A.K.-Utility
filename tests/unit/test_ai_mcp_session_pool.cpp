@@ -7,6 +7,7 @@
 #include "sak/windows_process_job.h"
 
 #include "../support/ai_mcp_native_fixture.h"
+#include "../support/test_hardware_guard.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -1066,6 +1067,7 @@ void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {
 }
 
 void AiMcpSessionPoolTests::builtInMcpReuseAndPolicyIsolation() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     QTemporaryDir read_only_app_data;
     QTemporaryDir full_app_data;
     QVERIFY(read_only_app_data.isValid());

@@ -31,6 +31,25 @@ tests/
 
 ## Running Tests
 
+### Tests and this PC's drives
+
+A test may not reach the real drives of the PC it runs on, and on a person's PC it cannot.
+`support/test_hardware_guard.cpp` is linked into every native `test_*` binary. Unless the environment
+sets `SAK_TEST_ALLOW_REAL_HARDWARE=1`, which only the CI workflows do, it refuses these and prints one
+`SAK TEST HARDWARE GUARD` line for each:
+
+- opening a physical drive, or a volume other than the system drive's, from product code or Qt;
+- starting a process whose command line would query a drive, scan or repair Windows, change the
+  network, or run the application;
+- asking for elevation, which is how the application reaches the helper that reads raw disks.
+
+The refused call fails with access denied, as it can on any PC, so a panel that lists drives as it
+starts carries on with none. Give a test that needs an answer a fake (`ScopedProcessFaultInjector` for
+a process), or start it with `SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED()` if only the real thing proves
+it. The PowerShell tests that run the application exit 77 without the variable, which CTest reports as
+skipped. `test_hardware_guard` drills each route with paths and commands that are harmless if the
+guard is broken.
+
 ### Labels and tiers
 
 Every registered test carries exactly one tier label (set in the label block at the end of
@@ -149,6 +168,8 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions; retired settings dropped on load (only when present); UI state in data/config/ui_state.ini (no registry QSettings in src/), no data-root fallback, per-session child temp |
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
+| test_hardware_guard | `support/test_hardware_guard` | Every route to a real drive is refused, ordinary work is not, and it stands down only when told |
+| test_accessibility_audit | `accessibility_audit` | What the audit holds a widget to; the main window and every dialog it can build pass |
 | test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, unprovable cleanup reported as a failed run with the live process and armed Job in custody, detached-tool fault injection, and five GUI detached-launch failure guards; ChildProcessPolicy::WaitForJobEmpty lets a relaunched child finish, stops and reports a family that outlives the wait, honours cancel, and the uninstaller/Chocolatey callers request it |
 | test_windows_process_job | `windows_process_job` | Native preparation failures (including a refused close after one), startup modifier preservation, real child/descendant containment, retained handles after cleanup failures, and isolated destruction of an unproved Job that reports and closes it, kill-on-close ending a live member, without crashing |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |

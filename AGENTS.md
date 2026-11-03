@@ -58,6 +58,8 @@ about what is "obviously fine".
   number. Windows requires a fourth field in the version resource and the manifest, so those
   templates fix it at 0, and Windows caps each part at 65535. Older tags and changelog headings
   keep their four parts.
+- **The log window stays a detached window that snaps to the main window** (owner, 2026-11-02).
+  Do not build it into the main window.
 
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem
@@ -193,6 +195,15 @@ minutes, no build). They are pre-commit `manual` stage, so no local commit runs 
 `setContentsMargins(0, 0, 0, 0)` sat red on `dev` across three pushes on 2026-10-25. A change that
 adds or moves a `QSKIP` also runs `scripts/check_test_skips.ps1 -StaticOnly` (T2's skip audit):
 five uninventoried elevation skips turned T2 red on 2026-11-01.
+
+A test may not reach the real drives of the PC it runs on. `tests/support/test_hardware_guard.h`
+is linked into every native test binary: on a machine without `SAK_TEST_ALLOW_REAL_HARDWARE=1`,
+which only the CI workflows set, opening a real drive or volume fails, asking for elevation fails,
+and starting a process that would query a drive, scan or repair Windows, change the network or run
+the application fails, and each attempt prints a `SAK TEST HARDWARE GUARD` line. Give a new test a fake (for a process,
+`ScopedProcessFaultInjector`), or start it with `SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED()` if only
+the real thing proves it. A PowerShell test that runs the application exits 77, which CTest reports
+as skipped. Do not set that variable on a person's PC.
 
 Capture the build exit code in its own statement and read it before believing any test result:
 

@@ -5,8 +5,11 @@
 /// @brief Unit tests for DiagnosticController suite state machine, skip guard, and error handling
 
 #include "sak/diagnostic_controller.h"
+#include "sak/process_runner.h"
 
 #include <QtTest/QtTest>
+
+#include <optional>
 
 using namespace sak;
 
@@ -72,7 +75,14 @@ void DiagnosticControllerTests::cancelCurrentResetsState() {
     // just that same untouched member. Only "one emit happened" was genuinely proved; the
     // assignment that takes a suite OUT of a mid-run state was unobserved. Drive it from a
     // non-Idle state: runFullSuite sets HardwareScan and emits before dispatching, and the
-    // dispatched scan hits its own cancelled checkpoint before its first query.
+    // dispatched scan hits its own cancelled checkpoint before its first query. Should the worker
+    // get a query in first, the fake answers it: the real scan asks about every disk.
+    const sak::ScopedProcessFaultInjector no_real_scan(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            return result;
+        });
     controller.runFullSuite(sak::StressTestConfig{}, sak::DiskBenchmarkConfig{});
     QVERIFY2(controller.currentState() != DiagnosticController::SuiteState::Idle,
              "control: the suite must actually leave Idle before the reset is meaningful");
@@ -88,19 +98,26 @@ void DiagnosticControllerTests::cancelCurrentResetsState() {
 // non-null -- which proved the object existed but not that anything reached the
 // caller, and which existed only for that test.
 //
-// processReadings emits unconditionally (an empty reading set from an
-// unprivileged sensor query is still a result), so this does not depend on the
-// box having readable sensors.
+// The sensor script is answered by a fake: the real one asks every disk for its reliability
+// counters. The reading that comes out is the fake's, which proves the forwarding carries it.
 void DiagnosticControllerTests::thermalReadingsAreForwardedToTheController() {
+    const sak::ScopedProcessFaultInjector fake_sensors(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral("disk0=38");
+            return result;
+        });
     DiagnosticController controller;
     QSignalSpy spy(&controller, &DiagnosticController::thermalReadingsUpdated);
     QVERIFY(spy.isValid());
 
     controller.startThermalMonitoring(500);
-    // A poll spawns an interpreter, so allow the same generous bound
-    // test_thermal_monitor uses; it normally arrives in a couple of seconds.
     QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 30'000);
     controller.stopThermalMonitoring();
+    const auto readings = spy.first().first().value<QVector<sak::ThermalReading>>();
+    QCOMPARE(readings.size(), 1);
+    QCOMPARE(readings.first().component, QStringLiteral("Disk 0"));
 }
 
 void DiagnosticControllerTests::reportDataAccess() {

@@ -6,6 +6,8 @@
 
 #include "sak/drive_scanner.h"
 
+#include "../support/test_hardware_guard.h"
+
 #include <QDir>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -155,6 +157,7 @@ void DriveScannerTests::driveInfo_validWhenPopulated() {
 // ============================================================================
 
 void DriveScannerTests::getDrives_returnsNonEmpty() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
 
     // The first scan lands on an EMPTY cache, so applyDriveScan() must PUBLISH it: one
@@ -215,6 +218,7 @@ void DriveScannerTests::getDrives_returnsNonEmpty() {
 }
 
 void DriveScannerTests::getRemovableDrives_subset() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     scanner.refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
@@ -240,6 +244,7 @@ void DriveScannerTests::getRemovableDrives_subset() {
 }
 
 void DriveScannerTests::isSystemDrive_systemDriveDetected() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     scanner.refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
@@ -270,6 +275,7 @@ void DriveScannerTests::isSystemDrive_systemDriveDetected() {
 // ============================================================================
 
 void DriveScannerTests::refresh_doubleCallStillCompletes() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     scanner.refresh();
     QVERIFY(scanner.m_isScanning.load());  // the first scan claimed the in-flight guard
@@ -302,6 +308,7 @@ void DriveScannerTests::refresh_doubleCallStillCompletes() {
 // ============================================================================
 
 void DriveScannerTests::startStop_lifecycle() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     QVERIFY(!scanner.m_rescanDebounce->isActive());  // idle until a device change
     scanner.start();
@@ -394,6 +401,7 @@ void DriveScannerTests::deviceChange_otherEventsAndClassesAreIgnored() {
 }
 
 void DriveScannerTests::deviceChange_burstCoalescesIntoOneDebouncedRescan() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     // Not monitoring yet: a stray notification must not start disk I/O.
     scanner.scheduleRescan();
@@ -425,6 +433,7 @@ void DriveScannerTests::deviceChange_burstCoalescesIntoOneDebouncedRescan() {
 // ============================================================================
 
 void DriveScannerTests::getDriveInfo_nonExistentDrive() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     DriveScanner scanner;
     scanner.refresh();
     // Wait for the scan to LAND. refresh() only kicks a worker future (drive_scanner.cpp:225);

@@ -7,6 +7,7 @@
 #include "sak/windows_process_job.h"
 
 #include "../support/ai_mcp_native_fixture.h"
+#include "../support/test_hardware_guard.h"
 
 #include <QBuffer>
 #include <QCoreApplication>
@@ -2143,6 +2144,7 @@ void AiMcpStdioSessionTests::uncancelledCallStillCompletes() {
 }
 
 void AiMcpStdioSessionTests::builtInMcpPersistentSession() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     QTemporaryDir local_app_data;
     QVERIFY(local_app_data.isValid());
     const QString parent_local_app_data =

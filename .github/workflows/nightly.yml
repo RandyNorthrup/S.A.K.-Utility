@@ -20,6 +20,8 @@ concurrency:
 
 env:
   T4_LABELS: '^(tooling-extended|mutation|coverage|tidy|cert-tooling|fuzz-extended)$'
+  # See ci.yml: a hosted runner has no drive anyone cares about.
+  SAK_TEST_ALLOW_REAL_HARDWARE: '1'
   # clang-tidy comes from Program Files\LLVM (scripts/run_clang_tidy.ps1). The image ships an
   # older LLVM; install the version developers run so the naming gate parses the same way.
   # Same release as clang-format in requirements-gates.txt, so both tools parse alike.

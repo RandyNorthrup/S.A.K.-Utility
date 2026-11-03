@@ -1639,6 +1639,21 @@ add_test(NAME test_process_runner COMMAND test_process_runner
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_process_runner")
 
+# test_hardware_guard - every native test binary dies before it reaches a real drive
+add_executable(test_hardware_guard
+    unit/test_hardware_guard.cpp
+    support/test_hardware_guard.h
+)
+set_target_properties(test_hardware_guard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_hardware_guard PRIVATE Qt6::Core Qt6::Test ${PLATFORM_LIBS})
+add_test(NAME test_hardware_guard COMMAND test_hardware_guard
+         -o "${TEST_OUTPUT_DIR}/test_hardware_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_hardware_guard")
+
 # test_windows_process_job - atomic startup containment and checked Job cleanup
 add_executable(test_windows_process_job
     unit/test_windows_process_job.cpp
@@ -6908,7 +6923,7 @@ add_test(NAME test_startup_budget
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1"
                  -ExePath "$<TARGET_FILE:sak_utility>")
-set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
+set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
 
 # The real application: a second launch on one data folder brings the running instance
 # forward and exits; an elevated relaunch (--elevated-relaunch) waits for its launcher.
@@ -6916,7 +6931,7 @@ add_test(NAME test_single_instance_app
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_single_instance_app.ps1"
                  -ExePath "$<TARGET_FILE:sak_utility>")
-set_tests_properties(test_single_instance_app PROPERTIES TIMEOUT 300)
+set_tests_properties(test_single_instance_app PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 
 add_test(NAME test_windows_runtime_dependencies
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7138,6 +7153,24 @@ set(_sak_run_serial
     test_startup_budget test_windows_process_job test_resource_soak
     test_ai_mcp_stdio_session test_ai_mcp_session_pool
     test_source_fingerprint test_release_archive_recovery)
+
+# ============================================================================
+# Test hardware guard
+# ============================================================================
+#
+# Every native test binary ends itself if it tries to reach a real drive, scan Windows, change the
+# network or run the application, unless the environment sets SAK_TEST_ALLOW_REAL_HARDWARE=1, which
+# only the CI workflows do. See support/test_hardware_guard.h. Attached here, once, so a new test
+# target has it without asking. The certifiers do not get it: they exist to reach a disposable
+# disk, and they refuse to run without being pointed at one.
+add_library(sak_test_hardware_guard OBJECT support/test_hardware_guard.cpp)
+get_property(_sak_guard_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_sak_guard_target IN LISTS _sak_guard_targets)
+    get_target_property(_sak_guard_type ${_sak_guard_target} TYPE)
+    if(_sak_guard_type STREQUAL "EXECUTABLE" AND _sak_guard_target MATCHES "^test_")
+        target_sources(${_sak_guard_target} PRIVATE $<TARGET_OBJECTS:sak_test_hardware_guard>)
+    endif()
+endforeach()
 
 get_property(_sak_label_tests DIRECTORY PROPERTY TESTS)
 foreach(_sak_pair IN LISTS _sak_label_lists)

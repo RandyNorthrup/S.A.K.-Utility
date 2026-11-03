@@ -8,6 +8,8 @@
 #include "sak/process_runner.h"
 #include "sak/thermal_monitor.h"
 
+#include "../support/test_hardware_guard.h"
+
 #include <QFile>
 #include <QScopeGuard>
 #include <QSemaphore>
@@ -37,7 +39,9 @@ private Q_SLOTS:
     void initialState();
     void startStop();
     void startFiresInitialPollImmediately();
-    void pollOnceReadingsAreWellFormed();
+    void pollOnceReadsWhatTheScriptPrints();
+    void pollOnceReportsAFailedQuery();
+    void pollOnceRunsTheRealScript();
     void sensorScriptSurfacesUnavailableQueries();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
@@ -142,12 +146,47 @@ void ThermalMonitorTests::startFiresInitialPollImmediately() {
     QVERIFY(!monitor.isRunning());
 }
 
-void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
-    // A live sensor query: MSAcpi_ThermalZoneTemperature and StorageReliabilityCounter
-    // both need admin, so an EMPTY result is legitimate and the reading COUNT cannot be
-    // asserted here. Two things are invariant on any box: a query that FAILED
-    // (unresolvable interpreter, non-zero exit, timeout) must report no readings at all,
-    // and every reading that IS returned must have survived parseThermalOutput's filters.
+// The script's output is a fake: the real script asks every disk for its reliability counters.
+void ThermalMonitorTests::pollOnceReadsWhatTheScriptPrints() {
+    ScopedProcessFaultInjector injector(
+        [](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral(
+                "cpu=52.3\ngpu=61\ndisk0=38\ndiskX=40\ncpu2=nan\n"
+                "status_disk1=unavailable:no_reading");
+            return result;
+        });
+    bool query_ok = false;
+    const QVector<ThermalReading> readings = ThermalMonitor::pollOnce(query_ok);
+    QVERIFY(query_ok);
+    QCOMPARE(readings.size(), 3);
+    QCOMPARE(readings.at(0).component, QStringLiteral("CPU Package"));
+    QCOMPARE(readings.at(0).temperature_celsius, 52.3);
+    QCOMPARE(readings.at(1).component, QStringLiteral("GPU"));
+    QCOMPARE(readings.at(2).component, QStringLiteral("Disk 0"));
+    QVERIFY(readings.at(2).timestamp.isValid());
+}
+
+void ThermalMonitorTests::pollOnceReportsAFailedQuery() {
+    ScopedProcessFaultInjector injector(
+        [](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            ProcessResult result;
+            result.exit_code = 1;
+            result.std_out = QStringLiteral("cpu=52.3");
+            return result;
+        });
+    bool query_ok = true;
+    QVERIFY(ThermalMonitor::pollOnce(query_ok).isEmpty());
+    QVERIFY(!query_ok);
+}
+
+// The one test that runs the script for real, so a PowerShell error in it cannot hide behind the
+// fakes above. It asks every disk for its counters, so it runs only in CI. MSAcpi_ThermalZone and
+// StorageReliabilityCounter both need admin, so an EMPTY result is legitimate and the reading COUNT
+// cannot be asserted; every reading that IS returned must have survived parseThermalOutput.
+void ThermalMonitorTests::pollOnceRunsTheRealScript() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     bool queryOk = false;
     const auto readings = ThermalMonitor::pollOnce(queryOk);
     QVERIFY2(queryOk || readings.isEmpty(), "a failed sensor query must not yield readings");

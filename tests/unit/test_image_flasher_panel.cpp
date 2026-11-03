@@ -23,6 +23,8 @@
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_usb_creator.h"
 
+#include "../support/test_hardware_guard.h"
+
 #include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -364,6 +366,7 @@ QString ImageFlasherPanelTests::writeImage(const QString& name, const QByteArray
 // Smoke and audit modes exist to exercise the start-up work users get. They used to skip the
 // drive scanner, so neither gate ever ran it -- and the scanner then rescanned every 5 s.
 void ImageFlasherPanelTests::smokeAndAuditModesRunTheStartupScanUsersGet() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
     for (const char* mode : {"sakStartupSmokeTest", "sakAccessibilityAudit"}) {
         m_panel.reset();
         QCoreApplication::instance()->setProperty("sakAccessibilityAudit", QVariant());

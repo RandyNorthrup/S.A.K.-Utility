@@ -29,6 +29,10 @@ env:
   # Anchored on purpose. An unanchored "product|release-tooling|tooling|cert" also matches
   # tooling-extended and cert-tooling, which pulls 23 T4 tests into T2.
   T2_LABELS: '^(product|release-tooling|tooling|cert)$'
+  # A hosted runner has no drive anyone cares about, so the tests that reach real drives and the
+  # real application run here. Unset on a person's PC, where tests/support/test_hardware_guard.h
+  # ends a test binary before it can get there.
+  SAK_TEST_ALLOW_REAL_HARDWARE: '1'
 
 jobs:
   # ==========================================================================================

@@ -8,8 +8,11 @@
 #include "sak/actions/generate_system_report_action.h"
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/diagnostic_controller.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 #include "sak/thermal_monitor.h"
+
+#include "../support/test_hardware_guard.h"
 
 #include <QApplication>
 #include <QDir>
@@ -27,17 +30,20 @@
 #include <QTimer>
 #include <QtTest/QtTest>
 
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace {
-// One real sensor query (PowerShell: WMI zone, nvidia-smi, reliability counters) is in flight
-// when the panel hides; stopping waits for it to land. Bounded well past its own 10 s timeout.
+// One sensor query is in flight when the panel hides; stopping waits for it to land.
 constexpr int kPollSettleTimeoutMs = 30'000;
-// The inventory report runs its real, read-only collectors (Get-ComputerInfo, storage, network),
-// each bounded by its own timeout; this is well past their sum under a loaded test run.
+// The real collectors (Get-ComputerInfo, storage, network) are each bounded by their own timeout;
+// this is well past their sum under a loaded test run.
 constexpr int kInventoryReportTimeoutMs = 300'000;
 const QString kInventoryReport = QStringLiteral("System Inventory Report");
+// What the sensor script prints on a PC with every sensor readable.
+const QString kFakeSensorOutput = QStringLiteral("cpu=52.3\ngpu=61\ndisk0=38");
 
 QPushButton* inventoryReportButton(const sak::DiagnosticBenchmarkPanel& panel) {
     for (auto* button : panel.findChildren<QPushButton*>()) {
@@ -81,6 +87,7 @@ private Q_SLOTS:
     void thermalPollsOnlyWhileShown_data();
     void thermalPollsOnlyWhileShown();
     void inventoryReportAsksWhereToSaveAndSaysWhereItWent();
+    void inventoryReportRunsItsRealCollectors();
     void inventoryReportCancelledFolderRunsNothing();
     void stressStatusSaysWhenThereIsNoSensor();
     void thermalLimitTooltipSaysWhatHappens();
@@ -89,16 +96,32 @@ private Q_SLOTS:
     void exportScanReportWritesTheHtmlItSays();
 
 private:
+    void runInventoryReportAndCheckItsFile();
+
     bool m_nativeDialogsWereDisabled{false};
+    // Every process this panel starts is answered here. The real sensor script reads every disk's
+    // reliability counters and the real report queries every disk, so a run of this suite on a
+    // person's PC would otherwise be asking their USB drives for those.
+    std::atomic<int> m_processes_answered{0};
+    std::unique_ptr<sak::ScopedProcessFaultInjector> m_fake_processes;
 };
 
 void DiagnosticBenchmarkPanelTests::initTestCase() {
     // The Qt dialog, not the Windows one, so the test can drive it.
     m_nativeDialogsWereDisabled = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    m_fake_processes = std::make_unique<sak::ScopedProcessFaultInjector>(
+        [this](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            m_processes_answered.fetch_add(1);
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = kFakeSensorOutput;
+            return result;
+        });
 }
 
 void DiagnosticBenchmarkPanelTests::cleanupTestCase() {
+    m_fake_processes.reset();
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, m_nativeDialogsWereDisabled);
 }
 
@@ -129,8 +152,10 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
     QVERIFY(monitor != nullptr);
     QVERIFY2(!monitor->isRunning(), "constructing the panel must not start sensor polling");
 
+    const int answered_before = m_processes_answered.load();
     panel.show();
     QVERIFY2(monitor->isRunning(), "a shown readout polls");
+    QTRY_VERIFY2(m_processes_answered.load() > answered_before, "a shown readout asks the sensors");
 
     panel.hide();
     QTRY_VERIFY_WITH_TIMEOUT(!monitor->isRunning(), kPollSettleTimeoutMs);
@@ -147,6 +172,21 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
 // The inventory quick action wrote to a fixed C:/SAK_Backups and reported only "Completed". It
 // now asks for a folder (starting in Documents), writes there, and the completion names the file.
 void DiagnosticBenchmarkPanelTests::inventoryReportAsksWhereToSaveAndSaysWhereItWent() {
+    runInventoryReportAndCheckItsFile();
+}
+
+// The one run of the report's real collectors, so a PowerShell error in them cannot hide behind the
+// fake. They query every disk, so it runs only in CI.
+void DiagnosticBenchmarkPanelTests::inventoryReportRunsItsRealCollectors() {
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
+    const sak::ScopedProcessFaultInjector real_processes(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            return std::nullopt;
+        });
+    runInventoryReportAndCheckItsFile();
+}
+
+void DiagnosticBenchmarkPanelTests::runInventoryReportAndCheckItsFile() {
     QTemporaryDir output;
     QVERIFY(output.isValid());
     sak::QuickActionController quick_actions;

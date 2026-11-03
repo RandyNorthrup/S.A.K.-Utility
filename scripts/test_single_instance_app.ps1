@@ -22,6 +22,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Runs the real application, which lists every drive on the PC and reads their reliability
+# counters. On a person's PC that is their USB drives, so it runs only in CI.
+if ($env:SAK_TEST_ALLOW_REAL_HARDWARE -ne '1') {
+    Write-Host "SKIPPED: runs the real application, which reaches this PC's drives. CI only."
+    exit 77
+}
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 . (Join-Path $ProjectRoot 'scripts\assert_built_target.ps1')
 . (Join-Path $ProjectRoot 'scripts\process_capture.ps1')
