@@ -2194,7 +2194,7 @@ struct CliOptions {
                                      QStringLiteral("Optional report JSON path."),
                                      QStringLiteral("path")};
     QCommandLineOption m_evidence{{QStringLiteral("evidence-id")},
-                                  QStringLiteral("Certification/evidence ID."),
+                                  QStringLiteral("Evidence ID."),
                                   QStringLiteral("id")};
     QCommandLineOption m_confirm{{QStringLiteral("confirm-target")},
                                  QStringLiteral("Confirm destructive target mutation.")};
@@ -2523,7 +2523,7 @@ int main(int argc, char* argv[]) {
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
         "S.A.K. APFS generated-container writer. Supports APFS image build/repair/file/directory "
-        "and volume-label mutation plus confirmed raw-partition format/repair and certifier raw "
+        "and volume-label mutation plus confirmed raw-partition format/repair and raw "
         "file/directory/volume-label mutation."));
     parser.addHelpOption();
     parser.addVersionOption();

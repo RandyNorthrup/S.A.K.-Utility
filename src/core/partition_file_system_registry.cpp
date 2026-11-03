@@ -59,39 +59,37 @@ PartitionFileSystemCapability extCapability(const QString& id) {
 }
 
 PartitionFileSystemCapability xfsCapability() {
-    return {
-        .id = QStringLiteral("xfs"),
-        .display_name = QStringLiteral("XFS"),
-        .support_level = QStringLiteral("Detection plus original read-only metadata checks"),
-        .aliases = {QStringLiteral("xfs")},
-        .available_actions = {QStringLiteral("Read-only signature detection"),
-                              QStringLiteral("Read-only superblock metadata inspection"),
-                              QStringLiteral(
-                                  "Original read-only superblock metadata consistency check")},
-        .blocked_actions =
-            {QStringLiteral("Deep xfs_repair check requires manifest-approved xfs_repair"),
-             QStringLiteral(
-                 "Format and repair remain blocked until bundled tools and certification pass")},
-        .required_tools = {QStringLiteral("xfs_repair")},
-        .non_native = true};
+    return {.id = QStringLiteral("xfs"),
+            .display_name = QStringLiteral("XFS"),
+            .support_level = QStringLiteral("Detection plus original read-only metadata checks"),
+            .aliases = {QStringLiteral("xfs")},
+            .available_actions = {QStringLiteral("Read-only signature detection"),
+                                  QStringLiteral("Read-only superblock metadata inspection"),
+                                  QStringLiteral(
+                                      "Original read-only superblock metadata consistency check")},
+            .blocked_actions =
+                {QStringLiteral("Deep xfs_repair check requires manifest-approved xfs_repair"),
+                 QStringLiteral(
+                     "Format and repair remain blocked until the bundled tools have been tested")},
+            .required_tools = {QStringLiteral("xfs_repair")},
+            .non_native = true};
 }
 
 PartitionFileSystemCapability btrfsCapability() {
-    return {
-        .id = QStringLiteral("btrfs"),
-        .display_name = QStringLiteral("Btrfs"),
-        .support_level = QStringLiteral("Detection plus original read-only metadata checks"),
-        .aliases = {QStringLiteral("btrfs")},
-        .available_actions = {QStringLiteral("Read-only signature detection"),
-                              QStringLiteral("Read-only superblock metadata inspection"),
-                              QStringLiteral(
-                                  "Original read-only superblock metadata consistency check")},
-        .blocked_actions = {QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
-                            QStringLiteral(
-                                "Repair remains disabled until destructive VM/lab certification "
-                                "proves safe scenarios")},
-        .required_tools = {QStringLiteral("btrfs")},
-        .non_native = true};
+    return {.id = QStringLiteral("btrfs"),
+            .display_name = QStringLiteral("Btrfs"),
+            .support_level = QStringLiteral("Detection plus original read-only metadata checks"),
+            .aliases = {QStringLiteral("btrfs")},
+            .available_actions = {QStringLiteral("Read-only signature detection"),
+                                  QStringLiteral("Read-only superblock metadata inspection"),
+                                  QStringLiteral(
+                                      "Original read-only superblock metadata consistency check")},
+            .blocked_actions = {QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
+                                QStringLiteral(
+                                    "Repair remains disabled until destructive VM and lab testing "
+                                    "proves safe scenarios")},
+            .required_tools = {QStringLiteral("btrfs")},
+            .non_native = true};
 }
 
 PartitionFileSystemCapability hfsCapability(const QString& id, const QString& displayName) {
@@ -113,8 +111,8 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
              QStringLiteral("Read-only HFS+ resource-fork extract"),
              QStringLiteral(
                  "Read-only bounded recursive directory export with resource-fork sidecars"),
-             QStringLiteral("Image-only same-size HFS+ data-fork overwrite with explicit "
-                            "certification evidence"),
+             QStringLiteral("Image-only same-size HFS+ data-fork overwrite with an explicit "
+                            "evidence ID"),
              QStringLiteral("Staged raw-partition HFS+ data/resource-fork replacement and truncate "
                             "through Pending Operations"),
              QStringLiteral("Staged raw-partition HFS+ bounded data/resource-fork allocation "
@@ -130,8 +128,8 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
              QStringLiteral("Staged raw-partition HFS+ bounded folder-tree delete with allocation "
                             "bitmap release"),
              QStringLiteral("Staged raw-partition HFS+ arbitrary-depth catalog B-tree split, "
-                            "rebalance, and node-pool growth (certified to depth-4 / >256 leaf "
-                            "nodes; Apple fsck_hfs + kernel RW mount)"),
+                            "rebalance, and node-pool growth (validated to depth-4 / >256 leaf "
+                            "nodes with Apple fsck_hfs and a kernel read-write mount)"),
              QStringLiteral("Staged raw-partition HFS+ inline attribute replacement through "
                             "Pending Operations"),
              QStringLiteral("Staged raw-partition HFS+ fork-backed attribute replacement within "
@@ -143,7 +141,7 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
         .blocked_actions =
             {QStringLiteral("Raw-partition HFS+ complex file delete, unbounded folder-tree delete, "
                             "and broad allocation growth remain blocked "
-                            "pending operation-specific certification"),
+                            "pending testing of each operation"),
              QStringLiteral(
                  "Inline/broad attribute growth and recursive extents-overflow-file overflow "
                  "remain blocked in this milestone")},
@@ -170,8 +168,8 @@ PartitionFileSystemCapability apfsCapability() {
                             "bounded recursive export"),
              QStringLiteral("Confirmed S.A.K. single-CIB, multi-CIB, metadata-overflow, and "
                             "CAB-tier generated APFS create and format through Pending Operations "
-                            "(64 MiB through 24 TiB targets; Apple fsck_apfs + kernel read-write "
-                            "mount certified, incl. the CAB tier at 8 TiB / cab_count 2)"),
+                            "(64 MiB through 24 TiB targets; validated with Apple fsck_apfs and a "
+                            "kernel read-write mount, incl. the CAB tier at 8 TiB / cab_count 2)"),
              QStringLiteral("Confirmed generated APFS metadata-checksum repair through Pending "
                             "Operations (64 MiB through 24 TiB targets)"),
              QStringLiteral("Confirmed in-place file and directory write, patch, rename, move, and "
@@ -180,7 +178,7 @@ PartitionFileSystemCapability apfsCapability() {
         .blocked_actions = {QStringLiteral(
                                 "Metadata-checksum repair is limited to S.A.K.-generated "
                                 "layouts; generated format/repair targets above the "
-                                "certified ~24 TiB / 48 TiB-engine CAB ceiling remain "
+                                "~24 TiB / 48 TiB-engine CAB ceiling remain "
                                 "blocked"),
                             QStringLiteral("Fusion and multi-device containers, sealed "
                                            "(signed-system) volumes, and case-sensitive volumes "

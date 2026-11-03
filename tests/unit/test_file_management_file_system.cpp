@@ -277,10 +277,10 @@ private Q_SLOTS:
         QCOMPARE(
             target.blockers,
             (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
-                                        "targets; use certified Partition Manager file actions for "
+                                        "targets; use Partition Manager file actions for "
                                         "supported writes"),
                          QStringLiteral("APFS writes need a known container size to range-gate the "
-                                        "certified engine; rescan disks or re-add the target with "
+                                        "write engine; rescan disks or re-add the target with "
                                         "its size")}));
     }
 
@@ -331,9 +331,9 @@ private Q_SLOTS:
         QCOMPARE(
             tooSmall.blockers,
             (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
-                                        "targets; use certified Partition Manager file actions for "
+                                        "targets; use Partition Manager file actions for "
                                         "supported writes"),
-                         QStringLiteral("APFS writes are certified for containers of %1; this "
+                         QStringLiteral("APFS writes are validated for containers of %1; this "
                                         "container is outside that range")
                              .arg(sak::apfsCapacityRangeText())}));
 
@@ -347,7 +347,7 @@ private Q_SLOTS:
         // Pin the exact certified-range blocker; contains("24 TiB") would pass on any text
         // mentioning that figure. (The list also holds the organizer blocker, so use membership.)
         QVERIFY(oversized.blockers.contains(
-            QStringLiteral("APFS writes are certified for containers of %1; this container is "
+            QStringLiteral("APFS writes are validated for containers of %1; this container is "
                            "outside that range")
                 .arg(sak::apfsCapacityRangeText())));
     }
@@ -546,7 +546,7 @@ private Q_SLOTS:
             Bridge::safetyNotes(arbitraryApfs),
             QStringList{
                 QStringLiteral(
-                    "APFS writes need a known container size within the certified engine range "
+                    "APFS writes need a known container size within the write engine's range "
                     "(%1); this target is read-only because its size is unknown or out of range. "
                     "Fusion/Tier2 sets and unprovided-credential encrypted volumes also stay "
                     "read-only.")
@@ -1272,10 +1272,10 @@ private Q_SLOTS:
         QCOMPARE(
             unknown.blockers,
             (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
-                                        "targets; use certified Partition Manager file actions for "
+                                        "targets; use Partition Manager file actions for "
                                         "supported writes"),
                          QStringLiteral("APFS writes need a known container size to range-gate the "
-                                        "certified engine; rescan disks or re-add the target with "
+                                        "write engine; rescan disks or re-add the target with "
                                         "its size")}));
     }
 
@@ -1465,9 +1465,9 @@ private Q_SLOTS:
         QCOMPARE(
             locked.blockers,
             (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
-                                        "targets; use certified Partition Manager file actions for "
+                                        "targets; use Partition Manager file actions for "
                                         "supported writes"),
-                         QStringLiteral("APFS writes are certified for containers of %1; this "
+                         QStringLiteral("APFS writes are validated for containers of %1; this "
                                         "container is outside that range")
                              .arg(sak::apfsCapacityRangeText())}));
     }

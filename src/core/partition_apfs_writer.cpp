@@ -4962,8 +4962,8 @@ bool readApfsRepairGeometry(QIODevice* image,
     *blockSize = le32(firstBlock, kApfsNxBlockSizeOffset);
     *blockCount = le64(firstBlock, kApfsNxBlockCountOffset);
     if (*blockSize != kSupportedApfsBlockSizeBytes || *blockCount == 0) {
-        blockers->append(QStringLiteral(
-            "APFS repair certification currently supports only 4096-byte block images"));
+        blockers->append(
+            QStringLiteral("APFS repair currently supports only 4096-byte block images"));
         return false;
     }
     return true;
@@ -20333,7 +20333,7 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                "TiB); "
                "this %2-block target needs %3 chunk(s) across %4 chunk-info block(s) and %5 "
                "CAB(s), "
-               "which exceeds the certified ceiling")
+               "which exceeds the supported ceiling")
         .arg(purpose)
         .arg(blockCount)
         .arg(geometry.chunk_count)
@@ -20668,12 +20668,12 @@ void appendGeneratedSpacemanBlockers(const GeneratedApfsLayoutContext& context,
     appendGeneratedLayoutBlocker(chunkCount == 1 && cibCount == 1 && chunkInfoCount == 1,
                                  QStringLiteral(
                                      "APFS generated/minimal spaceman chunk geometry exceeds "
-                                     "the certified one-chunk layout"),
+                                     "the supported one-chunk layout"),
                                  context.blockers);
     appendGeneratedLayoutBlocker(
         chunkInfoBlocks == mainBlocks && chunkInfoBlocks <= kGeneratedApfsSingleChunkMaxBlocks,
         QStringLiteral("APFS generated/minimal chunk-info block count exceeds "
-                       "the certified one-chunk layout"),
+                       "the supported one-chunk layout"),
         context.blockers);
     appendGeneratedLayoutBlocker(allocatedBlocks >= kApfsFormatVolumeBaseAllocatedBlocks &&
                                      allocatedBlocks <= context.geometry.blockCount,
@@ -20801,8 +20801,7 @@ void appendAlwaysRequiredApfsWriterBlockers(const PartitionApfsWriteOptions& opt
             QStringLiteral("APFS writes are not enabled for this target; nothing was changed"));
     }
     if (options.evidence_id.trimmed().isEmpty()) {
-        result->blockers.append(
-            QStringLiteral("APFS mutation requires a linked certification evidence ID"));
+        result->blockers.append(QStringLiteral("APFS mutation requires a linked evidence ID"));
     }
 }
 
@@ -20928,7 +20927,7 @@ PartitionApfsWritePreflight preflightNewContainerFormat(uint64_t target_containe
     }
     if (block_size_bytes != kSupportedApfsBlockSizeBytes) {
         result.blockers.append(
-            QStringLiteral("APFS format certification currently supports only 4096-byte blocks"));
+            QStringLiteral("APFS format currently supports only 4096-byte blocks"));
     }
     appendApfsVolumeNameBlockers(volume_name, QLatin1StringView("format"), &result.blockers);
 
@@ -20965,7 +20964,7 @@ QVector<PartitionApfsImageMutationStep> fileMutationSteps(PartitionApfsWriteOper
     QVector<PartitionApfsImageMutationStep> steps;
     steps.append({QStringLiteral("preflight"),
                   QStringLiteral("Verify read-only APFS metadata, feature flags, object checksums, "
-                                 "and linked certification evidence"),
+                                 "and the linked evidence ID"),
                   false,
                   false,
                   {QString(kEvidenceStructureMapping), QString(kEvidenceObjectChecksumVectors)}});
@@ -21447,8 +21446,8 @@ PartitionApfsWritePreflight PartitionApfsWriter::preflightExistingContainer(
     // The repair and label routes that come through here. File and directory writes do not: they
     // run on the in-place checkpoint commit, which writes Apple-created containers too.
     result.warnings.append(
-        QStringLiteral("APFS repair and legacy label changes are limited to certified "
-                       "generated/minimal layouts"));
+        QStringLiteral("APFS repair and legacy label changes are limited to S.A.K.-"
+                       "generated and minimal layouts"));
 
     appendAlwaysRequiredApfsWriterBlockers(options, &result);
     appendDetectionBlockers(detection, &result);
@@ -21613,7 +21612,7 @@ static bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatReques
                                   (kApfsExtraVolumeBlockSpan * static_cast<uint64_t>(extraVolumes));
     if (reservedSeed >= kApfsSpacemanBlocksPerChunk) {
         result->blockers.append(QStringLiteral(
-            "APFS multi-volume containers are not certified on the metadata-overflow "
+            "APFS multi-volume containers are not supported on the metadata-overflow "
             "tier (the additional volumes' metadata must fit chunk 0)"));
         return false;
     }
@@ -22749,7 +22748,7 @@ static bool appendSeedFileBlockers(const PartitionApfsImageFormatRequest& reques
     }
     if (static_cast<uint64_t>(request.seed_file_data.size()) > kApfsMaximumSeedFileBytes) {
         result->blockers.append(
-            QStringLiteral("APFS seed-file data exceeds current image-only certification cap"));
+            QStringLiteral("APFS seed-file data exceeds the current image-only cap"));
     }
     result->ok = result->blockers.isEmpty();
     return result->ok;
@@ -23091,8 +23090,7 @@ static ApfsImageSource validateImageOnlySource(const QString& path,
     }
     if (static_cast<uint64_t>(source.info.size()) > maxBytes) {
         blockers->append(
-            QStringLiteral("APFS %1 source image exceeds current image-only certification cap")
-                .arg(purpose));
+            QStringLiteral("APFS %1 source image exceeds the current image-only cap").arg(purpose));
         return source;
     }
     source.ok = true;
@@ -23198,8 +23196,7 @@ static bool appendRootFileNameBlockers(const QString& cleanFileName,
                                        QStringList* blockers) {
     if (!isSafeSeedFileName(cleanFileName)) {
         blockers->append(
-            QStringLiteral(
-                "APFS %1 certification supports one root file name without path traversal")
+            QStringLiteral("APFS %1 supports one root file name without path traversal")
                 .arg(purpose));
     }
     return blockers->isEmpty();
@@ -23210,8 +23207,7 @@ static bool appendRootDirectoryNameBlockers(const QString& cleanDirectoryName,
                                             QStringList* blockers) {
     if (!isSafeSeedFileName(cleanDirectoryName)) {
         blockers->append(
-            QStringLiteral(
-                "APFS %1 certification supports one root directory name without path traversal")
+            QStringLiteral("APFS %1 supports one root directory name without path traversal")
                 .arg(purpose));
     }
     return blockers->isEmpty();
@@ -23392,7 +23388,7 @@ static void verifyRawFormatReadback(PartitionApfsImageBuildResult* result,
                                   QLatin1StringView("format"),
                                   &result->blockers)) {
         result->warnings.append(QStringLiteral(
-            "Raw APFS format certified via post-write APFS detection and root-listing "
+            "Raw APFS format checked with post-write APFS detection and root-listing "
             "read-back (full-device SHA-256 skipped)"));
     }
 }
@@ -23746,8 +23742,8 @@ PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLa
     result.written_image_path = request.written_image_path.trimmed();
     result.new_volume_name = normalizedApfsVolumeName(request.volume_name);
     result.warnings.append(QStringLiteral(
-        "APFS volume-label change rewrites only the volume superblock name through the certified "
-        "in-place COW engine; the full file-system tree is preserved"));
+        "APFS volume-label change rewrites only the volume superblock name through the "
+        "in-place copy-on-write engine; the full file-system tree is preserved"));
 
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("volume-label"),
@@ -23794,7 +23790,7 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
     result.new_volume_name = normalizedApfsVolumeName(request.volume_name);
     result.warnings.append(
         QStringLiteral("Raw APFS volume-label change rewrites only the volume superblock name "
-                       "through the certified in-place COW engine; the full file-system tree is "
+                       "through the in-place copy-on-write engine; the full file-system tree is "
                        "preserved (generated and real Apple APFS containers)"));
 
     appendRawTargetMutationBlockers({.targetPath = result.target_path,

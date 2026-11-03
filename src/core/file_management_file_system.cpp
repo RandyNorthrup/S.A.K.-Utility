@@ -293,7 +293,7 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
     if (!target.can_organize) {
         target.blockers.append(
             QStringLiteral("Generic organizer moves are blocked for raw/non-native targets; use "
-                           "certified Partition Manager file actions for supported writes"));
+                           "Partition Manager file actions for supported writes"));
     }
     if (!target.can_write_files) {
         const bool apfs_kind_supported = fs == QStringLiteral("apfs") &&
@@ -304,8 +304,8 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
                 ? (target.size_bytes == 0
                        ? QStringLiteral(
                              "APFS writes need a known container size to range-gate the "
-                             "certified engine; rescan disks or re-add the target with its size")
-                       : QStringLiteral("APFS writes are certified for containers of %1; this "
+                             "write engine; rescan disks or re-add the target with its size")
+                       : QStringLiteral("APFS writes are validated for containers of %1; this "
                                         "container is outside that range")
                              .arg(apfsCapacityRangeText()))
                 : QStringLiteral("File Management opens this target read-only"));
@@ -1142,7 +1142,7 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
                       "case-sensitive volumes, and locked encrypted volumes are refused with an "
                       "exact reason.")
                 : QStringLiteral(
-                      "APFS writes need a known container size within the certified engine "
+                      "APFS writes need a known container size within the write engine's "
                       "range (%1); this target is read-only because its size is unknown or "
                       "out of range. Fusion/Tier2 sets and unprovided-credential encrypted "
                       "volumes also stay read-only.")
@@ -1152,8 +1152,8 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
                          ? QStringLiteral("HFS+/HFSX writes commit through a catalog/extents/"
                                           "attributes B-tree writer validated with Apple's own "
                                           "tools.")
-                         : QStringLiteral("This HFS+/HFSX target is read-only; certified writes "
-                                          "require a write-capable raw/image slice."));
+                         : QStringLiteral("This HFS+/HFSX target is read-only; writes require "
+                                          "a write-capable raw/image slice."));
     } else if (fs.contains(QStringLiteral("xfs")) || fs.contains(QStringLiteral("btrfs"))) {
         notes.append(
             QStringLiteral("XFS/Btrfs targets are metadata-only in this build; no "

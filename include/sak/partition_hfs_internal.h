@@ -9177,7 +9177,7 @@ private:
             blockers->append(QStringLiteral("HFS+ write requires explicit target confirmation"));
         }
         if (options.evidence_id.trimmed().isEmpty()) {
-            blockers->append(QStringLiteral("HFS+ write requires certification evidence ID"));
+            blockers->append(QStringLiteral("HFS+ write requires an evidence ID"));
         }
     }
 

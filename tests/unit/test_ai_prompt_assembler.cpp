@@ -313,7 +313,7 @@ void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
     QVERIFY(prompt.contains(QStringLiteral("operation=list FIRST")));
     const QString kAppActionPreferenceRule = QStringLiteral(
         "Prefer sak_app_action over raw run_powershell/run_cmd whenever a built-in app action "
-        "already covers the task: it drives the app's own certified engine instead of a "
+        "already covers the task: it drives the app's own tested engine instead of a "
         "hand-written script, returns structured results, and self-gates by risk. Fall back to the "
         "shell only when no app action fits. Never assume an action_id -- read it from the list "
         "output, since the ids are discovered at runtime and are not in this prompt.");

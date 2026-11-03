@@ -764,9 +764,8 @@ CliOptions buildCliOptions() {
         .m_output_json = QCommandLineOption({QStringLiteral("output-json")},
                                             QStringLiteral("Optional report JSON path."),
                                             QStringLiteral("path")),
-        .m_evidence = QCommandLineOption({QStringLiteral("evidence-id")},
-                                         QStringLiteral("Certification/evidence ID."),
-                                         QStringLiteral("id")),
+        .m_evidence = QCommandLineOption(
+            {QStringLiteral("evidence-id")}, QStringLiteral("Evidence ID."), QStringLiteral("id")),
         .m_file_count =
             QCommandLineOption({QStringLiteral("file-count")},
                                QStringLiteral("Number of files for create-empty-files-image."),
@@ -1004,9 +1003,9 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationVersion(QString::fromLatin1(sak::get_version()));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral(
-        "S.A.K. HFS+ image-only writer. Supports certified data/resource-fork replacement "
-        "and bounded allocation-growth file/fork mutations in an HFS+/HFSX image."));
+    parser.setApplicationDescription(
+        QStringLiteral("S.A.K. HFS+ image-only writer. Supports data/resource-fork replacement "
+                       "and bounded allocation-growth file/fork mutations in an HFS+/HFSX image."));
     parser.addHelpOption();
     parser.addVersionOption();
 
