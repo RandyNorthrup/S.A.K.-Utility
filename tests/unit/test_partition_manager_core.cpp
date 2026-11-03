@@ -1889,6 +1889,7 @@ private Q_SLOTS:
     void scriptBuilder_refusesBootRepairWithoutWindowsPath();
     void scriptBuilder_migrationSendsAFailedBootToStartupRepair();
     void scriptBuilder_bootRepairFindsAFreeLetterAndChecksTheMount();
+    void scriptBuilder_biosRepairLettersTheActivePartitionAndLetsGo();
     void scriptBuilder_longWorkOutlastsAWholeDiskPass();
     void scriptBuilder_convertAnswersItsOwnPrompts();
     void scriptBuilder_splitPutsTheNewPartitionNextToTheOriginal();
@@ -1903,6 +1904,7 @@ private Q_SLOTS:
     void fileRecoveryEngine_boundsHostileUnterminatedSignatures();
     void fileRecoveryEngine_findsFilesPastTheFirstWindow();
     void fileRecoveryEngine_aLimitKeepsWhatItFound();
+    void fileRecoveryEngine_findsEachKindOfFile();
     void fileRecoveryEngine_saysHowAScanEnded();
     void fileRecoveryEngine_confinesCraftedCandidateNames();
     void fileRecoveryEngine_prefixHashDoesNotClaimWholeSource();
@@ -21929,6 +21931,37 @@ void PartitionManagerCoreTests::scriptBuilder_bootRepairFindsAFreeLetterAndCheck
     QVERIFY(!script.script.contains(QStringLiteral("mountvol S:")));
 }
 
+// bcdboot writes to the partition the firmware starts from, which seldom has a letter. BIOS repair
+// named S: and never assigned it, so it failed on nearly every PC.
+void PartitionManagerCoreTests::scriptBuilder_biosRepairLettersTheActivePartitionAndLetsGo() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    QJsonObject payload;
+    payload[QStringLiteral("windows_path")] = QStringLiteral("D:\\Windows");
+    payload[QStringLiteral("esp_letter")] = QStringLiteral("S");
+    payload[QStringLiteral("boot_mode")] = QStringLiteral("BIOS");
+
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::RepairBoot, target, payload));
+    QVERIFY(script.valid());
+    const QString text = script.script;
+
+    QVERIFY2(text.contains(QStringLiteral("$_.IsActive }")), qPrintable(text));
+    QVERIFY(text.contains(QStringLiteral("if (-not $sakSystem) { throw 'BIOS boot repair")));
+    QVERIFY(text.contains(QStringLiteral("$sakBootLetter = Get-SakFreeBootLetter 'S'")));
+    const qsizetype lettered = text.indexOf(QStringLiteral("Add-PartitionAccessPath"));
+    const qsizetype remembered = text.indexOf(QStringLiteral("$sakLettered = $true"), lettered);
+    const qsizetype repaired = text.indexOf(QStringLiteral("/f BIOS"), remembered);
+    const qsizetype cleanup = text.indexOf(QStringLiteral("finally"), repaired);
+    const qsizetype removed =
+        text.indexOf(QStringLiteral("if ($sakLettered) { Remove-PartitionAccessPath"), cleanup);
+    QVERIFY(lettered >= 0 && lettered < remembered && remembered < repaired);
+    QVERIFY(repaired < cleanup && cleanup < removed);
+    QVERIFY(!text.contains(QStringLiteral("S:\\")));
+}
+
 // What scales with a disk, a volume or the data on it has the long limit. Only work that touches
 // metadata alone keeps a short one, where running past it can only mean a hang.
 void PartitionManagerCoreTests::scriptBuilder_longWorkOutlastsAWholeDiskPass() {
@@ -22417,6 +22450,55 @@ void PartitionManagerCoreTests::fileRecoveryEngine_findsFilesPastTheFirstWindow(
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         QCOMPARE(file.readAll(), pdf);
+    }
+}
+
+// All three kinds the tool promises, each found by its own signature at its true offset and
+// restored whole. No test had ever put a PNG through the scan.
+void PartitionManagerCoreTests::fileRecoveryEngine_findsEachKindOfFile() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    const QString imagePath = root.filePath(QStringLiteral("kinds.bin"));
+    const QByteArray png = QByteArray::fromHex(
+        "89504e470d0a1a0a"
+        "0000000d49484452000000010000000108060000001f15c489"
+        "0000000049454e44ae426082");
+    const QByteArray jpeg = QByteArray::fromHex("ffd8ffe000104a46494600010100000100010000ffd9");
+    const QByteArray pdf =
+        QByteArrayLiteral("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+    const QByteArray padding(64, 'x');
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QVERIFY(image.write(padding + png + padding + jpeg + padding + pdf + padding) > 0);
+    }
+
+    FileRecoveryScanOptions options;
+    options.image_path = imagePath;
+    const auto scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(scan.candidates.size(), 3);
+    const uint64_t png_at = static_cast<uint64_t>(padding.size());
+    const uint64_t jpeg_at = png_at + static_cast<uint64_t>(png.size() + padding.size());
+    const uint64_t pdf_at = jpeg_at + static_cast<uint64_t>(jpeg.size() + padding.size());
+    QCOMPARE(scan.candidates.at(0).extension, QStringLiteral("png"));
+    QCOMPARE(scan.candidates.at(0).offset_bytes, png_at);
+    QCOMPARE(scan.candidates.at(1).extension, QStringLiteral("jpg"));
+    QCOMPARE(scan.candidates.at(1).offset_bytes, jpeg_at);
+    QCOMPARE(scan.candidates.at(2).extension, QStringLiteral("pdf"));
+    QCOMPARE(scan.candidates.at(2).offset_bytes, pdf_at);
+
+    FileRecoveryRestoreOptions restore;
+    restore.image_path = imagePath;
+    restore.destination_directory = root.filePath(QStringLiteral("restore"));
+    restore.candidates = scan.candidates;
+    const auto restored = FileRecoveryEngine::restoreCandidates(restore);
+    QCOMPARE(restored.restored_paths.size(), 3);
+    const QList<QByteArray> expected{png, jpeg, pdf};
+    for (int i = 0; i < expected.size(); ++i) {
+        QFile file(restored.restored_paths.at(i));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), expected.at(i));
     }
 }
 
