@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Pictures stay in the message in exported mail** - In a converted MBOX or an exported EML, a picture
+  the message's body shows sat beside the body, where a mail program could not find it. Checking a
+  converted mailbox in Thunderbird showed the picture's alt text in the message, a warning about remote
+  content, and the picture again after the message. It now sits with the body, so it shows where it
+  belongs and is not listed as an attachment. An EML with attachments also kept its plain and HTML text
+  side by side, so a mail program could show the message twice; it now shows one.
+- **Restore Settings aims at the adapter you right-clicked** - On a PC with more than one network
+  adapter, Restore Settings asked which adapter to apply the backup to with the first one in the list
+  already chosen, whichever adapter you had right-clicked. It now starts on the one you right-clicked.
+- **Long assistant chats and activity logs read faster** - Reading each line of a saved chat or activity
+  log set aside 4 MB. They now read through one buffer per file, as the mailbox index does.
 - **Non-English subjects in an MBOX** - Email Inspector read an MBOX's encoded headers as they stand in
   the file, so a subject or sender in another language showed as `=?UTF-8?B?...?=` and a search for the
   real words missed it. Subjects, senders, recipients and attachment names now show and search as their
