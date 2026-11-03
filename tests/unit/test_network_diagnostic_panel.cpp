@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
@@ -214,6 +215,8 @@ private Q_SLOTS:
     void diagnoseOpensSettingsWhereWindowsHasNoTroubleshooter();
     void flushCacheDoesNotClaimItNeedsAnAdministrator();
     void backupAndRestoreDoNotPromiseEthernetOnly();
+    void adapterMenuOffersBackupAndRestoreWhereTheyWork_data();
+    void adapterMenuOffersBackupAndRestoreWhereTheyWork();
     void accessibleNameHoldsLabel_data();
     void accessibleNameHoldsLabel();
     void everyButtonsNameHoldsItsLabel();
@@ -576,6 +579,52 @@ void NetworkDiagnosticPanelTests::backupAndRestoreDoNotPromiseEthernetOnly() {
                      qPrintable(text));
         }
     }
+}
+
+void NetworkDiagnosticPanelTests::adapterMenuOffersBackupAndRestoreWhereTheyWork_data() {
+    QTest::addColumn<QString>("type");
+    QTest::addColumn<bool>("offered");
+    QTest::newRow("Ethernet") << QStringLiteral("Ethernet") << true;
+    QTest::newRow("WiFi") << QStringLiteral("WiFi") << true;
+    QTest::newRow("Loopback") << QStringLiteral("Loopback") << false;
+    QTest::newRow("VPN") << QStringLiteral("VPN") << false;
+    QTest::newRow("Bluetooth") << QStringLiteral("Bluetooth") << false;
+}
+
+// The real right-click: the panel gets an adapter of each type and opens its real menu.
+void NetworkDiagnosticPanelTests::adapterMenuOffersBackupAndRestoreWhereTheyWork() {
+    QFETCH(QString, type);
+    QFETCH(bool, offered);
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo adapter;
+    adapter.name = QStringLiteral("Test Adapter");
+    adapter.adapterType = type;
+    adapter.isConnected = true;
+    Q_EMIT controller->adaptersScanComplete({adapter});
+    auto* table = panel.adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 1);
+    table->selectRow(0);
+
+    QStringList actions;
+    QTimer::singleShot(0, &panel, [&actions]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        for (const QAction* action : menu->actions()) {
+            actions << action->text();
+        }
+        menu->close();
+    });
+    QVERIFY(
+        QMetaObject::invokeMethod(&panel, "showAdapterContextMenu", Q_ARG(QPoint, QPoint(1, 1))));
+    QVERIFY2(actions.contains(QStringLiteral("Status...")), qPrintable(actions.join(u',')));
+    QCOMPARE(actions.contains(QStringLiteral("Backup Settings...")), offered);
+    QCOMPARE(actions.contains(QStringLiteral("Restore Settings...")), offered);
 }
 
 void NetworkDiagnosticPanelTests::accessibleNameHoldsLabel_data() {
