@@ -313,6 +313,8 @@ void HardwareGuardTests::commands_data() {
                                   << true;
     QTest::newRow("reading the rules")
         << QStringLiteral("netsh.exe advfirewall firewall show rule name=all dir=in") << false;
+    QTest::newRow("a script read from standard input")
+        << powershell("[Console]::OpenStandardInput()") << true;
     QTest::newRow("an echo") << powershell("Write-Output hello") << false;
     QTest::newRow("a word inside a name") << QStringLiteral("tool.exe sfcdata dismiss") << false;
     QTest::newRow("CPU heat") << powershell("Get-CimInstance MSAcpi_ThermalZone") << false;

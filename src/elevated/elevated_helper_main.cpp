@@ -541,12 +541,8 @@ QString resolveSystemPowerShellPath() {
 // ProcessRunner's atomic kill-on-close Windows Job, the clamped timeout, the capped output,
 // and success gated on completedSuccessfully(). -ExecutionPolicy Bypass is the standard
 // programmatic mode.
-QStringList elevatedPowerShellArgs(const QString& command) {
-    return {QStringLiteral("-NoProfile"),
-            QStringLiteral("-ExecutionPolicy"),
-            QStringLiteral("Bypass"),
-            QStringLiteral("-Command"),
-            command};
+sak::PowerShellInvocation elevatedPowerShellInvocation(const QString& command) {
+    return sak::powerShellInvocation(command, true, true);
 }
 
 void configureElevatedPowerShellProgress(sak::ProcessStreamingRequest* request,
@@ -603,7 +599,9 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     bool started = false;
     sak::ProcessStreamingRequest request;
     request.program = powershell_path;
-    request.args = elevatedPowerShellArgs(config->m_command);
+    sak::PowerShellInvocation invocation = elevatedPowerShellInvocation(config->m_command);
+    request.args = std::move(invocation.args);
+    request.std_in = std::move(invocation.std_in);
     request.timeout_ms = config->m_timeout_ms;
     configureElevatedPowerShellProgress(&request,
                                         &progress,

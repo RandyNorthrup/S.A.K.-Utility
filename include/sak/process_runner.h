@@ -96,7 +96,25 @@ struct ProcessStreamingRequest {
     ProcessRunOptions options{};
     /// The child's environment; unset = this process's.
     std::optional<QProcessEnvironment> environment{};
+    /// Written to the child's standard input, which then closes. Empty = closed at once.
+    QByteArray std_in{};
 };
+
+/// The longest script PowerShell is given on its command line. Windows limits a whole command line
+/// to 32,767 characters, including the program's path and the other arguments.
+inline constexpr qsizetype kMaxPowerShellCommandLineScriptChars = 30'000;
+
+/// How to hand a script to powershell.exe. A longer script than a command line can hold reads
+/// itself from standard input, so it stays off the disk, where an unelevated program could reach it
+/// before an elevated PowerShell ran it.
+struct PowerShellInvocation {
+    QStringList args;
+    QByteArray std_in;
+};
+
+[[nodiscard]] PowerShellInvocation powerShellInvocation(const QString& script,
+                                                        bool no_profile,
+                                                        bool bypass_policy);
 
 [[nodiscard]] ProcessResult runProcess(const QString& program,
                                        const QStringList& args,

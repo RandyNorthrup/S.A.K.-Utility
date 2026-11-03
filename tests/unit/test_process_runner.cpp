@@ -10,6 +10,7 @@
 #include "sak/windows_process_job.h"
 
 #include "../support/ai_mcp_native_fixture.h"
+#include "../support/test_hardware_guard.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -50,6 +51,9 @@ private Q_SLOTS:
     void runPowerShell_simpleScript();
     void runPowerShell_withNoProfile();
     void runPowerShell_scriptError();
+    void powerShellInvocation_longScriptReadsItselfFromStandardInput();
+    void runProcessStreaming_standardInputReachesTheChild();
+    void runPowerShell_longScriptRunsAndKeepsItsExitCode();
 
     // B5-07: bounded output accumulation
     void appendCappedOutput_boundsAccumulation();
@@ -578,6 +582,51 @@ void ProcessRunnerTests::runPowerShell_scriptError() {
 
     // Should fail with non-zero exit code
     QVERIFY(result.exit_code != 0);
+}
+
+// Windows limits a command line to 32,767 characters, so a longer script could not start at all.
+void ProcessRunnerTests::powerShellInvocation_longScriptReadsItselfFromStandardInput() {
+    const QString short_script = QStringLiteral("Write-Output 'short'");
+    const auto small = sak::powerShellInvocation(short_script, true, true);
+    QVERIFY(small.std_in.isEmpty());
+    QVERIFY(small.args.contains(short_script));
+    const QString long_script =
+        QStringLiteral("# ").append(QString(sak::kMaxPowerShellCommandLineScriptChars, u'x'));
+    const auto large = sak::powerShellInvocation(long_script, true, true);
+    QCOMPARE(QString::fromUtf8(large.std_in), long_script);
+    QVERIFY(!large.args.contains(long_script));
+    QVERIFY(large.args.join(u' ').size() < sak::kMaxPowerShellCommandLineScriptChars);
+}
+
+void ProcessRunnerTests::runProcessStreaming_standardInputReachesTheChild() {
+    const QString findstr = sak::system32Path(QStringLiteral("findstr.exe"));
+    QVERIFY(!findstr.isEmpty());
+    sak::ProcessStreamingRequest request;
+    request.program = findstr;
+    request.args = {QStringLiteral("marker")};
+    request.timeout_ms = 60'000;
+    // Well past what a pipe buffers: this has to be written while the child reads it.
+    request.std_in = QByteArray(256 * 1024, 'x').append("\nmarker line\n");
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(result.completedSuccessfully(), qPrintable(result.std_err));
+    QVERIFY2(result.std_out.contains(QStringLiteral("marker line")), qPrintable(result.std_out));
+}
+
+void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
+    // The guard cannot read a script on standard input, so only CI starts one for real.
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
+    const QString padding = QStringLiteral("# ").append(
+        QString(sak::kMaxPowerShellCommandLineScriptChars, u'x').append(u'\n'));
+    const auto good =
+        sak::runPowerShell(padding + QStringLiteral("Write-Output 'read it all'; exit 7"), 60'000);
+    QVERIFY2(good.std_out.contains(QStringLiteral("read it all")), qPrintable(good.std_err));
+    QCOMPARE(good.exit_code, 7);
+    const auto thrown = sak::runPowerShell(
+        padding + QStringLiteral("$ErrorActionPreference = 'Stop'; throw 'refused on purpose'"),
+        60'000);
+    QVERIFY(thrown.exit_code != 0);
+    QVERIFY2(thrown.std_err.contains(QStringLiteral("refused on purpose")),
+             qPrintable(thrown.std_err));
 }
 
 // B5-07: output accumulation must be bounded so a runaway child cannot exhaust

@@ -69,6 +69,7 @@ struct ProcessRunRequest {
     ProcessOutputCallback on_output;
     ProcessStartedCallback on_started;
     ProcessRunOptions options{};
+    QByteArray std_in{};
 };
 
 void appendOutput(ProcessResult* result,
@@ -321,8 +322,11 @@ std::expected<void, QString> startProcess(const ProcessRunRequest& request,
         return std::unexpected(
             QStringLiteral("Failed to start process: %1").arg(proc->errorString()));
     }
-    // No caller writes stdin. Immediate EOF also prevents an unattended
-    // Chocolatey prompt from waiting on an inherited open pipe.
+    if (!request.std_in.isEmpty()) {
+        proc->write(request.std_in);
+    }
+    // Immediate EOF once that is written also prevents an unattended Chocolatey prompt from
+    // waiting on an inherited open pipe.
     proc->closeWriteChannel();
     return {};
 }
@@ -532,19 +536,36 @@ ProcessResult runProcessWithEnvironment(const QString& program,
     });
 }
 
+PowerShellInvocation powerShellInvocation(const QString& script,
+                                          bool no_profile,
+                                          bool bypass_policy) {
+    PowerShellInvocation invocation;
+    if (no_profile) {
+        invocation.args << "-NoProfile";
+    }
+    if (bypass_policy) {
+        invocation.args << "-ExecutionPolicy" << "Bypass";
+    }
+    if (script.size() <= kMaxPowerShellCommandLineScriptChars) {
+        invocation.args << "-Command" << script;
+        return invocation;
+    }
+    invocation.args << "-Command"
+                    << QStringLiteral(
+                           "$sakReader = New-Object System.IO.StreamReader("
+                           "[Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8); "
+                           "$sakScript = $sakReader.ReadToEnd(); $sakReader.Dispose(); "
+                           "& ([scriptblock]::Create($sakScript))");
+    invocation.std_in = script.toUtf8();
+    return invocation;
+}
+
 ProcessResult runPowerShell(const QString& script,
                             int timeout_ms,
                             bool no_profile,
                             bool bypass_policy,
                             const CancelCheck& should_cancel) {
-    QStringList args;
-    if (no_profile) {
-        args << "-NoProfile";
-    }
-    if (bypass_policy) {
-        args << "-ExecutionPolicy" << "Bypass";
-    }
-    args << "-Command" << script;
+    PowerShellInvocation invocation = powerShellInvocation(script, no_profile, bypass_policy);
 
     // Launch the System32-qualified interpreter, never a bare "powershell.exe": an
     // elevated caller must not be redirected to a PATH/CWD-planted powershell.
@@ -557,7 +578,11 @@ ProcessResult runPowerShell(const QString& script,
             "powershell.exe");
         return result;
     }
-    return runProcess(powershell, args, timeout_ms, should_cancel);
+    return runProcessInternal({.program = powershell,
+                               .args = std::move(invocation.args),
+                               .timeout_ms = timeout_ms,
+                               .should_cancel = should_cancel,
+                               .std_in = std::move(invocation.std_in)});
 }
 
 // Reject anything that is not a bare, System32/Windows-relative name (subdirectories with
@@ -722,6 +747,7 @@ ProcessResult runProcessStreaming(const ProcessStreamingRequest& request) {
         .on_output = request.on_output,
         .on_started = request.on_started,
         .options = request.options,
+        .std_in = request.std_in,
     });
 }
 

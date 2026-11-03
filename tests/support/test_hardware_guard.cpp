@@ -69,6 +69,8 @@ constexpr auto kBlockedCommandText = std::to_array<std::wstring_view>({
     L"mountvol",
     L"physicaldrive",
     L"sak_utility.exe",
+    // A script long enough to read itself from standard input: this list cannot see what it does.
+    L"openstandardinput",
     L"clear-dnsclientcache",
     L"/flushdns",
     L"set-dnsclientserveraddress",
