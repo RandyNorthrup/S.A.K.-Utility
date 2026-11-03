@@ -61,7 +61,6 @@ constexpr ExpectedReason kExpectedElevationReasons[] = {
      "System application removal requires administrator privileges"},
     {sak::FeatureId::FirewallAuditModify,
      "Modifying firewall rules requires administrator privileges"},
-    {sak::FeatureId::DnsCacheFlush, "ipconfig /flushdns requires administrator privileges"},
     {sak::FeatureId::ModifyAdapterConfig,
      "Changing IP/DNS settings requires administrator privileges"},
     {sak::FeatureId::CpuThermalData, "root/WMI thermal namespace requires administrator access"},
@@ -123,7 +122,7 @@ private Q_SLOTS:
     void tier2_chocolateyUninstallIsElevated();
     void tier2_advancedUninstallIsElevated();
     void tier2_firewallAuditModifyIsElevated();
-    void tier2_dnsCacheFlushIsElevated();
+    void tier1_dnsCacheFlushIsStandard();
     void tier2_modifyAdapterConfigIsElevated();
     void tier2_cpuThermalDataIsElevated();
     void tier2_permissionTakeOwnershipIsElevated();
@@ -386,8 +385,8 @@ void TestElevationHardening::tier2_firewallAuditModifyIsElevated() {
                  "FirewallAuditModify");
 }
 
-void TestElevationHardening::tier2_dnsCacheFlushIsElevated() {
-    verifyTierIs(sak::FeatureId::DnsCacheFlush, sak::ElevationTier::Elevated, "DnsCacheFlush");
+void TestElevationHardening::tier1_dnsCacheFlushIsStandard() {
+    verifyTierIs(sak::FeatureId::DnsCacheFlush, sak::ElevationTier::Standard, "DnsCacheFlush");
 }
 
 void TestElevationHardening::tier2_modifyAdapterConfigIsElevated() {
@@ -508,8 +507,8 @@ void TestElevationHardening::featureTable_countMatchesExpected() {
     // Pin the exact per-tier distribution. `> 0` only caught a whole tier vanishing; a mis-tiering
     // that moved features between tiers (security-relevant -- the tier governs UAC behavior) slid
     // past both `> 0` and the sum invariant below, which is unchanged by moving an entry.
-    QCOMPARE(standard_count, static_cast<size_t>(22));
-    QCOMPARE(elevated_count, static_cast<size_t>(21));
+    QCOMPARE(standard_count, static_cast<size_t>(23));
+    QCOMPARE(elevated_count, static_cast<size_t>(20));
     QCOMPARE(mixed_count, static_cast<size_t>(3));
     QCOMPARE(standard_count + elevated_count + mixed_count, sak::kFeatureCount);
 }

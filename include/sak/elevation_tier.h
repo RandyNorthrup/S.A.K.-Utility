@@ -229,10 +229,10 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
     {FeatureId::InternetSpeedTest, ElevationTier::Standard, "Internet Speed Test", ""},
     {FeatureId::NetworkShareBrowser, ElevationTier::Standard, "Network Share Browser", ""},
     {FeatureId::DnsLookup, ElevationTier::Standard, "DNS Lookup", ""},
-    {FeatureId::DnsCacheFlush,
-     ElevationTier::Elevated,
-     "Flush DNS Cache",
-     "ipconfig /flushdns requires administrator privileges"},
+    // Nothing gates on this and nothing asks for an administrator. Microsoft documents no such
+    // requirement for ipconfig /flushdns or Clear-DnsClientCache. docs/RELEASE_READINESS.md has
+    // the unelevated run on the VM smoke list.
+    {FeatureId::DnsCacheFlush, ElevationTier::Standard, "Flush DNS Cache", ""},
     {FeatureId::ModifyAdapterConfig,
      ElevationTier::Elevated,
      "Modify Adapter Configuration",
