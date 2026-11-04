@@ -323,6 +323,9 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/elevation_broker.cpp
     ../src/core/partition_safety_validator.cpp
     ../src/core/partition_script_builder.cpp
+    ../src/core/partition_os_migration.cpp
+    ../src/core/partition_os_migration_script.cpp
+    ${SAK_PARTITION_SCRIPTS_CPP}
     ../src/core/partition_executor.cpp
     ../src/core/partition_operation_planner.cpp
     ../src/core/partition_operation_queue.cpp
@@ -435,6 +438,28 @@ set_tests_properties(
     PROPERTIES TIMEOUT 210
 )
 message(STATUS "Added five Create Image source-lock runtime tests")
+
+# test_partition_os_migration - Migrate OS's plan, refusals and script, with no disk involved
+add_executable(test_partition_os_migration
+    unit/test_partition_os_migration.cpp
+)
+set_target_properties(test_partition_os_migration PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_os_migration PRIVATE
+    sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_partition_os_migration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_partition_os_migration PRIVATE QT_NO_KEYWORDS)
+add_test(NAME test_partition_os_migration COMMAND test_partition_os_migration
+         -o "${TEST_OUTPUT_DIR}/test_partition_os_migration.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_partition_os_migration")
+
 
 # test_partition_manager_controller - async preflight/apply/verification state machine
 add_executable(test_partition_manager_controller

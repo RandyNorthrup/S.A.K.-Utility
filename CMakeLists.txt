@@ -434,6 +434,17 @@ set(SAK_PARTITION_FS_SOURCES
 # Core: the headless product logic every feature runs -- scanners, workers, controllers, the
 # Partition Manager pipeline, email, deployment, network diagnostics, the app-action surface and
 # the quick actions. No Qt Widgets: what a panel shows is in sak_gui, what it does is here.
+# The scripts Partition Manager hands to an elevated PowerShell for Migrate OS and boot repair are real
+# files, so the syntax gate reads them, and they reach the program compiled in.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text_files.cmake")
+set(SAK_PARTITION_SCRIPTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/partition_scripts_embedded.cpp")
+sak_embed_text_files("${SAK_PARTITION_SCRIPTS_CPP}" sak::embedded_partition_scripts
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration_native.cs" kOsMigrationNativeCs
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration.ps1" kOsMigrationPs1
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/target_boot_files.ps1" kTargetBootFilesPs1
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/attached_boot_repair.ps1" kAttachedBootRepairPs1
+)
+
 set(SAK_CORE_SOURCES
     src/core/crash_reporter.cpp
     src/core/file_scanner.cpp
@@ -512,6 +523,9 @@ set(SAK_CORE_SOURCES
     src/core/partition_safety_validator.cpp
     src/core/partition_script_builder.cpp
     src/core/partition_operation_planner.cpp
+    src/core/partition_os_migration.cpp
+    src/core/partition_os_migration_script.cpp
+    ${SAK_PARTITION_SCRIPTS_CPP}
     src/core/partition_operation_queue.cpp
     src/core/partition_executor.cpp
     src/core/partition_manager_controller.cpp

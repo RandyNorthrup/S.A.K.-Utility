@@ -101,7 +101,7 @@ $gates = @(
         ids = @("external.os-migration-reboot")
         evidence = @(
             @{ path = $uiPath; patterns = @("Migrate OS to SSD/HDD Wizard") },
-            @{ path = $scriptBuilderPath; patterns = @("SAK OS migration boot validation", "BIOS/UEFI boot order") }
+            @{ path = "src\core\partition_scripts\os_migration.ps1"; patterns = @("function Set-SakTargetBoot", "BIOS or UEFI boot order") }
         )
     },
     @{

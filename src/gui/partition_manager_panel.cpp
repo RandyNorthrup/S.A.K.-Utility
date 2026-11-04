@@ -19,6 +19,7 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+#include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 
 #include <QProgressDialog>
@@ -1966,9 +1967,13 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
-    void configure(const PartitionDiskInfo* source_disk, uint64_t target_bytes) {
+    /// @p plan: what Migrate OS would build. Left out for a copy, whose target mirrors the source.
+    void configure(const PartitionDiskInfo* source_disk,
+                   uint64_t target_bytes,
+                   std::optional<OsMigrationPlan> plan = std::nullopt) {
         m_source_disk = source_disk;
         m_target_bytes = target_bytes;
+        m_plan = std::move(plan);
         update();
     }
 
@@ -2014,7 +2019,32 @@ private:
         return segments;
     }
 
+    [[nodiscard]] QVector<ClonePreviewSegment> migrationTargetSegments() const {
+        if (!m_plan->canRun()) {
+            return {{.label = tr("Blocked"),
+                     .bytes = m_target_bytes,
+                     .color = QColor(QString::fromLatin1(ui::kColorError)),
+                     .used_percent = 0}};
+        }
+        QVector<ClonePreviewSegment> segments;
+        for (const auto& entry : m_plan->partitions) {
+            const auto source_partition =
+                std::ranges::find(m_source_disk->partitions,
+                                  entry.source_number,
+                                  [](const PartitionInfoEx& partition) {
+                                      return partition.partition_number.value();
+                                  });
+            auto segment = partitionSegment(*source_partition);
+            segment.bytes = entry.final_size;
+            segments.append(segment);
+        }
+        return segments;
+    }
+
     [[nodiscard]] QVector<ClonePreviewSegment> targetSegments() const {
+        if (m_plan && m_source_disk != nullptr) {
+            return migrationTargetSegments();
+        }
         const uint64_t source_bytes = sourceTotalBytes();
         const uint64_t target_bytes = targetTotalBytes();
         if (target_bytes != 0 && source_bytes > target_bytes) {
@@ -2116,6 +2146,7 @@ private:
 
     const PartitionDiskInfo* m_source_disk{nullptr};
     uint64_t m_target_bytes{0};
+    std::optional<OsMigrationPlan> m_plan;
 };
 
 struct ApplyDiffSegment {
@@ -7894,6 +7925,7 @@ struct PartitionWizardResult {
     bool target_region_selected{false};
     bool recovery_restore_requested{false};
     bool recovery_restore_acknowledged{false};
+    bool allow_no_snapshot{false};
 };
 
 class ConfirmationWizardPage final : public QWizardPage {
@@ -7935,6 +7967,7 @@ struct DiskCopyWizardWidgets {
     QComboBox* target_disk{nullptr};
     QComboBox* verify_mode{nullptr};
     QCheckBox* target_wipe{nullptr};
+    QCheckBox* allow_no_snapshot{nullptr};
     CloneLayoutPreviewWidget* layout_preview{nullptr};
     QLabel* review{nullptr};
 };
@@ -8032,14 +8065,23 @@ void addDiskTargetPage(QWizard* wizard,
     wizard->addPage(target_page);
 }
 
-void addDiskOptionsPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
+void addDiskOptionsPage(QWizard* wizard,
+                        const DiskCopyWizardConfig& config,
+                        DiskCopyWizardWidgets* widgets) {
     auto* options_page = new QWizardPage(wizard);
     options_page->setTitle(QStringLiteral("Options"));
     auto* options_layout = new QFormLayout(options_page);
     auto* copy_note = new QLabel(
-        QStringLiteral("The disk is copied byte for byte, so the target's partitions keep the "
-                       "source's sizes, places and partition style. Any extra space on the target "
-                       "stays unallocated."),
+        config.os_migration
+            ? QStringLiteral(
+                  "Windows keeps running. Each volume is copied from a snapshot taken at the "
+                  "start, so nothing that changes after that reaches the target. The target gets "
+                  "a new partition table with its own identity, its partition style stays the "
+                  "source's, and its Windows partition is made to fit the target.")
+            : QStringLiteral(
+                  "The disk is copied byte for byte, so the target's partitions keep the source's "
+                  "sizes, places and partition style. Any extra space on the target stays "
+                  "unallocated."),
         options_page);
     copy_note->setWordWrap(true);
     copy_note->setAccessibleDescription(QStringLiteral("What the copy does"));
@@ -8049,6 +8091,15 @@ void addDiskOptionsPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
         {QStringLiteral("Sample verification"), QStringLiteral("Full verification")});
     widgets->verify_mode->setAccessibleName(QStringLiteral("Verification mode"));
     options_layout->addRow(QStringLiteral("Verify:"), widgets->verify_mode);
+    if (config.os_migration) {
+        widgets->allow_no_snapshot =
+            new QCheckBox(QStringLiteral("If Windows cannot take a snapshot, copy the running disk "
+                                         "anyway. The copy may be inconsistent and may not start."),
+                          options_page);
+        widgets->allow_no_snapshot->setAccessibleName(
+            QStringLiteral("Copy the running disk without a snapshot"));
+        options_layout->addRow(widgets->allow_no_snapshot);
+    }
     wizard->addPage(options_page);
 }
 
@@ -8090,17 +8141,51 @@ QString diskWizardSizingText(const DiskCopyWizardConfig& config,
     return text;
 }
 
+QString osMigrationWizardSizingText(const OsMigrationPlan& plan) {
+    QString text = QStringLiteral("Source size: %1\nTarget size: %2")
+                       .arg(formatPartitionBytes(plan.source_bytes),
+                            formatPartitionBytes(plan.target_bytes));
+    if (const auto* windows = plan.windowsPartition(); windows != nullptr) {
+        text += QStringLiteral("\nWindows partition: %1 now, %2 on the target, %3 in use")
+                    .arg(formatPartitionBytes(windows->source_size),
+                         formatPartitionBytes(windows->final_size),
+                         formatPartitionBytes(plan.windows_used_bytes));
+    }
+    if (plan.route == OsMigrationRoute::Image) {
+        text += QStringLiteral(
+            "\nThis target is smaller than the Windows partition, so Windows goes through a "
+            "temporary image on the target. Allow extra time, and room for it.");
+    }
+    for (const auto& blocker : plan.blockers) {
+        text += QStringLiteral("\nBlocked: %1").arg(blocker);
+    }
+    return text;
+}
+
 void updateDiskWizardReview(const DiskCopyWizardConfig& config,
                             const DiskCopyWizardWidgets& widgets) {
-    widgets.layout_preview->configure(findWizardDisk(*config.inventory, config.source_disk),
-                                      selectedDiskWizardTargetSize(widgets));
+    const auto* source_disk = findWizardDisk(*config.inventory, config.source_disk);
+    const uint64_t target_bytes = selectedDiskWizardTargetSize(widgets);
+    QString sizing;
+    QString mode = QStringLiteral("Byte for byte");
+    std::optional<OsMigrationPlan> plan;
+    if (config.os_migration && source_disk != nullptr) {
+        plan = planOsMigration(*source_disk, target_bytes);
+        sizing = osMigrationWizardSizingText(*plan);
+        mode = plan->route == OsMigrationRoute::Image
+                   ? QStringLiteral("Snapshot, new layout, Windows through a temporary image")
+                   : QStringLiteral("Snapshot, new layout, used blocks only");
+    } else {
+        sizing = diskWizardSizingText(config, widgets);
+    }
+    widgets.layout_preview->configure(source_disk, target_bytes, std::move(plan));
     syncWizardReview(widgets.review,
                      {.operation = config.title,
                       .source = physicalDrivePath(config.source_disk),
                       .target = selectedDiskWizardTarget(widgets),
-                      .mode = QStringLiteral("Byte for byte"),
+                      .mode = mode,
                       .verify = widgets.verify_mode->currentText(),
-                      .sizing = diskWizardSizingText(config, widgets)});
+                      .sizing = sizing});
 }
 
 void connectDiskWizardReviewSignals(QWizard* wizard,
@@ -8125,6 +8210,8 @@ PartitionWizardResult diskCopyWizardResult(const DiskCopyWizardConfig& config,
     result.source_size_bytes = sourceDiskSize(*config.inventory, config.source_disk);
     result.target_size_bytes = selectedDiskWizardTargetSize(widgets);
     result.target_wipe_confirmed = widgets.target_wipe->isChecked();
+    result.allow_no_snapshot = widgets.allow_no_snapshot != nullptr &&
+                               widgets.allow_no_snapshot->isChecked();
     return result;
 }
 
@@ -8136,7 +8223,7 @@ std::optional<PartitionWizardResult> runDiskCopyWizard(const DiskCopyWizardConfi
 
     DiskCopyWizardWidgets widgets;
     addDiskTargetPage(&wizard, config, &widgets);
-    addDiskOptionsPage(&wizard, &widgets);
+    addDiskOptionsPage(&wizard, config, &widgets);
     addDiskReviewPage(&wizard, &widgets);
     connectDiskWizardReviewSignals(&wizard, config, &widgets);
 
@@ -12554,6 +12641,9 @@ void PartitionManagerPanel::onMigrateOs() {
     payload[QStringLiteral("source_size_bytes")] = QString::number(result->source_size_bytes);
     payload[QStringLiteral("target_size_bytes")] = QString::number(result->target_size_bytes);
     payload[QStringLiteral("target_wipe_confirmed")] = result->target_wipe_confirmed;
+    payload[QStringLiteral("allow_no_snapshot")] = result->allow_no_snapshot;
+    payload[QStringLiteral("migration_plan")] =
+        osMigrationPlanToJson(planOsMigration(*source_disk, result->target_size_bytes));
     queueOperation(PartitionOperationType::MigrateOs, *selected, expected_layout_hash, payload);
 }
 
@@ -12563,19 +12653,41 @@ void PartitionManagerPanel::onRepairBoot() {
         Q_EMIT statusMessage(tr("Select a target first"), sak::kTimerStatusDefaultMs);
         return;
     }
-    const QString expected_layout_hash = m_controller->inventory().layout_hash;
+    const PartitionInventory inventory = m_controller->inventory();
+    const QString expected_layout_hash = inventory.layout_hash;
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, target->disk_number);
+    if (disk == nullptr) {
+        Q_EMIT statusMessage(tr("The selected disk is absent from the current inventory"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
+    const bool running_disk = disk->is_boot || disk->is_system;
     bool ok = false;
     const QStringList modes{tr("UEFI"), tr("BIOS")};
+    const bool bios_first = disk->partition_style.compare(QStringLiteral("MBR"),
+                                                          Qt::CaseInsensitive) == 0;
     const QString mode = QInputDialog::getItem(
         this,
         tr("Rebuild MBR / Boot Repair"),
-        tr("This rebuilds the boot files of the Windows this PC is running now, whichever disk is "
-           "selected.\n\nBoot mode:"),
+        running_disk
+            ? tr("This disk runs this PC. This rebuilds the boot files of the Windows that is "
+                 "running now.\n\nBoot mode:")
+            : tr("This looks for the Windows on Disk %1 and rebuilds its boot files on that disk, "
+                 "using temporary drive letters. This PC's own boot list is left alone.\n\nBoot "
+                 "mode (GPT disks start by UEFI, MBR disks by BIOS):")
+                  .arg(disk->disk_number.value()),
         modes,
-        0,
+        bios_first ? 1 : 0,
         false,
         &ok);
     if (!ok) {
+        return;
+    }
+    if (!running_disk) {
+        QJsonObject attached;
+        attached[QStringLiteral("repair_scope")] = QStringLiteral("attached");
+        attached[QStringLiteral("boot_mode")] = mode;
+        queueOperation(PartitionOperationType::RepairBoot, *target, expected_layout_hash, attached);
         return;
     }
     // The running system's Windows folder as the OS reports it: the repair rebuilds the boot

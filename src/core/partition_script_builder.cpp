@@ -7,6 +7,7 @@
 #include "sak/partition_script_builder.h"
 
 #include "sak/partition_file_system_tool_runner.h"
+#include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 
 #include <QByteArray>
@@ -2257,10 +2258,9 @@ bool restoreImageMissingSizes(const PartitionOperation& operation, const CloneTr
     return operation.type == PartitionOperationType::RestoreImage && missingSizes;
 }
 
-bool restoreOrMigrateMissingPhysicalTarget(const PartitionOperation& operation,
-                                           const CloneTransferSpec& spec) {
-    return (operation.type == PartitionOperationType::RestoreImage ||
-            operation.type == PartitionOperationType::MigrateOs) &&
+bool restoreMissingPhysicalTarget(const PartitionOperation& operation,
+                                  const CloneTransferSpec& spec) {
+    return operation.type == PartitionOperationType::RestoreImage &&
            !isPhysicalDrivePath(spec.target);
 }
 
@@ -2394,7 +2394,7 @@ QString validateCloneOrImageScript(const PartitionOperation& operation,
     if (restoreImageMissingSizes(operation, spec)) {
         return QStringLiteral("Restore Image requires known image and target sizes");
     }
-    if (restoreOrMigrateMissingPhysicalTarget(operation, spec)) {
+    if (restoreMissingPhysicalTarget(operation, spec)) {
         return QStringLiteral("Restore Image and OS migration require a physical target disk");
     }
     if (cloneTargetTooSmall(spec)) {
@@ -3225,41 +3225,6 @@ QString cloneTransferScript(const CloneTransferSpec& spec,
                imageSourceReleaseScript();
     }
     return script + cloneTransferExecutionScript(source_already_open, QString());
-}
-
-QString osMigrationBootValidationScript() {
-    return QStringLiteral(
-        "Write-Output 'SAK OS migration boot validation'\n"
-        "$targetDiskNumber = -1\n"
-        "if ($dst.StartsWith('\\\\.\\PhysicalDrive', "
-        "[System.StringComparison]::OrdinalIgnoreCase)) { $suffix = "
-        "$dst.Substring('\\\\.\\PhysicalDrive'.Length); [void][int]::TryParse($suffix, "
-        "[ref]$targetDiskNumber) }\n"
-        "if ($targetDiskNumber -lt 0) { throw 'OS migration boot validation could not resolve the "
-        "target physical disk path' }\n"
-        "$disk = Get-Disk -Number $targetDiskNumber -ErrorAction Stop\n"
-        "$parts = @(Get-Partition -DiskNumber $targetDiskNumber -ErrorAction Stop | Sort-Object "
-        "PartitionNumber)\n"
-        "Write-Output (\"Target Disk {0}: Scheme={1}; Operational={2}; Health={3}\" -f "
-        "$disk.Number, $disk.PartitionStyle, ($disk.OperationalStatus -join ','), "
-        "$disk.HealthStatus)\n"
-        "foreach ($part in $parts) { Write-Output (\"Partition {0}: Type={1}; GptType={2}; "
-        "Size={3}; Drive={4}; Active={5}\" -f $part.PartitionNumber, $part.Type, $part.GptType, "
-        "$part.Size, $part.DriveLetter, $part.IsActive) }\n"
-        "if ($disk.PartitionStyle -eq 'GPT') { $esp = @($parts | Where-Object { $_.GptType -eq "
-        "'{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}' -or $_.Type -eq 'System' }); if ($esp.Count -eq "
-        "0) { throw 'UEFI boot validation failed: no EFI System Partition on target disk' }; $data "
-        "= @($parts | Where-Object { $_.GptType -eq '{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}' -or "
-        "$_.Type -eq 'Basic' }); if ($data.Count -eq 0) { throw 'UEFI boot validation failed: no "
-        "Windows data partition candidate on target disk' }; Write-Output 'UEFI validation passed: "
-        "EFI System Partition and Windows data candidate found' }\n"
-        "elseif ($disk.PartitionStyle -eq 'MBR') { $active = @($parts | Where-Object { $_.IsActive "
-        "}); if ($active.Count -eq 0) { throw 'BIOS boot validation failed: no active partition on "
-        "target disk' }; Write-Output 'BIOS validation passed: active partition found' }\n"
-        "else { throw 'Boot validation failed: target disk partition style is RAW or unknown' }\n"
-        "Write-Output 'Next step: select the target disk in BIOS/UEFI boot order. If it does not "
-        "start, start the PC from Windows installation media and use Startup Repair. Boot Repair "
-        "in this app rebuilds only the Windows it is running on.'\n");
 }
 
 struct PrimaryLogicalScriptPayload {
@@ -4588,11 +4553,12 @@ void PartitionScriptBuilder::appendLayoutBuilders(QHash<int, Builder>* builders)
 }
 
 void PartitionScriptBuilder::appendCloneAndMaintenanceBuilders(QHash<int, Builder>* builders) {
+    builders->insert(static_cast<int>(PartitionOperationType::MigrateOs),
+                     &PartitionScriptBuilder::buildOsMigrationScript);
     for (const auto type : {PartitionOperationType::CloneDisk,
                             PartitionOperationType::ClonePartition,
                             PartitionOperationType::CreateImage,
-                            PartitionOperationType::RestoreImage,
-                            PartitionOperationType::MigrateOs}) {
+                            PartitionOperationType::RestoreImage}) {
         builders->insert(static_cast<int>(type), &PartitionScriptBuilder::buildCloneOrImageScript);
     }
     builders->insert(static_cast<int>(PartitionOperationType::RepairBoot),
@@ -5696,9 +5662,34 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     out.script += cloneTransferScript(spec,
                                       operation,
                                       operation.type == PartitionOperationType::RestoreImage);
-    if (operation.type == PartitionOperationType::MigrateOs) {
-        out.script += osMigrationBootValidationScript();
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
+    return out;
+}
+
+PartitionScript PartitionScriptBuilder::buildOsMigrationScript(
+    const PartitionOperation& operation) const {
+    if (!payloadBool(operation, QStringLiteral("target_wipe_confirmed"))) {
+        return invalidScript(QStringLiteral("Migrate OS requires target overwrite confirmation"));
     }
+    const auto plan = osMigrationPlanFromJson(
+        operation.payload.value(QStringLiteral("migration_plan")).toObject());
+    if (!plan) {
+        return invalidScript(QStringLiteral("Migrate OS has no plan worked out for its target"));
+    }
+    QString blocker;
+    const QString text = buildOsMigrationScriptText(operation, *plan, &blocker);
+    if (!blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
+    PartitionScript out;
+    out.preview = QStringLiteral("Migrate OS from Disk %1 to %2, %3")
+                      .arg(operation.target.disk_number.value())
+                      .arg(payloadString(operation, QStringLiteral("target_path")),
+                           plan->route == OsMigrationRoute::Image
+                               ? QStringLiteral("through a temporary image")
+                               : QStringLiteral("block by block from a snapshot"));
+    out.script = commonHeader(out.preview) + text;
+    out.dry_run_script = osMigrationPlanSummary(*plan);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5780,6 +5771,9 @@ PartitionScript PartitionScriptBuilder::buildBootRepairScript(
     const PartitionOperation& operation) const {
     // No guessed C:\Windows: the caller names the installation whose boot files are rebuilt
     // (the panel passes the running system's Windows folder, which is not always on C:).
+    if (payloadString(operation, QStringLiteral("repair_scope")) == QStringLiteral("attached")) {
+        return buildAttachedBootRepairScript(operation);
+    }
     const QString windows_path = payloadString(operation, QStringLiteral("windows_path")).trimmed();
     const QString esp_letter =
         payloadString(operation, QStringLiteral("esp_letter"), QStringLiteral("S")).left(1);
@@ -5803,6 +5797,27 @@ PartitionScript PartitionScriptBuilder::buildBootRepairScript(
     out.script += boot_mode == QStringLiteral("BIOS")
                       ? biosBootRepairBody(windows_path, esp_letter.toUpper())
                       : uefiBootRepairBody(windows_path, esp_letter.toUpper());
+    out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
+    return out;
+}
+
+PartitionScript PartitionScriptBuilder::buildAttachedBootRepairScript(
+    const PartitionOperation& operation) {
+    const QString boot_mode =
+        payloadString(operation, QStringLiteral("boot_mode")).trimmed().toUpper();
+    if (boot_mode != QStringLiteral("UEFI") && boot_mode != QStringLiteral("BIOS")) {
+        return invalidScript(QStringLiteral("Boot repair requires UEFI or BIOS boot_mode"));
+    }
+    if (operation.target.disk_unique_id.trimmed().isEmpty() ||
+        operation.target.disk_size_bytes == 0) {
+        return invalidScript(QStringLiteral("Boot repair of an attached disk needs its identity"));
+    }
+    PartitionScript out;
+    out.preview = QStringLiteral("Repair %1 boot files for the Windows on Disk %2")
+                      .arg(boot_mode)
+                      .arg(operation.target.disk_number.value());
+    out.script = commonHeader(out.preview) + requireDiskIdentity(operation.target) +
+                 buildAttachedBootRepairScriptText(operation.target.disk_number.value(), boot_mode);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }

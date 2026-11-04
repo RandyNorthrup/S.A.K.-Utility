@@ -4,6 +4,7 @@
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_panel.h"
+#include "sak/partition_os_migration.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractItemDelegate>
@@ -118,6 +119,11 @@ private Q_SLOTS:
     void apfsUnknownModeIsRefused() const;
     void diskCopyWizardHasNoUnprobedCustomTarget();
     void diskCopyWizardOffersOnlyWhatTheCopyDoes();
+    void migrationWizardSaysSnapshotAndOffersTheChoice();
+    void migrationWizardQueuesItsPlanAndTheChoice();
+    void migrationWizardShowsWhyATargetIsRefused();
+    void bootRepairOnAnAttachedDiskRepairsThatDisk();
+    void bootRepairOnTheRunningDiskRepairsTheRunningWindows();
     void createImageOverAnExistingFileCarriesTheDialogsAnswer();
     void labelsSayWhatTheToolDoes();
     void noVisibleTextSaysCertified();
@@ -2865,15 +2871,263 @@ void PartitionManagerPanelTests::diskCopyWizardOffersOnlyWhatTheCopyDoes() {
             QVERIFY(findAccessibleWidget<QComboBox>(wizard, QStringLiteral("Verification mode")) !=
                     nullptr);
             const auto labels = wizard->findChildren<QLabel*>();
-            QVERIFY(std::ranges::any_of(labels, [](const QLabel* label) {
+            const bool byte_for_byte = std::ranges::any_of(labels, [](const QLabel* label) {
                 return label->text().contains(QStringLiteral("byte for byte"));
-            }));
+            });
+            QCOMPARE(byte_for_byte, qstrcmp(slot, "onCloneDisk") == 0);
             inspected = true;
             wizard->reject();
         });
         QVERIFY(QMetaObject::invokeMethod(&panel, slot, Qt::DirectConnection));
         QVERIFY(inspected);
     }
+}
+
+namespace {
+
+constexpr uint64_t kMigrationGiB = 1024ULL * 1024ULL * 1024ULL;
+
+/// Windows on a GPT disk with 34 GiB in use, and an empty disk of the size asked for.
+sak::PartitionInventory migrationInventoryFixture(uint64_t target_bytes) {
+    sak::PartitionInfoEx esp;
+    esp.disk_number = sak::DiskNumber{0};
+    esp.partition_number = sak::PartitionNumber{1};
+    esp.type_name = QStringLiteral("System");
+    esp.offset_bytes = kTestMegabyteBytes;
+    esp.size_bytes = 200 * kTestMegabyteBytes;
+    esp.is_efi = true;
+    esp.is_system = true;
+    sak::PartitionVolumeInfo volume;
+    volume.drive_letter = QStringLiteral("C");
+    volume.file_system = QStringLiteral("NTFS");
+    volume.total_bytes = 255 * kMigrationGiB;
+    volume.free_bytes = 221 * kMigrationGiB;
+    volume.health_status = QStringLiteral("Healthy");
+    volume.bitlocker_state_known = true;
+    volume.dirty_bit_known = true;
+    sak::PartitionInfoEx windows;
+    windows.disk_number = sak::DiskNumber{0};
+    windows.partition_number = sak::PartitionNumber{2};
+    windows.type_name = QStringLiteral("Basic");
+    windows.offset_bytes = 201 * kTestMegabyteBytes;
+    windows.size_bytes = 255 * kMigrationGiB;
+    windows.is_boot = true;
+    windows.volume = volume;
+    sak::PartitionDiskInfo source;
+    source.disk_number = sak::DiskNumber{0};
+    source.unique_id = QStringLiteral("SOURCE-ID");
+    source.serial_number = QStringLiteral("SOURCE-SERIAL");
+    source.model = QStringLiteral("Old Drive");
+    source.partition_style = QStringLiteral("GPT");
+    source.size_bytes = 256 * kMigrationGiB;
+    source.is_boot = true;
+    source.is_system = true;
+    source.is_offline = false;
+    source.health_status = QStringLiteral("Healthy");
+    source.partitions = {esp, windows};
+    sak::PartitionDiskInfo target;
+    target.disk_number = sak::DiskNumber{1};
+    target.unique_id = QStringLiteral("TARGET-ID");
+    target.serial_number = QStringLiteral("TARGET-SERIAL");
+    target.model = QStringLiteral("New Drive");
+    target.partition_style = QStringLiteral("GPT");
+    target.size_bytes = target_bytes;
+    target.is_offline = false;
+    target.health_status = QStringLiteral("Healthy");
+    sak::PartitionInventory inventory;
+    inventory.disks = {source, target};
+    inventory.layout_hash = QStringLiteral("migration-fixture");
+    inventory.captured_at = QDateTime::currentDateTimeUtc();
+    return inventory;
+}
+
+QString wizardLabelsText(const QWizard* wizard) {
+    QStringList texts;
+    for (const auto* label : wizard->findChildren<QLabel*>()) {
+        texts.append(label->text());
+    }
+    return texts.join(QLatin1Char('\n'));
+}
+
+}  // namespace
+
+// It copies from snapshots now, so a wizard that says byte for byte would be untrue. Copying
+// without a snapshot is a choice the technician makes here, off by default.
+void PartitionManagerPanelTests::migrationWizardSaysSnapshotAndOffersTheChoice() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY2(wizard != nullptr, "The migration wizard should open");
+        const QString text = wizardLabelsText(wizard);
+        QVERIFY2(text.contains(QStringLiteral("snapshot")), qPrintable(text));
+        QVERIFY2(!text.contains(QStringLiteral("byte for byte")), qPrintable(text));
+        auto* choice = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Copy the running disk without a snapshot"));
+        QVERIFY2(choice != nullptr, "The choice to copy without a snapshot should exist");
+        QVERIFY(!choice->isChecked());
+        inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onMigrateOs", Qt::DirectConnection));
+    QVERIFY(inspected);
+
+    sak::PartitionManagerPanel clone_panel;
+    clone_panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+    auto* clone_table = clone_panel.findChild<QTableWidget*>();
+    QVERIFY(clone_table != nullptr);
+    clone_table->selectRow(0);
+    bool clone_inspected = false;
+    const ScopedModalInspection clone_inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        QVERIFY(findAccessibleWidget<QCheckBox>(
+                    wizard, QStringLiteral("Copy the running disk without a snapshot")) == nullptr);
+        clone_inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&clone_panel, "onCloneDisk", Qt::DirectConnection));
+    QVERIFY(clone_inspected);
+}
+
+void PartitionManagerPanelTests::migrationWizardQueuesItsPlanAndTheChoice() {
+    for (const bool allow : {false, true}) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(migrationInventoryFixture(100 * kMigrationGiB));
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        table->selectRow(0);
+        bool inspected = false;
+        const ScopedModalInspection inspection([&]() {
+            auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(wizard);
+            QVERIFY(wizard != nullptr);
+            auto* choice = findAccessibleWidget<QCheckBox>(
+                wizard, QStringLiteral("Copy the running disk without a snapshot"));
+            QVERIFY(choice != nullptr);
+            choice->setChecked(allow);
+            auto* confirm = findAccessibleWidget<QCheckBox>(
+                wizard, QStringLiteral("Confirm target disk overwrite"));
+            QVERIFY(confirm != nullptr);
+            confirm->setChecked(true);
+            inspected = true;
+            wizard->accept();
+        });
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onMigrateOs", Qt::DirectConnection));
+        QVERIFY(inspected);
+        const auto operations = panel.testQueuedOperationsForReview();
+        QCOMPARE(operations.size(), 1);
+        const auto& payload = operations.first().payload;
+        QCOMPARE(payload.value(QStringLiteral("allow_no_snapshot")).toBool(), allow);
+        const auto plan = sak::osMigrationPlanFromJson(
+            payload.value(QStringLiteral("migration_plan")).toObject());
+        QVERIFY(plan.has_value());
+        QCOMPARE(plan->route, sak::OsMigrationRoute::Image);
+        QCOMPARE(plan->target_bytes, 100 * kMigrationGiB);
+    }
+}
+
+void PartitionManagerPanelTests::migrationWizardShowsWhyATargetIsRefused() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(30 * kMigrationGiB));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        const QString text = wizardLabelsText(wizard);
+        QVERIFY2(text.contains(QStringLiteral("Blocked: Target disk is too small for the data")),
+                 qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("Windows partition:")), qPrintable(text));
+        inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onMigrateOs", Qt::DirectConnection));
+    QVERIFY(inspected);
+}
+
+// It only ever repaired the running Windows, whichever disk was selected. A technician repairs the
+// disk they pulled and attached, so that is what selecting another disk now means.
+void PartitionManagerPanelTests::bootRepairOnAnAttachedDiskRepairsThatDisk() {
+    for (const auto& [style, expected_mode] :
+         {std::pair{QStringLiteral("MBR"), QStringLiteral("BIOS")},
+          std::pair{QStringLiteral("GPT"), QStringLiteral("UEFI")}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = migrationInventoryFixture(512 * kMigrationGiB);
+        inventory.disks[1].partition_style = style;
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        for (int row = 0; row < table->rowCount() && table->selectedItems().isEmpty(); ++row) {
+            for (int column = 0; column < table->columnCount(); ++column) {
+                const auto* item = table->item(row, column);
+                if (item != nullptr &&
+                    item->data(Qt::UserRole).toMap().value(QStringLiteral("disk")).toInt() == 1 &&
+                    item->data(Qt::UserRole).toMap().contains(QStringLiteral("kind"))) {
+                    table->selectRow(row);
+                    break;
+                }
+            }
+        }
+        QVERIFY(!table->selectedItems().isEmpty());
+        bool inspected = false;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY2(dialog != nullptr, "The boot repair prompt should open");
+            QVERIFY2(dialog->labelText().contains(QStringLiteral("the Windows on Disk 1")),
+                     qPrintable(dialog->labelText()));
+            QVERIFY2(!dialog->labelText().contains(QStringLiteral("whichever")),
+                     qPrintable(dialog->labelText()));
+            QCOMPARE(dialog->textValue(), expected_mode);
+            inspected = true;
+            dialog->accept();
+        });
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onRepairBoot", Qt::DirectConnection));
+        QVERIFY(inspected);
+        const auto operations = panel.testQueuedOperationsForReview();
+        QCOMPARE(operations.size(), 1);
+        const auto& payload = operations.first().payload;
+        QCOMPARE(operations.first().target.disk_number, sak::DiskNumber{1});
+        QCOMPARE(payload.value(QStringLiteral("repair_scope")).toString(),
+                 QStringLiteral("attached"));
+        QCOMPARE(payload.value(QStringLiteral("boot_mode")).toString(), expected_mode);
+        QVERIFY(!payload.contains(QStringLiteral("windows_path")));
+    }
+}
+
+void PartitionManagerPanelTests::bootRepairOnTheRunningDiskRepairsTheRunningWindows() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "The boot repair prompt should open");
+        QVERIFY2(dialog->labelText().contains(QStringLiteral("running now")),
+                 qPrintable(dialog->labelText()));
+        inspected = true;
+        dialog->accept();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onRepairBoot", Qt::DirectConnection));
+    QVERIFY(inspected);
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    const auto& payload = operations.first().payload;
+    QVERIFY(!payload.contains(QStringLiteral("repair_scope")));
+    QVERIFY(!payload.value(QStringLiteral("windows_path")).toString().isEmpty());
 }
 
 // The save dialog asks before it returns a file that is already there, and the script used to
@@ -2939,9 +3193,8 @@ void PartitionManagerPanelTests::labelsSayWhatTheToolDoes() {
     }
     QVERIFY(source.contains(QStringLiteral("Overwrites the entire disk once, with a full format")));
     QVERIFY(source.contains(QStringLiteral("Copy a partition to free space or to an image file")));
-    QVERIFY(
-        source.contains(QStringLiteral("This rebuilds the boot files of the Windows this PC is "
-                                       "running now")));
+    QVERIFY(source.contains(QStringLiteral("rebuilds the boot files of the Windows that is")));
+    QVERIFY(source.contains(QStringLiteral("looks for the Windows on Disk %1")));
 }
 
 // Partition Manager and File Explorer may not call anything certified in what a person reads. Only

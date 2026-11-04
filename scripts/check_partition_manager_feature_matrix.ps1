@@ -209,12 +209,22 @@ $features = @(
             @{
                 kind = "script builder"
                 path = "src\core\partition_script_builder.cpp"
-                patterns = @("SAK OS migration boot validation", 'bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info")
+                patterns = @('bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info")
+            },
+            @{
+                kind = "script builder"
+                path = "src\core\partition_scripts\os_migration.ps1"
+                patterns = @("function Set-SakTargetBoot")
+            },
+            @{
+                kind = "script builder"
+                path = "src\core\partition_scripts\target_boot_files.ps1"
+                patterns = @("function Invoke-SakTargetBootFiles")
             },
             @{
                 kind = "test"
-                path = "tests\unit\test_partition_manager_core.cpp"
-                patterns = @("scriptBuilder_buildsOsMigrationBootValidationScript")
+                path = "tests\unit\test_partition_os_migration.cpp"
+                patterns = @("scriptRefusesEverythingBeforeTheFirstWrite")
             }
         )
     },

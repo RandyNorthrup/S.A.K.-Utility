@@ -33,6 +33,15 @@ public:
                                                    bool use_elevation);
     void cancel();
 
+    /// What a failed script said about itself: PowerShell's error text, without the lines after it
+    /// that say where in the script it was raised. Empty when there is none.
+    [[nodiscard]] static QString scriptFailureReason(const QString& std_err);
+    /// A non-empty reason for a failed elevated operation, and never just "it exited".
+    [[nodiscard]] static QString elevatedFailureMessage(const QString& helper_error,
+                                                        const QString& structured_error,
+                                                        const QString& std_err,
+                                                        int exit_code);
+
 #ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief Test-only: called with each broker right after an elevated operation registers
     ///        it, before anything is sent. Static so the class layout is the same in test and

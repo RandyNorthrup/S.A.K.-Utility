@@ -6,6 +6,7 @@
 
 #include "sak/partition_safety_validator.h"
 
+#include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 
 #include <QDir>
@@ -1090,7 +1091,6 @@ bool nonNativeResizeShrinkNeedsUsageMetadata(const PartitionInfoEx& partition,
 
 bool blocksTooSmallCloneTarget(const PartitionOperation& operation) {
     const bool cloneOperation = operation.type == PartitionOperationType::CloneDisk ||
-                                operation.type == PartitionOperationType::MigrateOs ||
                                 operation.type == PartitionOperationType::RestoreImage;
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
     const uint64_t targetSize = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
@@ -2240,18 +2240,57 @@ static void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("System disk conversion must use MBR2GPT to GPT"));
 }
 
+// The plan is worked out again from the live disk: this is what stops a target too small for the
+// data, and BitLocker on the source, before anything is written. The script checks both once more.
+static void validateOsMigrationPlan(const PartitionDiskInfo& disk,
+                                    const PartitionOperation& operation,
+                                    PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::MigrateOs) {
+        return;
+    }
+    const OsMigrationPlan live =
+        planOsMigration(disk, payloadUInt64(operation, QStringLiteral("target_size_bytes")));
+    result->blockers.append(live.blockers);
+    const auto reviewed = osMigrationPlanFromJson(
+        operation.payload.value(QStringLiteral("migration_plan")).toObject());
+    addBlockerIf(result,
+                 !reviewed.has_value(),
+                 QStringLiteral("Migrate OS was queued with no plan worked out for its target"));
+    addBlockerIf(result,
+                 reviewed.has_value() && !osMigrationPlansAgree(*reviewed, live),
+                 QStringLiteral("The source disk's layout or the target's size changed since "
+                                "Migrate OS was planned"));
+    addWarningIf(result,
+                 operation.payload.value(QStringLiteral("allow_no_snapshot")).toBool(false),
+                 QStringLiteral(
+                     "If Windows cannot take a snapshot, this copies the running disk "
+                     "anyway. Files that change during the copy can then be inconsistent "
+                     "on the target, and it may not start."));
+}
+
+// One repairs the Windows that is running, and the other a Windows on a disk that is not running.
+static void validateBootRepairScope(const PartitionDiskInfo& disk,
+                                    const PartitionOperation& operation,
+                                    PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::RepairBoot) {
+        return;
+    }
+    const bool attached = operation.payload.value(QStringLiteral("repair_scope")).toString() ==
+                          QStringLiteral("attached");
+    const bool running_disk = disk.is_system || disk.is_boot;
+    addBlockerIf(result,
+                 attached && running_disk,
+                 QStringLiteral("This is the disk Windows is running from, so a repair meant for "
+                                "an attached disk does not run on it"));
+    addBlockerIf(result,
+                 !attached && !running_disk,
+                 QStringLiteral("A repair of the running Windows was queued on a disk Windows is "
+                                "not running from"));
+}
+
 static void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
                                            const PartitionOperation& operation,
                                            PartitionValidationResult* result) {
-    // The disk being copied is the one Windows is running from, and nothing takes a snapshot of it.
-    if (operation.type == PartitionOperationType::MigrateOs) {
-        result->warnings.append(
-            QStringLiteral("Windows keeps running while this copies its own disk, with no "
-                           "snapshot, so anything that changes during the copy can be inconsistent "
-                           "on the target. Close other programs first, and let Windows check the "
-                           "disk on its first start from the target. Full verification can report "
-                           "differences for the same reason."));
-    }
     addBlockerIf(result,
                  operation.type == PartitionOperationType::MigrateOs &&
                      !(disk.is_system || disk.is_boot),
@@ -2306,6 +2345,8 @@ void PartitionSafetyValidator::validateDiskOperation(const PartitionInventory& i
     validateDynamicToBasicBlockers(disk, operation, result);
     validateDiskStyleBlockers(disk, operation, result);
     validateDiskCloneImageBlockers(disk, operation, result);
+    validateOsMigrationPlan(disk, operation, result);
+    validateBootRepairScope(disk, operation, result);
     validateDiskRecoveryBlockers(disk, operation, result);
     addWarningIf(result,
                  operation.type == PartitionOperationType::WipeDisk &&

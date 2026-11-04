@@ -36,25 +36,6 @@ std::function<void(const std::shared_ptr<ElevationBroker>&)>& brokerRegisteredOb
 }
 #endif
 
-// Resolve a non-empty failure reason for a failed elevated operation:
-// structured helper error -> structured data error -> script stderr -> exit code.
-QString resolveElevatedFailureMessage(const QString& helperError,
-                                      const QString& structuredError,
-                                      const QString& stderrText,
-                                      int exitCode) {
-    if (!helperError.isEmpty()) {
-        return helperError;
-    }
-    if (!structuredError.isEmpty()) {
-        return structuredError;
-    }
-    const QString trimmed = stderrText.trimmed();
-    if (!trimmed.isEmpty()) {
-        return trimmed;
-    }
-    return QStringLiteral("Operation failed (exit code %1) with no error output").arg(exitCode);
-}
-
 PartitionExecutionStep blockedExecutionStep(const PartitionOperation& operation,
                                             const QStringList& blockers) {
     PartitionExecutionStep step;
@@ -163,6 +144,45 @@ private:
 }  // namespace
 
 PartitionExecutor::PartitionExecutor(QObject* parent) : QObject(parent) {}
+
+// What the script said about itself -> structured helper error -> structured data error -> script
+// stderr -> exit code. The helper's own line for a script that stopped is only "Command exited with
+// code 1", and a person reading that cannot tell a refusal that wrote nothing from a copy that
+// failed halfway.
+QString PartitionExecutor::elevatedFailureMessage(const QString& helper_error,
+                                                  const QString& structured_error,
+                                                  const QString& std_err,
+                                                  int exit_code) {
+    if (const QString reason = scriptFailureReason(std_err); exit_code != 0 && !reason.isEmpty()) {
+        return reason;
+    }
+    if (!helper_error.isEmpty()) {
+        return helper_error;
+    }
+    if (!structured_error.isEmpty()) {
+        return structured_error;
+    }
+    const QString trimmed = std_err.trimmed();
+    if (!trimmed.isEmpty()) {
+        return trimmed;
+    }
+    return QStringLiteral("Operation failed (exit code %1) with no error output").arg(exit_code);
+}
+
+QString PartitionExecutor::scriptFailureReason(const QString& std_err) {
+    QStringList reason;
+    for (const auto& line : std_err.split(QLatin1Char('\n'))) {
+        const QString text = line.trimmed();
+        if (text.startsWith(QStringLiteral("At line:")) ||
+            text.startsWith(QStringLiteral("At C:")) || text.startsWith(QStringLiteral("+ "))) {
+            break;
+        }
+        if (!text.isEmpty()) {
+            reason.append(text);
+        }
+    }
+    return reason.join(QLatin1Char(' '));
+}
 
 PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOperation>& operations,
                                                     bool dry_run,
@@ -294,7 +314,7 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
     // empty error (matches the local path).
     step.error_message = step.success
                              ? elevated->error_message
-                             : resolveElevatedFailureMessage(
+                             : elevatedFailureMessage(
                                    elevated->error_message,
                                    elevated->data.value(QStringLiteral("error_message")).toString(),
                                    step.stderr_text,

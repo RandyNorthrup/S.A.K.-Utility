@@ -95,7 +95,10 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildCloneOrImageScript(
         const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildOsMigrationScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildBootRepairScript(const PartitionOperation& operation) const;
+    [[nodiscard]] static PartitionScript buildAttachedBootRepairScript(
+        const PartitionOperation& operation);
     [[nodiscard]] PartitionScript buildOptimizeSsdScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildDefragVolumeScript(
         const PartitionOperation& operation) const;

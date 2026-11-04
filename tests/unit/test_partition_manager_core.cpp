@@ -1803,7 +1803,6 @@ private Q_SLOTS:
     void scriptBuilder_buildsRecoveredPartitionRestoreScript();
     void scriptBuilder_buildsCloneVerificationScript();
     void scriptBuilder_buildsOffsetPartitionCloneScript();
-    void scriptBuilder_buildsOsMigrationBootValidationScript();
     void safetyValidator_blocksUnsafeParityOperations();
     void scriptBuilder_buildsClearLevelDiskWipeScript();
     void scriptBuilder_mergeRejectsTraversalTargetFolder();
@@ -1887,14 +1886,12 @@ private Q_SLOTS:
     void jsonUInt64_clampsNegativesInsteadOfWrapping();
     void scriptBuilder_buildsBiosBootRepairScript();
     void scriptBuilder_refusesBootRepairWithoutWindowsPath();
-    void scriptBuilder_migrationSendsAFailedBootToStartupRepair();
     void scriptBuilder_bootRepairFindsAFreeLetterAndChecksTheMount();
     void scriptBuilder_biosRepairLettersTheActivePartitionAndLetsGo();
     void scriptBuilder_longWorkOutlastsAWholeDiskPass();
     void scriptBuilder_convertAnswersItsOwnPrompts();
     void scriptBuilder_splitPutsTheNewPartitionNextToTheOriginal();
     void scriptBuilder_recoveryScanReadsEachKindOfBootSector();
-    void safetyValidator_warnsThatMigrationCopiesARunningDisk();
     void safetyValidator_refusesLargeEncryptedApfsWhenQueued();
     void defragRuleIsTheSameInTheValidatorAndTheScript();
     void operationQueue_blocksLayoutMismatch();
@@ -18543,30 +18540,6 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript()
     QVERIFY(script.script.contains(QStringLiteral("if (-not $verify.IsOffline)")));
 }
 
-void PartitionManagerCoreTests::scriptBuilder_buildsOsMigrationBootValidationScript() {
-    PartitionTarget target;
-    target.kind = PartitionTargetKind::Disk;
-    target.disk_number = DiskNumber{0};
-    QJsonObject payload;
-    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
-    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
-    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
-    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
-    payload[QStringLiteral("verify_mode")] = QStringLiteral("Sample verification");
-    pinRawTargetIdentity(&payload);
-    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::MigrateOs,
-                                                              target,
-                                                              payload);
-
-    PartitionScriptBuilder builder;
-    const auto script = builder.buildScript(operation);
-    QVERIFY(script.valid());
-    QVERIFY(script.script.contains(QStringLiteral("SAK OS migration boot validation")));
-    QVERIFY(script.script.contains(QStringLiteral("EFI System Partition")));
-    QVERIFY(script.script.contains(QStringLiteral("BIOS validation passed")));
-    QVERIFY(script.script.contains(QStringLiteral("Boot Repair")));
-}
-
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeParityOperations() {
     auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     auto& disk = inventory.disks.first();
@@ -21880,28 +21853,6 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {
     QVERIFY(script.script.indexOf(QStringLiteral("finally")) < removed);
 }
 
-// Boot Repair rebuilds the Windows it runs on, so it cannot be what fixes a target that will not
-// start.
-void PartitionManagerCoreTests::scriptBuilder_migrationSendsAFailedBootToStartupRepair() {
-    PartitionTarget target;
-    target.kind = PartitionTargetKind::Disk;
-    target.disk_number = DiskNumber{0};
-    QJsonObject payload;
-    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
-    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
-    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
-    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
-    payload[QStringLiteral("target_wipe_confirmed")] = true;
-    pinRawTargetIdentity(&payload);
-    PartitionScriptBuilder builder;
-    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::MigrateOs, target, payload));
-    QVERIFY(script.valid());
-    QVERIFY(script.script.contains(QStringLiteral("use Startup Repair")));
-    QVERIFY(!script.script.contains(QStringLiteral("on the target Windows install")));
-    QCOMPARE(script.timeout_seconds, kPartitionLongTaskTimeoutSeconds);
-}
-
 // mountvol failing used to go unnoticed: bcdboot then wrote its files to whatever already had that
 // letter, and the clean-up took the letter away from it.
 void PartitionManagerCoreTests::scriptBuilder_bootRepairFindsAFreeLetterAndChecksTheMount() {
@@ -22102,34 +22053,6 @@ void PartitionManagerCoreTests::scriptBuilder_recoveryScanReadsEachKindOfBootSec
                           QStringLiteral("oemonly="),
                           QStringLiteral("unsigned="),
                           QStringLiteral("loose=")}));
-}
-
-void PartitionManagerCoreTests::safetyValidator_warnsThatMigrationCopiesARunningDisk() {
-    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
-    inventory.disks.first().is_boot = true;
-    PartitionTarget target;
-    target.kind = PartitionTargetKind::Disk;
-    target.disk_number = DiskNumber{0};
-    const QJsonObject payload{
-        {QStringLiteral("source_path"), QStringLiteral("\\\\.\\PhysicalDrive0")},
-        {QStringLiteral("target_path"), QStringLiteral("\\\\.\\PhysicalDrive1")},
-        {QStringLiteral("source_size_bytes"), QStringLiteral("1048576")},
-        {QStringLiteral("target_size_bytes"), QStringLiteral("2097152")},
-        {QStringLiteral("target_wipe_confirmed"), true}};
-    PartitionOperationPlanner planner;
-    const auto migrate =
-        planner.previewOperation(inventory,
-                                 PartitionOperationPlanner::makeOperation(
-                                     PartitionOperationType::MigrateOs, target, payload));
-    const QString warnings = migrate.warnings.join(QLatin1Char(' '));
-    QVERIFY2(warnings.contains(QStringLiteral("no snapshot")), qPrintable(warnings));
-    QVERIFY2(warnings.contains(QStringLiteral("check the disk")), qPrintable(warnings));
-
-    const auto clone =
-        planner.previewOperation(inventory,
-                                 PartitionOperationPlanner::makeOperation(
-                                     PartitionOperationType::CloneDisk, target, payload));
-    QVERIFY(!clone.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("no snapshot")));
 }
 
 // The limit is the writer's, and a person used to learn it only when Apply ran.

@@ -44,6 +44,8 @@ install_manifest.txt
 !cmake/SakSourceFingerprint.cmake
 # The product-library helper the root CMakeLists.txt includes is first-party build code too.
 !cmake/SakProductLibrary.cmake
+# Compiles Partition Manager's scripts into the program; must be tracked despite *.cmake
+!cmake/embed_text_files.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild
