@@ -1182,8 +1182,11 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
     m_export_ics_button->setAccessibleName(tr("Export ICS"));
     m_export_ics_button->setAccessibleDescription(tr("Export calendar as ICS"));
     m_export_ics_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(
-        m_export_ics_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportIcsClicked);
+    connect(m_export_ics_button,
+            &QPushButton::clicked,
+            this,
+            &EmailCalendarDialog::onExportIcsClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_export_ics_button);
 
     m_export_csv_button = new QPushButton(tr("Export CSV"), this);
@@ -1191,8 +1194,11 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
     m_export_csv_button->setAccessibleName(tr("Export CSV"));
     m_export_csv_button->setAccessibleDescription(tr("Export calendar as CSV"));
     m_export_csv_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    connect(
-        m_export_csv_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportCsvClicked);
+    connect(m_export_csv_button,
+            &QPushButton::clicked,
+            this,
+            &EmailCalendarDialog::onExportCsvClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_export_csv_button);
 
     m_close_button = new QPushButton(tr("Close"), this);

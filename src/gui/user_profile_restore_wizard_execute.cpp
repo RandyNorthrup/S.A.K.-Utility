@@ -121,8 +121,11 @@ void UserProfileRestoreExecutePage::setupUi() {
             &QPushButton::clicked,
             this,
             &UserProfileRestoreExecutePage::onCancelRestore);
-    connect(
-        m_viewLogButton, &QPushButton::clicked, this, &UserProfileRestoreExecutePage::onViewLog);
+    connect(m_viewLogButton,
+            &QPushButton::clicked,
+            this,
+            &UserProfileRestoreExecutePage::onViewLog,
+            Qt::QueuedConnection);
 
     Q_ASSERT(m_statusLabel);
 }

@@ -357,12 +357,18 @@ void OrganizerPanel::addManualFileSystemTarget() {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("Add Target"));
     layout->addRow(buttons);
-    connect(browse, &QPushButton::clicked, &dialog, [this, path]() {
-        const QString file = QFileDialog::getOpenFileName(this, tr("Select Raw or Image Target"));
-        if (!file.isEmpty()) {
-            path->setText(file);
-        }
-    });
+    connect(
+        browse,
+        &QPushButton::clicked,
+        &dialog,
+        [this, path]() {
+            const QString file = QFileDialog::getOpenFileName(this,
+                                                              tr("Select Raw or Image Target"));
+            if (!file.isEmpty()) {
+                path->setText(file);
+            }
+        },
+        Qt::QueuedConnection);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
@@ -581,22 +587,45 @@ void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settings_btn) {
     connect(m_target_manual_button,
             &QPushButton::clicked,
             this,
-            &OrganizerPanel::addManualFileSystemTarget);
-    connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::onBrowseClicked);
-    connect(m_preview_button, &QPushButton::clicked, this, &OrganizerPanel::onPreviewClicked);
-    connect(m_execute_button, &QPushButton::clicked, this, &OrganizerPanel::onExecuteClicked);
-    connect(m_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onCancelClicked);
-    connect(settings_btn, &QPushButton::clicked, this, &OrganizerPanel::onSettingsClicked);
+            &OrganizerPanel::addManualFileSystemTarget,
+            Qt::QueuedConnection);
+    connect(m_browse_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onBrowseClicked,
+            Qt::QueuedConnection);
+    connect(m_preview_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onPreviewClicked,
+            Qt::QueuedConnection);
+    connect(m_execute_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onExecuteClicked,
+            Qt::QueuedConnection);
+    connect(m_cancel_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onCancelClicked,
+            Qt::QueuedConnection);
+    connect(settings_btn,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onSettingsClicked,
+            Qt::QueuedConnection);
     connect(
         m_add_category_button, &QPushButton::clicked, this, &OrganizerPanel::onAddCategoryClicked);
     connect(m_remove_category_button,
             &QPushButton::clicked,
             this,
-            &OrganizerPanel::onRemoveCategoryClicked);
+            &OrganizerPanel::onRemoveCategoryClicked,
+            Qt::QueuedConnection);
     connect(m_reset_categories_button,
             &QPushButton::clicked,
             this,
-            &OrganizerPanel::onResetCategoriesClicked);
+            &OrganizerPanel::onResetCategoriesClicked,
+            Qt::QueuedConnection);
 }
 
 void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settings_btn) {
@@ -790,7 +819,8 @@ void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settings_btn)
     connect(m_dedup_add_button,
             &QPushButton::clicked,
             this,
-            &OrganizerPanel::onDedupAddDirectoryClicked);
+            &OrganizerPanel::onDedupAddDirectoryClicked,
+            Qt::QueuedConnection);
     connect(m_dedup_target_combo,
             &QComboBox::currentIndexChanged,
             this,
@@ -798,13 +828,25 @@ void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settings_btn)
     connect(m_dedup_remove_button,
             &QPushButton::clicked,
             this,
-            &OrganizerPanel::onDedupRemoveDirectoryClicked);
-    connect(
-        m_dedup_clear_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupClearAllClicked);
-    connect(m_dedup_scan_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupScanClicked);
+            &OrganizerPanel::onDedupRemoveDirectoryClicked,
+            Qt::QueuedConnection);
+    connect(m_dedup_clear_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onDedupClearAllClicked,
+            Qt::QueuedConnection);
+    connect(m_dedup_scan_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onDedupScanClicked,
+            Qt::QueuedConnection);
     connect(
         m_dedup_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupCancelClicked);
-    connect(settings_btn, &QPushButton::clicked, this, &OrganizerPanel::onDedupSettingsClicked);
+    connect(settings_btn,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::onDedupSettingsClicked,
+            Qt::QueuedConnection);
 }
 
 // ============================================================================

@@ -82,6 +82,7 @@ private:
     void setupUi_saveLocation(QVBoxLayout* main_layout);
     void setupUi_progressAndButtons(QVBoxLayout* main_layout);
     void connectSignals();
+    void connectDownloaderSignals();
     void updateStartButton();
     QString getDefaultSavePath();
     void setInputsEnabled(bool enabled);

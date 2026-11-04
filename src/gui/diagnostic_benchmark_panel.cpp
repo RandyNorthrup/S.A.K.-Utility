@@ -878,27 +878,38 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
     connect(m_report_html_button,
             &QPushButton::clicked,
             this,
-            &DiagnosticBenchmarkPanel::onGenerateReportClicked);
-    connect(m_report_json_button, &QPushButton::clicked, this, [this]() {
-        const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
-        if (!dir.isEmpty()) {
-            m_controller->generateReport(dir,
-                                         m_report_technician_edit->text(),
-                                         m_report_ticket_edit->text(),
-                                         m_report_notes_edit->toPlainText(),
-                                         "json");
-        }
-    });
-    connect(m_report_csv_button, &QPushButton::clicked, this, [this]() {
-        const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
-        if (!dir.isEmpty()) {
-            m_controller->generateReport(dir,
-                                         m_report_technician_edit->text(),
-                                         m_report_ticket_edit->text(),
-                                         m_report_notes_edit->toPlainText(),
-                                         "csv");
-        }
-    });
+            &DiagnosticBenchmarkPanel::onGenerateReportClicked,
+            Qt::QueuedConnection);
+    connect(
+        m_report_json_button,
+        &QPushButton::clicked,
+        this,
+        [this]() {
+            const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
+            if (!dir.isEmpty()) {
+                m_controller->generateReport(dir,
+                                             m_report_technician_edit->text(),
+                                             m_report_ticket_edit->text(),
+                                             m_report_notes_edit->toPlainText(),
+                                             "json");
+            }
+        },
+        Qt::QueuedConnection);
+    connect(
+        m_report_csv_button,
+        &QPushButton::clicked,
+        this,
+        [this]() {
+            const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
+            if (!dir.isEmpty()) {
+                m_controller->generateReport(dir,
+                                             m_report_technician_edit->text(),
+                                             m_report_ticket_edit->text(),
+                                             m_report_notes_edit->toPlainText(),
+                                             "csv");
+            }
+        },
+        Qt::QueuedConnection);
 }
 
 // ============================================================================
@@ -1142,9 +1153,12 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
     for (auto it = m_qa_buttons.constBegin(); it != m_qa_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
         if (m_quick_actions.getAction(action_name) != nullptr) {
-            connect(it.value(), &QPushButton::clicked, this, [this, action_name]() {
-                onQuickActionClicked(action_name);
-            });
+            connect(
+                it.value(),
+                &QPushButton::clicked,
+                this,
+                [this, action_name]() { onQuickActionClicked(action_name); },
+                Qt::QueuedConnection);
         }
     }
 }

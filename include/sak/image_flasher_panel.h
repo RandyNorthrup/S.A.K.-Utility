@@ -131,6 +131,7 @@ private:
     void setupUi();
     /** @brief Create and wire up navigation buttons (Back/Next/Flash/Settings) */
     void setupNavigationButtons(QVBoxLayout* main_layout);
+    void setupBackButton(QHBoxLayout* button_layout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
     /** @brief Create download cards and select-file button */

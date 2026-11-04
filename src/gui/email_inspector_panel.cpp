@@ -375,8 +375,11 @@ void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
     m_export_emails_button->setAccessibleName(QStringLiteral("Save Selected Email"));
     m_export_emails_button->setToolTip(tr("Save checked emails as HTML, text, EML, or PDF"));
     m_export_emails_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(
-        m_export_emails_button, &QPushButton::clicked, this, &EmailInspectorPanel::onExportClicked);
+    connect(m_export_emails_button,
+            &QPushButton::clicked,
+            this,
+            &EmailInspectorPanel::onExportClicked,
+            Qt::QueuedConnection);
     log_toggle_layout->addWidget(m_export_emails_button);
     log_toggle_layout->addSpacing(sak::ui::kSpacingLarge);
     log_toggle_layout->addWidget(m_images_toggle_switch);
@@ -460,14 +463,19 @@ void EmailInspectorPanel::addRibbonFileGroup(QHBoxLayout* layout, QWidget* ribbo
     connect(m_scan_files_button,
             &QToolButton::clicked,
             this,
-            &EmailInspectorPanel::onScanForFilesClicked);
+            &EmailInspectorPanel::onScanForFilesClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_scan_files_button);
 
     m_open_button = makeRibbonButton(tr("Open"),
                                      QStringLiteral(":/icons/icons/icons8-opened-folder.svg"),
                                      tr("Open a PST, OST, NST, or MBOX file"),
                                      ribbon);
-    connect(m_open_button, &QToolButton::clicked, this, &EmailInspectorPanel::onOpenFileClicked);
+    connect(m_open_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onOpenFileClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_open_button);
 
     m_close_button = makeRibbonButton(tr("Close"),
@@ -591,7 +599,8 @@ void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ri
     connect(m_attachments_button,
             &QToolButton::clicked,
             this,
-            &EmailInspectorPanel::onExportAttachmentsClicked);
+            &EmailInspectorPanel::onExportAttachmentsClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_attachments_button);
 
     layout->addWidget(makeRibbonSeparator(ribbon));
@@ -603,8 +612,11 @@ void EmailInspectorPanel::addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* rib
                                          tr("Open the address book to view and export contacts"),
                                          ribbon);
     m_contacts_button->setEnabled(false);
-    connect(
-        m_contacts_button, &QToolButton::clicked, this, &EmailInspectorPanel::onContactsClicked);
+    connect(m_contacts_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onContactsClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_contacts_button);
 
     m_calendar_button = makeRibbonButton(tr("Calendar"),
@@ -612,8 +624,11 @@ void EmailInspectorPanel::addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* rib
                                          tr("Open calendar viewer to view and export events"),
                                          ribbon);
     m_calendar_button->setEnabled(false);
-    connect(
-        m_calendar_button, &QToolButton::clicked, this, &EmailInspectorPanel::onCalendarClicked);
+    connect(m_calendar_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onCalendarClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_calendar_button);
 }
 
@@ -882,7 +897,8 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     connect(m_save_attachment_button,
             &QPushButton::clicked,
             this,
-            &EmailInspectorPanel::onSaveAttachmentClicked);
+            &EmailInspectorPanel::onSaveAttachmentClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_save_attachment_button);
 
     m_save_all_attachments_button = new QPushButton(tr("Save All"), container);
@@ -892,7 +908,8 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     connect(m_save_all_attachments_button,
             &QPushButton::clicked,
             this,
-            &EmailInspectorPanel::onSaveAllAttachmentsClicked);
+            &EmailInspectorPanel::onSaveAllAttachmentsClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_save_all_attachments_button);
     button_row->addStretch();
     layout->addLayout(button_row);

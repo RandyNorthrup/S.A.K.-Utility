@@ -153,7 +153,8 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     connect(m_customizeButton,
             &QPushButton::clicked,
             this,
-            &UserProfileBackupCustomizeDataPage::onCustomizeUser);
+            &UserProfileBackupCustomizeDataPage::onCustomizeUser,
+            Qt::QueuedConnection);
     connect(m_userTable, &QTableWidget::itemSelectionChanged, this, [this]() {
         m_customizeButton->setEnabled(!m_userTable->selectedItems().isEmpty());
     });
@@ -415,7 +416,8 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
     connect(m_viewDangerousButton,
             &QPushButton::clicked,
             this,
-            &UserProfileBackupSmartFiltersPage::onViewDangerousList);
+            &UserProfileBackupSmartFiltersPage::onViewDangerousList,
+            Qt::QueuedConnection);
     dangerous_layout->addWidget(m_viewDangerousButton);
     layout->addLayout(dangerous_layout);
 
@@ -601,7 +603,8 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
-            &UserProfileBackupSettingsPage::onBrowseDestination);
+            &UserProfileBackupSettingsPage::onBrowseDestination,
+            Qt::QueuedConnection);
     dest_layout->addWidget(m_browseButton);
     layout->addLayout(dest_layout);
 

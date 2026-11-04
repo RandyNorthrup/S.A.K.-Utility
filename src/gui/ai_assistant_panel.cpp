@@ -4202,7 +4202,8 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     connect(m_renameSessionButton,
             &QPushButton::clicked,
             this,
-            &AiAssistantPanel::onRenameSessionClicked);
+            &AiAssistantPanel::onRenameSessionClicked,
+            Qt::QueuedConnection);
 
     auto* session_action_row = new QHBoxLayout();
     session_action_row->setSpacing(sak::ui::kSpacingSmall);
@@ -4217,8 +4218,11 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     setAccessible(m_resumeGateButton,
                   tr("Resume Waiting Run"),
                   tr("Answer pending workflow input and continue"));
-    connect(
-        m_resumeGateButton, &QPushButton::clicked, this, &AiAssistantPanel::onResumeGateClicked);
+    connect(m_resumeGateButton,
+            &QPushButton::clicked,
+            this,
+            &AiAssistantPanel::onResumeGateClicked,
+            Qt::QueuedConnection);
     m_resumeGateButton->setVisible(false);
     layout->addWidget(m_resumeGateButton);
 }
@@ -4415,7 +4419,11 @@ void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QW
     configureCompactButton(m_loadKeyButton);
     m_loadKeyButton->setToolTip(tr("Enter an OpenAI API key without displaying it in the panel"));
     setAccessible(m_loadKeyButton, tr("Load Key"), tr("Load OpenAI API key"));
-    connect(m_loadKeyButton, &QPushButton::clicked, this, &AiAssistantPanel::onLoadApiKeyClicked);
+    connect(m_loadKeyButton,
+            &QPushButton::clicked,
+            this,
+            &AiAssistantPanel::onLoadApiKeyClicked,
+            Qt::QueuedConnection);
     key_row->addWidget(m_loadKeyButton);
     layout->addLayout(key_row);
 
@@ -4546,7 +4554,8 @@ void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidg
     connect(m_generateReportButton,
             &QPushButton::clicked,
             this,
-            &AiAssistantPanel::onGenerateReportClicked);
+            &AiAssistantPanel::onGenerateReportClicked,
+            Qt::QueuedConnection);
     header_action_row->addWidget(m_generateReportButton);
     layout->addLayout(header_action_row);
 }
@@ -4635,7 +4644,8 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWid
     connect(m_addContextFilesButton,
             &QPushButton::clicked,
             this,
-            &AiAssistantPanel::onAddContextFilesClicked);
+            &AiAssistantPanel::onAddContextFilesClicked,
+            Qt::QueuedConnection);
     action_row->addWidget(m_addContextFilesButton);
 
     m_addInstructionButton = new QPushButton(tr("Instructions"), composer);
@@ -4647,7 +4657,8 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWid
     connect(m_addInstructionButton,
             &QPushButton::clicked,
             this,
-            &AiAssistantPanel::onAddInstructionContextClicked);
+            &AiAssistantPanel::onAddInstructionContextClicked,
+            Qt::QueuedConnection);
     action_row->addWidget(m_addInstructionButton);
 
     m_clearContextButton = new QPushButton(tr("Clear"), composer);

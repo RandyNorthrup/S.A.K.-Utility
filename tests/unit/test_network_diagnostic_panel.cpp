@@ -191,6 +191,7 @@ private:
             auto* button = box->button(m_confirm_with);
             if (button != nullptr) {
                 button->click();
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
             } else {
                 box->accept();
             }
@@ -400,7 +401,7 @@ void NetworkDiagnosticPanelTests::teardownRightAfterConstructionJoinsTheScan() {
     sak::QuickActionController quick_actions;
     for (int round = 0; round < 3; ++round) {
         auto panel = std::make_unique<sak::NetworkDiagnosticPanel>(quick_actions);
-        QCoreApplication::processEvents();  // dispatch the queued scan
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);  // dispatch the queued scan
         panel.reset();
     }
 }
@@ -420,6 +421,7 @@ void NetworkDiagnosticPanelTests::runReportFlow(const QString& report_path, QByt
     QSignalSpy generated(controller, &sak::NetworkDiagnosticController::reportGenerated);
     ReportDialogDriver driver(report_path);
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(driver.details_answered);
     QVERIFY(driver.file_answered);
     // The finished report also says where it went, in a box of its own that the driver answers.
@@ -485,6 +487,7 @@ void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     QVERIFY(button != nullptr);
     ReportDialogDriver driver(QStringLiteral("unused"));
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(driver.saw_message_box);
     QVERIFY(!driver.details_answered);
 }
@@ -573,6 +576,7 @@ void NetworkDiagnosticPanelTests::onlyOneBandwidthTestCanBeStartedAtATime() {
     QVERIFY(setIperfServer(panel, QStringLiteral("127.0.0.1")));
 
     iperf->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(!speed->isEnabled());
     QVERIFY(!iperf->isEnabled());
 
@@ -600,6 +604,7 @@ void NetworkDiagnosticPanelTests::stoppingKeepsRunButtonsOffUntilTheWorkerHasSto
     }
 
     iperf->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QPushButton* stop = nullptr;
     for (QPushButton* button : buttons) {
         if (button->text() == QStringLiteral("Stop") && button->isEnabled() &&
@@ -610,6 +615,7 @@ void NetworkDiagnosticPanelTests::stoppingKeepsRunButtonsOffUntilTheWorkerHasSto
     QVERIFY2(stop != nullptr, "the run should have enabled its own Stop button");
 
     stop->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(!stop->isEnabled());
     QVERIFY2(!speed->isEnabled() && !iperf->isEnabled(),
              "the worker is still stopping, so no run can start yet");
@@ -631,6 +637,7 @@ void NetworkDiagnosticPanelTests::runButtonsComeBackWhenTheOperationEndsWithoutA
     QVERIFY(iperf != nullptr);
     QVERIFY(setIperfServer(panel, QStringLiteral("127.0.0.1")));
     iperf->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(!speed->isEnabled() && !iperf->isEnabled());
 
     Q_EMIT controller->operationFinished(
@@ -862,7 +869,7 @@ void NetworkDiagnosticPanelTests::restoreDeclinedChangesNothing() {
     QVERIFY(found);
     QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Confirm Restore")),
                              kDialogTimeoutMs);
-    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(commands.netshCalls().isEmpty());
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
 }

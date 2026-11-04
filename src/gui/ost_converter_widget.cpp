@@ -182,8 +182,11 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     btn_layout->addStretch(1);
     layout->addLayout(btn_layout);
 
-    connect(
-        m_add_files_button, &QPushButton::clicked, this, &OstConverterWidget::onAddFilesClicked);
+    connect(m_add_files_button,
+            &QPushButton::clicked,
+            this,
+            &OstConverterWidget::onAddFilesClicked,
+            Qt::QueuedConnection);
     connect(m_remove_button, &QPushButton::clicked, this, &OstConverterWidget::onRemoveFileClicked);
     connect(m_clear_button, &QPushButton::clicked, this, &OstConverterWidget::onClearQueueClicked);
 
@@ -223,14 +226,19 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
     m_browse_button->setAccessibleName(tr("Browse output directory"));
     m_browse_button->setToolTip(tr("Select the folder that will receive converted email files"));
     applyCompactOstButton(m_browse_button, ui::kCompactPrimaryButtonStyle);
-    connect(m_browse_button, &QPushButton::clicked, this, [this]() {
-        const QString dir = QFileDialog::getExistingDirectory(this,
-                                                              tr("Select Output Directory"),
-                                                              m_output_dir_edit->text());
-        if (!dir.isEmpty()) {
-            m_output_dir_edit->setText(dir);
-        }
-    });
+    connect(
+        m_browse_button,
+        &QPushButton::clicked,
+        this,
+        [this]() {
+            const QString dir = QFileDialog::getExistingDirectory(this,
+                                                                  tr("Select Output Directory"),
+                                                                  m_output_dir_edit->text());
+            if (!dir.isEmpty()) {
+                m_output_dir_edit->setText(dir);
+            }
+        },
+        Qt::QueuedConnection);
     destination_row->addWidget(m_browse_button);
 
     layout->addLayout(destination_row);
@@ -414,8 +422,16 @@ QWidget* OstConverterWidget::createButtonBar() {
     applyCompactOstButton(m_cancel_button, ui::kCompactDangerButtonStyle);
     layout->addWidget(m_cancel_button);
 
-    connect(m_convert_button, &QPushButton::clicked, this, &OstConverterWidget::onConvertClicked);
-    connect(m_cancel_button, &QPushButton::clicked, this, &OstConverterWidget::onCancelClicked);
+    connect(m_convert_button,
+            &QPushButton::clicked,
+            this,
+            &OstConverterWidget::onConvertClicked,
+            Qt::QueuedConnection);
+    connect(m_cancel_button,
+            &QPushButton::clicked,
+            this,
+            &OstConverterWidget::onCancelClicked,
+            Qt::QueuedConnection);
 
     return bar;
 }

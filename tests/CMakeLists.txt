@@ -7063,6 +7063,11 @@ add_test(NAME test_cppcheck_qt_slot_classifier
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cppcheck_qt_slot_classifier.py")
 set_tests_properties(test_cppcheck_qt_slot_classifier PROPERTIES TIMEOUT 60)
 
+add_test(NAME test_dialog_buttons_deferred
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dialog_buttons_deferred.py")
+set_tests_properties(test_dialog_buttons_deferred PROPERTIES TIMEOUT 60)
+
 add_test(NAME test_clang_tidy_naming_gate
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
@@ -7156,6 +7161,7 @@ set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_depende
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
     test_run_ctest_no_dialogs test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
+    test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix)
 set(_sak_labels_tooling_extended

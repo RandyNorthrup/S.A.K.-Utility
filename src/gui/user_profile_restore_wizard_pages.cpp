@@ -1790,7 +1790,8 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     connect(m_installButton,
             &QPushButton::clicked,
             this,
-            &UserProfileRestoreAppRestorePage::onInstallApps);
+            &UserProfileRestoreAppRestorePage::onInstallApps,
+            Qt::QueuedConnection);
     button_layout->addWidget(m_installButton);
 
     layout->addLayout(button_layout);

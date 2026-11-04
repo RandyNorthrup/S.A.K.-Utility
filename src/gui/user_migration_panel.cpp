@@ -315,9 +315,12 @@ void UserMigrationPanel::createQuickActions() {
     for (auto it = m_action_buttons.constBegin(); it != m_action_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
         if (m_quick_actions.getAction(action_name) != nullptr) {
-            connect(it.value(), &QPushButton::clicked, this, [this, action_name]() {
-                onQuickActionClicked(action_name);
-            });
+            connect(
+                it.value(),
+                &QPushButton::clicked,
+                this,
+                [this, action_name]() { onQuickActionClicked(action_name); },
+                Qt::QueuedConnection);
         }
     }
 }

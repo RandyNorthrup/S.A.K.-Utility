@@ -142,6 +142,7 @@ private:
     void setupTableActionButtons(QVBoxLayout* layout);
     void setupActionButtons();
     void connectSignals();
+    void connectOutputButtons();
 
     struct QrExportFormats {
         bool png{false};

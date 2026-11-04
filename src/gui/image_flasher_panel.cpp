@@ -272,23 +272,7 @@ void ImageFlasherPanel::setupUi() {
     updateNavigationButtons();
 }
 
-void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
-    Q_ASSERT(main_layout);
-    Q_ASSERT(m_stackedWidget);
-    auto* button_layout = new QHBoxLayout();
-
-    m_settingsButton = new QPushButton("Settings", this);
-    m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
-    m_settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
-    m_settingsButton->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(m_settingsButton, &QPushButton::clicked, this, [this]() {
-        ImageFlasherSettingsDialog dialog(this);
-        dialog.exec();
-    });
-    button_layout->addWidget(m_settingsButton);
-
-    button_layout->addStretch();
-
+void ImageFlasherPanel::setupBackButton(QHBoxLayout* button_layout) {
     m_backButton = new QPushButton("Back", this);
     m_backButton->setEnabled(false);
     m_backButton->setAccessibleName(QStringLiteral("Back"));
@@ -310,6 +294,31 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
         }
         updateNavigationButtons();
     });
+}
+
+void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
+    Q_ASSERT(main_layout);
+    Q_ASSERT(m_stackedWidget);
+    auto* button_layout = new QHBoxLayout();
+
+    m_settingsButton = new QPushButton("Settings", this);
+    m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
+    m_settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
+    m_settingsButton->setStyleSheet(ui::kPrimaryButtonStyle);
+    connect(
+        m_settingsButton,
+        &QPushButton::clicked,
+        this,
+        [this]() {
+            ImageFlasherSettingsDialog dialog(this);
+            dialog.exec();
+        },
+        Qt::QueuedConnection);
+    button_layout->addWidget(m_settingsButton);
+
+    button_layout->addStretch();
+
+    setupBackButton(button_layout);
 
     m_nextButton = new QPushButton("Next", this);
     m_nextButton->setEnabled(false);
@@ -331,7 +340,11 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
     m_flashButton->setToolTip(QStringLiteral("Write the selected image to the target drive"));
     m_flashButton->setStyleSheet(ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_flashButton);
-    connect(m_flashButton, &QPushButton::clicked, this, &ImageFlasherPanel::onFlashClicked);
+    connect(m_flashButton,
+            &QPushButton::clicked,
+            this,
+            &ImageFlasherPanel::onFlashClicked,
+            Qt::QueuedConnection);
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     button_layout->insertWidget(1, m_logToggle);
@@ -480,7 +493,8 @@ void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* card_row) {
     connect(m_microsoftWindowsDownloadButton,
             &QPushButton::clicked,
             this,
-            &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked);
+            &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked,
+            Qt::QueuedConnection);
     card_row->addWidget(ms_card);
 }
 
@@ -498,7 +512,8 @@ void ImageFlasherPanel::addUupDownloadCard(QHBoxLayout* card_row) {
     connect(m_downloadWindowsButton,
             &QPushButton::clicked,
             this,
-            &ImageFlasherPanel::onDownloadWindowsClicked);
+            &ImageFlasherPanel::onDownloadWindowsClicked,
+            Qt::QueuedConnection);
 }
 
 void ImageFlasherPanel::addLinuxDownloadCard(QHBoxLayout* card_row) {
@@ -515,7 +530,8 @@ void ImageFlasherPanel::addLinuxDownloadCard(QHBoxLayout* card_row) {
     connect(m_downloadLinuxButton,
             &QPushButton::clicked,
             this,
-            &ImageFlasherPanel::onDownloadLinuxClicked);
+            &ImageFlasherPanel::onDownloadLinuxClicked,
+            Qt::QueuedConnection);
 }
 
 void ImageFlasherPanel::createDownloadCards(QVBoxLayout* page_layout) {
@@ -544,8 +560,11 @@ void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* page_layout) {
     m_selectImageButton->setAccessibleName(QStringLiteral("Select Image File"));
     m_selectImageButton->setAccessibleDescription(QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));
-    connect(
-        m_selectImageButton, &QPushButton::clicked, this, &ImageFlasherPanel::onSelectImageClicked);
+    connect(m_selectImageButton,
+            &QPushButton::clicked,
+            this,
+            &ImageFlasherPanel::onSelectImageClicked,
+            Qt::QueuedConnection);
 
     select_row->addWidget(m_selectImageButton);
     select_row->addStretch();
@@ -619,7 +638,11 @@ void ImageFlasherPanel::createFlashProgressPage() {
     m_cancelButton->setToolTip(QStringLiteral("Cancel the current flash operation"));
     m_cancelButton->setStyleSheet(ui::kDangerButtonStyle);
     group_layout->addWidget(m_cancelButton);
-    connect(m_cancelButton, &QPushButton::clicked, this, &ImageFlasherPanel::onCancelClicked);
+    connect(m_cancelButton,
+            &QPushButton::clicked,
+            this,
+            &ImageFlasherPanel::onCancelClicked,
+            Qt::QueuedConnection);
 
     layout->addWidget(group_box);
     m_stackedWidget->addWidget(m_flashProgressPage);

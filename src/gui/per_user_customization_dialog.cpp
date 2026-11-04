@@ -207,9 +207,13 @@ void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* main_layout)
     connect(m_addCustomButton,
             &QPushButton::clicked,
             this,
-            &PerUserCustomizationDialog::onAddCustomFolder);
-    connect(
-        m_removeButton, &QPushButton::clicked, this, &PerUserCustomizationDialog::onRemoveFolder);
+            &PerUserCustomizationDialog::onAddCustomFolder,
+            Qt::QueuedConnection);
+    connect(m_removeButton,
+            &QPushButton::clicked,
+            this,
+            &PerUserCustomizationDialog::onRemoveFolder,
+            Qt::QueuedConnection);
 
     connect(m_folderTree,
             &QTreeWidget::itemChanged,

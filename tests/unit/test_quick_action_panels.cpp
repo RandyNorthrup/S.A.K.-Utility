@@ -65,8 +65,10 @@ QPushButton* buttonNamed(const QWidget& panel, const QString& accessible_name) {
 }
 
 /// Runs @p handle on the modal dialog the next click opens, inside that dialog's own loop.
+/// A press queues what it does. A zero timer is a queued call too and would run before the dialog
+/// exists, so this one waits for an event loop, and the first to run is the dialog's.
 void handleNextDialog(const std::function<void(QWidget*)>& handle) {
-    QTimer::singleShot(0, qApp, [handle]() { handle(QApplication::activeModalWidget()); });
+    QTimer::singleShot(1, qApp, [handle]() { handle(QApplication::activeModalWidget()); });
 }
 
 void answerNextQuestion(QMessageBox::StandardButton answer, bool* asked) {
@@ -77,6 +79,7 @@ void answerNextQuestion(QMessageBox::StandardButton answer, bool* asked) {
         }
         *asked = true;
         box->button(answer)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     });
 }
 
@@ -147,6 +150,7 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
+    void aPressReturnsBeforeItsDialogOpens();
     void userMigrationScreenshotAsksWhereToSaveAndSaysWhereItWent();
     void userMigrationScreenshotWithNoFolderRunsNothing();
     void userMigrationBitLockerAsksForAFolderAndHandsItToTheHelper();
@@ -193,6 +197,41 @@ void QuickActionPanelTests::cleanup() {
 
 // Screenshot Settings wrote to a fixed C:/SAK_Backups and reported only "Completed". It now asks
 // for a folder (starting in Documents), writes there, and the completion names what it saved.
+// A dialog opened inside a button's click holds whatever delivered the click, so a screen reader
+// pressing the button could not read what it opened. Qt's accessibility press reaches that click a
+// moment later, from the button's own timer, so pressing through QAccessible here would pass either
+// way: what has to return first is the click.
+void QuickActionPanelTests::aPressReturnsBeforeItsDialogOpens() {
+    sak::QuickActionController controller;
+    QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
+    sak::UserMigrationPanel panel(controller);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QPushButton* button = buttonNamed(panel, QStringLiteral("Screenshot Settings"));
+    QVERIFY(button != nullptr);
+
+    bool press_returned = false;
+    bool dialog_opened = false;
+    bool opened_inside_press = false;
+    QTimer watcher;
+    constexpr int kWatchIntervalMs = 5;
+    watcher.setInterval(kWatchIntervalMs);
+    connect(&watcher, &QTimer::timeout, &watcher, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+            return;
+        }
+        dialog_opened = true;
+        opened_inside_press = !press_returned;
+        dialog->reject();
+    });
+    watcher.start();
+    button->click();
+    press_returned = true;
+    QTRY_VERIFY(dialog_opened);
+    QVERIFY2(!opened_inside_press, "the dialog ran inside the button's press");
+}
+
 void QuickActionPanelTests::userMigrationScreenshotAsksWhereToSaveAndSaysWhereItWent() {
     QTemporaryDir output;
     QVERIFY(output.isValid());
@@ -207,6 +246,7 @@ void QuickActionPanelTests::userMigrationScreenshotAsksWhereToSaveAndSaysWhereIt
     QString started_in;
     chooseFolderInNextDialog(output.path(), &asked, &started_in);
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(asked, "Screenshot Settings must ask where to save before it runs");
     QCOMPARE(QDir::cleanPath(started_in), documentsFolder());
     const QString saved =
@@ -238,6 +278,7 @@ void QuickActionPanelTests::userMigrationScreenshotWithNoFolderRunsNothing() {
         }
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTest::qWait(50);
     QVERIFY(!anyStartsWith(status, QStringLiteral("Running: ")));
@@ -259,6 +300,7 @@ void QuickActionPanelTests::userMigrationBitLockerAsksForAFolderAndHandsItToTheH
     bool asked = false;
     chooseFolderInNextDialog(destination.path(), &asked, nullptr);
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(asked, "the key backup must ask where to save before it runs");
     QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(status, QStringLiteral("Completed: ") + kBitLocker),
                              kRunTimeoutMs);
@@ -302,6 +344,7 @@ void QuickActionPanelTests::userMigrationBitLockerWarningDefaultsToCancelAndCanc
         box->button(QMessageBox::Cancel)->click();
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QVERIFY2(warned, "a drive that cannot restrict who reads files must warn before anything runs");
     QVERIFY2(warning_text.contains(destination.path()), qPrintable(warning_text));
@@ -334,9 +377,11 @@ void QuickActionPanelTests::userMigrationBitLockerWarningAcceptedSaysSoToTheHelp
         if (go_ahead != nullptr) {
             warned = true;
             go_ahead->click();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         }
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QVERIFY(warned);
     QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(status, QStringLiteral("Completed: ") + kBitLocker),
@@ -366,6 +411,7 @@ void QuickActionPanelTests::userMigrationBitLockerWithNoFolderRunsNothing() {
         }
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTest::qWait(50);
     QVERIFY(!anyStartsWith(status, QStringLiteral("Running: ")));
@@ -385,6 +431,7 @@ void QuickActionPanelTests::diagnosticsRunsEachMaintenanceActionThroughTheContro
     QPushButton* power = buttonNamed(panel, QStringLiteral("Optimize Power"));
     QVERIFY(power != nullptr);
     power->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(status, QStringLiteral("Completed: ") + kOptimizePower),
                              kRunTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(power->isEnabled(), kRunTimeoutMs);
@@ -397,6 +444,7 @@ void QuickActionPanelTests::diagnosticsRunsEachMaintenanceActionThroughTheContro
     bool asked = false;
     answerNextQuestion(QMessageBox::Yes, &asked);
     verify->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(asked, "Verify System Files repairs Windows files and must be confirmed");
     QTRY_VERIFY_WITH_TIMEOUT(
         anyStartsWith(status, QStringLiteral("Completed: ") + kVerifySystemFiles), kRunTimeoutMs);
@@ -406,6 +454,7 @@ void QuickActionPanelTests::diagnosticsRunsEachMaintenanceActionThroughTheContro
     QPushButton* check_disk = buttonNamed(panel, kCheckDisk);
     QVERIFY(check_disk != nullptr);
     check_disk->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(status, QStringLiteral("Completed: ") + kCheckDisk),
                              kRunTimeoutMs);
 
@@ -427,6 +476,7 @@ void QuickActionPanelTests::diagnosticsVerifySystemFilesDeclinedRunsNothing() {
     bool asked = false;
     answerNextQuestion(QMessageBox::No, &asked);
     verify->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTest::qWait(50);
     QVERIFY(!anyStartsWith(status, QStringLiteral("Running: ")));
@@ -449,6 +499,7 @@ void QuickActionPanelTests::diagnosticsInventoryReportSavesWhereTheUserChose() {
     QString started_in;
     chooseFolderInNextDialog(output.path(), &asked, &started_in);
     report->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QCOMPARE(QDir::cleanPath(started_in), documentsFolder());
     const QString saved =
@@ -472,6 +523,7 @@ void QuickActionPanelTests::networkResetConfirmsThenRunsElevatedAndRestoresTheBu
     bool asked = false;
     answerNextQuestion(QMessageBox::Yes, &asked);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(asked, "a network reset must be confirmed");
     QVERIFY(!reset->isEnabled());
     QCOMPARE(reset->text(), QStringLiteral("Resetting..."));
@@ -499,6 +551,7 @@ void QuickActionPanelTests::networkResetDeclinedRunsNothing() {
     bool asked = false;
     answerNextQuestion(QMessageBox::No, &asked);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTest::qWait(50);
     QVERIFY(m_system->elevatedTasks().isEmpty());
@@ -520,6 +573,7 @@ void QuickActionPanelTests::exitCancelsARunningElevatedQuickAction() {
     bool asked = false;
     answerNextQuestion(QMessageBox::Yes, &asked);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
     QVERIFY(sak::RunningOperations::runningNames().contains(QStringLiteral("Network reset")));
@@ -551,12 +605,14 @@ void QuickActionPanelTests::eachPanelReactsOnlyToItsOwnRuns() {
     bool asked = false;
     answerNextQuestion(QMessageBox::Yes, &asked);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTRY_VERIFY_WITH_TIMEOUT(texts(network_status).contains(QStringLiteral("fake elevated ok")),
                              kRunTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(reset->isEnabled(), kRunTimeoutMs);
 
     power->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QTRY_VERIFY_WITH_TIMEOUT(anyStartsWith(diagnostics_status,
                                            QStringLiteral("Completed: ") + kOptimizePower),
                              kRunTimeoutMs);
@@ -590,10 +646,12 @@ void QuickActionPanelTests::aClickWhileAnotherCallersRunIsGoingSaysQueued() {
     bool asked = false;
     answerNextQuestion(QMessageBox::Yes, &asked);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
 
     power->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QTRY_VERIFY_WITH_TIMEOUT(texts(diagnostics_status)
                                  .contains(QStringLiteral("Queued: ") + kOptimizePower +
                                            QStringLiteral(" - waits for ") + kResetNetwork +
@@ -628,12 +686,14 @@ void QuickActionPanelTests::aQueuedPanelRunKeepsTheFolderItsUserChose() {
     bool confirmed = false;
     answerNextQuestion(QMessageBox::Yes, &confirmed);
     reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(confirmed);
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
 
     bool asked = false;
     chooseFolderInNextDialog(chosen.path(), &asked, nullptr);
     report->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     controller.requestRun(
         {kInventoryReport, QStringLiteral("assistant#1"), assistant_staging.path()});

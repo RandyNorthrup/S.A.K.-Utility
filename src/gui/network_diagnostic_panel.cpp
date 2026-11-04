@@ -323,7 +323,8 @@ void NetworkDiagnosticPanel::setupUi() {
     connect(m_generateReportBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onGenerateReportClicked);
+            &NetworkDiagnosticPanel::onGenerateReportClicked,
+            Qt::QueuedConnection);
     status_row->addWidget(m_generateReportBtn);
     root_layout->addLayout(status_row);
 
@@ -1776,11 +1777,13 @@ void NetworkDiagnosticPanel::connectAdapterUiSignals() {
     connect(m_backupEthernetBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onBackupEthernetSettings);
+            &NetworkDiagnosticPanel::onBackupEthernetSettings,
+            Qt::QueuedConnection);
     connect(m_restoreEthernetBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onRestoreEthernetSettings);
+            &NetworkDiagnosticPanel::onRestoreEthernetSettings,
+            Qt::QueuedConnection);
     connect(m_adapterTable,
             &QTableWidget::itemSelectionChanged,
             this,
@@ -4774,7 +4777,8 @@ void NetworkDiagnosticPanel::createResetNetworkAction() {
     connect(m_resetNetworkBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onResetNetworkClicked);
+            &NetworkDiagnosticPanel::onResetNetworkClicked,
+            Qt::QueuedConnection);
 }
 
 void NetworkDiagnosticPanel::onResetNetworkClicked() {

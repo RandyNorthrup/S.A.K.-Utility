@@ -161,6 +161,7 @@ private:
     /** @brief Connect offline deployment signals */
     void setupOfflineConnections();
     void setupOfflineInputConnections();
+    void setupOfflineListConnections();
     void setupOfflineActionConnections();
     void setupOfflineWorkerConnections();
     void setupOfflineWorkerProgressConnections();

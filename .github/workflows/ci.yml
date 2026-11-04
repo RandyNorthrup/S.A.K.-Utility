@@ -139,6 +139,11 @@ jobs:
       shell: pwsh
       run: python scripts/check_magic_numbers.py
 
+    - name: Dialog buttons return before their dialog opens
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: python scripts/check_dialog_buttons_deferred.py
+
     - name: Logged message boxes
       if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
       shell: pwsh

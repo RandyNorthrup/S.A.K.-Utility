@@ -162,6 +162,7 @@ bool triggerContextMenuActionStartingWith(QWidget* target, const QString& prefix
         }
         if (QAction* action = actionStartingWith(menu, prefix); action && action->isEnabled()) {
             action->trigger();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
             triggered = true;
         }
         menu->close();
@@ -189,6 +190,7 @@ bool triggerContextSubmenuAction(QWidget* target,
         auto* submenu = menu->findChild<QMenu*>(submenu_object_name);
         if (QAction* action = actionStartingWith(submenu, prefix); action && action->isEnabled()) {
             action->trigger();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
             triggered = true;
         }
         menu->close();
@@ -679,10 +681,12 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
     // The preview region stays visible on both tabs; only the details
     // scroller toggles (InfoPane.xaml SelectedTab visual states).
     previewTab->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(previewTab->isChecked());
     QVERIFY(!scroller->isVisibleTo(info));
     QVERIFY(preview->isVisibleTo(info));
     detailsTab->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(scroller->isVisibleTo(info));
 }
 
@@ -700,6 +704,7 @@ void switchThroughViewModesAndVerifyVisibility(const sak::FileExplorerPane* pane
                                                QAction* listAction,
                                                const ViewModeWidgets& widgets) {
     listAction->trigger();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QApplication::processEvents();
     QTRY_VERIFY(widgets.list->isVisible());
     QVERIFY(!widgets.table->isVisible());
@@ -950,6 +955,7 @@ private Q_SLOTS:
 
         // The new-tab button opens a second tab and makes it active.
         newTab->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
         QCOMPARE(tabs->currentIndex(), 1);
@@ -1485,6 +1491,7 @@ private Q_SLOTS:
         QVERIFY(extensions);
         QVERIFY(extensions->isChecked());
         extensions->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(pane->showFileExtensions(), false);
 
@@ -1613,6 +1620,7 @@ private Q_SLOTS:
         QAction* action = actionStartingWith(groupMenu, prefix);
         QVERIFY(action);
         action->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         sortButton->menu()->hide();
         QApplication::processEvents();
     }
@@ -1889,6 +1897,7 @@ private Q_SLOTS:
         QVERIFY(checkboxes);
         QVERIFY(checkboxes->isChecked());
         checkboxes->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QVERIFY(!view_model->flags(view_model->index(0, 0)).testFlag(Qt::ItemIsUserCheckable));
 
@@ -1969,12 +1978,14 @@ private Q_SLOTS:
         QAction* cards_action = actionStartingWith(view_button->menu(), QStringLiteral("Cards"));
         QVERIFY(cards_action);
         cards_action->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QTRY_VERIFY(cards->isVisible());
         QVERIFY(!cards->grab().isNull());
         QAction* columns_action = actionStartingWith(view_button->menu(),
                                                      QStringLiteral("Columns"));
         QVERIFY(columns_action);
         columns_action->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QTRY_VERIFY(columns->isVisible());
         QVERIFY(!columns->grab().isNull());
     }
@@ -1996,8 +2007,9 @@ private Q_SLOTS:
 
         // Drive the dialog: uncheck the selection checkboxes, enable the
         // filter header and the flatten opt-in, then accept.
+        // Not a zero timer: the press queues what it does, and a zero timer would run first.
         bool dialog_seen = false;
-        QTimer::singleShot(0, [&dialog_seen]() {
+        QTimer::singleShot(1, [&dialog_seen]() {
             auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
             if (!dialog || dialog->objectName() != QStringLiteral("fileExplorerSettingsDialog")) {
                 return;
@@ -2012,6 +2024,7 @@ private Q_SLOTS:
             dialog->accept();
         });
         gear->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QVERIFY(dialog_seen);
 
         // Applied live and persisted under the Files setting names.
@@ -2410,6 +2423,7 @@ private Q_SLOTS:
         }
         armAutoAcceptManualTargetDialog(image_path, file_system);
         add->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         const QString needle = QFileInfo(image_path).fileName();
         int row = -1;
         std::ignore = QTest::qWaitFor(
@@ -3286,7 +3300,9 @@ private Q_SLOTS:
                 }
             }
             if (reorder && reorder->isEnabled()) {
-                QTimer::singleShot(0, [dialog_driven]() {
+                // Not a zero timer: the press queues what it does, and a zero timer would run
+                // first.
+                QTimer::singleShot(1, [dialog_driven]() {
                     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
                     if (!dialog) {
                         return;
@@ -3304,6 +3320,7 @@ private Q_SLOTS:
                     buttons->button(QDialogButtonBox::Save)->click();
                 });
                 reorder->trigger();
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
             }
             menu->close();
         });
@@ -3413,6 +3430,7 @@ private Q_SLOTS:
                                              QStringLiteral("Invert Selection"));
         QVERIFY(invert);
         invert->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         selectionButton->menu()->hide();
         QTRY_COMPARE(table->selectionModel()->selectedRows().size(), 0);
         QVERIFY(selectRowStable(table, QStringLiteral("a_sel")));
@@ -3562,14 +3580,17 @@ private Q_SLOTS:
         QAction* files_first = sortMenuAction(QStringLiteral("Sort files first"));
         QVERIFY(files_first);
         files_first->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QTRY_COMPARE(rowText(2), QStringLiteral("mmm_folder"));
         QAction* together = sortMenuAction(QStringLiteral("Sort files and folders together"));
         QVERIFY(together);
         together->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QTRY_COMPARE(rowText(1), QStringLiteral("mmm_folder"));
         QAction* folders_first = sortMenuAction(QStringLiteral("Sort folders first"));
         QVERIFY(folders_first);
         folders_first->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QTRY_COMPARE(rowText(0), QStringLiteral("mmm_folder"));
     }
 
@@ -3751,12 +3772,14 @@ private Q_SLOTS:
         auto* detailsToggle = child<QPushButton>(&panel, "fileExplorerDetailsToggleButton");
         QVERIFY(detailsToggle);
         detailsToggle->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QVERIFY(!details->isVisible());
         panel.resize(1300, 640);
         QApplication::processEvents();
         QVERIFY(!details->isVisible());
         detailsToggle->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QVERIFY(details->isVisible());
     }
@@ -4640,6 +4663,7 @@ private Q_SLOTS:
         QVERIFY(newTab);
 
         newTab->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
 
@@ -4681,6 +4705,7 @@ private Q_SLOTS:
 
         QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 1);
         dualPane->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
     }
@@ -4970,6 +4995,7 @@ private Q_SLOTS:
                 for (auto* action : menu->actions()) {
                     if (action->objectName() == QStringLiteral("fileExplorerRemoveStaleFavorite")) {
                         action->trigger();
+                        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
                         break;
                     }
                 }
@@ -5038,6 +5064,7 @@ private Q_SLOTS:
                 if (action->text().startsWith(QStringLiteral("Pin Favorite")) ||
                     action->text().startsWith(QStringLiteral("Unpin Favorite"))) {
                     action->trigger();
+                    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
                     break;
                 }
             }
@@ -5211,6 +5238,7 @@ private Q_SLOTS:
         stack = actionStartingWith(view->menu(), QStringLiteral("Stack Panes Vertically"));
         QVERIFY(stack->isEnabled());
         stack->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(splitter->orientation(), Qt::Vertical);
 
@@ -5218,6 +5246,7 @@ private Q_SLOTS:
         stack = actionStartingWith(view->menu(), QStringLiteral("Stack Panes Vertically"));
         QVERIFY(stack->isChecked());
         stack->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(splitter->orientation(), Qt::Horizontal);
     }
@@ -5323,6 +5352,7 @@ private Q_SLOTS:
 
         // The search button enters search mode: search placeholder + recents.
         searchButton->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(pathEdit->placeholderText(), QStringLiteral("Search for files and folders..."));
         auto* suggestions =
@@ -5500,6 +5530,7 @@ private Q_SLOTS:
         QVERIFY(duplicate);
         QVERIFY(duplicate->isEnabled());
         duplicate->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
     }
@@ -5522,6 +5553,7 @@ private Q_SLOTS:
             !actionStartingWith(view->menu(), QStringLiteral("Reopen Closed Tab"))->isEnabled());
 
         newTab->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
 
@@ -5865,6 +5897,7 @@ private Q_SLOTS:
         QApplication::processEvents();
         QCOMPARE(progressBar->value(), 40);
         expand->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         auto* graphFrame = child<QFrame>(card, "fileExplorerStatusCardGraphFrame");
         QVERIFY(graphFrame);
@@ -5878,6 +5911,7 @@ private Q_SLOTS:
         QVERIFY(name->isVisible());
         QCOMPARE(name->text(), QStringLiteral("Name: a.txt"));
         expand->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
 
         // Cancel through the more-options flyout: the card flags Canceling,
@@ -5889,6 +5923,7 @@ private Q_SLOTS:
             card->findChild<QAction*>(QStringLiteral("fileExplorerStatusCardCancel"));
         QVERIFY(cancelAction);
         cancelAction->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QApplication::processEvents();
         QVERIFY(item->isCancelRequested());
         // requestCancel prepends, so the surviving tail is the contract: the rebuilt copy

@@ -102,7 +102,8 @@ void UserProfileRestoreWelcomePage::setupUi() {
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
-            &UserProfileRestoreWelcomePage::onBrowseBackup);
+            &UserProfileRestoreWelcomePage::onBrowseBackup,
+            Qt::QueuedConnection);
     connect(m_backupPathEdit,
             &QLineEdit::textChanged,
             this,

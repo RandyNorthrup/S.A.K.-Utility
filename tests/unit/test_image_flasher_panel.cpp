@@ -441,6 +441,7 @@ void ImageFlasherPanelTests::flashEnablesOnlyWithBothAnImageAndADrive() {
     QVERIFY2(!flash->isVisibleTo(m_panel.get()), "Flash must not be offered on the image step");
     list->item(0)->setSelected(true);
     next->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(flash->isVisibleTo(m_panel.get()), "Flash must be reachable on drive selection");
     QVERIFY(flash->isEnabled());
 }
@@ -562,6 +563,7 @@ void ImageFlasherPanelTests::imagePickerOffersOnlyWhatFlashes() {
     });
     poll.start();
     select->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
 
     QVERIFY(!filters.isEmpty());
@@ -623,6 +625,7 @@ void ImageFlasherPanelTests::loadImageFileRefusesAnUnknownFormatWhenDeclined() {
         decline->stop();
         decline->deleteLater();
         no->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     });
     decline->start();
 

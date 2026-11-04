@@ -347,6 +347,15 @@ repos:
         pass_filenames: false
         stages: [manual]
 
+      # T2: a button or menu action must not hold a screen reader while its dialog is open.
+      - id: dialog-buttons-deferred
+        name: "Dialog button check"
+        description: "A press that opens a dialog must return first, through a queued connection"
+        entry: python scripts/check_dialog_buttons_deferred.py
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
       # T2: every user-facing message box must also write a log record (whole tree).
       - id: logged-message-boxes
         name: "Logged message box check"

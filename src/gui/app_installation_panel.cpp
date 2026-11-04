@@ -301,7 +301,11 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
         tr("Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
     applyCompactQueueButton(m_saveQueueButton, sak::ui::kCompactSecondaryButtonStyle);
-    connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
+    connect(m_saveQueueButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::saveQueueToFile,
+            Qt::QueuedConnection);
     queue_btn_row->addWidget(m_saveQueueButton);
 
     auto* load_queue_btn = new QPushButton(tr("Load List"), this);
@@ -309,7 +313,11 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
     load_queue_btn->setAccessibleDescription(QStringLiteral("Load Install List"));
     load_queue_btn->setToolTip(tr("Load a previously saved app list into the install queue"));
     applyCompactQueueButton(load_queue_btn, sak::ui::kCompactSecondaryButtonStyle);
-    connect(load_queue_btn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
+    connect(load_queue_btn,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::loadQueueFromFile,
+            Qt::QueuedConnection);
     queue_btn_row->addWidget(load_queue_btn);
 
     queue_layout->addLayout(queue_btn_row);
@@ -353,7 +361,11 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
             &AppInstallationPanel::onOnlinePresetSelected);
 
     // Search
-    connect(m_searchButton, &QPushButton::clicked, this, &AppInstallationPanel::onSearch);
+    connect(m_searchButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onSearch,
+            Qt::QueuedConnection);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &AppInstallationPanel::onSearch);
 
     // Queue management
@@ -365,7 +377,11 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
     connect(m_clearQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onClearQueue);
 
     // Install
-    connect(m_installButton, &QPushButton::clicked, this, &AppInstallationPanel::onInstallAll);
+    connect(m_installButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onInstallAll,
+            Qt::QueuedConnection);
     connect(m_cancelButton, &QPushButton::clicked, this, &AppInstallationPanel::onCancelInstall);
 
     // Queue selection
@@ -707,7 +723,36 @@ void AppInstallationPanel::setupOfflineConnections() {
     setupOfflineWorkerConnections();
 }
 
+void AppInstallationPanel::setupOfflineListConnections() {
+    connect(m_offlineRemoveButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onRemoveFromOfflineList);
+    connect(m_offlineClearButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onClearOfflineList);
+    connect(m_saveOfflineListButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onSaveOfflineList,
+            Qt::QueuedConnection);
+    connect(m_loadOfflineListButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onLoadOfflineList,
+            Qt::QueuedConnection);
+
+    // Same single in-flight authority as the online side (see setupQueueConnections).
+    connect(m_offlineListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_offlineRemoveButton->setEnabled(!m_offlineListWidget->selectedItems().isEmpty() &&
+                                          !packageOperationInFlight());
+    });
+}
+
 void AppInstallationPanel::setupOfflineInputConnections() {
+    setupOfflineListConnections();
+
     connect(m_presetCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
@@ -717,8 +762,11 @@ void AppInstallationPanel::setupOfflineInputConnections() {
         m_offlineAddButton, &QPushButton::clicked, this, &AppInstallationPanel::onAddToOfflineList);
 
     // Search button and Enter trigger offline search
-    connect(
-        m_offlineSearchButton, &QPushButton::clicked, this, &AppInstallationPanel::onOfflineSearch);
+    connect(m_offlineSearchButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onOfflineSearch,
+            Qt::QueuedConnection);
     connect(m_offlinePackageEdit,
             &QLineEdit::returnPressed,
             this,
@@ -738,43 +786,25 @@ void AppInstallationPanel::setupOfflineInputConnections() {
                     m_offlineResultsTable->selectionModel()->hasSelection());
             });
 
-    connect(m_offlineRemoveButton,
+    connect(m_buildBundleButton,
             &QPushButton::clicked,
             this,
-            &AppInstallationPanel::onRemoveFromOfflineList);
-    connect(m_offlineClearButton,
-            &QPushButton::clicked,
-            this,
-            &AppInstallationPanel::onClearOfflineList);
-
-    connect(m_buildBundleButton, &QPushButton::clicked, this, &AppInstallationPanel::onBuildBundle);
+            &AppInstallationPanel::onBuildBundle,
+            Qt::QueuedConnection);
     connect(m_directDownloadButton,
             &QPushButton::clicked,
             this,
-            &AppInstallationPanel::onDirectDownload);
+            &AppInstallationPanel::onDirectDownload,
+            Qt::QueuedConnection);
     connect(m_installFromBundleButton,
             &QPushButton::clicked,
             this,
-            &AppInstallationPanel::onInstallFromBundle);
+            &AppInstallationPanel::onInstallFromBundle,
+            Qt::QueuedConnection);
     connect(m_cancelOfflineButton,
             &QPushButton::clicked,
             this,
             &AppInstallationPanel::onCancelOfflineOperation);
-
-    connect(m_saveOfflineListButton,
-            &QPushButton::clicked,
-            this,
-            &AppInstallationPanel::onSaveOfflineList);
-    connect(m_loadOfflineListButton,
-            &QPushButton::clicked,
-            this,
-            &AppInstallationPanel::onLoadOfflineList);
-
-    // Same single in-flight authority as the online side (see setupQueueConnections).
-    connect(m_offlineListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
-        m_offlineRemoveButton->setEnabled(!m_offlineListWidget->selectedItems().isEmpty() &&
-                                          !packageOperationInFlight());
-    });
 }
 
 void AppInstallationPanel::setupOfflineWorkerConnections() {

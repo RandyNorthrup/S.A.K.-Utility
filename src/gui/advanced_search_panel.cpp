@@ -787,7 +787,8 @@ void AdvancedSearchPanel::connectSearchBarSignals() {
     connect(m_target_manual_button,
             &QPushButton::clicked,
             this,
-            &AdvancedSearchPanel::addManualSearchTarget);
+            &AdvancedSearchPanel::addManualSearchTarget,
+            Qt::QueuedConnection);
 
     // Enter key triggers search
     connect(m_search_combo->lineEdit(),
@@ -997,7 +998,8 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
     connect(m_preferences_button,
             &QPushButton::clicked,
             this,
-            &AdvancedSearchPanel::onPreferencesClicked);
+            &AdvancedSearchPanel::onPreferencesClicked,
+            Qt::QueuedConnection);
 
     status_row->addStretch();
 
@@ -1108,12 +1110,18 @@ void AdvancedSearchPanel::addManualSearchTarget() {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("Add Target"));
     layout->addRow(buttons);
-    connect(browse, &QPushButton::clicked, &dialog, [this, path]() {
-        const QString file = QFileDialog::getOpenFileName(this, tr("Select Raw or Image Target"));
-        if (!file.isEmpty()) {
-            path->setText(file);
-        }
-    });
+    connect(
+        browse,
+        &QPushButton::clicked,
+        &dialog,
+        [this, path]() {
+            const QString file = QFileDialog::getOpenFileName(this,
+                                                              tr("Select Raw or Image Target"));
+            if (!file.isEmpty()) {
+                path->setText(file);
+            }
+        },
+        Qt::QueuedConnection);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
@@ -1552,26 +1560,34 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
 
     auto* open_dir_action = menu.addAction(tr("Open Directory"));
     open_dir_action->setEnabled(currentSearchTarget().local_file_system);
-    connect(open_dir_action, &QAction::triggered, this, [this, file_path]() {
-        const QString native = QDir::toNativeSeparators(file_path);
-        // explorer.exe by absolute Windows-directory path (it is NOT in System32): a bare
-        // name is resolved through the CreateProcess search order like any other launch.
-        if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
-                                           {QStringLiteral("/select,") + native})) {
-            const QString failure =
-                tr("Could not open the selected file's directory in File Explorer.");
-            logMessage(failure);
-            Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
-            sak::showWarningLogged(this, tr("Open Directory"), failure);
-        }
-    });
+    connect(
+        open_dir_action,
+        &QAction::triggered,
+        this,
+        [this, file_path]() {
+            const QString native = QDir::toNativeSeparators(file_path);
+            // explorer.exe by absolute Windows-directory path (it is NOT in System32): a bare
+            // name is resolved through the CreateProcess search order like any other launch.
+            if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                               {QStringLiteral("/select,") + native})) {
+                const QString failure =
+                    tr("Could not open the selected file's directory in File Explorer.");
+                logMessage(failure);
+                Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
+                sak::showWarningLogged(this, tr("Open Directory"), failure);
+            }
+        },
+        Qt::QueuedConnection);
 
     menu.addSeparator();
 
     auto* view_meta_action = menu.addAction(tr("View Metadata"));
-    connect(view_meta_action, &QAction::triggered, this, [this, file_path]() {
-        showMetadataDialog(file_path);
-    });
+    connect(
+        view_meta_action,
+        &QAction::triggered,
+        this,
+        [this, file_path]() { showMetadataDialog(file_path); },
+        Qt::QueuedConnection);
 
     auto* view_props_action = menu.addAction(tr("View Properties"));
     view_props_action->setEnabled(currentSearchTarget().local_file_system);

@@ -55,8 +55,10 @@ QPushButton* inventoryReportButton(const sak::DiagnosticBenchmarkPanel& panel) {
 }
 
 /// Runs @p inspect on the folder dialog the next click opens, inside that dialog's own loop.
+/// A press queues what it does. A zero timer is a queued call too and would run before the dialog
+/// exists, so this one waits for an event loop, and the first to run is the dialog's.
 void inspectNextFolderDialog(const std::function<void(QFileDialog*)>& inspect) {
-    QTimer::singleShot(0, qApp, [inspect]() {
+    QTimer::singleShot(1, qApp, [inspect]() {
         inspect(qobject_cast<QFileDialog*>(QApplication::activeModalWidget()));
     });
 }
@@ -209,6 +211,7 @@ void DiagnosticBenchmarkPanelTests::runInventoryReportAndCheckItsFile() {
         static_cast<QDialog*>(dialog)->accept();
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY2(asked, "the report must ask where to save before it runs");
     QCOMPARE(QDir::cleanPath(started_in),
              QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)));
@@ -253,6 +256,7 @@ void DiagnosticBenchmarkPanelTests::inventoryReportCancelledFolderRunsNothing() 
         }
     });
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(asked);
     QTest::qWait(1);
     for (const QString& text : statusTexts(status)) {
@@ -314,6 +318,7 @@ void DiagnosticBenchmarkPanelTests::exportScanReportWritesTheHtmlItSays() {
     closer.start(50);
     button->setEnabled(true);
     button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QTRY_COMPARE(generated.count(), 1);
 
     const QStringList written = QDir(output.path()).entryList(QDir::Files);

@@ -644,9 +644,12 @@ void FileManagementExplorerPanel::setupUi() {
     m_scan_disks_button = m_sidebar->scanDisksButton();
     m_add_manual_button = m_sidebar->addManualButton();
     // Files sidebar footer gear (MainPage SettingsButton).
-    connect(m_sidebar->settingsButton(), &QPushButton::clicked, this, [this]() {
-        showExplorerSettings();
-    });
+    connect(
+        m_sidebar->settingsButton(),
+        &QPushButton::clicked,
+        this,
+        [this]() { showExplorerSettings(); },
+        Qt::QueuedConnection);
     // Files SidebarViewModel drag targets: items drop onto tag rows
     // (drag-to-tag) and target rows (copy/move to that location), and
     // favorites reorder by drag within their section.
@@ -1221,7 +1224,8 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
     connect(m_add_manual_button,
             &QPushButton::clicked,
             this,
-            &FileManagementExplorerPanel::onAddManualTarget);
+            &FileManagementExplorerPanel::onAddManualTarget,
+            Qt::QueuedConnection);
     // Files ToggleSidebarAction switches Expanded <-> Compact (the 56px
     // icon rail); the narrow-width responsive collapse still hides it.
     connect(m_sidebar_toggle_button, &QPushButton::clicked, this, [this]() {
@@ -1372,7 +1376,8 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
     connect(m_delete_button,
             &QPushButton::clicked,
             this,
-            &FileManagementExplorerPanel::onDeleteClicked);
+            &FileManagementExplorerPanel::onDeleteClicked,
+            Qt::QueuedConnection);
 }
 
 void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* pane) {
@@ -7253,12 +7258,18 @@ void FileManagementExplorerPanel::onAddManualTarget() {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("Add Target"));
     layout->addRow(buttons);
-    connect(browse, &QPushButton::clicked, &dialog, [this, path]() {
-        const QString file = QFileDialog::getOpenFileName(this, tr("Select Raw or Image Target"));
-        if (!file.isEmpty()) {
-            path->setText(file);
-        }
-    });
+    connect(
+        browse,
+        &QPushButton::clicked,
+        &dialog,
+        [this, path]() {
+            const QString file = QFileDialog::getOpenFileName(this,
+                                                              tr("Select Raw or Image Target"));
+            if (!file.isEmpty()) {
+                path->setText(file);
+            }
+        },
+        Qt::QueuedConnection);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
@@ -8386,8 +8397,11 @@ void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
     edit_tags->setEnabled(selection.hasSingleEntry());
     edit_tags->setToolTip(
         tr("Tag this item with S.A.K. metadata (never written to the file system)."));
-    connect(
-        edit_tags, &QAction::triggered, this, &FileManagementExplorerPanel::editSelectedItemTags);
+    connect(edit_tags,
+            &QAction::triggered,
+            this,
+            &FileManagementExplorerPanel::editSelectedItemTags,
+            Qt::QueuedConnection);
 }
 
 void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const bool add) {
@@ -8859,17 +8873,23 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     });
     auto* properties = menu.addAction(tr("Target Properties"));
     properties->setEnabled(has_menu_target);
-    connect(properties, &QAction::triggered, this, [this, menu_target_index]() {
-        showTargetPropertiesAtIndex(menu_target_index);
-    });
+    connect(
+        properties,
+        &QAction::triggered,
+        this,
+        [this, menu_target_index]() { showTargetPropertiesAtIndex(menu_target_index); },
+        Qt::QueuedConnection);
     // Files SidebarViewModel ShowEjectDevice: drives only, never the system
     // drive.
     auto* eject = menu.addAction(tr("Eject"));
     eject->setObjectName(QStringLiteral("fileExplorerEjectTarget"));
     eject->setEnabled(has_menu_target && canEjectTarget(m_targets.at(menu_target_index)));
-    connect(eject, &QAction::triggered, this, [this, menu_target_index]() {
-        ejectLocalTargetAtIndex(menu_target_index);
-    });
+    connect(
+        eject,
+        &QAction::triggered,
+        this,
+        [this, menu_target_index]() { ejectLocalTargetAtIndex(menu_target_index); },
+        Qt::QueuedConnection);
     menu.addSeparator();
     addSidebarGlobalMenuActions(&menu);
     menu.exec(m_target_list->viewport()->mapToGlobal(position));
@@ -8884,7 +8904,11 @@ void FileManagementExplorerPanel::addSidebarGlobalMenuActions(QMenu* menu) {
     auto* scan = menu->addAction(tr("Scan Disks"));
     connect(scan, &QAction::triggered, this, &FileManagementExplorerPanel::onScanDiskTargets);
     auto* add_manual = menu->addAction(tr("Add Raw/Image"));
-    connect(add_manual, &QAction::triggered, this, &FileManagementExplorerPanel::onAddManualTarget);
+    connect(add_manual,
+            &QAction::triggered,
+            this,
+            &FileManagementExplorerPanel::onAddManualTarget,
+            Qt::QueuedConnection);
     auto* clear_recent = menu->addAction(tr("Clear Recent"));
     clear_recent->setObjectName(QStringLiteral("fileExplorerClearRecent"));
     clear_recent->setEnabled(!m_recent_target_ids.isEmpty());
@@ -8897,7 +8921,8 @@ void FileManagementExplorerPanel::addSidebarGlobalMenuActions(QMenu* menu) {
     connect(reorder,
             &QAction::triggered,
             this,
-            &FileManagementExplorerPanel::showReorderFavoritesDialog);
+            &FileManagementExplorerPanel::showReorderFavoritesDialog,
+            Qt::QueuedConnection);
     addSidebarSectionToggleMenu(menu);
 }
 

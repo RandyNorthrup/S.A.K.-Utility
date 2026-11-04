@@ -612,15 +612,18 @@ void AdvancedUninstallPanel::createToolbar(QVBoxLayout* layout) {
     connect(m_uninstall_button,
             &QPushButton::clicked,
             this,
-            &AdvancedUninstallPanel::onUninstallClicked);
+            &AdvancedUninstallPanel::onUninstallClicked,
+            Qt::QueuedConnection);
     connect(m_forced_uninstall_button,
             &QPushButton::clicked,
             this,
-            &AdvancedUninstallPanel::onForcedUninstallClicked);
+            &AdvancedUninstallPanel::onForcedUninstallClicked,
+            Qt::QueuedConnection);
     connect(m_batch_button,
             &QPushButton::clicked,
             this,
-            &AdvancedUninstallPanel::onBatchUninstallClicked);
+            &AdvancedUninstallPanel::onBatchUninstallClicked,
+            Qt::QueuedConnection);
 }
 
 void AdvancedUninstallPanel::createProgramTable(QVBoxLayout* layout) {
@@ -711,7 +714,8 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
     connect(m_delete_selected_button,
             &QPushButton::clicked,
             this,
-            &AdvancedUninstallPanel::onDeleteSelectedLeftovers);
+            &AdvancedUninstallPanel::onDeleteSelectedLeftovers,
+            Qt::QueuedConnection);
     connect(m_leftover_table,
             &QTableWidget::itemChanged,
             this,
@@ -739,7 +743,8 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
     connect(m_settings_button,
             &QPushButton::clicked,
             this,
-            &AdvancedUninstallPanel::showSettingsDialog);
+            &AdvancedUninstallPanel::showSettingsDialog,
+            Qt::QueuedConnection);
 
     status_row->addStretch();
 

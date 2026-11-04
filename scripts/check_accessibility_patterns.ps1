@@ -70,6 +70,12 @@ try {
         throw "Accessibility accessor count ${count} below required minimum ${MinimumExplicitAccessors}"
     }
 
+    # A press that opens a dialog must return first, or a screen reader cannot read the dialog.
+    & python (Join-Path $PSScriptRoot "check_dialog_buttons_deferred.py") --root $repo
+    if ($LASTEXITCODE -ne 0) {
+        throw "A button or menu action opens a dialog inside its press"
+    }
+
     if ([string]::IsNullOrWhiteSpace($ExePath)) {
         $ExePath = Join-Path $repo "build/Release/sak_utility.exe"
     }

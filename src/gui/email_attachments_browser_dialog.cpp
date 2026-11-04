@@ -242,7 +242,8 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     connect(m_save_selected_button,
             &QPushButton::clicked,
             this,
-            &EmailAttachmentsBrowserDialog::onSaveSelectedClicked);
+            &EmailAttachmentsBrowserDialog::onSaveSelectedClicked,
+            Qt::QueuedConnection);
     buttons->addWidget(m_save_selected_button);
 
     m_save_all_button = new QPushButton(tr("Save All Visible"), this);
@@ -251,7 +252,8 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     connect(m_save_all_button,
             &QPushButton::clicked,
             this,
-            &EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked);
+            &EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked,
+            Qt::QueuedConnection);
     buttons->addWidget(m_save_all_button);
 
     m_close_button = new QPushButton(tr("Close"), this);

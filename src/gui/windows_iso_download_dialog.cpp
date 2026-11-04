@@ -248,13 +248,23 @@ void WindowsISODownloadDialog::connectSignals() {
     connect(m_browseSaveButton,
             &QPushButton::clicked,
             this,
-            &WindowsISODownloadDialog::onBrowseSaveLocation);
-    connect(m_startButton, &QPushButton::clicked, this, &WindowsISODownloadDialog::onStartDownload);
-    connect(
-        m_cancelButton, &QPushButton::clicked, this, &WindowsISODownloadDialog::onCancelDownload);
+            &WindowsISODownloadDialog::onBrowseSaveLocation,
+            Qt::QueuedConnection);
+    connect(m_startButton,
+            &QPushButton::clicked,
+            this,
+            &WindowsISODownloadDialog::onStartDownload,
+            Qt::QueuedConnection);
+    connect(m_cancelButton,
+            &QPushButton::clicked,
+            this,
+            &WindowsISODownloadDialog::onCancelDownload,
+            Qt::QueuedConnection);
     connect(m_closeButton, &QPushButton::clicked, this, &QDialog::reject);
+    connectDownloaderSignals();
+}
 
-    // Downloader signals
+void WindowsISODownloadDialog::connectDownloaderSignals() {
     connect(m_downloader,
             &WindowsISODownloader::buildsFetched,
             this,

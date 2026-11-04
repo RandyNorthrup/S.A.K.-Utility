@@ -213,9 +213,18 @@ void LinuxISODownloadDialog::connectSignals() {
     connect(m_browseSaveButton,
             &QPushButton::clicked,
             this,
-            &LinuxISODownloadDialog::onBrowseSaveLocation);
-    connect(m_startButton, &QPushButton::clicked, this, &LinuxISODownloadDialog::onStartDownload);
-    connect(m_cancelButton, &QPushButton::clicked, this, &LinuxISODownloadDialog::onCancelDownload);
+            &LinuxISODownloadDialog::onBrowseSaveLocation,
+            Qt::QueuedConnection);
+    connect(m_startButton,
+            &QPushButton::clicked,
+            this,
+            &LinuxISODownloadDialog::onStartDownload,
+            Qt::QueuedConnection);
+    connect(m_cancelButton,
+            &QPushButton::clicked,
+            this,
+            &LinuxISODownloadDialog::onCancelDownload,
+            Qt::QueuedConnection);
     connect(m_closeButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_saveLocationEdit, &QLineEdit::textChanged, this, [this](const QString&) {
         updateStartButton();

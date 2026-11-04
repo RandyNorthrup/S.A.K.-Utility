@@ -142,15 +142,21 @@ void EmailContactsDialog::setupButtonRow(QVBoxLayout* layout) {
     m_export_vcf_button = new QPushButton(tr("Export VCF"), this);
     m_export_vcf_button->setToolTip(tr("Export all contacts as vCard (.vcf) files"));
     m_export_vcf_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(
-        m_export_vcf_button, &QPushButton::clicked, this, &EmailContactsDialog::onExportVcfClicked);
+    connect(m_export_vcf_button,
+            &QPushButton::clicked,
+            this,
+            &EmailContactsDialog::onExportVcfClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_export_vcf_button);
 
     m_export_csv_button = new QPushButton(tr("Export CSV"), this);
     m_export_csv_button->setToolTip(tr("Export all contacts as a CSV spreadsheet"));
     m_export_csv_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    connect(
-        m_export_csv_button, &QPushButton::clicked, this, &EmailContactsDialog::onExportCsvClicked);
+    connect(m_export_csv_button,
+            &QPushButton::clicked,
+            this,
+            &EmailContactsDialog::onExportCsvClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_export_csv_button);
 
     button_row->addStretch();

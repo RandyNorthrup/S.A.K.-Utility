@@ -525,8 +525,32 @@ void WifiManagerPanel::setupActionButtons() {
     }
 }
 
+void WifiManagerPanel::connectOutputButtons() {
+    connect(m_generate_qr_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onGenerateQrClicked,
+            Qt::QueuedConnection);
+    connect(m_export_script_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onExportWindowsScriptClicked,
+            Qt::QueuedConnection);
+    connect(m_export_macos_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onExportMacosProfileClicked,
+            Qt::QueuedConnection);
+    connect(m_connect_phone_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onConnectWithPhoneClicked,
+            Qt::QueuedConnection);
+}
+
 void WifiManagerPanel::connectSignals() {
     Q_ASSERT(m_network_table);
+    connectOutputButtons();
     connect(m_security_combo,
             &QComboBox::currentTextChanged,
             this,
@@ -540,8 +564,16 @@ void WifiManagerPanel::connectSignals() {
             &QPushButton::clicked,
             this,
             &WifiManagerPanel::onDeleteSelectedClicked);
-    connect(m_save_table_btn, &QPushButton::clicked, this, &WifiManagerPanel::onSaveTableClicked);
-    connect(m_load_table_btn, &QPushButton::clicked, this, &WifiManagerPanel::onLoadTableClicked);
+    connect(m_save_table_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onSaveTableClicked,
+            Qt::QueuedConnection);
+    connect(m_load_table_btn,
+            &QPushButton::clicked,
+            this,
+            &WifiManagerPanel::onLoadTableClicked,
+            Qt::QueuedConnection);
     connect(m_network_table,
             &QTableWidget::doubleClicked,
             this,
@@ -549,19 +581,6 @@ void WifiManagerPanel::connectSignals() {
     connect(m_search_input, &QLineEdit::textChanged, this, &WifiManagerPanel::onSearchChanged);
     connect(m_search_up_btn, &QToolButton::clicked, this, &WifiManagerPanel::onFindPrev);
     connect(m_search_down_btn, &QToolButton::clicked, this, &WifiManagerPanel::onFindNext);
-    connect(m_generate_qr_btn, &QPushButton::clicked, this, &WifiManagerPanel::onGenerateQrClicked);
-    connect(m_export_script_btn,
-            &QPushButton::clicked,
-            this,
-            &WifiManagerPanel::onExportWindowsScriptClicked);
-    connect(m_export_macos_btn,
-            &QPushButton::clicked,
-            this,
-            &WifiManagerPanel::onExportMacosProfileClicked);
-    connect(m_connect_phone_btn,
-            &QPushButton::clicked,
-            this,
-            &WifiManagerPanel::onConnectWithPhoneClicked);
     connect(
         m_scan_networks_btn, &QPushButton::clicked, this, &WifiManagerPanel::onScanNetworksClicked);
     connect(m_add_to_windows_btn,
@@ -852,7 +871,10 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
     QObject::connect(ctl.btnCancel1, &QPushButton::clicked, dlg, &QDialog::reject);
     QObject::connect(ctl.btnBack, &QPushButton::clicked, [stack]() { stack->setCurrentIndex(0); });
     QObject::connect(
-        ctl.btnBrowse, &QPushButton::clicked, [dlg, ctl, sub_name = content.sub_name]() {
+        ctl.btnBrowse,
+        &QPushButton::clicked,
+        ctl.btnBrowse,
+        [dlg, ctl, sub_name = content.sub_name]() {
             const QString start =
                 ctl.dirEdit->text().isEmpty()
                     ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
@@ -865,10 +887,14 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
             ctl.dirEdit->setText(chosen);
             ctl.subLabel->setText(QString("Files will be saved to: %1/%2/").arg(chosen, sub_name));
             ctl.btnGenerate->setEnabled(true);
-        });
-    QObject::connect(ctl.btnGenerate, &QPushButton::clicked, [this, dlg, ctl, content]() {
-        executeSingleQrExport(dlg, ctl, content);
-    });
+        },
+        Qt::QueuedConnection);
+    QObject::connect(
+        ctl.btnGenerate,
+        &QPushButton::clicked,
+        ctl.btnGenerate,
+        [this, dlg, ctl, content]() { executeSingleQrExport(dlg, ctl, content); },
+        Qt::QueuedConnection);
 }
 
 void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
@@ -1200,41 +1226,52 @@ void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources) {
     const BatchQrDialogUi ui = buildBatchQrDialogUi(&dlg, static_cast<int>(sources.size()));
 
     QObject::connect(ui.btn_cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
-    QObject::connect(ui.btn_browse, &QPushButton::clicked, &dlg, [&]() {
-        const QString start = ui.dir_edit->text().isEmpty() ? QStandardPaths::writableLocation(
-                                                                  QStandardPaths::DesktopLocation)
-                                                            : ui.dir_edit->text();
-        const QString chosen =
-            QFileDialog::getExistingDirectory(&dlg, "Select Output Directory", start);
-        if (chosen.isEmpty()) {
-            return;
-        }
-        ui.dir_edit->setText(chosen);
-        ui.sub_label->setText(
-            QString("One subfolder will be created per network under: %1").arg(chosen));
-        ui.btn_gen->setEnabled(true);
-    });
+    QObject::connect(
+        ui.btn_browse,
+        &QPushButton::clicked,
+        &dlg,
+        [&]() {
+            const QString start =
+                ui.dir_edit->text().isEmpty()
+                    ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
+                    : ui.dir_edit->text();
+            const QString chosen =
+                QFileDialog::getExistingDirectory(&dlg, "Select Output Directory", start);
+            if (chosen.isEmpty()) {
+                return;
+            }
+            ui.dir_edit->setText(chosen);
+            ui.sub_label->setText(
+                QString("One subfolder will be created per network under: %1").arg(chosen));
+            ui.btn_gen->setEnabled(true);
+        },
+        Qt::QueuedConnection);
 
-    QObject::connect(ui.btn_gen, &QPushButton::clicked, &dlg, [&]() {
-        const QString base_dir = ui.dir_edit->text();
-        if (base_dir.isEmpty()) {
-            return;
-        }
-        if (!ui.chk_png->isChecked() && !ui.chk_pdf->isChecked() && !ui.chk_jpg->isChecked() &&
-            !ui.chk_bmp->isChecked()) {
-            sak::logWarning("Select at least one export format.");
-            sak::showWarningLogged(&dlg, "No Format", "Select at least one export format.");
-            return;
-        }
-        executeBatchQrExport(&dlg,
-                             sources,
-                             base_dir,
-                             ui.header_toggle->isChecked(),
-                             {.png = ui.chk_png->isChecked(),
-                              .pdf = ui.chk_pdf->isChecked(),
-                              .jpg = ui.chk_jpg->isChecked(),
-                              .bmp = ui.chk_bmp->isChecked()});
-    });
+    QObject::connect(
+        ui.btn_gen,
+        &QPushButton::clicked,
+        &dlg,
+        [&]() {
+            const QString base_dir = ui.dir_edit->text();
+            if (base_dir.isEmpty()) {
+                return;
+            }
+            if (!ui.chk_png->isChecked() && !ui.chk_pdf->isChecked() && !ui.chk_jpg->isChecked() &&
+                !ui.chk_bmp->isChecked()) {
+                sak::logWarning("Select at least one export format.");
+                sak::showWarningLogged(&dlg, "No Format", "Select at least one export format.");
+                return;
+            }
+            executeBatchQrExport(&dlg,
+                                 sources,
+                                 base_dir,
+                                 ui.header_toggle->isChecked(),
+                                 {.png = ui.chk_png->isChecked(),
+                                  .pdf = ui.chk_pdf->isChecked(),
+                                  .jpg = ui.chk_jpg->isChecked(),
+                                  .bmp = ui.chk_bmp->isChecked()});
+        },
+        Qt::QueuedConnection);
     dlg.exec();
 }
 

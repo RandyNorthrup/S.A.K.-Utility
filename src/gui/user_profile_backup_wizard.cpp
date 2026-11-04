@@ -221,8 +221,11 @@ void UserProfileBackupSelectUsersPage::setupScanControls(QVBoxLayout* layout) {
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(
-        m_scanButton, &QPushButton::clicked, this, &UserProfileBackupSelectUsersPage::onScanUsers);
+    connect(m_scanButton,
+            &QPushButton::clicked,
+            this,
+            &UserProfileBackupSelectUsersPage::onScanUsers,
+            Qt::QueuedConnection);
     scan_layout->addWidget(m_scanButton);
 
     m_statusLabel = new QLabel(tr("Click Scan Users to begin"), this);

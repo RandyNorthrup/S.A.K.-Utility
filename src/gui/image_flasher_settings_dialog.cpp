@@ -217,7 +217,8 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* main_layout) {
     connect(m_clearCacheButton,
             &QPushButton::clicked,
             this,
-            &ImageFlasherSettingsDialog::onClearDownloadCaches);
+            &ImageFlasherSettingsDialog::onClearDownloadCaches,
+            Qt::QueuedConnection);
     storage_layout->addLayout(cache_info_row);
 
     main_layout->addWidget(storage_group);
