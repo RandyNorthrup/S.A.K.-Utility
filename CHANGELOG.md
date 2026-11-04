@@ -8,6 +8,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Migrate OS works from a snapshot and fits the new drive** - It used to copy a running Windows disk byte
+  for byte, so files could change under the copy, and it refused any drive smaller than the old disk. Each
+  volume is now read from a Volume Shadow Copy snapshot taken at the start, and the EFI, reserved and
+  recovery partitions are copied directly. The new drive gets a new partition table with its own identity,
+  so both disks can stay attached, and its Windows partition grows or shrinks to fit. A larger drive gets
+  the used blocks and then an extended volume. A smaller one gets a new volume filled by Windows' own DISM
+  through a temporary image on that drive, and must hold the data, some room and that image; the wizard gives
+  the number if it does not. The boot files, for UEFI or BIOS, and Windows' list of drive letters are rebuilt
+  for the new drive, and this PC's boot order is left alone. BitLocker on the source is refused with the
+  reason. If Windows cannot take a snapshot it stops and says so before writing anything, and a new check box
+  on the Options page lets a technician copy the running disk anyway. Every snapshot is released, on failure
+  too, and on Cancel Windows releases it within about ten minutes. Windows Recovery stays off on the new drive
+  until `reagentc /enable` is run once there.
+- **Boot Repair repairs the disk you select** - It only ever repaired the Windows that was running. Select
+  any other disk, such as one pulled from a PC that will not start, and it now finds that disk's Windows and
+  system partition, in either firmware mode, gives them temporary letters, rebuilds the boot files, sets that
+  Windows' drive letter, and takes the letters away. This PC's boot order is left alone. It refuses the disk
+  Windows runs from, a disk with two Windows installs, and a disk whose partition style does not match the
+  mode, each with its reason. Selecting the disk Windows runs from still repairs the running Windows.
+- **A failed Partition Manager job says why** - A script that stopped reported "Command exited with code
+  1", with the reason only in the log. The message now gives the script's own words, so a refusal that wrote
+  nothing reads differently from a copy that failed halfway.
 - **Administrator tasks run from an unelevated app again** - Since 2026-08-02 each end of the connection
   between the app and its administrator helper checked which program was on the other end, and compared
   a path written with forward slashes against one written with backslashes. They never matched, so
@@ -19,7 +41,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   a drive or the data on it now runs as long as it needs, up to 23 days, and Cancel ends it. Jobs that
   only change a disk's layout keep a short limit, because running past it can only mean something is
   stuck.
-- **The disk copy wizards offer only what the copy does** - Layout, Align partitions to 1 MB and Prefer
+- **The disk copy wizard offers only what the copy does** - Layout, Align partitions to 1 MB and Prefer
   GPT were read by nothing, though Layout changed the picture of the result. They are gone, and the
   page says the copy is byte for byte.
 - **Data Recovery reads the whole source and keeps what it finds** - An image over 512 MB, or a scan
@@ -34,8 +56,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Boot Repair finds its own drive letter** - BIOS repair named S: and never assigned it, so it failed
   on nearly every PC. UEFI repair did not check S: was free: bcdboot could write to whatever already had
   that letter, and the clean-up then took the letter away from it. Both now use a free letter, and BIOS
-  repair gives it to the active partition and takes it away again. The dialog says it repairs the
-  Windows that is running, and OS migration no longer sends you to run it on the target.
+  repair gives it to the active partition and takes it away again.
 - **Convert to NTFS answers its own prompts** - convert.exe stops to ask for the volume's label, and for
   leave to dismount, and no one was there to answer, so a labeled volume could not be converted.
 - **Defrag agrees with itself** - The queue accepted a drive whose model name says it is a hard disk, and

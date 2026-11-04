@@ -51,7 +51,7 @@ a process), or start it with `SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED()` if only t
 it. The PowerShell tests that run the application exit 77 without the variable, which CTest reports as
 skipped. The APFS and HFS writer CLI tests and the live certifier test leave out, without it, the checks
 that aim those programs at this PC's own disk to prove they refuse: the guard is not linked into them. `test_hardware_guard` drills each route with paths and commands that are harmless if the
-guard is broken.
+guard is broken. A script too long for a command line reads itself from standard input, where the guard cannot read it, so the guard refuses that form outright.
 
 ### Labels and tiers
 
@@ -168,6 +168,8 @@ and termination-utility setup handshakes; neither changes production deadlines.
 ### Core Utilities
 | Test | Module Under Test | Coverage |
 |---|---|---|
+| test_partition_os_migration | `partition_os_migration`, `src/core/partition_scripts` | What Migrate OS plans for each target, what refuses it, and the order of the script's steps, with no disk involved. Its fixture parses the scripts, compiles their C#, and runs the copy code and pure functions on ordinary files. The scripts' real work runs only in the VM. |
+| test_elevated_helper_connection | `ElevationBroker`, `sak_elevated_helper` | The real helper, started the real way, runs a real task over the real pipe. CI only, because it asks for elevation. Nothing else connects the two ends, which is how a path comparison stopped every administrator task for three months. |
 | test_partition_image_volume_lock (five CTests) | `PartitionScriptBuilder`, Create Image source locks | Each disk/selected-partition, pinned/unpinned GUID, and offline capture shape executes the full generated PowerShell lock fixture and its guard drills in a separately bounded CTest. No row is dropped from the former aggregate core test. |
 | test_path_utils | `path_utils` | Path validation, normalization, sanitization, env-var expansion, safe-delete checks |
 | test_logger | `logger` | Log levels, formatting, file rotation, thread safety; old session logs pruned at initialize (newest 30, 200 MB) |
