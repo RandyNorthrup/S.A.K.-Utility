@@ -1818,6 +1818,10 @@ private Q_SLOTS:
     void scriptBuilder_backupReadsItsShadowCopyThroughALink();
     void scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVolume();
     void scriptBuilder_restoredPartitionKeepsItsStart();
+    void safetyValidator_copyingFromAReadOnlyPartitionOnlyReadsIt();
+    void scanListsWhatGetDiskLeavesOut();
+    void dynamicDiskFromTheScanConvertsAndNothingElse();
+    void scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
@@ -17390,7 +17394,7 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
     // The helper must be DEFINED before the Get-Disk pipeline that calls it.
     const int definedAt = script.indexOf(QStringLiteral("function Get-SakPartitionsForDisk"));
     const int calledAt =
-        script.indexOf(QStringLiteral("$partitionQuery = Get-SakPartitionsForDisk"));
+        script.indexOf(QStringLiteral("Get-SakPartitionsForDisk -DiskNumber $disk.Number"));
     QVERIFY2(definedAt >= 0 && calledAt > definedAt,
              "Get-SakPartitionsForDisk must be defined before the disk pipeline calls it.");
     QVERIFY2(script.contains(QStringLiteral("Get-SakVolumeForPartition")),
@@ -21786,6 +21790,132 @@ void PartitionManagerCoreTests::scriptBuilder_backupReadsItsShadowCopyThroughALi
 }
 
 // Every NTFS root holds a folder an administrator may not list, and listing it stopped the script.
+// The partition a copy selects is what it reads. Its target is checked as a target.
+void PartitionManagerCoreTests::safetyValidator_copyingFromAReadOnlyPartitionOnlyReadsIt() {
+    auto inventory = singleDataDiskInventory();
+    inventory.disks.first().partitions.first().is_read_only = true;
+    const auto& partition = inventory.disks.first().partitions.first();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    const QString refusal = QStringLiteral("Target partition is read-only");
+    const auto copy = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, {});
+    QVERIFY2(!PartitionSafetyValidator::validate(inventory, copy).blockers.contains(refusal),
+             "a copy only reads the partition it selects");
+    const auto format =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, {});
+    QVERIFY2(PartitionSafetyValidator::validate(inventory, format).blockers.contains(refusal),
+             "and anything that writes to it stays refused");
+}
+
+// Get-Disk does not list a dynamic disk, so a scan built on it alone hid a real disk.
+void PartitionManagerCoreTests::scanListsWhatGetDiskLeavesOut() {
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript();
+    QVERIFY2(script.contains(QStringLiteral("@(@(Get-Disk) + @(Get-SakDynamicDisks))")),
+             "the scan must walk both lists");
+    QVERIFY2(script.indexOf(QStringLiteral("function Get-SakDynamicDisks")) <
+                 script.indexOf(QStringLiteral("@(@(Get-Disk)")),
+             "and the function has to exist before the pipeline calls it");
+    QVERIFY(script.contains(QStringLiteral("Win32_DiskDrive")));
+    QVERIFY2(script.contains(QStringLiteral("$disk.DynamicPartitions")),
+             "a dynamic disk's volumes stand in for the partitions Get-Partition cannot list");
+    QVERIFY2(!script.contains(QStringLiteral("-Access")),
+             "what a standard user may ask stays what it can ask");
+}
+
+void PartitionManagerCoreTests::dynamicDiskFromTheScanConvertsAndNothingElse() {
+    QJsonObject volume{{QStringLiteral("UniqueId"), QStringLiteral("\\\\?\\Volume{D}\\")},
+                       {QStringLiteral("DriveLetter"), QStringLiteral("Q")},
+                       {QStringLiteral("FileSystem"), QStringLiteral("NTFS")},
+                       {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
+                       {QStringLiteral("Size"), 402'649'088},
+                       {QStringLiteral("SizeRemaining"), 1024},
+                       {QStringLiteral("BitLockerStateKnown"), true},
+                       {QStringLiteral("DirtyBitKnown"), true}};
+    QJsonObject partition{{QStringLiteral("PartitionNumber"), 1},
+                          {QStringLiteral("Type"), QStringLiteral("Dynamic")},
+                          {QStringLiteral("Offset"), 32'256},
+                          {QStringLiteral("Size"), 402'653'184},
+                          {QStringLiteral("DriveLetter"), QStringLiteral("Q")},
+                          {QStringLiteral("Volume"), volume}};
+    const QJsonObject json{{QStringLiteral("Number"), 1},
+                           {QStringLiteral("UniqueId"), QStringLiteral("dynamic:9f3e0c11")},
+                           {QStringLiteral("FriendlyName"), QStringLiteral("Model")},
+                           {QStringLiteral("SerialNumber"), QStringLiteral("SN")},
+                           {QStringLiteral("PartitionScheme"), QStringLiteral("MBR")},
+                           {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
+                           {QStringLiteral("OperationalStatus"), QStringLiteral("Online")},
+                           {QStringLiteral("Size"), 1'073'741'824},
+                           {QStringLiteral("IsOffline"), false},
+                           {QStringLiteral("IsDynamic"), true},
+                           {QStringLiteral("ReliabilityQuerySucceeded"), true},
+                           {QStringLiteral("Partitions"), QJsonArray{partition}}};
+    const auto inventory =
+        StorageInventoryWorker::parseInventoryJson(QJsonDocument(QJsonArray{json}).toJson());
+    QCOMPARE(inventory.disks.size(), 1);
+    const auto& disk = inventory.disks.first();
+    QVERIFY2(disk.is_dynamic, "the scan's own flag must reach the panel");
+    QCOMPARE(disk.partitions.size(), 1);
+    PartitionTarget whole;
+    whole.kind = PartitionTargetKind::Disk;
+    whole.disk_number = disk.disk_number;
+    whole.disk_unique_id = disk.unique_id;
+    whole.disk_serial_number = disk.serial_number;
+    whole.size_bytes = disk.size_bytes;
+    const auto wipe =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk, whole, {});
+    QVERIFY2(!PartitionSafetyValidator::validate(inventory, wipe).blockers.isEmpty(),
+             "a dynamic disk stays read-only to everything else");
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("402653184");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("Q");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    payload[QStringLiteral("backup_volume_guid")] = QStringLiteral("\\\\?\\Volume{B}\\");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto convert = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, whole, payload);
+    QStringList blockers = PartitionSafetyValidator::validate(inventory, convert).blockers;
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QLatin1Char('|'))));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{2};
+    target.disk_unique_id = QStringLiteral("dynamic:9f3e0c11");
+    target.size_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1073741824");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("T");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("label")] = QStringLiteral("Moved");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const PartitionScriptBuilder builder;
+    const auto convert = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, payload));
+    QVERIFY2(convert.valid(), qPrintable(convert.blockers.join(QStringLiteral("; "))));
+    const auto find =
+        convert.script.indexOf(QStringLiteral("@(Get-SakDynamicDisks | Where-Object"));
+    const auto destroy = convert.script.indexOf(QStringLiteral("delete volume override"));
+    QVERIFY2(find >= 0 && destroy > find, "it must find the disk before it deletes anything");
+    // In PowerShell a comma binds tighter than +: without these brackets every line became one.
+    QVERIFY(
+        convert.script.contains(QStringLiteral("@(('select volume ' + $drive),'delete volume")));
+    QVERIFY2(!convert.script.contains(QStringLiteral("$disk = Get-Disk -Number")),
+             "Get-Disk does not list the disk being converted");
+    QVERIFY(convert.script.contains(QStringLiteral("function Get-SakDynamicDisks")));
+    const auto identity = convert.script.indexOf(QStringLiteral("'dynamic:9f3e0c11'"));
+    QVERIFY2(identity >= 0 && identity < destroy, "the disk scanned must be the disk converted");
+    const auto span = convert.script.indexOf(QStringLiteral("$disk.VolumeSpansDisks"));
+    QVERIFY2(span >= 0 && span < destroy, "a spanned volume must stop before anything changes");
+}
+
 void PartitionManagerCoreTests::scriptBuilder_restoredPartitionKeepsItsStart() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;

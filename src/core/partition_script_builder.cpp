@@ -6264,6 +6264,30 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
     return out;
 }
 
+namespace {
+
+// Get-Disk does not list a dynamic disk until it has been converted, so it is found the way the
+// scan found it. The scan named a volume, and only here can the whole of that volume be seen.
+QString dynamicDiskAdmissionScript(const PartitionTarget& target) {
+    return dynamicDiskFunctionsScript() +
+           QStringLiteral(
+               "$disk = @(Get-SakDynamicDisks | Where-Object { [int]$_.Number -eq %1 }) | "
+               "Select-Object -First 1\n"
+               "if (-not $disk) { throw 'Disk %1 is not a dynamic disk now' }\n"
+               "$sakExpectedDisk = %2\n"
+               "if ($sakExpectedDisk -and \"$($disk.UniqueId)\" -ne $sakExpectedDisk) { throw "
+               "'Disk identity changed since this was queued' }\n"
+               "if ($disk.IsBoot -or $disk.IsSystem) { throw 'Current OS disk dynamic-to-basic "
+               "conversion is blocked' }\n"
+               "if ($disk.IsReadOnly) { throw 'Target disk is read-only' }\n"
+               "if ($disk.VolumeSpansDisks) { throw 'A volume on this disk also lies on another "
+               "disk, and only a simple volume converts directly. Nothing was changed.' }\n")
+               .arg(target.disk_number.value())
+               .arg(PartitionScriptBuilder::quotePowerShell(target.disk_unique_id.trimmed()));
+}
+
+}  // namespace
+
 PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
     const PartitionOperation& operation) const {
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
@@ -6296,7 +6320,8 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
     out.preview = QStringLiteral("Convert Dynamic Disk %1 to Basic")
                       .arg(operation.target.disk_number.value());
     out.script =
-        commonHeader(out.preview) + backupRestoreHelpersScript() + diskPartRunnerScript() +
+        commonHeader(out.preview) + dynamicDiskAdmissionScript(operation.target) +
+        backupRestoreHelpersScript() + diskPartRunnerScript() +
         QStringLiteral(
             "$drive = %1\n"
             "$sourceRoot = ('{0}:\\' -f $drive)\n"
@@ -6304,17 +6329,13 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
             "$sourceSizeMb = %3\n"
             "$fileSystem = %4\n"
             "$label = %5\n"
-            "$disk = Get-Disk -Number %6 -ErrorAction Stop\n"
-            "if ($disk.IsBoot -or $disk.IsSystem) { throw 'Current OS disk dynamic-to-basic "
-            "conversion is blocked' }\n"
-            "if ($disk.IsReadOnly) { throw 'Target disk is read-only' }\n"
             "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
             "$backupPath = Join-Path $backupRootFull ('sak-dynamic-basic-backup-{0}' -f "
             "[guid]::NewGuid().ToString('N'))\n"
             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
             "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-            "$lines = @('select volume ' + $drive,'delete volume override','select disk "
+            "$lines = @(('select volume ' + $drive),'delete volume override','select disk "
             "%6','convert basic',('create partition primary size={0}' -f $sourceSizeMb),('format "
             "fs={0} quick label=\"{1}\"' -f $fileSystem, $label),('assign letter={0}' -f $drive))\n"
             "Invoke-SakDiskPart $lines\n"

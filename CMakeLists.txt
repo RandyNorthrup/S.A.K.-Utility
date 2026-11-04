@@ -443,6 +443,7 @@ sak_embed_text_files("${SAK_PARTITION_SCRIPTS_CPP}" sak::embedded_partition_scri
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration.ps1" kOsMigrationPs1
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/target_boot_files.ps1" kTargetBootFilesPs1
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/attached_boot_repair.ps1" kAttachedBootRepairPs1
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/dynamic_disks.ps1" kDynamicDisksPs1
 )
 
 set(SAK_CORE_SOURCES

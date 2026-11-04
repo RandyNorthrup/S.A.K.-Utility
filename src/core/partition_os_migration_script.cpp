@@ -16,6 +16,7 @@ extern const char kOsMigrationNativeCs[];
 extern const char kOsMigrationPs1[];
 extern const char kTargetBootFilesPs1[];
 extern const char kAttachedBootRepairPs1[];
+extern const char kDynamicDisksPs1[];
 }  // namespace embedded_partition_scripts
 
 namespace {
@@ -105,6 +106,10 @@ QString migrationParametersScript(const PartitionOperation& operation,
 }
 
 }  // namespace
+
+QString dynamicDiskFunctionsScript() {
+    return embedded(embedded_partition_scripts::kDynamicDisksPs1);
+}
 
 QString targetBootFilesFunctionScript() {
     return PartitionScriptBuilder::freeBootLetterFunctionScript() +

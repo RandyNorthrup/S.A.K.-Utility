@@ -1599,7 +1599,8 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  QStringLiteral("BitLocker protection and lock state could not be determined"));
     addBlockerIf(result,
                  (disk.is_read_only || partition.is_read_only) &&
-                     operation.type != PartitionOperationType::CreateImage,
+                     operation.type != PartitionOperationType::CreateImage &&
+                     operation.type != PartitionOperationType::ClonePartition,
                  QStringLiteral("Target partition is read-only"));
     addBlockerIf(result,
                  disk.is_dynamic || disk.is_storage_spaces,

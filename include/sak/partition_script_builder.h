@@ -35,6 +35,10 @@ struct PartitionScript {
     [[nodiscard]] bool valid() const noexcept { return blockers.isEmpty() && !script.isEmpty(); }
 };
 
+/// The PowerShell that finds the dynamic disks Get-Disk does not list. The scan and the conversion
+/// both run it, so they cannot disagree about which disk is which.
+[[nodiscard]] QString dynamicDiskFunctionsScript();
+
 class PartitionScriptBuilder {
 public:
     [[nodiscard]] PartitionScript buildScript(const PartitionOperation& operation) const;

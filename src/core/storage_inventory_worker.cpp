@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_safety_validator.h"
+#include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
 
 #include <QCryptographicHash>
@@ -958,7 +959,7 @@ function Get-SakVolumeForPartition {
 
 static QString inventoryPowerShellDiskPrefixScript() {
     return QStringLiteral(R"PS(
-$disks = Get-Disk | ForEach-Object {
+$disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
   $disk = $_
   $physical = $physicalDisks | Where-Object {
     "$($_.DeviceId)" -eq "$($disk.Number)" -or
@@ -981,7 +982,11 @@ $disks = Get-Disk | ForEach-Object {
       $reliabilityError = "$($_.Exception.Message)"
     }
   }
-  $partitionQuery = Get-SakPartitionsForDisk -DiskNumber $disk.Number
+  $partitionQuery = if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions') {
+    [pscustomobject]@{ Failed = $false; Error = ''; Items = @($disk.DynamicPartitions) }
+  } else {
+    Get-SakPartitionsForDisk -DiskNumber $disk.Number
+  }
   [pscustomobject]@{
     Number = $disk.Number
     UniqueId = "$($disk.UniqueId)"
@@ -1141,9 +1146,9 @@ function Get-SakPartitionsForDisk {
 QString StorageInventoryWorker::inventoryPowerShellScript() {
     // Both helper functions must be defined BEFORE the Get-Disk pipeline that calls them.
     return inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
-           inventoryPowerShellPartitionQueryScript() + inventoryPowerShellDiskPrefixScript() +
-           inventoryPowerShellPartitionProbeScript() + inventoryPowerShellPartitionResultScript() +
-           inventoryPowerShellFooterScript();
+           inventoryPowerShellPartitionQueryScript() + dynamicDiskFunctionsScript() +
+           inventoryPowerShellDiskPrefixScript() + inventoryPowerShellPartitionProbeScript() +
+           inventoryPowerShellPartitionResultScript() + inventoryPowerShellFooterScript();
 }
 
 }  // namespace sak
