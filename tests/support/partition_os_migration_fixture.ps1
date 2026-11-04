@@ -59,12 +59,16 @@ $bytes = New-Object byte[] (6 * 1048576)
 [IO.File]::WriteAllBytes($targetPath, (New-Object byte[] (8 * 1048576)))
 $targetBase = [int64]1048576
 $ranges = [int64[]]@(0, 1048576, (3 * 1048576), 2097152)
+function New-FixtureCheck([int64[]]$Ranges, [bool]$Full) { New-Object SakMigration.CopyCheck -ArgumentList $Ranges, $Full }
+$fullCheck = New-FixtureCheck $ranges $true
+$sampleCheck = New-FixtureCheck $ranges $false
 $source = [SakMigration.Io]::OpenRead($sourcePath)
 $target = [SakMigration.Io]::OpenWrite($targetPath)
 try {
-    [SakMigration.Copy]::Run($source, 0, $target, $targetBase, $ranges, 'Fixture copy')
-    [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $ranges, $true)
-    [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $ranges, $false)
+    [SakMigration.Copy]::Run($source, 0, $target, $targetBase, $ranges, 'Fixture copy', $fullCheck)
+    [SakMigration.Copy]::Run($source, 0, $target, $targetBase, $ranges, 'Fixture copy', $sampleCheck)
+    [SakMigration.Copy]::Verify($target, $targetBase, $ranges, $fullCheck)
+    [SakMigration.Copy]::Verify($target, $targetBase, $ranges, $sampleCheck)
 } finally {
     $source.Dispose()
     $target.Dispose()
@@ -79,19 +83,28 @@ Assert-Fixture (($after[0..1048575] | Where-Object { $_ -ne 0 } | Select-Object 
 $gap = $after[(2 * 1048576)..(4 * 1048576 - 1)]
 Assert-Fixture (($gap | Where-Object { $_ -ne 0 } | Select-Object -First 1) -eq $null) 'Copy wrote a range it was not given'
 
-# --- a difference is reported, in full and in the sample
+# --- a source that changes after the copy is not a difference, as in VMs where Windows wrote its prefetch
+# file for the snapshot service into a free cluster, and wrote to its page file: a snapshot reads both as
+# they now are
+$changed = $bytes.Clone()
+$changed[5] = [byte]($changed[5] -bxor 0xFF)
+[IO.File]::WriteAllBytes($sourcePath, $changed)
+$target = [SakMigration.Io]::OpenWrite($targetPath)
+try { foreach ($check in @($fullCheck, $sampleCheck)) { [SakMigration.Copy]::Verify($target, $targetBase, $ranges, $check) } }
+finally { $target.Dispose() }
+
+# --- a difference on the target is reported, in full and in the sample
 $after[$targetBase + 3 * 1048576 + 5] = [byte]($after[$targetBase + 3 * 1048576 + 5] -bxor 0xFF)
 [IO.File]::WriteAllBytes($targetPath, $after)
-foreach ($full in @($true, $false)) {
-    $source = [SakMigration.Io]::OpenRead($sourcePath)
+foreach ($check in @($fullCheck, $sampleCheck)) {
     $target = [SakMigration.Io]::OpenWrite($targetPath)
     $reported = $false
-    try { [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $ranges, $full) } catch { $reported = "$_" -match 'difference' }
-    finally { $source.Dispose(); $target.Dispose() }
-    Assert-Fixture $reported "Verify (full=$full) did not report a changed byte"
+    try { [SakMigration.Copy]::Verify($target, $targetBase, $ranges, $check) } catch { $reported = "$_" -match 'difference' }
+    finally { $target.Dispose() }
+    Assert-Fixture $reported 'Verify did not report a changed byte'
 }
 
-# --- a copy merges close runs; what a comparison is given keeps exactly the clusters in use
+# --- a copy merges close runs
 foreach ($case in @(@{ Gap = [int64]1048576; Want = '0,12288,2097152,4096' }, @{ Gap = [int64]0; Want = '0,4096,8192,4096,2097152,4096' })) {
     $list = New-Object SakMigration.RangeList $case.Gap
     foreach ($at in @(0, 8192, 2097152)) { $list.Add([int64]$at, [int64]4096) }
@@ -102,36 +115,16 @@ $list.Add([int64]0, [int64]4096)
 $list.Add([int64]4096, [int64]4096)
 Assert-Fixture (($list.ToArray() -join ',') -ceq '0,8192') 'Touching clusters must be one run'
 
-# --- a free cluster that changes after the copy is not a difference, as in a VM where Windows wrote its
-# prefetch file for the snapshot service into one: the snapshot reads it as it now is
-[IO.File]::WriteAllBytes($sourcePath, $bytes)
-[IO.File]::WriteAllBytes($targetPath, (New-Object byte[] (8 * 1048576)))
-$source = [SakMigration.Io]::OpenRead($sourcePath)
-$target = [SakMigration.Io]::OpenWrite($targetPath)
-try { [SakMigration.Copy]::Run($source, 0, $target, $targetBase, [int64[]]@(0, (3 * 1048576)), 'Fixture copy') }
-finally { $source.Dispose(); $target.Dispose() }
-$changed = $bytes.Clone()
-$changed[1572864] = [byte]($changed[1572864] -bxor 0xFF)
-[IO.File]::WriteAllBytes($sourcePath, $changed)
-$inUse = [int64[]]@(0, 1048576, (2 * 1048576), 1048576)
-foreach ($full in @($true, $false)) {
-    $source = [SakMigration.Io]::OpenRead($sourcePath)
-    $target = [SakMigration.Io]::OpenWrite($targetPath)
-    try { [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $inUse, $full) }
-    finally { $source.Dispose(); $target.Dispose() }
-}
-
-# --- a sample is the same amount however small the runs are
-$small = New-Object System.Collections.Generic.List[int64]
-foreach ($i in 0..11) { $small.Add([int64]($i * 65536)); $small.Add([int64]4096) }
-$changed[65536 + 7] = [byte]($changed[65536 + 7] -bxor 0xFF)
-[IO.File]::WriteAllBytes($sourcePath, $changed)
-$source = [SakMigration.Io]::OpenRead($sourcePath)
-$target = [SakMigration.Io]::OpenWrite($targetPath)
-$reported = $false
-try { [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $small.ToArray(), $false) } catch { $reported = "$_" -match 'difference' }
-finally { $source.Dispose(); $target.Dispose() }
-Assert-Fixture $reported 'The sample stopped at the first small run'
+# --- a sample is spread over the whole partition, its first and last block included, and is not all of it
+$blockBytes = [int64][SakMigration.Copy]::BlockBytes
+$large = [int64[]]@(0, (1000 * $blockBytes))
+$sample = New-FixtureCheck $large $false
+$wanted = @(0..999 | Where-Object { $sample.Wanted([int64]$_) })
+Assert-Fixture ($wanted.Count -le 65 -and $wanted.Count -ge 32) "A sample of 1000 blocks read $($wanted.Count)"
+Assert-Fixture ($wanted[0] -eq 0 -and $wanted[-1] -eq 999) 'A sample must read the first and last block'
+Assert-Fixture ($wanted[20] -gt 300) 'A sample must be spread out'
+$all = New-FixtureCheck $large $true
+Assert-Fixture (@(0..999 | Where-Object { $all.Wanted([int64]$_) }).Count -eq 1000) 'Full verification must read every block'
 
 # --- an ordinary file is not in the Compact state, and asking does not fail
 Assert-Fixture (-not [SakMigration.Io]::IsExternallyBacked($sourcePath)) 'An ordinary file read as externally backed'

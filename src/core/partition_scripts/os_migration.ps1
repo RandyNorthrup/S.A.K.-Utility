@@ -154,26 +154,18 @@ function Copy-SakPartition($p) {
       $source = [SakMigration.Io]::OpenRead($p.Device)
       $sourceBase = [int64]0
       $ntfs = "$($p.FileSystem)" -eq 'NTFS'
-      $ranges = if ($ntfs) { [SakMigration.Copy]::UsedRanges($source, [SakMigration.Copy]::CopyMergeGap) } else { [SakMigration.Copy]::Whole($p.SourceSize) }
-      # Only clusters in use can be compared. A snapshot keeps no copy of a free cluster, so what it reads
-      # there follows the running volume: Windows writing one small file would read as a bad copy.
-      $compared = if ($ntfs) { [SakMigration.Copy]::UsedRanges($source, 0) } else { $null }
+      $ranges = if ($ntfs) { [SakMigration.Copy]::UsedRanges($source) } else { [SakMigration.Copy]::Whole($p.SourceSize) }
     } else {
       $source = [SakMigration.Io]::OpenRead("\\.\PhysicalDrive$sakSourceDisk")
       $sourceBase = $p.SourceOffset
       $ranges = [SakMigration.Copy]::Whole($p.SourceSize)
-      # A volume in use with no snapshot keeps changing, so comparing it would only report that.
-      $compared = if ($p.Kind -in 'Windows', 'Data') { $null } else { $ranges }
     }
     try {
-      [SakMigration.Copy]::Run($source, $sourceBase, $target, $p.TargetOffset, $ranges, "$($p.Kind) partition")
+      $check = New-Object SakMigration.CopyCheck -ArgumentList ([int64[]]$ranges), ($sakVerify -like 'Full*')
+      [SakMigration.Copy]::Run($source, $sourceBase, $target, $p.TargetOffset, $ranges, "$($p.Kind) partition", $check)
       if ($p.Device -and $ntfs) { [SakMigration.Copy]::BackupBootSector($source, $target, $p.TargetOffset) }
-      if ($null -ne $compared) {
-        [SakMigration.Copy]::Verify($source, $sourceBase, $target, $p.TargetOffset, $compared, $sakVerify -like 'Full*')
-        Write-Output "$($p.Kind) partition: verified ($sakVerify)"
-      } else {
-        Write-Output "$($p.Kind) partition: not compared, because there is no fixed copy of it to compare with"
-      }
+      [SakMigration.Copy]::Verify($target, $p.TargetOffset, $ranges, $check)
+      Write-Output "$($p.Kind) partition: verified ($sakVerify)"
     } finally { $source.Dispose() }
   } finally { $target.Dispose() }
 }

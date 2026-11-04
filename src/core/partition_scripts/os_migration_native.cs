@@ -337,12 +337,33 @@ public sealed class RangeList {
     public long[] ToArray() { if (start >= 0) Close(); return ranges.ToArray(); }
 }
 
+// What a copy read, kept so that the target can be checked against it afterwards. The source cannot be
+// asked again: a snapshot keeps no copy of a free cluster or of the page file, so what it reads there
+// follows the running volume, and Windows writing to one would read as a bad copy. A corruption check,
+// not a security one, so a plain 64-bit FNV-1a, which needs no provider a FIPS policy can refuse.
+public sealed class CopyCheck {
+    const long SampleBlocks = 64;
+    readonly long blocks, stride;
+    readonly List<ulong> sums = new List<ulong>();
+    public CopyCheck(long[] ranges, bool full) {
+        for (int r = 1; r < ranges.Length; r += 2) blocks += (ranges[r] + Copy.BlockBytes - 1) / Copy.BlockBytes;
+        stride = full ? 1 : Math.Max(1, (blocks + SampleBlocks - 1) / SampleBlocks);
+    }
+    public bool Wanted(long block) { return block % stride == 0 || block == blocks - 1; }
+    public void Note(long block, byte[] data, int count) { if (Wanted(block)) sums.Add(Sum(data, count)); }
+    public ulong Noted(int index) { return sums[index]; }
+    public static ulong Sum(byte[] data, int count) {
+        ulong sum = 14695981039346656037UL;
+        for (int i = 0; i < count; ++i) { sum ^= data[i]; sum *= 1099511628211UL; }
+        return sum;
+    }
+}
+
 public static class Copy {
     const uint VolumeDataCode = 0x90064, VolumeBitmapCode = 0x9006F;
-    const int MoreData = 234, BitmapChunk = 1024 * 1024, BufferBytes = 4 * 1024 * 1024, SampleBytes = 1024 * 1024;
-    const long QuietBelowBytes = 1024L * 1024L * 1024L;
-    // What a copy reads as one run, free clusters and all, to spare the disk a seek.
-    public const long CopyMergeGap = 1024 * 1024;
+    const int MoreData = 234, BitmapChunk = 1024 * 1024;
+    const long QuietBelowBytes = 1024L * 1024L * 1024L, MergeGap = 1024 * 1024;
+    public const int BlockBytes = 4 * 1024 * 1024;
     public static long[] Whole(long size) { return new long[] { 0, size }; }
     // Bytes in use on an NTFS volume, from its own counters.
     public static long UsedBytes(SafeFileHandle volume) {
@@ -362,12 +383,12 @@ public static class Copy {
         Io.Write(target, targetBase + sectors * bytesPerSector, sector, bytesPerSector);
         Io.Flush(target);
     }
-    // The volume's allocated clusters as offset/length pairs, neighbours within the gap merged.
-    public static long[] UsedRanges(SafeFileHandle volume, long mergeGap) {
+    // The volume's allocated clusters as offset/length pairs, close neighbours merged to spare a seek.
+    public static long[] UsedRanges(SafeFileHandle volume) {
         byte[] data = new byte[512];
         Io.Control(volume, VolumeDataCode, null, data, 0);
         long cluster = BitConverter.ToInt32(data, 44);
-        RangeList ranges = new RangeList(mergeGap);
+        RangeList ranges = new RangeList(MergeGap);
         byte[] start = new byte[8];
         byte[] output = new byte[BitmapChunk + 16];
         long lcn = 0;
@@ -384,13 +405,14 @@ public static class Copy {
         return ranges.ToArray();
     }
     static long Total(long[] ranges) { long total = 0; for (int i = 1; i < ranges.Length; i += 2) total += ranges[i]; return total; }
-    public static void Run(SafeFileHandle source, long sourceBase, SafeFileHandle target, long targetBase, long[] ranges, string label) {
-        byte[] buffer = new byte[BufferBytes];
-        long total = Total(ranges), done = 0; int shown = -5;
+    public static void Run(SafeFileHandle source, long sourceBase, SafeFileHandle target, long targetBase, long[] ranges, string label, CopyCheck check) {
+        byte[] buffer = new byte[BlockBytes];
+        long total = Total(ranges), done = 0, block = 0; int shown = -5;
         for (int r = 0; r + 1 < ranges.Length; r += 2) {
-            for (long at = ranges[r], left = ranges[r + 1]; left > 0;) {
-                int take = (int)Math.Min(left, BufferBytes);
+            for (long at = ranges[r], left = ranges[r + 1]; left > 0; ++block) {
+                int take = (int)Math.Min(left, BlockBytes);
                 Io.Read(source, sourceBase + at, buffer, take);
+                check.Note(block, buffer, take);
                 Io.Write(target, targetBase + at, buffer, take);
                 at += take; left -= take; done += take;
                 int percent = (int)(done * 100 / total);
@@ -399,30 +421,18 @@ public static class Copy {
         }
         Io.Flush(target);
     }
-    static void Compare(SafeFileHandle source, long sourceAt, SafeFileHandle target, long targetAt, int count, byte[] a, byte[] b) {
-        Io.Read(source, sourceAt, a, count);
-        Io.Read(target, targetAt, b, count);
-        for (int i = 0; i < count; ++i) if (a[i] != b[i]) throw new IOException("Verification found a difference at target byte " + (targetAt + i));
-    }
-    public static void Verify(SafeFileHandle source, long sourceBase, SafeFileHandle target, long targetBase, long[] ranges, bool full) {
-        byte[] a = new byte[BufferBytes], b = new byte[BufferBytes];
-        if (full) {
-            for (int r = 0; r + 1 < ranges.Length; r += 2) {
-                for (long at = ranges[r], left = ranges[r + 1]; left > 0;) {
-                    int take = (int)Math.Min(left, BufferBytes);
-                    Compare(source, sourceBase + at, target, targetBase + at, take, a, b);
-                    at += take; left -= take;
+    // Reads the blocks the check kept a note of back from the target.
+    public static void Verify(SafeFileHandle target, long targetBase, long[] ranges, CopyCheck check) {
+        byte[] buffer = new byte[BlockBytes];
+        long block = 0; int noted = 0;
+        for (int r = 0; r + 1 < ranges.Length; r += 2) {
+            for (long at = ranges[r], left = ranges[r + 1]; left > 0; ++block) {
+                int take = (int)Math.Min(left, BlockBytes);
+                if (check.Wanted(block)) {
+                    Io.Read(target, targetBase + at, buffer, take);
+                    if (CopyCheck.Sum(buffer, take) != check.Noted(noted++)) throw new IOException("Verification found a difference in the " + take + " bytes at target byte " + (targetBase + at));
                 }
-            }
-            return;
-        }
-        // A sample is the same amount at the start, middle and end however small the runs are.
-        foreach (int from in new int[] { 0, (ranges.Length / 4) * 2, ranges.Length - 2 }) {
-            long budget = SampleBytes;
-            for (int r = from; r + 1 < ranges.Length && budget > 0; r += 2) {
-                int take = (int)Math.Min(ranges[r + 1], budget);
-                Compare(source, sourceBase + ranges[r], target, targetBase + ranges[r], take, a, b);
-                budget -= take;
+                at += take; left -= take;
             }
         }
     }
