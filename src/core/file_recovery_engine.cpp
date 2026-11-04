@@ -18,6 +18,11 @@
 #include <algorithm>
 #include <optional>
 
+#include <windows.h>
+
+#include <io.h>
+#include <winioctl.h>
+
 namespace sak {
 
 namespace {
@@ -351,7 +356,15 @@ std::optional<QDir> prepareRestoreDestination(const QFileInfo& imageInfo,
         return std::nullopt;
     }
     if (!destinationIsSeparate(imageInfo, destination)) {
-        warnings->append(QStringLiteral("Restore destination must be separate from source"));
+        // A path naming a whole disk gives no drive to compare the destination with.
+        const bool whole_disk = isWindowsRawDevicePath(imageInfo.filePath()) &&
+                                windowsRawDeviceDriveRoot(imageInfo.filePath()).isEmpty();
+        warnings->append(
+            whole_disk ? QStringLiteral("Recovered files cannot be restored from a whole-disk "
+                                        "path, because the destination cannot be checked "
+                                        "against it. Scan the volume's own path, such as "
+                                        "\\\\.\\D:, instead")
+                       : QStringLiteral("Restore destination must be separate from source"));
         return std::nullopt;
     }
     return destination;
@@ -515,6 +528,38 @@ bool hashCoveredWholeSource(uint64_t hash_cap_bytes, uint64_t source_size_bytes)
         return source_size_bytes > 0;
     }
     return source_size_bytes > 0 && source_size_bytes <= hash_cap_bytes;
+}
+
+// QFile reports no size for a raw device, and Windows answers a read past its end with an error,
+// not an end of file. So a scan that had to find the end by reading there called every complete
+// scan partial. Ask the device instead. A file system also hides the last sectors of its own volume
+// until asked to show them. Zero means the device would not say, and the read finds out as before.
+uint64_t rawDeviceLengthBytes(const QFile& image) {
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(image.handle()));
+    if (handle == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    DWORD returned = 0;
+    (void)DeviceIoControl(
+        handle, FSCTL_ALLOW_EXTENDED_DASD_IO, nullptr, 0, nullptr, 0, &returned, nullptr);
+    GET_LENGTH_INFORMATION length{};
+    if (!DeviceIoControl(handle,
+                         IOCTL_DISK_GET_LENGTH_INFO,
+                         nullptr,
+                         0,
+                         &length,
+                         sizeof(length),
+                         &returned,
+                         nullptr)) {
+        return 0;
+    }
+    return static_cast<uint64_t>(length.Length.QuadPart);
+}
+
+uint64_t scanSourceBytes(const QFile& image, qint64 reported_size, bool raw_device) {
+    return reported_size <= 0 && raw_device
+               ? rawDeviceLengthBytes(image)
+               : static_cast<uint64_t>(std::max<qint64>(0, reported_size));
 }
 
 uint64_t scanByteLimit(uint64_t imageSize, const FileRecoveryScanOptions& options) {
@@ -719,7 +764,8 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
         result.warnings.append(QStringLiteral("Could not determine recovery source size"));
         return result;
     }
-    const uint64_t imageSize = static_cast<uint64_t>(std::max<qint64>(0, reportedSize));
+    const uint64_t imageSize =
+        scanSourceBytes(image, reportedSize, isWindowsRawDevicePath(options.image_path));
     const uint64_t scanBytes = scanByteLimit(imageSize, options);
     carveSource(&image, scanBytes, options, &result, cancel);
     if (scanBytes < imageSize) {
