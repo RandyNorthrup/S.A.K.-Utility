@@ -113,7 +113,22 @@ What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key,
 
 ### What a run takes
 
-Measured on the rig in the trial of 2026-11-04.
+Measured on the rig in the trial of 2026-11-04, one group at a time. The device groups have not run on a physical PC, so theirs are estimates.
+
+| Part | Time |
+|---|---|
+| Configure, build the step client and helper, stage, deploy | 5 minutes |
+| `vhd`: twelve rows, the wipe on a throwaway VDI | 29 minutes |
+| `data`: eight rows on VHDs, the dynamic disk on a VDI | 17 minutes |
+| `boot-uefi`: migrate, prove it starts, break, repair, prove it starts again | 22 minutes |
+| `boot-bios`: build a BIOS install | 83 minutes |
+| `boot-bios`: repair chain, then system MBR-to-GPT | 20 minutes |
+| `ssd-virtual` and `usb-virtual` | 5 minutes each |
+| The device groups on a PC: two whole-disk passes on the 256 GB SSD, a defrag of 16 GB on the hard drive, and four small data rows | about an hour, not measured |
+
+The whole run is about three and a half hours on the VM rig and an hour on the PC, one after the other, or about five hours with setup. A failed group stops it, and a code fix starts it again from the freeze.
+
+A proof VM is shut down from inside its Windows, as a person would. Pulling the power leaves Windows recording a failed shutdown, and on BIOS the next start then stops at "Your PC couldn't turn off properly" until someone presses Enter.
 
 ## Current Certification State
 

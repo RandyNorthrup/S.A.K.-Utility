@@ -1084,6 +1084,63 @@ the script's text, compiles its C#, and runs the copy and read-back code on ordi
 
 **Writer B's B5 and the owner's defect 3 are closed.** Round 6's design decisions above about both no longer apply.
 
+### Round 7: Partition Manager's certification now tests the app (2026-11-04)
+
+**The old rows tested Windows and VirtualBox, not this app.** Evidence from before this round ran Windows' own commands, and much of it assumed a helper task worked during the months it could not (Round 6). Every row now goes through the app's own request building (`src/core/partition_operation_requests.cpp`), its controller and queue, and the real `sak_elevated_helper.exe`, from a client under a standard-user token, and a separate script reads the disk back. Old evidence stays in git and cannot be selected. `docs/PARTITION_MANAGER_CERTIFICATION.md` describes the rows, the levels and the procedure.
+
+**No claim changed.** The level is `CodeCompleteOnly`, 0 of 12 and 0 of 18, until the final run. Trial evidence stayed in scratch.
+
+**What the real path found.** Each of these was broken for a person using the app, and no earlier test could see it:
+
+| Found by | What was wrong | Since |
+|---|---|---|
+| Every row | Apply was impossible from an unelevated app, because BitLocker and dirty state read as unknown and blocked it | always |
+| `vhd.empty-style-conversion` | Empty GPT refused for its reserved partition, empty MBR stopped with an error | always |
+| `vhd.partition-clone-region` | Copy Partition failed at the end of every mounted NTFS volume, and read it live | always |
+| `vhd.clear-disk-wipe` | Wipe and full format on a thin disk failed with "Not Supported" after the disk had been cleared | always |
+| Six backup-and-restore rows | Move, Allocate, Cluster Size, Primary/Logical, Volume Serial and Dynamic to Basic all stopped on NTFS | 2026-07-22 |
+| `external.bitlocker` | One locked volume stopped every Apply, including the one that would unlock it | always |
+| `vhd.recovered-partition-restore` | Windows blanks the start of a new partition, so a restored partition read as empty | always |
+| `external.file-level-data-recovery` | Raw scans were always called partial, raw restore was impossible, the first JPEG was lost in NTFS's upcase table | always |
+| `external.dynamic-to-basic` | Dynamic disks were missing from the table, so conversion could not be reached, and its diskpart lines were one line | always |
+| `external.primary-logical-conversion` | A read-only partition could not be copied | always |
+| `external.ssd-secure-erase` | Every disk scanned with no media type, so HDD defrag was refused on a hard drive whose name does not say so, and an SSD wipe never warned it is not a purge | v0.9.1.8 or before |
+
+**The trial.** MacBook VM `Windows 11`, throwaway VDIs, through the real path. Commits differ between rows, because code changed as rows found things, and each row was checked against the digest it was built from.
+
+| Row | Ran on | Result |
+|---|---|---|
+| The twelve `vhd.*` rows | VHDX in the VM; `vhd.clear-disk-wipe` on a throwaway VDI, because every VHDX reports thin | Accepted |
+| `external.file-level-data-recovery`, `bitlocker`, `bitlocker-mutation`, `allocate-free-space`, `partition-move`, `cluster-size-change`, `primary-logical-conversion`, `volume-serial-number` | VHDX in the VM | Accepted |
+| `external.dynamic-to-basic` | Throwaway VDI on SATA, because Windows will not make a VHDX dynamic | Accepted |
+| `external.os-migration-reboot` | Running Windows to a throwaway VDI, which then started alone under UEFI with the source's marker | Accepted |
+| `external.boot-repair-uefi`, `external.boot-repair-bios` | Throwaway VDI: it starts, its boot files are broken and it does not, the app repairs it from another Windows, and it starts again alone | Accepted |
+| `external.system-mbr2gpt` | A BIOS Windows converted while running from it, then started under UEFI | Accepted |
+| `external.ssd-retrim`, `external.ssd-secure-erase`, `external.hardware-wipe` | Throwaway VDI that Windows reports as SSD | Accepted, as a virtual machine only |
+| `external.usb-removable` | Throwaway VDI behind a virtual USB controller | Accepted, as a virtual machine only |
+| `external.hdd-defrag-execution` | Ran on a VDI, which Windows reports as `Unspecified` | Refused, correctly: it accepts only a real hard drive, and has not run on one |
+
+One BIOS repair run is set aside: its last proof reached sign-in only after Enter was pressed at "Your PC couldn't turn off properly", because the rig had pulled the power on the proof VM before it. The rig now shuts proof VMs down from inside, and the rerun passed with nobody touching it.
+
+**Real drives did not run.** The Seagate Expansion Desk 8 TB and the NS-PCNVMEHDE(-C) 256 GB adapter cannot reach Windows through VirtualBox on this Mac. Under root both showed `Captured`, but macOS refused authorization (`irc=0xe00002eb`), Windows' `USBSTOR` failed with Code 10 (`0xC0000001`, `0xC000000E`), and xHCI reset every two minutes. On a USB 2 controller VirtualBox refused both, `VERR_PDM_NO_USB_PORTS`, as SuperSpeed devices. A raw-disk link was not tried, by decision: it would write to real drives while showing Windows a `VBOX HARDDISK`, and only count as a virtual machine. Nothing was written to either drive. The device rows wait for disposable physical PCs.
+
+**A physical PC as a target.** `-PcFile` sends the rig over ssh and scp instead of VBoxManage. The rows refuse any machine that is not a VirtualBox guest or named as disposable by its own id and typed words, the rig refuses a PC file that names the machine it runs on, and a board with no id of its own cannot be named. Boot rows and the virtual disk groups stay on the VM rig. It was tried for real with the VM standing in for a PC, over OpenSSH by key: the session came up elevated, PcPrepare checked it, a deploy, a refusal to pin the disk that runs Windows, and one row through the elevated task with its evidence back and verified. That row reports a VHDX in a VM, and nothing about hardware. No physical PC has run it.
+
+**The defrag row accepts only a real hard drive.** Windows reports a VirtualBox disk's media type as `Unspecified`. Its check stays. The level for virtual machines now means every row a VM can run, and lists that row as not run.
+
+**T3 checks the source digest.** A clean checkout rebuilds, so it cannot check a binary's hash. `scripts/partition_manager_code_digest.py` hashes every tracked file but docs, Markdown, evidence, workflows and tool configuration, with CRLF read as LF, and T3 checks evidence against it and against the commit being in this history. Docs and the site may change after a freeze. Code may not.
+
+**What no test here covers.**
+
+- No row presses the panel's dialogs. They reach the same request functions, and `test_partition_manager_panel` tests what they queue.
+- The consent prompt is answered by Windows policy in every row, and each report says so. No row shows that a person pressing Yes behaves the same.
+- A spanned dynamic volume is refused at Apply and no row exercises it.
+- Nothing is signed. A forged set of evidence, consistent with itself, would pass.
+- The plain-button sweep protects the click path, and was not measured again with a real screen reader.
+- The raw device length and the whole-sector read in Data Recovery have no unit seam, so only `external.file-level-data-recovery` proves them. Each was broken in the source and the row run in the VM: it failed on both. The second survived until the row's fixture got a PDF that starts off a sector boundary, inside a file that is not one.
+- `scanCurrentSystem(false)`, used by the AI actions, stays strict and was not moved to the new preflight.
+- Internal SATA, NVMe and SMART have run on nothing.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

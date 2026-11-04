@@ -39,6 +39,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Copy Disk turns off the disk this PC runs from** - The wizard listed it as a target and refused it only after
   Finish. It now stays in the list, turned off, with the reason beside it, and with no other disk to copy to, Finish
   stays off and says why.
+- **HDD defrag works on a hard drive whose name does not say so, and an SSD wipe warns again** - Partition
+  Manager read every disk's media type from a place that has none, so no disk was known to be an SSD or a hard
+  drive. Defrag was refused on a hard drive such as a Seagate Expansion Desk, an SSD wipe never said that a
+  software clear is not a purge, and the SSD and HDD modes guessed from the drive's name.
 - **Wiping or fully formatting a virtual disk file says why it cannot** - Windows does not allow a full format on a
   thin-provisioned disk, and said only "Not Supported" after the disk had been cleared. S.A.K. now checks first and
   nothing changes.
