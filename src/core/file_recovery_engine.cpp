@@ -122,13 +122,32 @@ std::optional<uint64_t> pngSizeAt(const QByteArray& data,
     return std::nullopt;
 }
 
+// What can follow a JPEG's start marker: an APPn, a comment, or a table or frame header. Three
+// bytes alone are not enough. NTFS's upcase table holds FF D8 FF D9 on every volume, and with
+// nothing to rule that out, a candidate started there and ran on to the first real JPEG's end, and
+// that file was lost inside it.
+bool canFollowJpegStart(uint8_t marker) {
+    constexpr uint8_t kFirstApp = 0xE0;
+    constexpr uint8_t kLastApp = 0xEF;
+    constexpr uint8_t kComment = 0xFE;
+    constexpr uint8_t kQuantization = 0xDB;
+    constexpr uint8_t kRestartInterval = 0xDD;
+    constexpr uint8_t kHuffman = 0xC4;
+    constexpr uint8_t kFirstFrame = 0xC0;
+    constexpr uint8_t kLastFrame = 0xC2;
+    return (marker >= kFirstApp && marker <= kLastApp) || marker == kComment ||
+           marker == kQuantization || marker == kRestartInterval || marker == kHuffman ||
+           (marker >= kFirstFrame && marker <= kLastFrame);
+}
+
 std::optional<uint64_t> jpegSizeAt(const QByteArray& data,
                                    qsizetype offset,
                                    uint64_t maxCandidateBytes,
                                    uint64_t* work) {
     const QByteArrayView start("\xff\xd8\xff", kJpegSignatureSize);
     const QByteArrayView end("\xff\xd9", kJpegMarkerSize);
-    if (!hasBytesAt(data, offset, start)) {
+    if (!hasBytesAt(data, offset, start) || offset + start.size() >= data.size() ||
+        !canFollowJpegStart(static_cast<uint8_t>(data.at(offset + start.size())))) {
         return std::nullopt;
     }
     // Bound the forward search to maxCandidateBytes without signed overflow: compute the span in

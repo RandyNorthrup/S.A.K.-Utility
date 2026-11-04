@@ -1823,6 +1823,7 @@ private Q_SLOTS:
     void dynamicDiskFromTheScanConvertsAndNothingElse();
     void scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
+    void fileRecoveryEngine_anUpcaseTableDoesNotSwallowARealJpeg();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
     void scriptBuilder_styleConversionLooksPastReservedPartition();
@@ -18952,6 +18953,32 @@ void PartitionManagerCoreTests::lockedVolumeDoesNotStopApply() {
              "and nobody is told a locked volume's dirty state is a concern");
 }
 
+// Every NTFS volume's upcase table holds these bytes, and a real JPEG used to vanish into them.
+void PartitionManagerCoreTests::fileRecoveryEngine_anUpcaseTableDoesNotSwallowARealJpeg() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray upcase = QByteArray::fromHex("d7ffd8ffd9ffdaff");
+    const QByteArray jpeg = QByteArray::fromHex("ffd8ffe000104a464946") + QByteArray(4096, 'A') +
+                            QByteArray::fromHex("ffd9");
+    QByteArray image = QByteArray(4096, '\0') + upcase + QByteArray(8192, '\0');
+    const qsizetype real_at = image.size();
+    image += jpeg;
+    image += QByteArray(4096, '\0');
+    const QString path = dir.filePath(QStringLiteral("volume.img"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(image), image.size());
+    file.close();
+    FileRecoveryScanOptions options;
+    options.image_path = path;
+    options.max_scan_bytes = sak::kFileRecoveryWholeSourceScanBytes;
+    options.max_candidates = sak::kFileRecoveryPanelMaxCandidates;
+    const auto scan = FileRecoveryEngine::scanOfflineImage(options);
+    QCOMPARE(scan.candidates.size(), 1);
+    QCOMPARE(scan.candidates.first().offset_bytes, static_cast<uint64_t>(real_at));
+    QCOMPARE(scan.candidates.first().size_bytes, static_cast<uint64_t>(jpeg.size()));
+}
+
 void PartitionManagerCoreTests::fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore() {
     FileRecoveryRestoreOptions options;
     options.image_path = QStringLiteral("\\\\.\\PhysicalDrive9");
@@ -21823,6 +21850,13 @@ void PartitionManagerCoreTests::scanListsWhatGetDiskLeavesOut() {
     QVERIFY(script.contains(QStringLiteral("Win32_DiskDrive")));
     QVERIFY2(script.contains(QStringLiteral("$disk.DynamicPartitions")),
              "a dynamic disk's volumes stand in for the partitions Get-Partition cannot list");
+    // BitLocker does not manage a dynamic volume. Only there is "not found" an answer.
+    const auto not_found = script.indexOf(QStringLiteral("-match $sakElementNotFound"));
+    QVERIFY(not_found >= 0);
+    const auto only_dynamic =
+        script.lastIndexOf(QStringLiteral("-contains 'DynamicPartitions' -and"), not_found);
+    QVERIFY2(only_dynamic >= 0 && not_found - only_dynamic < 120,
+             "not-found must stay a failure on any other volume");
     QVERIFY2(!script.contains(QStringLiteral("-Access")),
              "what a standard user may ask stays what it can ask");
 }
@@ -21910,8 +21944,10 @@ void PartitionManagerCoreTests::scriptBuilder_dynamicConversionFindsItsDiskTheWa
     QVERIFY2(!convert.script.contains(QStringLiteral("$disk = Get-Disk -Number")),
              "Get-Disk does not list the disk being converted");
     QVERIFY(convert.script.contains(QStringLiteral("function Get-SakDynamicDisks")));
-    const auto identity = convert.script.indexOf(QStringLiteral("'dynamic:9f3e0c11'"));
+    const auto identity =
+        convert.script.indexOf(QStringLiteral("$sakExpectedDisk = 'dynamic:9f3e0c11'"));
     QVERIFY2(identity >= 0 && identity < destroy, "the disk scanned must be the disk converted");
+    QVERIFY(convert.script.contains(QStringLiteral("\"$($disk.UniqueId)\" -ne $sakExpectedDisk")));
     const auto span = convert.script.indexOf(QStringLiteral("$disk.VolumeSpansDisks"));
     QVERIFY2(span >= 0 && span < destroy, "a spanned volume must stop before anything changes");
 }
@@ -21960,7 +21996,8 @@ void PartitionManagerCoreTests::scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVo
         PartitionOperationType::MovePartition, target, payload));
     QVERIFY2(move.valid(), qPrintable(move.blockers.join(QStringLiteral("; "))));
     QVERIFY(move.script.contains(QStringLiteral("function Get-SakFileManifest")));
-    QVERIFY2(move.script.contains(QStringLiteral("'System Volume Information', '$RECYCLE.BIN'")),
+    QVERIFY2(move.script.contains(QStringLiteral(
+                 "'System Volume Information', '$RECYCLE.BIN') -notcontains $_.Name")),
              "the folders Windows keeps must be left out");
     QVERIFY2(!move.script.contains(
                  QStringLiteral("Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File")),

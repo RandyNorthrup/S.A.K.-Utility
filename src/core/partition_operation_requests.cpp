@@ -267,12 +267,12 @@ QJsonObject dynamicToBasicPayload(const PartitionInfoEx& partition,
     return payload;
 }
 
-QJsonObject convertStylePayload(const PartitionDiskInfo& disk, const QString& target_style) {
+QJsonObject convertStylePayload(const PartitionDiskInfo& disk, const QString& scheme) {
     QJsonObject payload;
-    payload[QStringLiteral("target_style")] = target_style;
+    payload[QStringLiteral("target_style")] = scheme;
     if (disk.is_system &&
         disk.partition_style.compare(QStringLiteral("MBR"), Qt::CaseInsensitive) == 0 &&
-        target_style == QStringLiteral("GPT")) {
+        scheme == QStringLiteral("GPT")) {
         payload[QStringLiteral("mode")] = QStringLiteral("mbr2gpt");
     }
     return payload;

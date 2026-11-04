@@ -95,8 +95,7 @@ void addMovePartitionFields(QJsonObject* payload,
 [[nodiscard]] QJsonObject dynamicToBasicPayload(const PartitionInfoEx& partition,
                                                 const BackupRestoreChoices& backup);
 
-[[nodiscard]] QJsonObject convertStylePayload(const PartitionDiskInfo& disk,
-                                              const QString& target_style);
+[[nodiscard]] QJsonObject convertStylePayload(const PartitionDiskInfo& disk, const QString& scheme);
 
 // Quick Partition.
 [[nodiscard]] uint64_t quickPartitionUsableBytes(const PartitionDiskInfo& disk);

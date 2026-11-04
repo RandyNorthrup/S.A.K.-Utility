@@ -200,11 +200,21 @@ function Get-SakDynamicVolumes {
 # The disks Get-Disk leaves out, in the shape Get-Disk gives, with IsDynamic set.
 function Get-SakDynamicDisks {
   $listed = @(Get-Disk | ForEach-Object { [int]$_.Number })
-  $hidden = @(Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop | Where-Object { $listed -notcontains [int]$_.Index })
+  # Not being able to ask leaves the list as Get-Disk gave it. A scan that shows the other disks is
+  # better than none, and a disk not shown cannot be changed.
+  try {
+    $hidden = @(Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop | Where-Object { $listed -notcontains [int]$_.Index })
+  } catch {
+    return
+  }
   if ($hidden.Count -eq 0) { return }
   $facts = @{}
   foreach ($drive in $hidden) {
-    $probe = [Sak.DynamicDiskProbe]::Disk([int]$drive.Index)
+    try {
+      $probe = [Sak.DynamicDiskProbe]::Disk([int]$drive.Index)
+    } catch {
+      continue
+    }
     if ($probe.IsDynamic) { $facts[[int]$drive.Index] = $probe }
   }
   if ($facts.Count -eq 0) { return }

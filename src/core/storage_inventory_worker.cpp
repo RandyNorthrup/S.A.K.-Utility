@@ -892,6 +892,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $bitLockerCommandAvailable = $false
 $bitLockerCommandError = ''
+$sakElementNotFound = '0x80070490'
 try {
   $bitLockerCommandAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction Stop)
 } catch {
@@ -1040,7 +1041,14 @@ static QString inventoryPowerShellPartitionProbeScript() {
               $bitLockerError = 'Get-BitLockerVolume returned no result'
             }
           } catch {
-            $bitLockerError = "$($_.Exception.Message)"
+            # BitLocker does not manage a dynamic volume, and says "element not found". That is
+            # an answer about this volume: it is not encrypted. On any other volume it is a failure.
+            if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions' -and
+                "$($_.Exception.Message)" -match $sakElementNotFound) {
+              $bitLockerKnown = $true
+            } else {
+              $bitLockerError = "$($_.Exception.Message)"
+            }
           }
         }
       }
