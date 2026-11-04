@@ -19,6 +19,7 @@
 #include <QPalette>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 
 namespace sak::ui {
 
@@ -752,12 +753,22 @@ struct CalendarPopupSelectorTone {
     QString selectionText;
 };
 
+/// Writes @p state on each selector of a list. In a style sheet a state belongs to one selector, so
+/// "QPushButton, QToolButton:disabled" matches every QPushButton, enabled or not.
+inline QString selectorsInState(const QString& selectors, const char* state) {
+    QStringList parts = selectors.split(QLatin1Char(','));
+    for (QString& part : parts) {
+        part = part.trimmed() + QString::fromLatin1(state);
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
 inline QString buttonGradientRule(const QString& selector,
                                   const char* state,
                                   const char* top,
                                   const char* middle,
                                   const char* bottom) {
-    return selector + QString::fromLatin1(state) +
+    return selectorsInState(selector, state) +
            QStringLiteral(
                " {"
                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
@@ -816,9 +827,9 @@ inline QString buttonBaseRule(const QString& selector,
 inline QString cssColor(const char* color);
 
 inline QString buttonDisabledRule(const QString& selector) {
-    return selector +
+    return selectorsInState(selector, ":disabled") +
            QStringLiteral(
-               ":disabled {"
+               " {"
                "  background: ") +
            QString::fromLatin1(kColorButtonDisabledBackground) + QStringLiteral("; color: ") +
            cssColor(kColorTextMuted) +
@@ -834,12 +845,12 @@ inline QString buttonDisabledRule(const QString& selector) {
 
 inline QString buttonMenuIndicatorRule(const char* selector) {
     return QStringLiteral(
-               "%1::menu-indicator {"
+               "%1 {"
                "  subcontrol-position: right center;"
                "  subcontrol-origin: padding;"
                "  left: %2px;"
                "}")
-        .arg(QString::fromLatin1(selector))
+        .arg(selectorsInState(QString::fromLatin1(selector), "::menu-indicator"))
         .arg(kToolButtonMenuIndicatorOffsetPx);
 }
 

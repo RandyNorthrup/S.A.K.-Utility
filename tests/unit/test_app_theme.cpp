@@ -25,6 +25,7 @@
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QtTest/QtTest>
+#include <QVBoxLayout>
 
 #include <memory>
 
@@ -210,6 +211,8 @@ private Q_SLOTS:
     void everyTabRendersInTheTheme();
     void mutedTextAndDisabledButtonsSuitTheTheme_data();
     void mutedTextAndDisabledButtonsSuitTheTheme();
+    void plainButtonsShowWhetherTheyAreEnabled_data();
+    void plainButtonsShowWhetherTheyAreEnabled();
     void noSurfaceCarriesADropShadow();
     void infoPopupIsOutlinedNotShadowed();
     void cardsAndGroupsDrawAOnePixelBorder_data();
@@ -440,6 +443,42 @@ void AppThemeTests::mutedTextAndDisabledButtonsSuitTheTheme() {
                  qPrintable(
                      QStringLiteral("disabled fill lightness %1 on the light page").arg(fill)));
     }
+}
+
+void AppThemeTests::plainButtonsShowWhetherTheyAreEnabled_data() {
+    everyTabRendersInTheTheme_data();
+}
+
+// The theme's button rule names two widget types. A state written after the whole list belongs to
+// the last type only, so every plain QPushButton matched the disabled rule: Next, Cancel and OK
+// looked switched off, and a Finish that really was off looked the same as a Cancel that was on.
+void AppThemeTests::plainButtonsShowWhetherTheyAreEnabled() {
+    QFETCH(ThemePreference, preference);
+    sak::ui::setThemePreference(*qApp, preference);
+    const QString sheet = qApp->styleSheet();
+    for (const QString& state :
+         {QStringLiteral(":hover"), QStringLiteral(":pressed"), QStringLiteral(":disabled")}) {
+        QVERIFY2(sheet.contains(QStringLiteral("QPushButton") + state),
+                 qPrintable(QStringLiteral("no QPushButton%1 rule").arg(state)));
+        QVERIFY2(sheet.contains(QStringLiteral("QToolButton") + state),
+                 qPrintable(QStringLiteral("no QToolButton%1 rule").arg(state)));
+    }
+
+    QWidget page;
+    auto* layout = new QVBoxLayout(&page);
+    auto* enabled = new QPushButton(QStringLiteral("Next"), &page);
+    auto* disabled = new QPushButton(QStringLiteral("Next"), &page);
+    disabled->setEnabled(false);
+    layout->addWidget(enabled);
+    layout->addWidget(disabled);
+    page.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&page));
+    const auto fillOf = [&page](const QPushButton* button) {
+        const QImage image = page.grab(button->geometry()).toImage();
+        return QColor(image.pixel(kButtonFillProbeInsetPx, image.height() / 2)).rgb();
+    };
+    QVERIFY2(fillOf(enabled) != fillOf(disabled),
+             "an enabled plain button draws the same as a disabled one");
 }
 
 // Each visible group box and card outlines itself, in both themes: halfway down its left edge
