@@ -12,6 +12,7 @@
 
 #include <QDir>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QTemporaryFile>
 #include <QUuid>
@@ -181,7 +182,12 @@ QString PartitionExecutor::scriptFailureReason(const QString& std_err) {
             reason.append(text);
         }
     }
-    return reason.join(QLatin1Char(' '));
+    const QString text = reason.join(QLatin1Char(' '));
+    // A failure in the script's own .NET code arrives wrapped in PowerShell's account of the call.
+    static const QRegularExpression kWrappedCall(
+        QStringLiteral("^Exception calling \"[^\"]*\" with \"\\d+\" argument\\(s\\): \"(.*)\"$"));
+    const auto wrapped = kWrappedCall.match(text);
+    return wrapped.hasMatch() ? wrapped.captured(1) : text;
 }
 
 PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOperation>& operations,

@@ -447,10 +447,16 @@ void PartitionOsMigrationTests::scriptReleasesSnapshotsAndNeverTouchesFirmware()
     // Left running, this writer deletes Outlook's OST files from the snapshot, so from the new
     // drive.
     QVERIFY(text.contains(QStringLiteral("4dc3bdd4-ab48-4d07-adb0-3bee2926fd7f")));
+    // What is compared is what the snapshot keeps: a free cluster reads as the running volume does.
+    QVERIFY(text.contains(
+        QStringLiteral("$compared = if ($ntfs) { [SakMigration.Copy]::UsedRanges($source, 0) }")));
+    QVERIFY(
+        text.contains(QStringLiteral("$compared = if ($p.Kind -in 'Windows', 'Data') { $null }")));
+    QVERIFY(text.contains(QStringLiteral("$target, $p.TargetOffset, $compared, $sakVerify")));
     QVERIFY(text.contains(QStringLiteral("b.DisableWriterClasses(ref optimization, 1)")));
-    QVERIFY2(text.contains(QStringLiteral("'/nofirmwaresync'")),
+    QVERIFY2(text.contains(QStringLiteral(
+                 "if ($help -match 'nofirmwaresync') { '/nofirmwaresync' } else { '/addlast' }")),
              "a bcdboot on another disk must not move this PC's boot order");
-    QVERIFY(text.contains(QStringLiteral("'/addlast'")));
     QVERIFY(text.contains(QStringLiteral("'/deletevalue', '{bootmgr}', 'nofirmwaresync'")));
     QVERIFY(text.contains(QStringLiteral("function Set-SakTargetDriveLetters")));
     QVERIFY(text.contains(QStringLiteral("  Set-SakTargetBoot\n")));
@@ -646,6 +652,12 @@ void PartitionOsMigrationTests::aRefusalReachesThePersonInItsOwnWords() {
                             "InitializeForBackup failed with VSS error 0x80042302. Nothing was "
                             "written to the target."));
     QVERIFY(PartitionExecutor::scriptFailureReason(QString()).isEmpty());
+    // The script's own .NET code fails in PowerShell's words around its own, seen in the VM.
+    QCOMPARE(PartitionExecutor::scriptFailureReason(QStringLiteral(
+                 "Exception calling \"Verify\" with \"6\" argument(s): \"Verification found a "
+                 "difference at target byte 228065280\"\n"
+                 "At line:1 char:92\n")),
+             QStringLiteral("Verification found a difference at target byte 228065280"));
     const QString generic = QStringLiteral("Command exited with code 1");
     QVERIFY(PartitionExecutor::elevatedFailureMessage(generic, QString(), captured, 1)
                 .startsWith(QStringLiteral("Windows could not take a snapshot")));

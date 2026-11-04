@@ -91,6 +91,48 @@ foreach ($full in @($true, $false)) {
     Assert-Fixture $reported "Verify (full=$full) did not report a changed byte"
 }
 
+# --- a copy merges close runs; what a comparison is given keeps exactly the clusters in use
+foreach ($case in @(@{ Gap = [int64]1048576; Want = '0,12288,2097152,4096' }, @{ Gap = [int64]0; Want = '0,4096,8192,4096,2097152,4096' })) {
+    $list = New-Object SakMigration.RangeList $case.Gap
+    foreach ($at in @(0, 8192, 2097152)) { $list.Add([int64]$at, [int64]4096) }
+    Assert-Fixture (($list.ToArray() -join ',') -ceq $case.Want) "Runs with gap $($case.Gap) are $($list.ToArray() -join ',')"
+}
+$list = New-Object SakMigration.RangeList ([int64]0)
+$list.Add([int64]0, [int64]4096)
+$list.Add([int64]4096, [int64]4096)
+Assert-Fixture (($list.ToArray() -join ',') -ceq '0,8192') 'Touching clusters must be one run'
+
+# --- a free cluster that changes after the copy is not a difference, as in a VM where Windows wrote its
+# prefetch file for the snapshot service into one: the snapshot reads it as it now is
+[IO.File]::WriteAllBytes($sourcePath, $bytes)
+[IO.File]::WriteAllBytes($targetPath, (New-Object byte[] (8 * 1048576)))
+$source = [SakMigration.Io]::OpenRead($sourcePath)
+$target = [SakMigration.Io]::OpenWrite($targetPath)
+try { [SakMigration.Copy]::Run($source, 0, $target, $targetBase, [int64[]]@(0, (3 * 1048576)), 'Fixture copy') }
+finally { $source.Dispose(); $target.Dispose() }
+$changed = $bytes.Clone()
+$changed[1572864] = [byte]($changed[1572864] -bxor 0xFF)
+[IO.File]::WriteAllBytes($sourcePath, $changed)
+$inUse = [int64[]]@(0, 1048576, (2 * 1048576), 1048576)
+foreach ($full in @($true, $false)) {
+    $source = [SakMigration.Io]::OpenRead($sourcePath)
+    $target = [SakMigration.Io]::OpenWrite($targetPath)
+    try { [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $inUse, $full) }
+    finally { $source.Dispose(); $target.Dispose() }
+}
+
+# --- a sample is the same amount however small the runs are
+$small = New-Object System.Collections.Generic.List[int64]
+foreach ($i in 0..11) { $small.Add([int64]($i * 65536)); $small.Add([int64]4096) }
+$changed[65536 + 7] = [byte]($changed[65536 + 7] -bxor 0xFF)
+[IO.File]::WriteAllBytes($sourcePath, $changed)
+$source = [SakMigration.Io]::OpenRead($sourcePath)
+$target = [SakMigration.Io]::OpenWrite($targetPath)
+$reported = $false
+try { [SakMigration.Copy]::Verify($source, 0, $target, $targetBase, $small.ToArray(), $false) } catch { $reported = "$_" -match 'difference' }
+finally { $source.Dispose(); $target.Dispose() }
+Assert-Fixture $reported 'The sample stopped at the first small run'
+
 # --- an ordinary file is not in the Compact state, and asking does not fail
 Assert-Fixture (-not [SakMigration.Io]::IsExternallyBacked($sourcePath)) 'An ordinary file read as externally backed'
 

@@ -322,10 +322,27 @@ public static class Layout {
     }
 }
 
+// Offset/length pairs, in order. Runs no further apart than the gap become one.
+public sealed class RangeList {
+    readonly long gap;
+    readonly List<long> ranges = new List<long>();
+    long start = -1, end = -1;
+    public RangeList(long mergeGap) { gap = mergeGap; }
+    public void Add(long at, long length) {
+        if (start >= 0 && at - end > gap) Close();
+        if (start < 0) start = at;
+        end = at + length;
+    }
+    void Close() { ranges.Add(start); ranges.Add(end - start); start = -1; }
+    public long[] ToArray() { if (start >= 0) Close(); return ranges.ToArray(); }
+}
+
 public static class Copy {
     const uint VolumeDataCode = 0x90064, VolumeBitmapCode = 0x9006F;
     const int MoreData = 234, BitmapChunk = 1024 * 1024, BufferBytes = 4 * 1024 * 1024, SampleBytes = 1024 * 1024;
-    const long MergeGap = 1024 * 1024, QuietBelowBytes = 1024L * 1024L * 1024L;
+    const long QuietBelowBytes = 1024L * 1024L * 1024L;
+    // What a copy reads as one run, free clusters and all, to spare the disk a seek.
+    public const long CopyMergeGap = 1024 * 1024;
     public static long[] Whole(long size) { return new long[] { 0, size }; }
     // Bytes in use on an NTFS volume, from its own counters.
     public static long UsedBytes(SafeFileHandle volume) {
@@ -345,30 +362,25 @@ public static class Copy {
         Io.Write(target, targetBase + sectors * bytesPerSector, sector, bytesPerSector);
         Io.Flush(target);
     }
-    // The volume's allocated clusters as offset/length pairs, close neighbours merged.
-    public static long[] UsedRanges(SafeFileHandle volume) {
+    // The volume's allocated clusters as offset/length pairs, neighbours within the gap merged.
+    public static long[] UsedRanges(SafeFileHandle volume, long mergeGap) {
         byte[] data = new byte[512];
         Io.Control(volume, VolumeDataCode, null, data, 0);
         long cluster = BitConverter.ToInt32(data, 44);
-        List<long> ranges = new List<long>();
+        RangeList ranges = new RangeList(mergeGap);
         byte[] start = new byte[8];
         byte[] output = new byte[BitmapChunk + 16];
-        long lcn = 0, runStart = -1, runEnd = -1;
+        long lcn = 0;
         for (bool more = true; more;) {
             BitConverter.GetBytes(lcn).CopyTo(start, 0);
             more = !Io.Control(volume, VolumeBitmapCode, start, output, MoreData);
             long first = BitConverter.ToInt64(output, 0), clusters = BitConverter.ToInt64(output, 8);
             long count = Math.Min(clusters, (long)BitmapChunk * 8);
             for (long i = 0; i < count; ++i) {
-                if ((output[16 + i / 8] & (1 << (int)(i % 8))) == 0) continue;
-                long at = (first + i) * cluster;
-                if (runStart >= 0 && at - runEnd > MergeGap) { ranges.Add(runStart); ranges.Add(runEnd - runStart); runStart = -1; }
-                if (runStart < 0) runStart = at;
-                runEnd = at + cluster;
+                if ((output[16 + i / 8] & (1 << (int)(i % 8))) != 0) ranges.Add((first + i) * cluster, cluster);
             }
             lcn = first + count;
         }
-        if (runStart >= 0) { ranges.Add(runStart); ranges.Add(runEnd - runStart); }
         return ranges.ToArray();
     }
     static long Total(long[] ranges) { long total = 0; for (int i = 1; i < ranges.Length; i += 2) total += ranges[i]; return total; }
@@ -404,9 +416,14 @@ public static class Copy {
             }
             return;
         }
-        foreach (int r in new int[] { 0, (ranges.Length / 4) * 2, ranges.Length - 2 }) {
-            int take = (int)Math.Min(ranges[r + 1], SampleBytes);
-            Compare(source, sourceBase + ranges[r], target, targetBase + ranges[r], take, a, b);
+        // A sample is the same amount at the start, middle and end however small the runs are.
+        foreach (int from in new int[] { 0, (ranges.Length / 4) * 2, ranges.Length - 2 }) {
+            long budget = SampleBytes;
+            for (int r = from; r + 1 < ranges.Length && budget > 0; r += 2) {
+                int take = (int)Math.Min(ranges[r + 1], budget);
+                Compare(source, sourceBase + ranges[r], target, targetBase + ranges[r], take, a, b);
+                budget -= take;
+            }
         }
     }
 }
