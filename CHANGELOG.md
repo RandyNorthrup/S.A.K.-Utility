@@ -30,6 +30,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **A failed Partition Manager job says why** - A script that stopped reported "Command exited with code
   1", with the reason only in the log. The message now gives the script's own words, so a refusal that wrote
   nothing reads differently from a copy that failed halfway.
+- **Dialog buttons show whether they are on** - Every plain button in a dialog, such as Next, Cancel, OK and
+  Finish, drew in the disabled grey whether it was on or not, so a Finish that was still off looked the same as
+  a Cancel that was on. They now draw in the theme's button colour, and in grey only when they are off.
+- **A screen reader can read what Partition Manager's actions open** - Pressing a sidebar action, a context
+  menu item or Apply through Windows' UI Automation, as a screen reader does, held every later UI Automation
+  request until the dialog it opened was closed, so that dialog could not be read. The action now runs after
+  the press returns.
 - **Administrator tasks run from an unelevated app again** - Since 2026-08-02 each end of the connection
   between the app and its administrator helper checked which program was on the other end, and compared
   a path written with forward slashes against one written with backslashes. They never matched, so

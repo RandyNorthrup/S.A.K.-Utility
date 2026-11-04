@@ -930,6 +930,157 @@ what a dialog offers and what it sends, offscreen. Nothing connects a real helpe
 `identity_imageChecksCompareTheFileNotTheSlashes` tests the comparison, and this round's VM run is the only end-to-end
 proof, which is how the defect above lived for three months.
 
+### Round 6b: Migrate OS and boot repair, and what booted (2026-11-03)
+
+**Migrate OS no longer copies a live disk, and Boot Repair repairs the disk you select.** Migrate OS used to copy a
+running Windows byte for byte and warn. It now reads each volume from a VSS snapshot taken at the start, writes a new
+partition table with its own identity, and fits the Windows partition to the target, then rebuilds the boot files and
+Windows' list of drive letters. Boot Repair of a disk other than the one Windows runs from finds that disk's Windows
+and system partition, and rebuilds its boot files, leaving this PC's firmware boot order alone. The code is
+`src/core/partition_os_migration.cpp` and `src/core/partition_scripts`.
+
+**How it was proved.** The MacBook's `Windows 11` VM migrated its own running Windows onto throwaway VDIs through the real
+inventory scan, planner, queue, validator, executor and helper over the real pipe. The larger UEFI run went through the
+real application window, wizard to Apply, driven by the capture harness. The others replaced only the wizard's dialogs,
+with a driver that is not in the tree (`scratchpad\round6b`). Each target then started in a separate throwaway VirtualBox
+VM with no other disk, and each screenshot came from VBoxManage. The checks from inside ran after signing in as the VM's
+Technician account.
+
+The VM's Windows is UEFI, so the BIOS runs needed a real BIOS install first. It was made by imaging that Windows from a
+snapshot onto a 100 GiB MBR VDI with DISM, `bcdboot /f BIOS` and `bootsect`. It started in a VM with BIOS firmware and
+reported `Firmware: Legacy`, and every BIOS run below had it as the running source.
+
+| Target | Firmware | How filled | Verify | Took | Result |
+|---|---|---|---|---|---|
+| Larger, 320 GiB, real window | UEFI | Used blocks, then grown | Sample | About 3 min | Lock screen |
+| Smaller, 80 GiB | UEFI | DISM image on the target | Sample | 74 min | Lock screen |
+| Larger, 120 GiB | BIOS | Used blocks, then grown | Full | 225 s | Lock screen |
+| Smaller, 80 GiB | BIOS | DISM image on the target | Sample | 110 min | Lock screen |
+
+Inside each: `SystemDrive` is `C:`, the firmware is the one named, `Repair-Volume -Scan` says `NoErrorsFound`, and `C:` is not
+dirty. On the UEFI targets `K:` kept its letter and a marker file, and a marker `.ost` and a marker in
+`SoftwareDistribution` were there. The BIOS install has no data volume or recovery partition, so those were not exercised
+on MBR. On the larger UEFI target the Windows partition grew to 340 GB, `{bootmgr}` no longer holds `nofirmwaresync`, and
+hard links between `System32` and `WinSxS` survived. Everywhere, the first start logs an unexpected shutdown (41, 6008),
+because the copy is of a running PC. On the used-block targets, UEFI and BIOS, Windows Search also stopped once at the
+first start (7031, 7024), and it was running again when checked. Whether its index needed rebuilding was not looked at.
+
+| Boot Repair | Before | Broken, on its own | Repair through the helper | After |
+|---|---|---|---|---|
+| UEFI, attached disk | Starts | `EFI\Microsoft\Boot` and `EFI\Boot` removed: "BdsDxe: No bootable option or device was found" | 26 s, temporary letters gone | Lock screen |
+| BIOS, attached disk | Starts | `bootmgr`, `Boot` and the MBR's boot code removed: "No bootable medium found!" | 22 s, temporary letters gone | Lock screen |
+
+This closes round 6's two INCOMPLETE boot repair items. The first BIOS attempt proved nothing and is not counted: the
+script breaking the disk could not delete `bcdboot`'s files, so the "broken" disk still started. The script was fixed and
+the disk that was then repaired really had failed to start.
+
+| Refusal or stop | What happened |
+|---|---|
+| 20 GiB target | "Target disk is too small for the data on the Windows volume: 28.99 GB in use needs a disk of at least 56.84 GB". The disk stayed RAW |
+| VSS service disabled | "Windows could not take a snapshot ... Nothing was written". The disk stayed RAW |
+| VSS service disabled, check box ticked | The warning, and the copy goes ahead. Cancelled at 20 s, with the target left offline |
+| BitLocker on `K:` | Refused by the queue. With the queue skipped, refused by the script: "K: is encrypted with BitLocker, so nothing was written" |
+
+**What the first runs found, each fixed:**
+
+- A snapshot taken the ordinary way is not the volume. Windows' Shadow Copy Optimization Writer deletes from it what the
+  registry lists under `FilesNotToSnapshot`, which on this VM included `*.ost` under each profile's Outlook folder and
+  all of `%windir%\SoftwareDistribution`. A target built from such a snapshot silently loses Outlook's cache, which can
+  hold mail that has not synced. The migration disables that writer for its snapshot set.
+- The VM's Windows is in the Compact state. A plain DISM apply stores files whole, so the image route ran out of room on
+  a volume sized for the used data, with exit 112. It now applies with `/Compact` when the running Windows is compact,
+  and what a smaller target has spare is shared between the new volume and the image.
+- A snapshot device ends at the last cluster, so the backup NTFS boot sector past it cannot be read from there. It is
+  written from the first sector, which is identical.
+- DISM's default exclusions include `Windows\CSC`, the Offline Files cache, which can also hold work that has not synced.
+  The capture uses that list without it.
+- A failed Partition Manager job's message was "Command exited with code 1", with the script's reason only in the log.
+  The message is now the script's own words.
+- The whole script is 52 KB, past what a command line can hold. A long script now reads itself from standard input.
+- Asking a snapshot a second time is not a check. A snapshot keeps no copy of a free cluster or of the page file, so what
+  it reads there follows the running volume. The first migration through the real window stopped with "Verification found
+  a difference at target byte 228065280": cluster 128 of `C:`, a free cluster Windows had just given to the prefetch file
+  of the snapshot service itself. Comparing only clusters in use was not enough: a Full run stopped at a cluster of
+  `pagefile.sys`. The copy was right both times, and the earlier driver runs passed by the timing of what Windows wrote.
+  The copy now keeps a 64-bit checksum of what it read, block by block, and verification reads the target back against
+  those: every block in Full, 64 spread over each partition in Sample. A copy made with no snapshot now gets verified
+  too, which it could not before.
+- On MBR a smaller target stopped with "The target disk's volumes did not appear after it came online". A raw partition
+  is hidden so that Windows does not offer to format it. GPT has an attribute for that. MBR only has a hidden type, and
+  that leaves the partition with no volume at all. Each partition's type now changes just before its format, and in the
+  VM the volume came in under a second, the format took three, and no format prompt came up.
+
+**The desktop check found two things no earlier test could.** Both came from looking at the capture harness's work in
+the VM, and both are fixed.
+
+- Every plain button in the application drew in the disabled grey, on or off, because the theme's `:disabled` went on
+  the last selector of `QPushButton, QToolButton`. In the wizard a Finish that was off looked the same as a Cancel that
+  was on. They now draw in the theme's colour. Every dialog in the application changes look, so existing pictures of
+  dialogs are out of date.
+- Qt's accessibility press on a tool button runs what it does inside the UI Automation call, so a wizard opened from the
+  Partition Manager sidebar held every later UI Automation request until it closed: 25 second timeouts on every read. The
+  sidebar actions, the context menu actions and Apply now queue what they do, and UI Automation read the wizard and
+  Apply's review at once. Tool buttons on other panels that open a dialog behave as these did, and are not changed.
+
+The BitLocker warning on an exFAT drive, both wizards' pages and both boot repair prompts were looked at in the real
+application in the VM. The Copy Disk wizard still lists the disk Windows runs from as a target. The validator refuses it
+after Finish ("Payload target disk is system, boot, read-only, dynamic, or Storage Spaces"), so nothing can be written to
+it, but the wizard could say so sooner.
+
+**CI now connects the real helper.** `test_elevated_helper_connection` copies itself beside a copy of the helper, as
+`sak_utility.exe`, starts the helper the way the application does, and runs a harmless task over the real pipe. It asks
+for elevation, so it runs on the CI runner and skips everywhere else. In the VM it passed, and with the August path
+comparison put back it went RED with broker error 411.
+
+**Cancel.** A real Cancel through the helper stopped the script at once. The two snapshots were listed for 361 more
+seconds and then gone, with nothing cleaning them up: they belong to the process, and Windows releases them when it
+ends. The target stayed offline, which the wiki says.
+
+**INCOMPLETE, and why:**
+
+- Physical drives, NVMe and 4Kn. Every run was on VirtualBox SATA VDIs. This round had to leave the 8 TB and NVMe drives
+  alone for round 7.
+- Real firmware boot order, Secure Boot and a TPM in the target. The target VMs had neither, and each had one disk.
+- A Windows 10 `bcdboot` with no `/nofirmwaresync`, and so the `/addlast` branch. It is text-tested only.
+- Windows Recovery and a data volume on MBR, because the BIOS install has neither.
+- A source with ReFS or FAT data volumes, OneDrive placeholders on the image route, a domain-joined source, a dual-boot
+  source, and a real writer failure from SQL Server or the like.
+- What a Cancel leaves when it lands while the target's SYSTEM hive is loaded or the snapshot has its temporary letter.
+
+**DESIGN DECISIONS:**
+
+- A target at least as large as the old Windows partition gets the used blocks from the snapshot and then a grown volume.
+  A smaller one needs an NTFS relocator or a file-level copy, and DISM is Microsoft's own, so a smaller target goes through
+  a DISM image. That image needs room on the target, so a target is refused unless it holds the used data, 5 percent or
+  2 GiB of room, and an image reckoned at three quarters of the used data. **This is narrower than "refused only if too
+  small for the used data".** A target that holds the data but not the image is refused with the number. Taking the image
+  to a third disk, or to the source's free space, would close that gap: a folder choice in the wizard, plus cleaning it up
+  after Cancel. Not done this round.
+- Verification checks what reached the target, not what the source says now. A read from the source that returned wrong
+  data and raised no error goes undetected. Asking the source again could not catch that reliably either, as above.
+- BitLocker on any source volume is refused with the reason. A shadow device reads decrypted, so a copy would put a
+  customer's data on the new drive unencrypted without saying so.
+- Copying without a snapshot is a check box on the Options page, off by default. The script cannot ask anyone, so it stops,
+  says why, and says where the box is. A smaller target refuses even with it ticked.
+- Windows Recovery: the script points the new Windows at the recovery partition copied to its own disk, and it stays off
+  until `reagentc /enable` is run once from the new disk, which the wiki says. In the VM that one command gave `Enabled`.
+- bcdboot takes `/nofirmwaresync` where it has it, so this PC's boot order is never moved to a disk that is only attached.
+  On a Windows whose bcdboot lacks it, `/addlast`.
+- The bcdboot used is this PC's, never the one on an attached disk: running a program from a customer's disk with an
+  administrator token would run whatever is on it.
+- A disk with two Windows installs is refused rather than guessed at.
+- A disk with extended or logical partitions, a dynamic or Storage Spaces disk, a Windows that boots from another disk, and
+  a pair of disks with different sector sizes are refused, each with its reason.
+- On MBR a partition gets a drive letter from this PC in the second before its format. The script uses that letter and
+  takes it away at the end. Only AutoPlay's notice came up on screen.
+
+**What no automated test covers.** The scripts' real work runs only in the VM. `test_partition_os_migration` plans, reads
+the script's text, compiles its C#, and runs the copy and read-back code on ordinary files. The bitmap read, the snapshot,
+`bcdboot`, DISM and every partition change have only the runs above as proof. No claim level changed, and nothing under
+`certification/` changed.
+
+**Writer B's B5 and the owner's defect 3 are closed.** Round 6's design decisions above about both no longer apply.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
