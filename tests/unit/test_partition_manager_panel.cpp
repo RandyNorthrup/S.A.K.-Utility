@@ -4,6 +4,7 @@
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_panel.h"
+#include "sak/partition_operation_requests.h"
 #include "sak/partition_os_migration.h"
 #include "sak/style_constants.h"
 
@@ -121,6 +122,7 @@ private Q_SLOTS:
     void customRawCloneTargetsMustExist() const;
     void apfsUnknownModeIsRefused() const;
     void diskCopyWizardHasNoUnprobedCustomTarget();
+    void aSelectedRowQueuesWhatTheStepClientBuilds();
     void diskCopyWizardOffersOnlyWhatTheCopyDoes();
     void diskCopyWizardShowsTheRunningDiskTurnedOff();
     void diskCopyWizardCannotFinishWithNoTarget();
@@ -2715,8 +2717,9 @@ void PartitionManagerPanelTests::restoreImageQueuesConfirmedTarget() {
         QStringLiteral("QString PartitionManagerPanel::pinRestoreImageDigest"), function_start);
     QVERIFY(function_start >= 0 && function_end > function_start);
     const QString body = source.mid(function_start, function_end - function_start);
-    QVERIFY(body.contains(QStringLiteral(
-        "PartitionOperationType::RestoreImage, *selected, expected_layout_hash, payload")));
+    QVERIFY(body.contains(
+        QStringLiteral("restoreImagePayload(*selected, path, image_size, source_sha256)")));
+    QVERIFY(body.contains(QStringLiteral("expected_layout_hash,")));
     QVERIFY(!body.contains(
         QStringLiteral("queueOperation(PartitionOperationType::RestoreImage, payload)")));
 }

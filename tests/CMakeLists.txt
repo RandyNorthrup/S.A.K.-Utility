@@ -323,6 +323,7 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/elevation_broker.cpp
     ../src/core/partition_safety_validator.cpp
     ../src/core/partition_script_builder.cpp
+    ../src/core/partition_operation_requests.cpp
     ../src/core/partition_os_migration.cpp
     ../src/core/partition_os_migration_script.cpp
     ${SAK_PARTITION_SCRIPTS_CPP}
@@ -483,6 +484,27 @@ add_test(NAME test_elevated_helper_connection COMMAND test_elevated_helper_conne
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 set_tests_properties(test_elevated_helper_connection PROPERTIES TIMEOUT 300)
 message(STATUS "Added unit test: test_elevated_helper_connection")
+
+# test_partition_operation_requests - what the panel and the certification step both queue
+add_executable(test_partition_operation_requests
+    unit/test_partition_operation_requests.cpp
+)
+set_target_properties(test_partition_operation_requests PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_operation_requests PRIVATE
+    sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_partition_operation_requests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_partition_operation_requests PRIVATE QT_NO_KEYWORDS)
+add_test(NAME test_partition_operation_requests COMMAND test_partition_operation_requests
+         -o "${TEST_OUTPUT_DIR}/test_partition_operation_requests.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_partition_operation_requests")
 
 # test_partition_manager_controller - async preflight/apply/verification state machine
 add_executable(test_partition_manager_controller

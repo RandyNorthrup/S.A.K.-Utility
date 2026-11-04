@@ -226,6 +226,7 @@ private:
                            bool scroll_buttons = false);
     void addLegendItem(QHBoxLayout* layout, const QString& text, const QColor& color);
     void connectController();
+    void connectControllerSignals();
     void rebuildTable(const PartitionInventory& inventory);
     void rebuildDiskMap(const PartitionInventory& inventory);
     void addDiskMapRow(QVBoxLayout* layout, const PartitionDiskInfo& disk);
@@ -275,7 +276,7 @@ private:
                                                      const QString& expected_layout_hash);
     void queueBitLockerUnlock(const PartitionTarget& target,
                               const QString& expected_layout_hash,
-                              QJsonObject payload);
+                              const QString& mount_point);
     [[nodiscard]] std::optional<PartitionQueueReviewToken> showApplyReviewDialog();
     void showSelectedTargetContextMenuAt(const QPoint& global_position);
     void addDiskContextMenuActions(QMenu& menu);

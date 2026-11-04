@@ -523,6 +523,7 @@ set(SAK_CORE_SOURCES
     src/core/partition_safety_validator.cpp
     src/core/partition_script_builder.cpp
     src/core/partition_operation_planner.cpp
+    src/core/partition_operation_requests.cpp
     src/core/partition_os_migration.cpp
     src/core/partition_os_migration_script.cpp
     ${SAK_PARTITION_SCRIPTS_CPP}
