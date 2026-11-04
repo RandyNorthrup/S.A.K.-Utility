@@ -18,6 +18,8 @@
 #include "sak/storage_inventory_worker.h"
 #include "sak/windows_path_policy.h"
 
+#include "partition_manager_scenario_step.h"
+
 #include <QBuffer>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -2529,6 +2531,7 @@ int selfTest() {
     selfTestOfflineFixtureScope(&checks);
     selfTestOfflineInventoryMsr(&checks);
     selfTestExecutionFlagSerialization(&checks);
+    certification::selfTestScenarioStep(&checks);
     const auto open_options = attachmentOpenOptions();
     addSelfTestCheck(&checks,
                      "permanent-attachment-access",
@@ -2560,6 +2563,9 @@ int main(int argc, char* argv[]) {
     const QStringList arguments = app.arguments();
     if (arguments.size() == 2 && arguments.at(1) == "--self-test") {
         return selfTest();
+    }
+    if (arguments.size() == 3 && arguments.at(1) == "--scenario-step") {
+        return certification::runScenarioStep(arguments.at(2));
     }
     const auto config = parseConfig(arguments);
     if (!config) {

@@ -118,6 +118,15 @@ function Test-PureAdmissionContract {
                            "execution-timed-out-boolean-$cancelled-$timedOut")
         }
     }
+    $expected += @(
+        "step-pin-matches-exact-identity", "step-pin-refuses-other-unique-id", "step-pin-refuses-other-serial",
+        "step-pin-refuses-other-model", "step-pin-refuses-other-size", "step-pin-refuses-two-matches",
+        "step-pin-refuses-no-match", "step-job-accepted", "step-job-refuses-confirmation-of-another-disk",
+        "step-job-refuses-no-expectation", "step-job-refused-needs-a-reason", "step-report-withholds-a-password",
+        "step-refusal-must-name-the-reason", "step-report-names-its-code",
+        "step-execution-needs-every-queued-step", "step-execution-passes-with-every-step",
+        "step-execution-refuses-a-skipped-step", "step-has-a-builder-for-each-operation"
+    )
     $checks = @($report.checks)
     Assert-Contract ($checks.Count -eq $expected.Count) "Pure guard check count changed"
     foreach ($name in $expected) {

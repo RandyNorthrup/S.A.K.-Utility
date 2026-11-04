@@ -535,6 +535,8 @@ message(STATUS "Added unit test: test_partition_manager_controller")
 # substitute executor. This helper is not an unattended destructive CTest.
 set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
     certification/partition_manager_live_certifier.cpp
+    certification/partition_manager_scenario_step.cpp
+    certification/partition_manager_scenario_step.h
     ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
     ../src/core/elevation_manager.cpp
@@ -555,6 +557,7 @@ target_link_libraries(partition_manager_live_certifier PRIVATE
 )
 target_include_directories(partition_manager_live_certifier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    "${CMAKE_CURRENT_BINARY_DIR}/partition_manager_code_digest"
 )
 
 # Conservatively bind the complete first-party public-header tree. This includes transitive
@@ -6859,6 +6862,12 @@ add_test(NAME test_run_ctest_no_dialogs
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
 set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
 
+# What the verifier refuses in a certification row's evidence, on synthetic files.
+add_test(NAME test_partition_manager_row_evidence
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_row_evidence.ps1")
+set_tests_properties(test_partition_manager_row_evidence PROPERTIES TIMEOUT 180)
+
 # scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
 # verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
 # was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
@@ -7080,6 +7089,22 @@ add_test(NAME test_source_fingerprint
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_source_fingerprint.py")
 set_tests_properties(test_source_fingerprint PROPERTIES TIMEOUT 180)
 
+# What a certification step reports it was built from: every tracked file but docs and evidence.
+# It runs on each build of this target, and a header that has not changed keeps its timestamp.
+add_custom_target(sak_partition_manager_code_digest
+    COMMAND "${SAK_PYTHON_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/partition_manager_code_digest.py"
+        --root "${CMAKE_SOURCE_DIR}"
+        --header "${CMAKE_CURRENT_BINARY_DIR}/partition_manager_code_digest/partition_manager_code_digest.h"
+    COMMENT "Working out the code digest for certification evidence"
+    VERBATIM
+)
+add_dependencies(partition_manager_live_certifier sak_partition_manager_code_digest)
+
+add_test(NAME test_partition_manager_code_digest
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_code_digest.py")
+set_tests_properties(test_partition_manager_code_digest PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_cppcheck_qt_slot_classifier
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cppcheck_qt_slot_classifier.py")
@@ -7185,7 +7210,8 @@ set(_sak_labels_tooling
     test_run_ctest_no_dialogs test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
     test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell)
-set(_sak_labels_cert test_apple_filesystem_capability_matrix)
+set(_sak_labels_cert test_apple_filesystem_capability_matrix
+    test_partition_manager_code_digest test_partition_manager_row_evidence)
 set(_sak_labels_tooling_extended
     test_process_capture_ownership test_process_capture_ownership_windows_powershell
     test_process_capture_deadline test_process_capture_deadline_windows_powershell
