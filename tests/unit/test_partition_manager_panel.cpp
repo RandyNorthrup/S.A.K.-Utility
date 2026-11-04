@@ -1627,9 +1627,20 @@ void PartitionManagerPanelTests::init() {
     m_modal_watchdog.stop();
     m_modal_watchdog.disconnect(this);
     m_modal_watchdog.setSingleShot(false);
-    QObject::connect(&m_modal_watchdog, &QTimer::timeout, this, []() {
-        failAndCloseUnexpectedInteraction("Unattended interaction deadline exceeded");
-    });
+    // Only what has stayed open from one tick to the next is unanswered. A dialog a test's driver
+    // answers in milliseconds can be open at the moment a tick lands, and on a loaded machine it
+    // is.
+    QObject::connect(
+        &m_modal_watchdog, &QTimer::timeout, this, [seen = QPointer<QWidget>()]() mutable {
+            QWidget* open = QApplication::activePopupWidget();
+            if (open == nullptr) {
+                open = QApplication::activeModalWidget();
+            }
+            if (open != nullptr && open == seen) {
+                failAndCloseUnexpectedInteraction("Unattended interaction deadline exceeded");
+            }
+            seen = open;
+        });
     m_modal_watchdog.start(kModalWatchdogMs);
 }
 
