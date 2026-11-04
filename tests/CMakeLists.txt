@@ -6862,6 +6862,12 @@ add_test(NAME test_run_ctest_no_dialogs
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
 set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
 
+# The claim level and the site's words, from synthetic evidence for each outcome.
+add_test(NAME test_partition_manager_certification_status
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_status.ps1")
+set_tests_properties(test_partition_manager_certification_status PROPERTIES TIMEOUT 180)
+
 # What the verifier refuses in a certification row's evidence, on synthetic files.
 add_test(NAME test_partition_manager_row_evidence
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7100,6 +7106,11 @@ add_custom_target(sak_partition_manager_code_digest
 )
 add_dependencies(partition_manager_live_certifier sak_partition_manager_code_digest)
 
+add_test(NAME test_partition_manager_matrix_generated
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_SOURCE_DIR}/scripts/generate_partition_manager_matrix.py" --check --root "${CMAKE_SOURCE_DIR}")
+set_tests_properties(test_partition_manager_matrix_generated PROPERTIES TIMEOUT 60)
+
 add_test(NAME test_partition_manager_code_digest
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_code_digest.py")
@@ -7211,7 +7222,8 @@ set(_sak_labels_tooling
     test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
-    test_partition_manager_code_digest test_partition_manager_row_evidence)
+    test_partition_manager_code_digest test_partition_manager_row_evidence
+    test_partition_manager_certification_status test_partition_manager_matrix_generated)
 set(_sak_labels_tooling_extended
     test_process_capture_ownership test_process_capture_ownership_windows_powershell
     test_process_capture_deadline test_process_capture_deadline_windows_powershell

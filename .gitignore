@@ -414,6 +414,8 @@ artifacts/
 artifacts/*
 !artifacts/partition-manager-certification/
 artifacts/partition-manager-certification/*
+!artifacts/partition-manager-certification/evidence/
+!artifacts/partition-manager-certification/evidence/**
 !artifacts/partition-manager-certification/vhd-strict/
 artifacts/partition-manager-certification/vhd-strict/*
 !artifacts/partition-manager-certification/vhd-strict/run-20260602-194934/

@@ -194,7 +194,7 @@ $features = @(
             @{
                 kind = "certification matrix"
                 path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("vhd.image-clone", "vhd.image-restore", "target_overwritten", "vhd.partition-clone-region", "outside_marker_preserved")
+                patterns = @("vhd.image-clone", "vhd.image-restore", "every_other_sector_matches", "vhd.partition-clone-region", "the_marker_after_the_region_is_kept")
             }
         )
     },
@@ -294,7 +294,7 @@ $features = @(
             @{
                 kind = "certification matrix"
                 path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("external.file-level-data-recovery", "deleted_fixture_name", "restore_to_separate_destination", "external.allocate-free-space", "external.ssd-retrim", "purge_warning_visible")
+                patterns = @("external.file-level-data-recovery", "every_fixture_was_recovered", "external.allocate-free-space", "external.ssd-retrim", "the_app_warned_this_is_not_a_purge")
             }
         )
     },
@@ -324,77 +324,52 @@ $features = @(
             @{
                 kind = "readiness script"
                 path = "scripts\check_release_readiness.ps1"
-                patterns = @("run_partition_manager_destructive_certification.ps1", "run_partition_manager_vhd_certification_strict.ps1", "run_partition_manager_hardware_certification_strict.ps1", "verify_partition_manager_certification.ps1", "check_partition_manager_certification_matrix_integrity.ps1", "check_partition_manager_commercial_gate_matrix.ps1", "check_partition_manager_external_checklist.ps1", "check_partition_manager_external_lab_package.ps1", "new_partition_manager_certification_gap_report.ps1", "check_partition_manager_certification_gap_report.ps1", "certification-gap-report.md", "new_partition_manager_certification_bundle.ps1", "check_partition_manager_certification_bundle.ps1", "certification-artifact-bundle.json", "test_partition_manager_vhd_preflight.ps1", "check_partition_manager_vhd_preflight_report.ps1", "vhd-preflight.json", "CreateEvidenceDirectories", "external-evidence", "PartitionExternalEvidenceChecklist", "external-evidence.checklist.md", "check_partition_manager_release_claims.ps1", "test_partition_manager_certification_tools.ps1")
+                patterns = @("verify_partition_manager_certification.ps1", "check_partition_manager_release_claims.ps1", "test_partition_manager_row_evidence.ps1", "test_partition_manager_certification_status.ps1")
             },
             @{
                 kind = "certification verifier"
                 path = "scripts\verify_partition_manager_certification.ps1"
-                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "PARTITION_MANAGER_CERTIFICATION_MATRIX.json", "Assert-PassedVhdEvidencePayload", "Assert-PassedExternalEvidencePayload", "Assert-EvidenceValuePresent")
+                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "get_partition_manager_certification_status.ps1", "merge-base --is-ancestor")
             },
             @{
                 kind = "certification status"
                 path = "scripts\get_partition_manager_certification_status.ps1"
-                patterns = @("Test-VhdEvidenceComplete", "Test-ExternalEvidenceComplete", "Test-EvidenceValuePresent", "claim_level")
+                patterns = @("claim_level", "VirtualMachinesValidated", "NamedDevicesValidated", "Test-PmRowEvidence", "Test-PmEvidenceIndex", "site_wording")
             },
             @{
-                kind = "external evidence scaffold"
-                path = "scripts\new_partition_manager_external_evidence_manifest.ps1"
-                patterns = @("Write-GateReportTemplate", "report.template.json", "partition-manager-external-evidence-report", "suggested_evidence_path", "required_evidence_values")
+                kind = "evidence guards"
+                path = "scripts\partition_manager_row_evidence.ps1"
+                patterns = @("Test-PmRowEvidence", "Test-PmSnapshotsAgree", "Test-PmStep", "Test-PmMedia", "Test-PmEvidenceIndex")
             },
             @{
-                kind = "external lab package verifier"
-                path = "scripts\check_partition_manager_external_lab_package.ps1"
-                patterns = @("report.template.json", "partition-manager-external-evidence-report", "Report template evidence keys mismatch", "Report template required evidence values mismatch")
+                kind = "independent readback"
+                path = "scripts\partition_manager_readback.ps1"
+                patterns = @("ConvertFrom-RbPartitionTable", "Get-RbRangeSha256", "Get-RbRangeDifferences", "Find-RbMarkerAnywhere", "Assert-RbInDisposableVm")
             },
             @{
-                kind = "external report importer"
-                path = "scripts\update_partition_manager_external_manifest_from_reports.ps1"
-                patterns = @("partition-manager-external-evidence-report", "RequireAllReports", "required_evidence_keys", "safety_contract", "required_evidence_values", "evidence_path")
+                kind = "code digest"
+                path = "scripts\partition_manager_code_digest.py"
+                patterns = @("EXCLUDED_PREFIXES", "EXCLUDED_SUFFIXES")
             },
             @{
-                kind = "certification gap report"
-                path = "scripts\new_partition_manager_certification_gap_report.ps1"
-                patterns = @("certification-gap-report", "required_evidence_keys", "safety_contract", "next_commands", "run_partition_manager_vhd_certification_strict.ps1", "run_partition_manager_hardware_certification_strict.ps1")
+                kind = "step client"
+                path = "tests\certification\partition_manager_scenario_step.cpp"
+                patterns = @("runScenarioStep", "requestBuilders", "PartitionManagerController", "elevated-helper")
             },
             @{
-                kind = "certification gap verifier"
-                path = "scripts\check_partition_manager_certification_gap_report.ps1"
-                patterns = @("Gap count mismatch", "required_evidence_keys", "safety_contract", "required evidence values", "Gap Markdown missing")
+                kind = "row orchestrator"
+                path = "scripts\run_partition_manager_app_certification.ps1"
+                patterns = @("Invoke-CertStep", "Assert-RbInDisposableVm", "New-PmRowReport")
             },
             @{
-                kind = "VHD preflight"
-                path = "scripts\test_partition_manager_vhd_preflight.ps1"
-                patterns = @("partition-manager-vhd-preflight", "RequireAdministrator", "required_commands", "free_drive_letters", "ready_for_vhd_certification", "run_partition_manager_destructive_certification.ps1")
-            },
-            @{
-                kind = "VHD preflight verifier"
-                path = "scripts\check_partition_manager_vhd_preflight_report.ps1"
-                patterns = @("partition-manager-vhd-preflight", "VHD scenario count mismatch", "External gate count mismatch", "Non-admin required preflight missing administrator blocker")
-            },
-            @{
-                kind = "strict VHD orchestrator"
-                path = "scripts\run_partition_manager_vhd_certification_strict.ps1"
-                patterns = @("Invoke-ElevatedRelaunch", "Verb RunAs", "RequireReady", "RunVhdDataDiskMatrix", "RequireVhdDataDiskEvidence", "VhdDataDiskCertified", "certification-artifact-bundle.json")
-            },
-            @{
-                kind = "strict hardware orchestrator"
-                path = "scripts\run_partition_manager_hardware_certification_strict.ps1"
-                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "HardwareCertified", "check_partition_manager_external_checklist.ps1", "check_partition_manager_external_lab_package.ps1", "hardware-certification-status.json", "hardware-certification-artifact-bundle.json")
-            },
-            @{
-                kind = "certification artifact bundle"
-                path = "scripts\new_partition_manager_certification_bundle.ps1"
-                patterns = @("partition-manager-certification-artifact-bundle", "certification_status", "certification_report", "external_evidence_manifest", "external_evidence_checklist", "Get-FileHash")
-            },
-            @{
-                kind = "certification artifact bundle verifier"
-                path = "scripts\check_partition_manager_certification_bundle.ps1"
-                patterns = @("partition-manager-certification-artifact-bundle", "Certification bundle hash mismatch", "Certification bundle claim level mismatch", "Certification bundle VHD preflight ready mismatch")
+                kind = "final run"
+                path = "scripts\run_partition_manager_final_certification.ps1"
+                patterns = @("code_dirty", "select_partition_manager_evidence.ps1", "check_partition_manager_release_claims.ps1")
             },
             @{
                 kind = "certification matrix"
                 path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("required_evidence_keys", "safety_contract", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation", "external.hardware-wipe")
+                patterns = @("ran_on", "not_proved", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation")
             }
         )
     }

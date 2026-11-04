@@ -231,7 +231,7 @@ repos:
           -File scripts/check_partition_manager_certification_matrix_integrity.ps1
         language: system
         pass_filenames: false
-        files: ^(certification/|scripts/(check_partition_manager_certification_matrix_integrity|run_partition_manager_destructive_certification|new_partition_manager_external_evidence_manifest|verify_partition_manager_certification|get_partition_manager_certification_status|test_partition_manager_certification_tools|check_partition_manager_external_checklist|check_partition_manager_external_lab_package|update_partition_manager_external_manifest_from_reports|run_partition_manager_hardware_certification_strict)\.ps1$)
+        files: ^(certification/|scripts/(check_partition_manager_certification_matrix_integrity|generate_partition_manager_matrix|verify_partition_manager_certification|get_partition_manager_certification_status|partition_manager_certification_row_bodies)\.(ps1|py)$)
 
       - id: apple-filesystem-capability-matrix
         name: "Apple filesystem capability matrix"
@@ -249,7 +249,7 @@ repos:
           -File scripts/check_partition_manager_feature_matrix.ps1
         language: system
         pass_filenames: false
-        files: ^(certification/|include/sak/partition_manager_types\.h$|src/core/(file_recovery_engine|partition_script_builder)\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/(check_partition_manager_feature_matrix|check_partition_manager_certification_bundle|check_partition_manager_certification_gap_report|check_partition_manager_external_lab_package|check_partition_manager_vhd_preflight_report|check_release_readiness|get_partition_manager_certification_status|new_partition_manager_certification_bundle|new_partition_manager_certification_gap_report|new_partition_manager_external_evidence_manifest|run_partition_manager_hardware_certification_strict|run_partition_manager_vhd_certification_strict|test_partition_manager_vhd_preflight|update_partition_manager_external_manifest_from_reports|verify_partition_manager_certification)\.ps1$)
+        files: ^(certification/|include/sak/partition_manager_types\.h$|src/core/(file_recovery_engine|partition_script_builder)\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/(check_partition_manager_feature_matrix|run_partition_manager_app_certification|verify_partition_manager_certification|get_partition_manager_certification_status|partition_manager_row_evidence)\.ps1$)
 
       - id: partition-commercial-gate-matrix
         name: "Partition Manager commercial gate matrix"
@@ -455,35 +455,13 @@ repos:
         pass_filenames: false
         stages: [manual]
 
-      # T3: incomplete certification gates are enumerated and consistent.
-      - id: partition-cert-gap-report
-        name: "Partition Manager certification gap report"
-        description: "Incomplete certification gates are enumerated and consistent"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_certification_gap_report.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      # T3: external VM/hardware/lab gates match the certification matrix.
-      - id: partition-external-checklist
-        name: "Partition Manager external checklist"
-        description: "External VM/hardware/lab gates match the certification matrix"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_external_checklist.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      # T3: binds the stored VM report to the local certifier binary and source manifest, so
-      # it cannot pass on any commit after a bound source changes until a VM
-      # recertification. Run it on release bytes.
+      # T3: binds the selected evidence to this checkout's source digest, so it cannot pass on any
+      # commit after a code file changes until a new run. Run it on release bytes.
       - id: partition-cert-verification
         name: "Partition Manager certification verification"
-        description: "The stored strict-VHD certification report matches the matrix"
+        description: "The selected certification evidence holds for this source"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/verify_partition_manager_certification.ps1
-          -CertificationRoot artifacts/partition-manager-certification/vhd-strict
         language: system
         pass_filenames: false
         stages: [manual]

@@ -218,8 +218,8 @@ jobs:
         & scripts/check_release_readiness.ps1 -PackageRoot $extract
 
     # The generated Current Certification State block in docs/PARTITION_MANAGER_CERTIFICATION.md
-    # must match the claim level computed from the committed certification evidence. A clean
-    # clone carries less evidence than a certification workstation, so this is T3, not T2.
+    # must match the claim level computed from the committed certification evidence, against this
+    # checkout's source digest. Evidence from other code stops counting, and the block goes stale.
     - name: Partition Manager certification state block is current
       shell: pwsh
       run: '& scripts/check_partition_manager_release_claims.ps1'

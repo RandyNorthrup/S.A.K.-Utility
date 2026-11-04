@@ -24,13 +24,15 @@
     This replaced (2026-10-24, owner ruling) a regex scan of README, changelog, plan,
     certification and readiness prose for unsupported wording, which tested a document's
     phrasing rather than the evidence.
+
+    The block says what each row ran on and gives the exact words the site may use. Both come from
+    the status: the words are a function of the claim level and of what the rows reported.
 #>
 
 [CmdletBinding()]
 param(
     [string]$StatusPath = "",
-    [string]$CertificationRoot = "artifacts\partition-manager-certification\vhd-strict",
-    [string]$ExternalEvidenceManifest = "",
+    [string]$EvidenceRoot = "artifacts\partition-manager-certification\evidence\current",
     [string]$DocumentPath = "docs\PARTITION_MANAGER_CERTIFICATION.md",
     [switch]$Update
 )
@@ -40,7 +42,8 @@ $ErrorActionPreference = "Stop"
 $Script:BeginMarker = '<!-- BEGIN GENERATED certification-state: do not edit by hand. Regenerate with ' +
     'scripts/check_partition_manager_release_claims.ps1 -Update -->'
 $Script:EndMarker = '<!-- END GENERATED certification-state -->'
-$Script:KnownClaimLevels = @("FailedEvidence", "CodeCompleteOnly", "VhdDataDiskCertified", "HardwareCertified")
+$Script:KnownClaimLevels = @("FailedEvidence", "CodeCompleteOnly", "VhdDataDiskCertified",
+    "VirtualMachinesValidated", "NamedDevicesValidated")
 
 function Resolve-ProjectRoot {
     return Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -66,15 +69,11 @@ function Resolve-StatusPath {
         return (Resolve-Path -LiteralPath $StatusPath -ErrorAction Stop).Path
     }
 
-    # External evidence is an explicit authority choice, never inferred from old files.
     $statusOutputPath = Join-Path $ProjectRoot "artifacts\partition-manager-certification\claim-check-status.json"
     $arguments = @{
-        CertificationRoot = $CertificationRoot
+        EvidenceRoot = $EvidenceRoot
         OutputPath = $statusOutputPath
         Quiet = $true
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
-        $arguments.ExternalEvidenceManifest = $ExternalEvidenceManifest
     }
 
     # Delete any prior status file first so a generator run that exits without writing
@@ -99,7 +98,7 @@ function Assert-StatusHeader {
     if ($Status.tool -ne "partition-manager-certification-status") {
         throw "Unexpected Partition Manager certification status tool: $($Status.tool)"
     }
-    if (($Status.schema_version -isnot [int] -and $Status.schema_version -isnot [long]) -or $Status.schema_version -ne 1) {
+    if (($Status.schema_version -isnot [int] -and $Status.schema_version -isnot [long]) -or $Status.schema_version -ne 2) {
         throw 'Unsupported Partition Manager certification status schema_version'
     }
     # Fail closed on an unrecognized or wrong-typed claim_level (an array/number, or a forged
@@ -149,7 +148,7 @@ function Get-ValidatedState {
         [Parameter(Mandatory = $true)][object]$Matrix
     )
     Assert-StatusHeader $Status
-    if (($Matrix.schema_version -isnot [int] -and $Matrix.schema_version -isnot [long]) -or $Matrix.schema_version -ne 1) {
+    if (($Matrix.schema_version -isnot [int] -and $Matrix.schema_version -isnot [long]) -or $Matrix.schema_version -ne 2) {
         throw 'Unsupported Partition Manager certification matrix schema_version'
     }
     $vhdRows = @($Matrix.vhd_scenarios)
@@ -159,13 +158,30 @@ function Get-ValidatedState {
     $hasVhdGaps = @($vhd.incomplete_ids).Count -gt 0
     $hasExternalGaps = @($external.incomplete_ids).Count -gt 0
     $level = [string]$Status.claim_level
-    if (($level -ceq 'HardwareCertified' -and ($hasVhdGaps -or $hasExternalGaps)) -or
+    $everyRow = $level -ceq 'VirtualMachinesValidated' -or $level -ceq 'NamedDevicesValidated'
+    if (($everyRow -and ($hasVhdGaps -or $hasExternalGaps)) -or
         ($level -ceq 'VhdDataDiskCertified' -and ($hasVhdGaps -or -not $hasExternalGaps)) -or
         ($level -ceq 'CodeCompleteOnly' -and -not $hasVhdGaps)) {
         throw 'Certification status claim level contradicts its incomplete evidence sets'
     }
+    $virtualWhereItMatters = @($Status.virtual_where_a_device_matters)
+    if (($level -ceq 'NamedDevicesValidated' -and $virtualWhereItMatters.Count -gt 0) -or
+        ($level -ceq 'VirtualMachinesValidated' -and $virtualWhereItMatters.Count -eq 0)) {
+        throw 'Certification status claim level contradicts what its rows ran on'
+    }
+    $wording = $Status.site_wording
+    if ($wording -isnot [string] -or [string]::IsNullOrWhiteSpace($wording)) {
+        throw 'Certification status has no words for the site'
+    }
+    if ($wording -match '(?i)certif') {
+        throw "The site's words may not say certified: $wording"
+    }
+    $ranOn = @{}
+    foreach ($row in @($Status.rows)) { $ranOn["$($row.id)"] = $row.ran_on }
     return [pscustomobject]@{
         level = $level
+        wording = $wording
+        ran_on = $ranOn
         vhd = $vhd
         external = $external
         vhd_rows = $vhdRows
@@ -183,9 +199,13 @@ function Format-IdList {
 
 function Get-CaveatLines {
     param([Parameter(Mandatory = $true)][object]$State)
-    if ($State.level -ceq 'HardwareCertified') {
-        return @('Every VHD scenario and every external VM/hardware/lab gate passed verification on the',
-            'selected evidence.')
+    if ($State.level -ceq 'NamedDevicesValidated') {
+        return @('Every row passed on the selected evidence, and each row that needs a real device ran on',
+            'the one named below. That says those devices, and no others.')
+    }
+    if ($State.level -ceq 'VirtualMachinesValidated') {
+        return @('Every row passed on the selected evidence, and at least one row that needs a real device',
+            'ran on a virtual one. Nothing here is a statement about hardware.')
     }
     $reasons = @()
     if ($State.level -ceq 'FailedEvidence') { $reasons += 'evidence verification failed' }
@@ -198,11 +218,13 @@ function Get-CaveatLines {
 }
 
 function Get-ScenarioTableLines {
-    param([object[]]$Rows, [string[]]$IncompleteIds, [string]$Kind)
-    $lines = @("| $Kind | Name | Accepted on this evidence |", '|---|---|---|')
+    param([object[]]$Rows, [string[]]$IncompleteIds, [string]$Kind, [hashtable]$RanOn)
+    $lines = @("| $Kind | Name | Accepted on this evidence | Ran on |", '|---|---|---|---|')
     foreach ($row in $Rows) {
         $accepted = if ($IncompleteIds -ccontains [string]$row.id) { 'no' } else { 'yes' }
-        $lines += ('| `{0}` | {1} | {2} |' -f $row.id, $row.name, $accepted)
+        $on = $RanOn[[string]$row.id]
+        $where = if ($null -eq $on) { 'nothing yet' } else { "$($on.class): $($on.model), $($on.bus_type)" }
+        $lines += ('| `{0}` | {1} | {2} | {3} |' -f $row.id, $row.name, $accepted, $where)
     }
     return $lines
 }
@@ -239,13 +261,17 @@ function Get-GeneratedBlock {
     $lines += ''
     $lines += Get-CaveatLines $State
     $lines += ''
+    $lines += 'What the site may say for this evidence:'
+    $lines += ''
+    $lines += "> $($State.wording)"
+    $lines += ''
     $lines += 'Disposable-VHD scenarios (`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`):'
     $lines += ''
-    $lines += Get-ScenarioTableLines $State.vhd_rows $State.vhd.incomplete_ids 'Scenario'
+    $lines += Get-ScenarioTableLines $State.vhd_rows $State.vhd.incomplete_ids 'Scenario' $State.ran_on
     $lines += ''
     $lines += 'External VM/hardware/lab gates (same matrix):'
     $lines += ''
-    $lines += Get-ScenarioTableLines $State.external_rows $State.external.incomplete_ids 'Gate'
+    $lines += Get-ScenarioTableLines $State.external_rows $State.external.incomplete_ids 'Gate' $State.ran_on
     $lines += ''
     $lines += 'Apple filesystem driver capabilities (`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`):'
     $lines += ''

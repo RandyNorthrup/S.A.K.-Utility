@@ -1,483 +1,137 @@
 <#
 .SYNOPSIS
-    Summarizes Partition Manager certification claim level.
+    Works out what Partition Manager's certification evidence supports, and how to say it.
 
 .DESCRIPTION
-    Reads a Partition Manager certification report plus an optional external
-    VM/hardware/lab evidence manifest and emits a machine-readable claim level.
-    This does not replace strict verification; it makes release-note wording
-    deterministic.
-.PARAMETER ControllerCertifierPath
-    Independently selected local helper. Default: build/Release/partition_manager_live_certifier.exe.
-.PARAMETER ControllerSourceManifestPath
-    Independently selected raw source sidecar. Default: build/Release/partition_manager_live_certifier.sources.txt.
-    Relative overrides resolve from this checkout, never from report claims. No artifact search occurs.
+    Reads certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json and the one run of evidence the
+    index at -EvidenceRoot names, checks each row with partition_manager_row_evidence.ps1, and
+    computes the claim level, what each row ran on, and the words the site may use.
+
+    Older evidence in the repository is not selectable: only the index is read, and it names one
+    run. It stays in git as history.
+
+    The levels, each saying what ran on what:
+      FailedEvidence            a row in the selected run failed.
+      CodeCompleteOnly          not every disposable-VHD row is accepted.
+      VhdDataDiskCertified      every disposable-VHD row, not every other row. Virtual disks in a VM.
+      VirtualMachinesValidated  every row, with at least one that needs a real device run on a
+                                virtual one. Nothing here may read as a statement about hardware.
+      NamedDevicesValidated     every row, with each that needs a real device run on one, named.
+                                It says those devices, and no others.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$ReportPath = "",
-    [string]$CertificationRoot = "artifacts\partition-manager-certification\vhd-strict",
-    [string]$ExternalEvidenceManifest = "",
-    [string]$ControllerCertifierPath = "",
-    [string]$ControllerSourceManifestPath = "",
-    [string]$OutputPath = "",
+    [string]$EvidenceRoot = 'artifacts\partition-manager-certification\evidence\current',
+    [string]$CodeDigest = '',
+    [string]$MatrixPath = '',
+    [string]$OutputPath = '',
     [switch]$Quiet
 )
 
-$ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "partition_manager_certification_report.ps1")
-. (Join-Path $PSScriptRoot "partition_manager_controller_evidence.ps1")
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'partition_manager_row_evidence.ps1')
+. (Join-Path $PSScriptRoot 'partition_manager_claim_wording.ps1')
 
-function Resolve-ProjectRoot {
-    return Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$projectRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($MatrixPath)) {
+    $MatrixPath = Join-Path $projectRoot 'certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json'
+}
+$matrix = Get-Content -LiteralPath $MatrixPath -Raw | ConvertFrom-Json
+if ($matrix.schema_version -ne 2) {
+    throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 }
 
-function Read-CertificationMatrix {
-    $matrixPath = Join-Path (Resolve-ProjectRoot) "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-    $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
-    if ($matrix.schema_version -ne 1) {
-        throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
-    }
-    return $matrix
+function Resolve-StatusPath {
+    param([string]$Path)
+    if ([IO.Path]::IsPathRooted($Path)) { return $Path }
+    return (Join-Path $projectRoot $Path)
 }
 
-$CertificationMatrix = Read-CertificationMatrix
-$ExpectedVhdScenarioIds = @($CertificationMatrix.vhd_scenarios | ForEach-Object { $_.id })
-$ExpectedExternalGateIds = @($CertificationMatrix.external_gates | ForEach-Object { $_.id })
-if ($ExpectedVhdScenarioIds.Count -eq 0) {
-    throw "Partition Manager certification matrix has no VHD scenarios"
-}
-if ($ExpectedExternalGateIds.Count -eq 0) {
-    throw "Partition Manager certification matrix has no external gates"
+if ([string]::IsNullOrWhiteSpace($CodeDigest)) {
+    $described = & python (Join-Path $PSScriptRoot 'partition_manager_code_digest.py') --root $projectRoot
+    if ($LASTEXITCODE -ne 0) { throw 'The code digest could not be worked out' }
+    $CodeDigest = ($described | ConvertFrom-Json).code_digest
 }
 
-function Read-JsonFile {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    return Get-Content -LiteralPath $resolved.Path -Raw | ConvertFrom-Json
+$evidencePath = Resolve-StatusPath -Path $EvidenceRoot
+$indexPath = Join-Path $evidencePath 'index.json'
+$index = $null
+$indexReasons = @()
+if (Test-Path -LiteralPath $indexPath -PathType Leaf) {
+    $index = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json
+    $indexReasons = @(Test-PmEvidenceIndex -Index $index -EvidenceRoot $evidencePath -Matrix $matrix)
 }
 
-function Test-EvidenceReference {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Result,
-        [Parameter(Mandatory = $true)]
-        [string]$ManifestDirectory,
-        [Parameter(Mandatory = $true)]
-        [string]$ProjectRoot
-    )
-
-    $hasPath = -not [string]::IsNullOrWhiteSpace($Result.evidence_path)
-    $hasUrl = -not [string]::IsNullOrWhiteSpace($Result.evidence_url)
-    if (-not $hasPath -and -not $hasUrl) {
-        return $false
+function Get-RowVerdict {
+    param([object]$Spec)
+    $rowDir = Join-Path $evidencePath "$($Spec.id)"
+    $listed = $null -ne $index -and $indexReasons.Count -eq 0 -and
+        @($index.rows | Where-Object { "$($_.id)" -ceq "$($Spec.id)" }).Count -eq 1
+    $physicalClaim = [bool]$Spec.ran_on.physical_claim
+    if (-not $listed) {
+        $why = if ($null -eq $index) { 'no evidence has been selected' } elseif ($indexReasons.Count -gt 0) { $indexReasons -join '; ' } else { 'the selected run has no evidence for this row' }
+        return [ordered]@{ id = "$($Spec.id)"; name = "$($Spec.name)"; accepted = $false; failed = $false; physical_claim = $physicalClaim; reasons = @($why); ran_on = $null }
     }
-
-    if ($hasPath) {
-        $candidatePaths = @()
-        if ([System.IO.Path]::IsPathRooted($Result.evidence_path)) {
-            $candidatePaths += $Result.evidence_path
-        }
-        else {
-            $candidatePaths += Join-Path $ProjectRoot $Result.evidence_path
-            $candidatePaths += Join-Path $ManifestDirectory $Result.evidence_path
-        }
-
-        $exists = $false
-        foreach ($candidate in $candidatePaths) {
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                $exists = $true
-                break
-            }
-        }
-        if (-not $exists) { return $false }
-    }
-
-    if ($hasUrl) {
-        $uri = $null
-        $validUri = [System.Uri]::TryCreate($Result.evidence_url, [System.UriKind]::Absolute, [ref]$uri)
-        # Match strict verification: every supplied reference must validate. A valid local
-        # artifact must not hide an insecure URL, nor may a URL hide a missing artifact.
-        if (-not ($validUri -and ($uri.Scheme -eq "https"))) { return $false }
-    }
-
-    return $true
-}
-
-function Get-ResultById {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$Results,
-        [Parameter(Mandatory = $true)]
-        [string]$Id
-    )
-
-    return @($Results | Where-Object { $_.id -eq $Id })
-}
-
-function Get-ScenarioSpec {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Id
-    )
-
-    $matches = @($CertificationMatrix.vhd_scenarios + $CertificationMatrix.external_gates |
-        Where-Object { $_.id -eq $Id })
-    if ($matches.Count -eq 0) {
-        return $null
-    }
-    return $matches[0]
-}
-
-function Test-ObjectPropertyExists {
-    param(
-        [object]$Object,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-
-    if ($null -eq $Object) {
-        return $false
-    }
-    return $null -ne $Object.PSObject.Properties[$Name]
-}
-
-function Test-EvidenceValuePresent {
-    param(
-        [object]$Value
-    )
-
-    if ($null -eq $Value) {
-        return $false
-    }
-    if ($Value -is [string]) {
-        return -not [string]::IsNullOrWhiteSpace($Value)
-    }
-    if ($Value -is [System.Array]) {
-        return @($Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
-    }
-    if ($Value -is [pscustomobject]) {
-        return @($Value.PSObject.Properties).Count -gt 0
-    }
-
-    return $true
-}
-
-function Test-EvidencePropertyComplete {
-    param(
-        [object]$Object,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-
-    if (-not (Test-ObjectPropertyExists -Object $Object -Name $Name)) {
-        return $false
-    }
-    return Test-EvidenceValuePresent -Value $Object.PSObject.Properties[$Name].Value
-}
-
-function ConvertTo-EvidenceValueStrings {
-    param(
-        [object]$Value
-    )
-
-    if ($null -eq $Value) {
-        return @()
-    }
-    if ($Value -is [System.Array]) {
-        return @($Value | ForEach-Object { $_.ToString() })
-    }
-    return @($Value.ToString())
-}
-
-function Get-EvidenceValueRequirement {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$ScenarioSpec,
-        [Parameter(Mandatory = $true)]
-        [string]$Key
-    )
-
-    if ($null -eq $ScenarioSpec.PSObject.Properties["required_evidence_values"]) {
-        return $null
-    }
-    $property = $ScenarioSpec.required_evidence_values.PSObject.Properties[$Key]
-    if ($null -eq $property) {
-        return $null
-    }
-    return $property.Value
-}
-
-function Test-EvidenceValueRequirement {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Evidence,
-        [Parameter(Mandatory = $true)]
-        [string]$Key,
-        [Parameter(Mandatory = $true)]
-        [object]$Requirement
-    )
-
-    if (-not (Test-ObjectPropertyExists -Object $Evidence -Name $Key)) {
-        return $false
-    }
-
-    $actualValues = ConvertTo-EvidenceValueStrings -Value $Evidence.PSObject.Properties[$Key].Value
-    if ($null -ne $Requirement.PSObject.Properties["allowed_values"]) {
-        $allowedValues = @($Requirement.allowed_values | ForEach-Object { $_.ToString() })
-        if ($actualValues.Count -eq 0 -or @($actualValues | Where-Object { $allowedValues -notcontains $_ }).Count -gt 0) {
-            return $false
-        }
-    }
-    if ($null -ne $Requirement.PSObject.Properties["contains_all"]) {
-        $requiredValues = @($Requirement.contains_all | ForEach-Object { $_.ToString() })
-        foreach ($requiredValue in $requiredValues) {
-            if ($actualValues -notcontains $requiredValue) {
-                return $false
-            }
-        }
-    }
-
-    return $true
-}
-
-function Test-ScenarioContractComplete {
-    param(
-        [object]$Result
-    )
-
-    $spec = Get-ScenarioSpec -Id $Result.id
-    if ($null -eq $spec -or $Result.name -ne $spec.name) {
-        return $false
-    }
-
-    $actualKeys = @($Result.required_evidence_keys | ForEach-Object { $_.ToString() })
-    foreach ($key in @($spec.required_evidence_keys)) {
-        if ($actualKeys -notcontains $key) {
-            return $false
-        }
-    }
-
-    $actualSafety = @($Result.safety_contract | ForEach-Object { $_.ToString() })
-    foreach ($item in @($spec.safety_contract)) {
-        if ($actualSafety -notcontains $item) {
-            return $false
-        }
-    }
-
-    if ($null -ne $spec.PSObject.Properties["required_evidence_values"]) {
-        if ($null -eq $Result.PSObject.Properties["required_evidence_values"] -or $null -eq $Result.required_evidence_values) {
-            return $false
-        }
-        foreach ($requirementProperty in @($spec.required_evidence_values.PSObject.Properties)) {
-            $actualProperty = $Result.required_evidence_values.PSObject.Properties[$requirementProperty.Name]
-            if ($null -eq $actualProperty) {
-                return $false
-            }
-            if ($null -ne $requirementProperty.Value.PSObject.Properties["allowed_values"]) {
-                $actualAllowed = @($actualProperty.Value.allowed_values | ForEach-Object { $_.ToString() })
-                foreach ($allowedValue in @($requirementProperty.Value.allowed_values)) {
-                    if ($actualAllowed -notcontains $allowedValue.ToString()) {
-                        return $false
-                    }
-                }
-            }
-            if ($null -ne $requirementProperty.Value.PSObject.Properties["contains_all"]) {
-                $actualRequired = @($actualProperty.Value.contains_all | ForEach-Object { $_.ToString() })
-                foreach ($requiredValue in @($requirementProperty.Value.contains_all)) {
-                    if ($actualRequired -notcontains $requiredValue.ToString()) {
-                        return $false
-                    }
-                }
-            }
-        }
-    }
-
-    return $true
-}
-
-function Test-VhdEvidenceComplete {
-    param(
-        [object]$Result
-    )
-
-    if ($Result.id -eq 'vhd.image-restore') {
-        try {
-            $inputs = Resolve-PartitionManagerControllerBuildInputs -ProjectRoot (Resolve-ProjectRoot) `
-                -ControllerCertifierPath $ControllerCertifierPath -ControllerSourceManifestPath $ControllerSourceManifestPath
-            [void](Assert-PartitionManagerControllerScenarioEvidence -Evidence $Result.evidence `
-                -ReportDirectory $Script:ControllerReportDirectory @inputs)
-        } catch {
-            $Script:VhdEvidenceReasons[$Result.id] = $_.Exception.Message
-            return $false
-        }
-    }
-    if (-not (Test-ScenarioContractComplete -Result $Result)) {
-        return $false
-    }
-    $spec = Get-ScenarioSpec -Id $Result.id
-    foreach ($key in @($spec.required_evidence_keys)) {
-        if (-not (Test-EvidencePropertyComplete -Object $Result.evidence -Name $key)) {
-            return $false
-        }
-        $requirement = Get-EvidenceValueRequirement -ScenarioSpec $spec -Key $key
-        if ($null -ne $requirement -and -not (Test-EvidenceValueRequirement -Evidence $Result.evidence -Key $key -Requirement $requirement)) {
-            return $false
-        }
-    }
-    return $true
-}
-
-function Test-ExternalEvidenceComplete {
-    param(
-        [object]$Result,
-        [Parameter(Mandatory = $true)]
-        [string]$ManifestDirectory,
-        [Parameter(Mandatory = $true)]
-        [string]$ProjectRoot
-    )
-
-    if (-not (Test-ScenarioContractComplete -Result $Result)) {
-        return $false
-    }
-    if (-not (Test-EvidenceReference -Result $Result -ManifestDirectory $ManifestDirectory -ProjectRoot $ProjectRoot)) {
-        return $false
-    }
-
-    $spec = Get-ScenarioSpec -Id $Result.id
-    foreach ($key in @($spec.required_evidence_keys)) {
-        if (-not (Test-EvidencePropertyComplete -Object $Result.evidence -Name $key)) {
-            return $false
-        }
-        $requirement = Get-EvidenceValueRequirement -ScenarioSpec $spec -Key $key
-        if ($null -ne $requirement -and -not (Test-EvidenceValueRequirement -Evidence $Result.evidence -Key $key -Requirement $requirement)) {
-            return $false
-        }
-    }
-    return $true
-}
-
-$projectRoot = Resolve-ProjectRoot
-Push-Location $projectRoot
-try {
-    if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-        $ReportPath = Resolve-LatestCertificationReport -Root $CertificationRoot
-    }
-
-    $resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath -ErrorAction Stop).Path
-    $Script:ControllerReportDirectory = Split-Path -Parent $resolvedReportPath
-    $report = Read-JsonFile -Path $resolvedReportPath
-    $reportResults = @($report.results)
-    $failedIds = @($reportResults | Where-Object { $_.status -eq "Failed" } | ForEach-Object { $_.id })
-
-    $passedVhdIds = @()
-    $incompleteVhdIds = @()
-    $Script:VhdEvidenceReasons = [ordered]@{}
-    foreach ($id in $ExpectedVhdScenarioIds) {
-        $matches = @(Get-ResultById -Results $reportResults -Id $id)
-        if ($matches.Count -eq 1 -and $matches[0].status -eq "Passed" -and
-            (Test-VhdEvidenceComplete -Result $matches[0])) {
-            $passedVhdIds += $id
-        }
-        else {
-            $incompleteVhdIds += $id
-            if (-not $Script:VhdEvidenceReasons.Contains($id)) {
-                $Script:VhdEvidenceReasons[$id] = 'Result missing, duplicated, not Passed, or missing required evidence contract'
-            }
-        }
-    }
-
-    $externalManifestPath = ""
-    $passedExternalIds = @()
-    $incompleteExternalIds = @($ExpectedExternalGateIds)
-    if (-not [string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
-        $externalManifestPath = (Resolve-Path -LiteralPath $ExternalEvidenceManifest -ErrorAction Stop).Path
-        $manifest = Read-JsonFile -Path $externalManifestPath
-        $manifestDirectory = Split-Path -Parent $externalManifestPath
-        $externalResults = @($manifest.results)
-        $passedExternalIds = @()
-        $incompleteExternalIds = @()
-        foreach ($id in $ExpectedExternalGateIds) {
-            $matches = @(Get-ResultById -Results $externalResults -Id $id)
-            if ($matches.Count -eq 1 -and $matches[0].status -eq "Passed" -and
-                (Test-ExternalEvidenceComplete -Result $matches[0] -ManifestDirectory $manifestDirectory -ProjectRoot $projectRoot)) {
-                $passedExternalIds += $id
-            }
-            else {
-                $incompleteExternalIds += $id
-            }
-        }
-    }
-
-    $vhdCertified = ($incompleteVhdIds.Count -eq 0)
-    $hardwareCertified = ($vhdCertified -and $incompleteExternalIds.Count -eq 0)
-    $claimLevel = if ($failedIds.Count -gt 0 -or $report.status -eq "Failed") {
-        "FailedEvidence"
-    }
-    elseif ($hardwareCertified) {
-        "HardwareCertified"
-    }
-    elseif ($vhdCertified) {
-        "VhdDataDiskCertified"
-    }
-    else {
-        "CodeCompleteOnly"
-    }
-
-    $summary = [ordered]@{
-        tool = "partition-manager-certification-status"
-        schema_version = 1
-        generated_utc = (Get-Date).ToUniversalTime().ToString("o")
-        claim_level = $claimLevel
-        claims = [ordered]@{
-            code_complete_automated = (($claimLevel -ne "FailedEvidence") -and ($reportResults.Count -gt 0))
-            vhd_data_disk_certified = $vhdCertified
-            hardware_certified = $hardwareCertified
-        }
-        report = [ordered]@{
-            path = $resolvedReportPath
-            status = $report.status
-            failed_ids = $failedIds
-        }
-        vhd_data_disk = [ordered]@{
-            passed = $passedVhdIds.Count
-            required = $ExpectedVhdScenarioIds.Count
-            incomplete_ids = $incompleteVhdIds
-            incomplete_reasons = $Script:VhdEvidenceReasons
-        }
-        external_gates = [ordered]@{
-            manifest_path = $externalManifestPath
-            passed = $passedExternalIds.Count
-            required = $ExpectedExternalGateIds.Count
-            incomplete_ids = $incompleteExternalIds
-        }
-    }
-
-    $json = $summary | ConvertTo-Json -Depth 8
-    if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
-        $resolvedOutputPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) {
-            $OutputPath
-        }
-        else {
-            Join-Path $projectRoot $OutputPath
-        }
-        $parent = Split-Path -Parent $resolvedOutputPath
-        if (-not [string]::IsNullOrWhiteSpace($parent)) {
-            New-Item -ItemType Directory -Path $parent -Force | Out-Null
-        }
-        $json | Set-Content -LiteralPath $resolvedOutputPath -Encoding UTF8
-    }
-
-    if (-not $Quiet) {
-        Write-Host "Partition Manager certification claim level: $claimLevel"
-        Write-Output $json
+    $reasons = @(Test-PmRowEvidence -Spec $Spec -RowDir $rowDir -CurrentCodeDigest $CodeDigest)
+    $report = Get-Content -LiteralPath (Join-Path $rowDir 'report.json') -Raw | ConvertFrom-Json
+    return [ordered]@{
+        id = "$($Spec.id)"
+        name = "$($Spec.name)"
+        accepted = ($reasons.Count -eq 0)
+        failed = ("$($report.status)" -ceq 'Failed')
+        physical_claim = $physicalClaim
+        reasons = @($reasons)
+        ran_on = (Get-PmRanOn -RowDir $rowDir)
     }
 }
-finally {
-    Pop-Location
+
+$vhdRows = @($matrix.vhd_scenarios | ForEach-Object { Get-RowVerdict -Spec $_ })
+$externalRows = @($matrix.external_gates | ForEach-Object { Get-RowVerdict -Spec $_ })
+$allRows = @($vhdRows + $externalRows)
+$vhdIncomplete = @($vhdRows | Where-Object { -not $_.accepted } | ForEach-Object { $_.id })
+$externalIncomplete = @($externalRows | Where-Object { -not $_.accepted } | ForEach-Object { $_.id })
+$failedIds = @($allRows | Where-Object { $_.failed } | ForEach-Object { $_.id })
+$virtualWhereItMatters = @($allRows | Where-Object { $_.accepted -and $_.physical_claim -and "$($_.ran_on.class)" -cne 'physical' } | ForEach-Object { $_.id })
+
+$claimLevel = if ($failedIds.Count -gt 0) { 'FailedEvidence' }
+elseif ($vhdIncomplete.Count -gt 0) { 'CodeCompleteOnly' }
+elseif ($externalIncomplete.Count -gt 0) { 'VhdDataDiskCertified' }
+elseif ($virtualWhereItMatters.Count -gt 0) { 'VirtualMachinesValidated' }
+else { 'NamedDevicesValidated' }
+
+$incompleteReasons = [ordered]@{}
+foreach ($row in @($allRows | Where-Object { -not $_.accepted })) { $incompleteReasons[$row.id] = @($row.reasons) }
+
+$version = (Get-Content -LiteralPath (Join-Path $projectRoot 'VERSION') -Raw).Trim()
+$appleMatrix = Get-Content -LiteralPath (Join-Path $projectRoot 'certification\APPLE_FILESYSTEM_CAPABILITY_MATRIX.json') -Raw | ConvertFrom-Json
+
+$summary = [ordered]@{
+    tool = 'partition-manager-certification-status'
+    schema_version = 2
+    generated_utc = (Get-Date).ToUniversalTime().ToString('o')
+    claim_level = $claimLevel
+    code_digest = $CodeDigest
+    evidence_root = "$EvidenceRoot".Replace('\', '/')
+    evidence_commit = if ($null -ne $index) { "$($index.code_commit)" } else { '' }
+    evidence_completed_utc = if ($null -ne $index) { "$($index.completed_utc)" } else { '' }
+    vhd_data_disk = [ordered]@{ passed = $vhdRows.Count - $vhdIncomplete.Count; required = $vhdRows.Count; incomplete_ids = @($vhdIncomplete) }
+    external_gates = [ordered]@{ passed = $externalRows.Count - $externalIncomplete.Count; required = $externalRows.Count; incomplete_ids = @($externalIncomplete) }
+    failed_ids = @($failedIds)
+    virtual_where_a_device_matters = @($virtualWhereItMatters)
+    incomplete_reasons = $incompleteReasons
+    rows = @($allRows | ForEach-Object { [ordered]@{ id = $_.id; accepted = $_.accepted; ran_on = $_.ran_on } })
+    site_wording = (Get-PmSiteWording -ClaimLevel $claimLevel -Version $version -Rows $allRows -VhdRowCount $vhdRows.Count -AppleMatrix $appleMatrix)
+}
+
+$json = $summary | ConvertTo-Json -Depth 12
+if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+    $resolved = Resolve-StatusPath -Path $OutputPath
+    $parent = Split-Path -Parent $resolved
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    [IO.File]::WriteAllText($resolved, $json)
+}
+if (-not $Quiet) {
+    Write-Host "Partition Manager certification claim level: $claimLevel"
+    Write-Output $json
 }
