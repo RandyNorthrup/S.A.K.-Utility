@@ -8,6 +8,8 @@
 #include "sak/style_constants.h"
 
 #include <QAbstractItemDelegate>
+#include <QAccessible>
+#include <QAccessibleActionInterface>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -89,6 +91,7 @@ private Q_SLOTS:
     void diskMapHighlightsOnlySelectedPartition();
     void diskMapHighlightsSelectedDiskRow();
     void diskMapContextMenuSelectsMatchingTargets();
+    void actionsReturnBeforeTheirDialogsOpen();
     void contextMenuOmitsRibbonAndQueueControls();
     void diskMapSegmentsSelectMatchingTableRows();
     void redoButtonEnablesOnlyAfterUndo();
@@ -381,6 +384,41 @@ void closeNextPopup() {
             popup->close();
         }
     });
+}
+
+/// Presses a Partition Manager action: it queues what it does, so this runs that as well.
+void pressAction(QAbstractButton* button) {
+    button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+}
+
+/// Whether @p press opened a dialog, and whether it did so before the press returned.
+struct PressOutcome {
+    bool dialog_opened{false};
+    bool opened_inside_press{false};
+};
+
+template <typename Press>
+PressOutcome watchPressForDialog(Press press) {
+    PressOutcome outcome;
+    bool press_returned = false;
+    QTimer watcher;
+    watcher.setInterval(5);
+    QObject::connect(&watcher, &QTimer::timeout, &watcher, [&outcome, &press_returned]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+            return;
+        }
+        outcome.dialog_opened = true;
+        outcome.opened_inside_press = !press_returned;
+        dialog->reject();
+    });
+    watcher.start();
+    press();
+    press_returned = true;
+    constexpr int kDialogBoundMs = 15'000;
+    (void)QTest::qWaitFor([&outcome]() { return outcome.dialog_opened; }, kDialogBoundMs);
+    return outcome;
 }
 
 void sendContextMenu(QWidget* target) {
@@ -937,7 +975,7 @@ void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
     });
     auto* inspect = findToolButtonByName(panel, QStringLiteral("Inspect Non-Windows File System"));
     QVERIFY2(inspect != nullptr, "Inspect Non-Windows File System action should exist");
-    inspect->click();
+    pressAction(inspect);
     QVERIFY(inspected);
 }
 
@@ -1000,7 +1038,7 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFindi
         inspected = true;
         dialog->reject();
     });
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 }
 
@@ -1025,7 +1063,7 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     });
     auto* propertiesButton = findToolButtonByName(panel, QStringLiteral("Properties"));
     QVERIFY2(propertiesButton != nullptr, "Properties action should exist");
-    propertiesButton->click();
+    pressAction(propertiesButton);
     QVERIFY(propertiesInspected);
 
     bool inspectInspected = false;
@@ -1048,7 +1086,7 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     auto* inspectButton = findToolButtonByName(panel,
                                                QStringLiteral("Inspect Non-Windows File System"));
     QVERIFY2(inspectButton != nullptr, "Inspect Non-Windows File System action should exist");
-    inspectButton->click();
+    pressAction(inspectButton);
     QVERIFY(inspectInspected);
 }
 
@@ -1092,7 +1130,7 @@ void queueExtFormatAndVerify() {
     });
     auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
     QVERIFY2(format != nullptr, "Format action should exist");
-    format->click();
+    pressAction(format);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
@@ -1121,7 +1159,7 @@ void queueLinuxSwapFormatAndVerify() {
     });
     auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
     QVERIFY2(format != nullptr, "Format action should exist");
-    format->click();
+    pressAction(format);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
@@ -1146,7 +1184,7 @@ void queueApfsFormatAndVerify() {
     });
     auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
     QVERIFY2(format != nullptr, "Format action should exist");
-    format->click();
+    pressAction(format);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
@@ -1184,7 +1222,7 @@ void queueExtRepairAndVerify() {
     });
     auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
-    check->click();
+    pressAction(check);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
@@ -1229,7 +1267,7 @@ void queueHfsRepairAndVerify() {
     });
     auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
-    check->click();
+    pressAction(check);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
@@ -1280,7 +1318,7 @@ void queueGeneratedApfsRepairAndVerify() {
     });
     auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
-    check->click();
+    pressAction(check);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
@@ -1335,7 +1373,7 @@ void queueApfsVolumeLabelChangeAndVerify() {
         handled = true;
         dialog->accept();
     });
-    changeLabel->click();
+    pressAction(changeLabel);
     QVERIFY(handled);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
@@ -1392,7 +1430,7 @@ void queueApfsContainerSnapshotAndVerify() {
         inspected = true;
         dialog->accept();
     });
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Snapshot Create - Disk 0 Partition 1"));
@@ -1430,7 +1468,7 @@ void queueExtResizeAndVerify(bool grow) {
     });
     auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
     QVERIFY2(resize != nullptr, "Resize action should exist");
-    resize->click();
+    pressAction(resize);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition - Disk 0 Partition 1"));
 }
@@ -1463,7 +1501,7 @@ void queueUnallocatedAllocateAndVerifyResize() {
     });
     auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition - Disk 0 Partition 1"));
 }
@@ -1502,7 +1540,7 @@ void queueUnallocatedAllocateAndVerifyMove() {
     });
     auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Move Partition - Disk 0 Partition 2"));
 }
@@ -1574,7 +1612,7 @@ void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
         inspected = true;
         clickEnabledDialogAccept(dialog);
     });
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, action.queued_text);
 }
@@ -3033,6 +3071,76 @@ void PartitionManagerPanelTests::migrationWizardQueuesItsPlanAndTheChoice() {
     }
 }
 
+// Qt's accessibility press on a tool button or menu item runs what it does inside the UI Automation
+// call. A modal dialog opened there holds that call and every later one until it closes, so a
+// screen reader cannot read the dialog it has just opened. In the VM, reading the migration wizard
+// timed out every time it was opened that way.
+void PartitionManagerPanelTests::actionsReturnBeforeTheirDialogsOpen() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(100 * kMigrationGiB));
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+
+    const auto accessiblePress = [](QToolButton* button) {
+        QAccessibleInterface* face = QAccessible::queryAccessibleInterface(button);
+        QVERIFY(face != nullptr && face->actionInterface() != nullptr);
+        face->actionInterface()->doAction(QAccessibleActionInterface::pressAction());
+    };
+
+    auto* sidebar = findToolButtonByName(&panel, QStringLiteral("Migrate OS to SSD/HDD Wizard"));
+    QVERIFY(sidebar != nullptr);
+    QTRY_VERIFY(sidebar->isEnabled());
+    const PressOutcome from_sidebar = watchPressForDialog([&]() { accessiblePress(sidebar); });
+    QVERIFY2(from_sidebar.dialog_opened, "the sidebar action opened no wizard");
+    QVERIFY2(!from_sidebar.opened_inside_press, "the wizard ran inside the sidebar button's press");
+
+    auto* tile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY(tile != nullptr);
+    const PressOutcome from_menu = watchPressForDialog([&]() {
+        QTimer::singleShot(0, []() {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            QVERIFY(menu != nullptr);
+            const auto actions = menu->actions();
+            for (QAction* action : actions) {
+                if (action->text() == QStringLiteral("Migrate OS to SSD/HDD Wizard")) {
+                    action->trigger();
+                    break;
+                }
+            }
+            menu->close();
+        });
+        const QPoint point = tile->rect().center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, tile->mapToGlobal(point));
+        QApplication::sendEvent(tile, &event);
+    });
+    QVERIFY2(from_menu.dialog_opened, "the menu item opened no wizard");
+    QVERIFY2(!from_menu.opened_inside_press, "the wizard ran inside the menu item's press");
+
+    // Something in the queue, so Apply has a dialog to open.
+    const ScopedModalInspection queueIt([]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Confirm target disk overwrite"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        wizard->accept();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onMigrateOs", Qt::DirectConnection));
+    QCOMPARE(panel.testQueuedOperationsForReview().size(), 1);
+    auto* apply = findToolButtonByName(&panel, QStringLiteral("Apply"));
+    QVERIFY(apply != nullptr);
+    QTRY_VERIFY(apply->isEnabled());
+    const PressOutcome from_apply = watchPressForDialog([&]() { accessiblePress(apply); });
+    QVERIFY2(from_apply.dialog_opened, "Apply opened no dialog");
+    QVERIFY2(!from_apply.opened_inside_press, "Apply's dialog ran inside its press");
+}
+
 void PartitionManagerPanelTests::migrationWizardShowsWhyATargetIsRefused() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(migrationInventoryFixture(30 * kMigrationGiB));
@@ -3334,7 +3442,7 @@ void PartitionManagerPanelTests::readOnlyCheckButtonSaysItRunsNow() {
         }
         dialog->reject();
     });
-    check->click();
+    pressAction(check);
     QCOMPARE(read_only_text, QStringLiteral("Check Now"));
     QCOMPARE(repair_text, QStringLiteral("Add to Queue"));
 }
@@ -3633,7 +3741,7 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
 
     auto* propertiesButton = findToolButtonByName(&panel, QStringLiteral("Properties"));
     QVERIFY2(propertiesButton != nullptr, "Properties action should exist");
-    propertiesButton->click();
+    pressAction(propertiesButton);
     QVERIFY(inspected);
 }
 
@@ -3736,7 +3844,7 @@ void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() 
         handled = true;
         dialog->accept();
     });
-    changeLabel->click();
+    pressAction(changeLabel);
     QVERIFY(handled);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
@@ -3811,7 +3919,7 @@ void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
         dialog->reject();
     });
 
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 }
 
@@ -3866,7 +3974,7 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
         dialog->reject();
     });
 
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 }
 
@@ -3921,7 +4029,7 @@ void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {
         dialog->reject();
     });
 
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 }
 
@@ -3984,7 +4092,7 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
         auto* button = findToolButtonByName(&panel, name);
         QVERIFY2(button != nullptr, qPrintable(name));
         QTRY_VERIFY2(button->isEnabled(), qPrintable(name));
-        button->click();
+        pressAction(button);
         ++expected_runs;
         QTRY_COMPARE(executionCount(), expected_runs);
         QTRY_COMPARE(results_shown, expected_runs);
@@ -4156,7 +4264,7 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
         add_to_queue->click();
     });
 
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 
     auto* queue = panel.findChild<QListWidget*>();
@@ -4212,7 +4320,7 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
         clickEnabledDialogAccept(dialog);
     });
 
-    button->click();
+    pressAction(button);
     QVERIFY(inspected);
 
     auto* queue = panel.findChild<QListWidget*>();
@@ -4254,7 +4362,7 @@ void PartitionManagerPanelTests::destructiveBackupIsRevalidatedAfterModal() {
 
     auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
-    button->click();
+    pressAction(button);
     QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
 }
 

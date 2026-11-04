@@ -1359,7 +1359,8 @@ QAction* addContextMenuAction(QMenu& menu,
         action->setToolTip(spec.disabled_reason);
         action->setStatusTip(spec.disabled_reason);
     }
-    QObject::connect(action, &QAction::triggered, receiver, callback);
+    // Queued for the reason createConfiguredActionLink gives.
+    QObject::connect(action, &QAction::triggered, receiver, callback, Qt::QueuedConnection);
     return action;
 }
 
@@ -8817,7 +8818,10 @@ QToolButton* PartitionManagerPanel::createConfiguredActionLink(QWidget* parent,
                                                                const ActionLinkSpec& spec) {
     auto* button = createActionLink(parent, spec.text, spec.icon_path, spec.tooltip);
     if (spec.slot != nullptr) {
-        connect(button, &QToolButton::clicked, this, spec.slot);
+        // Queued: Qt's accessibility press on a tool button calls click() inside the UI Automation
+        // call, and a modal dialog opened there holds that call and every later one until it
+        // closes, so a screen reader could not read the dialog it had just opened.
+        connect(button, &QToolButton::clicked, this, spec.slot, Qt::QueuedConnection);
     }
     button->setProperty(kActionTargetKindsProperty, spec.options.target_kinds);
     if (spec.options.requires_drive_letter) {
@@ -9376,7 +9380,12 @@ void PartitionManagerPanel::connectController() {
             &QAbstractButton::clicked,
             this,
             &PartitionManagerPanel::refreshInventory);
-    connect(m_apply_button, &QAbstractButton::clicked, this, &PartitionManagerPanel::applyQueue);
+    // Queued for the reason createConfiguredActionLink gives: Apply opens its review dialog.
+    connect(m_apply_button,
+            &QAbstractButton::clicked,
+            this,
+            &PartitionManagerPanel::applyQueue,
+            Qt::QueuedConnection);
     connect(m_cancel_button, &QAbstractButton::clicked, this, &PartitionManagerPanel::cancelApply);
     connect(m_dry_run_button, &QAbstractButton::clicked, this, &PartitionManagerPanel::dryRunQueue);
     connect(
