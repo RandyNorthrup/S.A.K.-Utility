@@ -283,11 +283,11 @@ jobs:
           'test_elevated_helper_connection is not in this shard'
           exit 0
         }
-        $output = @(& build/Release/test_elevated_helper_connection.exe -o '-,txt' 2>&1 | ForEach-Object { "$_" })
-        $testExit = $LASTEXITCODE
-        $output
-        if ($testExit -ne 0) { exit $testExit }
-        if (-not ($output -match '^PASS\s+: ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe\(\)')) {
+        $log = Join-Path $env:RUNNER_TEMP 'test_elevated_helper_connection.txt'
+        $test = Start-Process -FilePath build/Release/test_elevated_helper_connection.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^PASS\s+: ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe\(\)')) {
           throw 'test_elevated_helper_connection did not run: a skip exits 0 too'
         }
 
