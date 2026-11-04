@@ -11,10 +11,16 @@
 ///
 /// Each end checks which program is on the other: the helper accepts only a client named
 /// sak_utility.exe in its own folder. So this test copies itself there under that name, beside a
-/// copy of the helper, and runs that copy. It asks for elevation, so it runs where elevation asks
-/// nobody anything (a CI runner) and skips everywhere else.
+/// copy of the helper, and runs that copy.
+///
+/// It starts the helper through runas, so it runs only in an elevated process, where that asks
+/// nobody anything. Under a standard-user token runas needs a consent prompt: on a CI runner nobody
+/// can answer one, and it waits two minutes and reads as declined. So ctest, which CI runs under a
+/// standard-user token, skips this, and an elevated CI step of its own runs it and fails if it
+/// skipped there. Everywhere else it skips before asking for anything.
 
 #include "sak/elevation_broker.h"
+#include "sak/elevation_manager.h"
 
 #include "../support/test_hardware_guard.h"
 
@@ -69,6 +75,9 @@ private Q_SLOTS:
 
 void ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe() {
     SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
+    if (!sak::ElevationManager::isElevated()) {
+        QSKIP("Starting the helper from a standard-user token needs a consent prompt");
+    }
     const QDir build(QCoreApplication::applicationDirPath());
     const QString helper = build.filePath(QStringLiteral("sak_elevated_helper.exe"));
     QVERIFY2(QFile::exists(helper), qPrintable(helper));

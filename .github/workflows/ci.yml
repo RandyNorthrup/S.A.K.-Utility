@@ -270,6 +270,27 @@ jobs:
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
 
+    # test_elevated_helper_connection starts the real helper through runas. Under the standard-user
+    # token above that needs a consent prompt nobody on a runner can answer, so ctest skips it
+    # (tests/skip_baseline.txt) and this step, which keeps the runner's elevated token, runs it. A
+    # skip exits 0 too, so the step also reads the test's own PASS line. One shard holds the test.
+    - name: Real helper over a real pipe
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_elevated_helper_connection') {
+          'test_elevated_helper_connection is not in this shard'
+          exit 0
+        }
+        $output = @(& build/Release/test_elevated_helper_connection.exe -o '-,txt' 2>&1 | ForEach-Object { "$_" })
+        $testExit = $LASTEXITCODE
+        $output
+        if ($testExit -ne 0) { exit $testExit }
+        if (-not ($output -match '^PASS\s+: ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe\(\)')) {
+          throw 'test_elevated_helper_connection did not run: a skip exits 0 too'
+        }
+
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
     - name: Record this shard's test registration

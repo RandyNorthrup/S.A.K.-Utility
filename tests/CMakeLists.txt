@@ -460,8 +460,8 @@ add_test(NAME test_partition_os_migration COMMAND test_partition_os_migration
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_partition_os_migration")
 
-# test_elevated_helper_connection - the real helper over a real pipe. Asks for elevation, so it runs
-# where that asks nobody anything (CI) and skips everywhere else.
+# test_elevated_helper_connection - the real helper over a real pipe. Runs only in an elevated
+# process, which is an elevated CI step of its own (ci.yml), and skips everywhere else.
 add_executable(test_elevated_helper_connection
     unit/test_elevated_helper_connection.cpp
 )

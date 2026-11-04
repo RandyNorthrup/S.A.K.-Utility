@@ -11,6 +11,7 @@
 tests/support/test_hardware_guard.h = 1 | a test that reaches real drives or the application runs only where SAK_TEST_ALLOW_REAL_HARDWARE=1, which is CI
 tests/integration/test_offline_package_builder.cpp = 1 | initial opt-out for live Chocolatey service/CDN integration
 tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 4 | file-symlink privilege and destructive certification
+tests/unit/test_elevated_helper_connection.cpp = 1 | standard-user token: starting the helper needs a consent prompt nobody can answer; an elevated CI step runs it
 tests/unit/test_file_management_file_system.cpp = 2 | external raw APFS/HFS certification images
 tests/unit/test_linux_iso_downloader.cpp = 1 | initial opt-out for live Linux ISO network tests
 tests/unit/test_openai_responses_client.cpp = 2 | initial opt-out for paid live OpenAI requests

@@ -35,11 +35,15 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::li
 # ---------------------------------------------------------------------------
 # B. HOST PRIVILEGE OR PLATFORM BEHAVIOUR the test cannot manufacture.
 #
+# test_elevated_helper_connection skips only under ctest's standard-user token. The elevated CI step
+# "Real helper over a real pipe" runs it, and fails if it skipped there.
+#
 # The precondition is a property of the machine, not of the code. Each of these
 # asserts something that is only observable in a state the test is not allowed
 # to create for itself.
 # ---------------------------------------------------------------------------
 test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
+test_elevated_helper_connection::ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe = Starting the helper from a standard-user token needs a consent prompt, and a runner has nobody to answer it. An elevated CI step runs this test and fails if it skipped.
 
 # ---------------------------------------------------------------------------
 # C. LIVE THIRD-PARTY NETWORK - costs money or depends on someone else's uptime.

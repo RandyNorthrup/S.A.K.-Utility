@@ -1028,9 +1028,12 @@ after Finish ("Payload target disk is system, boot, read-only, dynamic, or Stora
 it, but the wizard could say so sooner.
 
 **CI now connects the real helper.** `test_elevated_helper_connection` copies itself beside a copy of the helper, as
-`sak_utility.exe`, starts the helper the way the application does, and runs a harmless task over the real pipe. It asks
-for elevation, so it runs on the CI runner and skips everywhere else. In the VM it passed, and with the August path
-comparison put back it went RED with broker error 411.
+`sak_utility.exe`, starts the helper the way the application does, and runs a harmless task over the real pipe. In the VM
+it passed, and with the August path comparison put back it went RED with broker error 411. Its first T2 failed: CI's
+suite runs under a standard-user token, where `runas` needs a consent prompt that nobody on a runner can answer, and it
+waited two minutes and read as declined (broker error 409). So ctest skips it there and an elevated CI step of its own runs
+it, and fails if it skipped. That step proves an elevated client and the helper accept each other on the runner. A
+standard-user client getting past a real consent has only the VM runs as proof.
 
 **Cancel.** A real Cancel through the helper stopped the script at once. The two snapshots were listed for 361 more
 seconds and then gone, with nothing cleaning them up: they belong to the process, and Windows releases them when it
