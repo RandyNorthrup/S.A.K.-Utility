@@ -158,9 +158,12 @@ function Get-ValidatedState {
     $hasVhdGaps = @($vhd.incomplete_ids).Count -gt 0
     $hasExternalGaps = @($external.incomplete_ids).Count -gt 0
     $level = [string]$Status.claim_level
-    $everyRow = $level -ceq 'VirtualMachinesValidated' -or $level -ceq 'NamedDevicesValidated'
-    if (($everyRow -and ($hasVhdGaps -or $hasExternalGaps)) -or
-        ($level -ceq 'VhdDataDiskCertified' -and ($hasVhdGaps -or -not $hasExternalGaps)) -or
+    # A row that accepts only a physical device cannot be run on a VM, so its gap is no gap at the VM level.
+    $physicalOnly = @($externalRows | Where-Object { (@($_.ran_on.accepted) -join ',') -ceq 'physical' } | ForEach-Object { [string]$_.id })
+    $hasGapAVmCouldFill = @($external.incomplete_ids | Where-Object { $physicalOnly -cnotcontains $_ }).Count -gt 0
+    if (($level -ceq 'NamedDevicesValidated' -and ($hasVhdGaps -or $hasExternalGaps)) -or
+        ($level -ceq 'VirtualMachinesValidated' -and ($hasVhdGaps -or $hasGapAVmCouldFill)) -or
+        ($level -ceq 'VhdDataDiskCertified' -and ($hasVhdGaps -or -not $hasGapAVmCouldFill)) -or
         ($level -ceq 'CodeCompleteOnly' -and -not $hasVhdGaps)) {
         throw 'Certification status claim level contradicts its incomplete evidence sets'
     }
@@ -204,8 +207,8 @@ function Get-CaveatLines {
             'the one named below. That says those devices, and no others.')
     }
     if ($State.level -ceq 'VirtualMachinesValidated') {
-        return @('Every row passed on the selected evidence, and at least one row that needs a real device',
-            'ran on a virtual one. Nothing here is a statement about hardware.')
+        return @('Every row a VM can run passed on the selected evidence. At least one row that needs a real',
+            'device ran on a virtual one, or has not run. Nothing here is a statement about hardware.')
     }
     $reasons = @()
     if ($State.level -ceq 'FailedEvidence') { $reasons += 'evidence verification failed' }

@@ -46,7 +46,8 @@ $Script:Specs = [ordered]@{
     external_gates = @(
         (New-RowSpec -Id 'external.boot' -Accepted @('virtual_machine')),
         (New-RowSpec -Id 'external.ssd-secure-erase' -Accepted @('virtual_machine', 'physical') -PhysicalClaim $true -Requirement @{ media_type = @('SSD') }),
-        (New-RowSpec -Id 'external.hdd' -Accepted @('virtual_machine', 'physical') -PhysicalClaim $true -Requirement @{ media_type = @('HDD') })
+        (New-RowSpec -Id 'external.hdd' -Accepted @('virtual_machine', 'physical') -PhysicalClaim $true -Requirement @{ media_type = @('HDD') }),
+        (New-RowSpec -Id 'external.defrag' -Accepted @('physical') -PhysicalClaim $true -Requirement @{ media_type = @('HDD') })
     )
 }
 
@@ -139,7 +140,29 @@ try {
     Assert-That ($status.claim_level -ceq 'VirtualMachinesValidated') 'VM-only evidence is the VM level' $status.claim_level
     Assert-That ($status.claim_level -cnotmatch 'Hardware') 'VM-only evidence never reads as hardware'
     Assert-That ($status.site_wording -ceq "On the v$version code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Real SSD, NVMe, USB and hard-disk behaviour was not tested. $apple Back up before changing a disk.") 'The VM words' $status.site_wording
-    Assert-That (@($status.virtual_where_a_device_matters).Count -eq 2) 'It lists which rows need a real device'
+    Assert-That (@($status.virtual_where_a_device_matters).Count -eq 3) 'It lists which rows need a real device'
+    Assert-That (@($status.external_gates.incomplete_ids).Count -eq 1 -and @($status.external_gates.incomplete_ids)[0] -ceq 'external.defrag') 'A row only a device can run is still listed as not run' "$($status.external_gates.incomplete_ids)"
+
+    # That row on a virtual disk is refused, and does not hold back or raise the level.
+    $defragInVm = Join-Path $Script:Root 'defrag-in-vm'
+    Write-Row -RunDir $defragInVm -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $defragInVm -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $defragInVm -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $defragInVm -Id 'external.hdd' -Media $virtualHdd
+    Write-Row -RunDir $defragInVm -Id 'external.defrag' -Media $virtualHdd
+    Write-Index -RunDir $defragInVm -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd', 'external.defrag')
+    $status = Get-Status -RunDir $defragInVm
+    Assert-That ($status.claim_level -ceq 'VirtualMachinesValidated') 'A device-only row on a VM stays the VM level' $status.claim_level
+    Assert-That (@($status.external_gates.incomplete_ids) -ccontains 'external.defrag') 'and it is not accepted'
+
+    # A row a VM could run, missing, is not the VM level, whatever the device-only row did.
+    $vmGap = Join-Path $Script:Root 'vm-gap'
+    Write-Row -RunDir $vmGap -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $vmGap -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $vmGap -Id 'external.hdd' -Media $virtualHdd
+    Write-Row -RunDir $vmGap -Id 'external.defrag' -Media $seagate
+    Write-Index -RunDir $vmGap -Ids @('vhd.a', 'external.ssd-secure-erase', 'external.hdd', 'external.defrag')
+    Assert-That ((Get-Status -RunDir $vmGap).claim_level -ceq 'VhdDataDiskCertified') 'A row a VM could run, missing, stays the VHD level'
 
     # One device of the two: still the VM level, with that device named and no other.
     $some = Join-Path $Script:Root 'some'
@@ -160,7 +183,8 @@ try {
     Write-Row -RunDir $all -Id 'external.boot' -Media $virtualMachine
     Write-Row -RunDir $all -Id 'external.ssd-secure-erase' -Media $nvme
     Write-Row -RunDir $all -Id 'external.hdd' -Media $seagate
-    Write-Index -RunDir $all -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd')
+    Write-Row -RunDir $all -Id 'external.defrag' -Media $seagate
+    Write-Index -RunDir $all -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd', 'external.defrag')
     $status = Get-Status -RunDir $all
     Assert-That ($status.claim_level -ceq 'NamedDevicesValidated') 'Each device row on its device is the named level' $status.claim_level
     Assert-That ($status.site_wording -ceq "On the v$version code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Some operations were also tested on one NS-PCNVMEHDE(-C) 256 GB USB SSD and one Seagate Expansion Desk 8 TB USB hard drive. Internal SATA and NVMe drives were not tested, and results on other devices may differ. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize. $apple Back up before changing a disk.") 'The device words' $status.site_wording
@@ -184,7 +208,8 @@ try {
     Write-Row -RunDir $bothInside -Id 'external.boot' -Media $virtualMachine
     Write-Row -RunDir $bothInside -Id 'external.ssd-secure-erase' -Media $internalSsd
     Write-Row -RunDir $bothInside -Id 'external.hdd' -Media $internalHdd
-    Write-Index -RunDir $bothInside -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd')
+    Write-Row -RunDir $bothInside -Id 'external.defrag' -Media $internalHdd
+    Write-Index -RunDir $bothInside -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd', 'external.defrag')
     $status = Get-Status -RunDir $bothInside
     Assert-That ($status.site_wording -cnotmatch 'were not tested') 'With both tested, it does not say either was not' $status.site_wording
     Assert-That ($status.site_wording -cmatch 'Results on other devices may differ\.') 'It still says other devices may differ' $status.site_wording
@@ -240,6 +265,54 @@ try {
     $status = Get-Status -RunDir $changed
     Assert-That ($status.claim_level -ceq 'CodeCompleteOnly') 'A report changed after selection does not count' $status.claim_level
     Assert-That ("$($status.incomplete_reasons.'vhd.a')" -match 'changed after this run was selected') 'It says why'
+
+    # Selecting a run: what it takes, and what it refuses.
+    function Invoke-Select {
+        param([string]$RunDir, [string[]]$DenyNames = @())
+        $target = Join-Path $Script:Root "selected-$([guid]::NewGuid().ToString('N'))"
+        try {
+            & (Join-Path $PSScriptRoot 'select_partition_manager_evidence.ps1') -RunDir $RunDir -OutputRoot $target -CodeDigest $Script:Digest -MatrixPath $Script:MatrixPath -DenyNames $DenyNames | Out-Null
+            return [pscustomobject]@{ error = ''; root = $target }
+        } catch { return [pscustomobject]@{ error = "$($_.Exception.Message)"; root = $target } }
+    }
+    $noDevice = Join-Path $Script:Root 'select-no-device'
+    Write-Row -RunDir $noDevice -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $noDevice -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $noDevice -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $noDevice -Id 'external.hdd' -Media $virtualHdd
+    $picked = Invoke-Select -RunDir $noDevice
+    Assert-That ($picked.error -ceq '') 'A run with no device can be selected, without the row only a device can run' $picked.error
+    if ($picked.error -ceq '') {
+        $status = Get-Status -RunDir $picked.root
+        Assert-That ($status.claim_level -ceq 'VirtualMachinesValidated') 'and selecting it gives the VM level' $status.claim_level
+        Assert-That (Test-Path -LiteralPath (Join-Path $picked.root 'vhd.a\report.json')) 'and it copies the rows'
+        $index = Get-Content -LiteralPath (Join-Path $picked.root 'index.json') -Raw | ConvertFrom-Json
+        Assert-That (@($index.rows | Where-Object { $_.id -ceq 'external.defrag' }).Count -eq 0) 'and the index does not name that row'
+    }
+    $missing = Join-Path $Script:Root 'select-missing'
+    Write-Row -RunDir $missing -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $missing -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $missing -Id 'external.hdd' -Media $virtualHdd
+    Assert-That ((Invoke-Select -RunDir $missing).error -match 'has no evidence for external\.boot') 'A row a VM could run, missing, stops selection'
+
+    $doesNotHold = Join-Path $Script:Root 'select-does-not-hold'
+    Write-Row -RunDir $doesNotHold -Id 'vhd.a' -Media $virtualDisk -Worked $false
+    Write-Row -RunDir $doesNotHold -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $doesNotHold -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $doesNotHold -Id 'external.hdd' -Media $virtualHdd
+    Assert-That ((Invoke-Select -RunDir $doesNotHold).error -match 'vhd\.a does not hold') 'A row that does not hold stops selection'
+
+    Assert-That ((Invoke-Select -RunDir $noDevice -DenyNames @('run')).error -match 'holds a private name') 'A private name in the evidence stops selection'
+    $otherCommit = Join-Path $Script:Root 'select-other-commit'
+    Write-Row -RunDir $otherCommit -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $otherCommit -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $otherCommit -Id 'external.ssd-secure-erase' -Media $virtualMachine
+    Write-Row -RunDir $otherCommit -Id 'external.hdd' -Media $virtualHdd
+    $saved = $Script:Commit
+    $Script:Commit = '5' * 40
+    Write-Row -RunDir $otherCommit -Id 'external.boot' -Media $virtualMachine
+    $Script:Commit = $saved
+    Assert-That ((Invoke-Select -RunDir $otherCommit).error -match 'more than one commit') 'Rows from two commits stop selection'
 
     $unknownIndex = Join-Path $Script:Root 'unknown'
     Write-Row -RunDir $unknownIndex -Id 'vhd.a' -Media $virtualDisk

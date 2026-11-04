@@ -8,8 +8,8 @@
     run as current, and regenerates the state block. It writes evidence and that block, and commits
     nothing: docs and evidence may change after a freeze, code may not.
 
-    Without -PinFile the device rows run on virtual disks, and the claim cannot rise past
-    VirtualMachinesValidated. With -PinFile they run on the pinned devices, and only their rows
+    Without -PinFile the device rows run on virtual disks, except the one only a real hard drive can
+    run, and the claim cannot rise past VirtualMachinesValidated. With -PinFile they run on the pinned devices, and only their rows
     touch those devices. Make the pin file with the rig's WritePins just before the run, from the
     machine that holds them. The steps are in docs/PARTITION_MANAGER_CERTIFICATION.md.
 
@@ -31,6 +31,9 @@
 
 .PARAMETER RunName
     A name for this run's evidence folder. It defaults to the commit.
+
+.PARAMETER PlanOnly
+    Prints what would run on what, and stops before it reads the tree or reaches any machine.
 #>
 
 [CmdletBinding()]
@@ -40,7 +43,8 @@ param(
     [string]$PinFile = '',
     [string]$PcFile = '',
     [string]$RunName = '',
-    [string]$WorkDir = 'temp\partition-manager-final'
+    [string]$WorkDir = 'temp\partition-manager-final',
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,6 +61,25 @@ function Resolve-FinalPath {
 function Say {
     param([string]$Text)
     "=== [$(Get-Date -Format HH:mm:ss)] $Text"
+}
+
+if ($PcFile -and -not $PinFile) { throw '-PcFile needs -PinFile: it says where the pinned devices are' }
+
+# The data rows the owner named for the hard drive run there. The rest need a virtual disk or a VDI.
+$deviceDataRows = @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number')
+$plan = @(@{ group = 'vhd' })
+if ($PinFile) {
+    $plan += @{ group = 'data'; rows = @('external.file-level-data-recovery', 'external.bitlocker', 'external.bitlocker-mutation', 'external.primary-logical-conversion', 'external.dynamic-to-basic') }
+    $plan += @(@{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-device'; device = $true }, @{ group = 'hdd-device'; device = $true }, @{ group = 'data-device'; device = $true; rows = $deviceDataRows })
+} else {
+    $plan += @(@{ group = 'data' }, @{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-virtual' }, @{ group = 'usb-virtual' })
+}
+if ($PlanOnly) {
+    foreach ($step in $plan) {
+        $where = if ($step.device -and $PcFile) { 'physical PC' } else { 'VM rig' }
+        "$($step.group) on $where$(if ($step.device) { ', pinned' }): $(if ($step.rows) { $step.rows -join ',' } else { 'every row' })"
+    }
+    return
 }
 
 $code = (& python (Join-Path $PSScriptRoot 'partition_manager_code_digest.py') --root $ProjectRoot) | ConvertFrom-Json
@@ -81,7 +104,6 @@ if (-not $client.Contains("$($code.code_digest)")) {
 & pwsh -NoProfile -File $Rig -Action Deploy -CredFile $credentials -StageDir $stage
 if ($LASTEXITCODE -ne 0) { throw 'Deploying to the VM failed' }
 
-if ($PcFile -and -not $PinFile) { throw '-PcFile needs -PinFile: it says where the pinned devices are' }
 $pc = ''
 $deny = @()
 if ($PcFile) {
@@ -93,17 +115,10 @@ if ($PcFile) {
     $deny = @((Get-Content -LiteralPath $pc -Raw | ConvertFrom-Json).deny_names | Where-Object { $_ })
 }
 
-# The data rows the owner named for the hard drive run there. The rest need a virtual disk or a VDI.
-$deviceDataRows = @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number')
-$plan = @(@{ group = 'vhd' })
+$pins = ''
 if ($PinFile) {
     $pins = Resolve-FinalPath $PinFile
     if (-not (Test-Path -LiteralPath $pins)) { throw "No pin file at $pins" }
-    $plan += @{ group = 'data'; rows = @('external.file-level-data-recovery', 'external.bitlocker', 'external.bitlocker-mutation', 'external.primary-logical-conversion', 'external.dynamic-to-basic') }
-    $plan += @(@{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-device'; device = $true }, @{ group = 'hdd-device'; device = $true }, @{ group = 'data-device'; device = $true; rows = $deviceDataRows })
-} else {
-    $pins = ''
-    $plan += @(@{ group = 'data' }, @{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-virtual' }, @{ group = 'hdd-virtual' }, @{ group = 'usb-virtual' })
 }
 
 $started = Get-Date

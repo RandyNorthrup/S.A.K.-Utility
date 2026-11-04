@@ -402,7 +402,7 @@ EXTERNAL_ROWS = [
     row(
         "external.hdd-defrag-execution",
         "Direct in-app HDD defrag execution proof",
-        [VIRTUAL_MACHINE, PHYSICAL],
+        [PHYSICAL],
         [step("defrag", "DefragVolume")],
         [
             check("windows_reports_a_hard_disk", "media_type", equals="HDD"),
@@ -410,7 +410,8 @@ EXTERNAL_ROWS = [
             *files_unchanged("files_survived", "files_before", "files_after"),
             *healthy("defragged", "health"),
         ],
-        "Fragmentation dropping on any given volume: Windows decides how much it moves.",
+        "Fragmentation dropping on any given volume: Windows decides how much it moves. Windows "
+        "reports a VirtualBox disk's media type as Unspecified, so this row runs only on a real hard drive.",
         physical_claim=True,
         physical_requirement={"media_type": ["HDD"]},
     ),

@@ -1196,7 +1196,6 @@
       "name": "Direct in-app HDD defrag execution proof",
       "ran_on": {
         "accepted": [
-          "virtual_machine",
           "physical"
         ],
         "physical_claim": true,
@@ -1251,7 +1250,7 @@
           "is_false": true
         }
       ],
-      "not_proved": "Fragmentation dropping on any given volume: Windows decides how much it moves."
+      "not_proved": "Fragmentation dropping on any given volume: Windows decides how much it moves. Windows reports a VirtualBox disk's media type as Unspecified, so this row runs only on a real hard drive."
     },
     {
       "id": "external.ssd-secure-erase",

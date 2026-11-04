@@ -107,7 +107,7 @@ try {
     $alone = Invoke-Script -Path $Script:Groups -Arguments @('-Group', 'vhd', '-EvidenceDir', (Join-Path $Script:Root 'ev'), '-PcFile', $pc)
     Assert-That ($alone.code -ne 0 -and $alone.text -match 'runs on the VM rig') 'A VM group stops on a physical PC' $alone.text
     Assert-That ($alone.calls -ceq '') 'and reaches nothing' $alone.calls
-    foreach ($group in 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'hdd-virtual', 'usb-virtual') {
+    foreach ($group in 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'usb-virtual') {
         $stopped = Invoke-Script -Path $Script:Groups -Arguments @('-Group', $group, '-EvidenceDir', (Join-Path $Script:Root 'ev'), '-PcFile', $pc)
         Assert-That ($stopped.code -ne 0 -and $stopped.text -match 'runs on the VM rig' -and $stopped.calls -ceq '') "The group $group stops on a physical PC" $stopped.text
     }
@@ -189,6 +189,30 @@ try {
     Assert-That ($none.code -ne 0 -and $none.text -match 'found 0') 'No matching disk stops it' $none.text
     $shape = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'WritePins', '-PcFile', $pc, '-PinFile', $pinPath, '-PinSpec', 'boot=Boot Drive|512110190592')
     Assert-That ($shape.code -ne 0 -and $shape.text -match 'A pin is role') 'A role that is not one stops it' $shape.text
+
+    # What the final run sends where. -PlanOnly reaches nothing.
+    $final = Join-Path $PSScriptRoot 'run_partition_manager_final_certification.ps1'
+    $onPc = Invoke-Script -Path $final -Arguments @('-ReleaseDir', 'x', '-PinFile', 'pins.json', '-PcFile', $pc, '-PlanOnly')
+    Assert-That ($onPc.code -eq 0 -and $onPc.calls -ceq '') 'The plan reaches nothing' $onPc.text
+    foreach ($group in 'ssd-device', 'hdd-device', 'data-device') {
+        Assert-That ($onPc.text -cmatch "(?m)^$group on physical PC, pinned") "$group runs on the physical PC" $onPc.text
+    }
+    foreach ($group in 'vhd', 'data', 'boot-uefi', 'boot-bios') {
+        Assert-That ($onPc.text -cmatch "(?m)^$group on VM rig:") "$group stays on the VM rig" $onPc.text
+    }
+    Assert-That ($onPc.text -cnotmatch 'virtual on') 'No virtual device group runs when devices are named' $onPc.text
+    $dataLine = @($onPc.text -split "`n" | Where-Object { $_ -cmatch '^data on' })[0]
+    Assert-That ($dataLine -cnotmatch 'allocate-free-space|partition-move|cluster-size-change|volume-serial-number') 'The rows for the hard drive do not also run in the VM' $dataLine
+    Assert-That ($dataLine -cmatch 'dynamic-to-basic' -and $dataLine -cmatch 'file-level-data-recovery') 'The other data rows stay in the VM' $dataLine
+    $deviceLine = @($onPc.text -split "`n" | Where-Object { $_ -cmatch '^data-device on' })[0]
+    Assert-That ($deviceLine -cmatch 'allocate-free-space' -and $deviceLine -cmatch 'partition-move' -and $deviceLine -cmatch 'cluster-size-change' -and $deviceLine -cmatch 'volume-serial-number') 'The rows for the hard drive run on it' $deviceLine
+    $noDevices = Invoke-Script -Path $final -Arguments @('-ReleaseDir', 'x', '-PlanOnly')
+    foreach ($group in 'ssd-virtual', 'usb-virtual') {
+        Assert-That ($noDevices.text -cmatch "(?m)^$group on VM rig:") "$group runs when no device is named" $noDevices.text
+    }
+    Assert-That ($noDevices.text -cnotmatch '-device on|physical PC') 'No device group runs when no device is named' $noDevices.text
+    $pcNoPins = Invoke-Script -Path $final -Arguments @('-ReleaseDir', 'x', '-PcFile', $pc, '-PlanOnly')
+    Assert-That ($pcNoPins.code -ne 0 -and $pcNoPins.text -match 'needs -PinFile') 'A PC with no pins stops the final run' $pcNoPins.text
 
     # The rows themselves stop on this machine, or on any that nobody named as disposable.
     . (Join-Path $PSScriptRoot 'partition_manager_readback.ps1')

@@ -13,9 +13,10 @@
     The levels, each saying what ran on what:
       FailedEvidence            a row in the selected run failed.
       CodeCompleteOnly          not every disposable-VHD row is accepted.
-      VhdDataDiskCertified      every disposable-VHD row, not every other row. Virtual disks in a VM.
-      VirtualMachinesValidated  every row, with at least one that needs a real device run on a
-                                virtual one. Nothing here may read as a statement about hardware.
+      VhdDataDiskCertified      every disposable-VHD row, not every row a VM can run. Virtual disks in a VM.
+      VirtualMachinesValidated  every row a VM can run, with at least one that needs a real device
+                                run on a virtual one, or not run because only a real device can. Nothing
+                                here may read as a statement about hardware.
       NamedDevicesValidated     every row, with each that needs a real device run on one, named.
                                 It says those devices, and no others.
 #>
@@ -92,11 +93,15 @@ $allRows = @($vhdRows + $externalRows)
 $vhdIncomplete = @($vhdRows | Where-Object { -not $_.accepted } | ForEach-Object { $_.id })
 $externalIncomplete = @($externalRows | Where-Object { -not $_.accepted } | ForEach-Object { $_.id })
 $failedIds = @($allRows | Where-Object { $_.failed } | ForEach-Object { $_.id })
-$virtualWhereItMatters = @($allRows | Where-Object { $_.accepted -and $_.physical_claim -and "$($_.ran_on.class)" -cne 'physical' } | ForEach-Object { $_.id })
+# A row that accepts only a physical device cannot be run on a VM, so its gap does not hold the VM level back.
+$physicalOnlyIds = @($matrix.external_gates | Where-Object { (@($_.ran_on.accepted) -join ',') -ceq 'physical' } | ForEach-Object { "$($_.id)" })
+$gapsAVmCouldFill = @($externalIncomplete | Where-Object { $physicalOnlyIds -cnotcontains $_ })
+$virtualWhereItMatters = @($allRows | Where-Object { $_.accepted -and $_.physical_claim -and "$($_.ran_on.class)" -cne 'physical' } | ForEach-Object { $_.id }) +
+    @($externalIncomplete | Where-Object { $physicalOnlyIds -ccontains $_ })
 
 $claimLevel = if ($failedIds.Count -gt 0) { 'FailedEvidence' }
 elseif ($vhdIncomplete.Count -gt 0) { 'CodeCompleteOnly' }
-elseif ($externalIncomplete.Count -gt 0) { 'VhdDataDiskCertified' }
+elseif ($gapsAVmCouldFill.Count -gt 0) { 'VhdDataDiskCertified' }
 elseif ($virtualWhereItMatters.Count -gt 0) { 'VirtualMachinesValidated' }
 else { 'NamedDevicesValidated' }
 

@@ -19,7 +19,6 @@
     boot-uefi  OS migration, then UEFI boot repair on what it wrote.
     boot-bios  A BIOS install built for the purpose, BIOS boot repair, then system MBR-to-GPT.
     ssd-virtual  The SSD rows on a VDI the guest is told does not rotate and can discard.
-    hdd-virtual  The defrag row on a plain VDI.
     usb-virtual  The USB row on a VDI behind a virtual USB controller, with no host device involved.
     ssd-device, hdd-device    The device rows on the pinned device.
     data-device  Data-volume rows, on small partitions of the pinned hard drive. No whole-disk pass.
@@ -32,7 +31,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('vhd', 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'hdd-virtual', 'usb-virtual', 'ssd-device', 'hdd-device', 'data-device')]
+    [ValidateSet('vhd', 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'usb-virtual', 'ssd-device', 'hdd-device', 'data-device')]
     [string]$Group,
     [Parameter(Mandatory = $true)] [string]$EvidenceDir,
     [string[]]$Rows = @(),
@@ -268,9 +267,6 @@ switch ($Group) {
     'ssd-virtual' {
         Invoke-RowsOnThrowawayDisk -Ids $(if ($Rows.Count) { $Rows } else { @('external.ssd-retrim', 'external.ssd-secure-erase', 'external.hardware-wipe') }) `
             -Disk 'cert-ssd' -SizeMiB 8192 -DiskBus 'SataSolidState'
-    }
-    'hdd-virtual' {
-        Invoke-RowsOnThrowawayDisk -Ids $(if ($Rows.Count) { $Rows } else { @('external.hdd-defrag-execution') }) -Disk 'cert-hdd' -SizeMiB 32768 -DiskBus 'Sata'
     }
     'usb-virtual' {
         Invoke-RowsOnThrowawayDisk -Ids $(if ($Rows.Count) { $Rows } else { @('external.usb-removable') }) -Disk 'cert-usb' -SizeMiB 8192 -DiskBus 'Usb'

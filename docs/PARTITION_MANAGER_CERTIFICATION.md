@@ -26,11 +26,11 @@ The level says what ran on what, and there is no level for hardware in general.
 |---|---|
 | `FailedEvidence` | A row in the selected run failed. |
 | `CodeCompleteOnly` | Not every disposable-VHD row is accepted. |
-| `VhdDataDiskCertified` | Every disposable-VHD row, on virtual disks in a VM, and not every other row. |
-| `VirtualMachinesValidated` | Every row, with at least one that needs a real device run on a virtual one. |
+| `VhdDataDiskCertified` | Every disposable-VHD row, on virtual disks in a VM, and not every row a VM can run. |
+| `VirtualMachinesValidated` | Every row a VM can run, with at least one that needs a real device run on a virtual one, or not run because only a real device can. |
 | `NamedDevicesValidated` | Every row, with each that needs a real device run on one. It says those devices, and no others. |
 
-Internal SATA and NVMe cannot be passed through VirtualBox, and SMART does not cross a USB bridge, so no row claims them. The words the site may use are generated from the status and appear in the block below.
+The defrag row accepts only a real hard drive, because Windows reports a VirtualBox disk's media type as `Unspecified`. A claim about a real device comes from a row that ran on that device, on a physical PC with the drive plugged straight in. VirtualBox on the rig's Mac cannot do this: over xHCI macOS refuses authorization and Windows gets Code 10, and on a USB 2 controller VirtualBox refuses a SuperSpeed device. A raw-disk link would show Windows a `VBOX HARDDISK` on SATA, which can only count as a virtual machine. The words the site may use are generated from the status and appear in the block below.
 
 ## The freeze rule
 
@@ -44,14 +44,14 @@ Docs and the site may change after a freeze. Code may not.
 
 ## Running it
 
-The rig is a host with the disposable VirtualBox guest. `AGENTS.local.md` says which machine that is. Nothing runs on the machine you work at but compiling and these scripts' ssh calls: every row changes disks, and every disk it changes is in the guest.
+The rig is a host with the disposable VirtualBox guest, and for the device rows a disposable physical PC reached over SSH. `AGENTS.local.md` says which machines those are. Nothing runs on the machine you work at but compiling and these scripts' ssh calls: every row changes disks, and every disk it changes is in the guest or on that PC.
 
 | Script | What it is for |
 |---|---|
 | `scripts/run_partition_manager_final_certification.ps1` | The whole run, on one frozen commit |
 | `scripts/run_partition_manager_certification_groups.ps1` | One group of rows, for a trial |
 | `scripts/run_partition_manager_certification_rig.ps1` | One action on the rig: stage, deploy, VM on and off, a throwaway disk |
-| `scripts/run_partition_manager_app_certification.ps1` | Runs in the guest, and refuses to run anywhere else |
+| `scripts/run_partition_manager_app_certification.ps1` | Runs in the guest or on a PC named as disposable, and refuses to run anywhere else |
 | `scripts/partition_manager_certification_row_bodies.ps1` | What each row does |
 
 A trial writes to a folder of your choosing and is never selected. Run a row with:
@@ -62,34 +62,54 @@ pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Actio
 pwsh -NoProfile -File scripts/run_partition_manager_certification_groups.ps1 -Group vhd -Rows vhd.quick-partition -EvidenceDir <folder> -StageDir <folder>
 ```
 
+### On a physical PC
+
+The device groups (`ssd-device`, `hdd-device`, `data-device`) run on a physical PC when given `-PcFile`. The other groups stop: they need throwaway disks the VM rig can attach, and a VM of their own to start a disk in. Boot rows also stop on a physical PC, because nothing here can prove a boot there or put the machine back. Proving a boot on real firmware needs a chain written for that PC's disks, and someone to power-cycle it when a row leaves it unbootable.
+
+What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key, a local administrator who signs in automatically, and the drives plugged in. The rows run from a scheduled task in that signed-in session, the client under its standard-user token, and Windows' own policy answers the consent prompt, so nobody is at the keyboard and every report says so. No row shows that a person pressing Yes behaves the same.
+
+1. Read the machine's id on the PC: `Get-CimInstance Win32_ComputerSystemProduct | Select-Object UUID` and `Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model`.
+2. Write the PC file outside the repository. `confirmation` is what a person types to say this machine, and only this one, may be changed. A board with no id of its own cannot be named. `port`, `jump` and `deny_names` are optional, and `deny_names` are checked for in the evidence along with the rig's own:
+
+   ```json
+   { "host": "Technician@10.0.0.5", "key": "C:\\keys\\pc-a", "machine_uuid": "...", "confirmation": "DISPOSABLE <manufacturer> <model> <uuid>", "deny_names": ["..."] }
+   ```
+
+3. Prepare it. This checks it is the machine named, that UAC is on and someone is signed in, writes the approval the rows look for, registers the elevated task, and lists the disks:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action PcPrepare -PcFile <pc.json>
+   ```
+
+4. Write the pin file from that list, by model and exact size. It refuses the disk that runs that Windows, and two disks that match, and prints no serial number:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action WritePins -PcFile <pc.json> -PinFile <pins.json> -PinSpec "ssd=<model>|<bytes>;hdd=<model>|<bytes>"
+   ```
+
 ### The final run
 
 1. Freeze: commit, and leave the tree clean. `python scripts/partition_manager_code_digest.py --root .` must say `code_dirty: false`. Docs and the site may still change after this. Code may not.
 2. Build Release from that commit, on any machine.
 3. Restore the VM to its clean snapshot, start it, and sign in.
-4. For the device rows, pass the devices through. VirtualBox on macOS needs root to capture a USB device, so someone with the password does this:
-   - `pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action UsbOn` with the VM off.
-   - `diskutil unmountDisk` each device on the Mac.
-   - Start the VM in a way that can capture USB, and check `-Action UsbList` shows each one as `Captured`.
-   - In the guest, `Get-Disk | Select-Object FriendlyName, Size, SerialNumber, BusType` must show them.
-5. Write the pin file outside the repository, because it holds serial numbers. Each device has its model, size and serial as the guest read them, and its typed confirmation, `CERTIFY <model> <serial> <size>`. Check them by eye against the devices in front of you. Every row reads the disk again, against this, immediately before each step:
+4. For the device rows, prepare the physical PC and write the pin file, as above, immediately before the run. The pin file holds serial numbers, so it stays outside the repository. Check it by eye against the drives in front of you. Every row reads the disk again, against this, immediately before each step:
 
    ```json
    {
-     "ssd": { "model": "...", "size_bytes": 0, "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." },
-     "hdd": { "model": "...", "size_bytes": 0, "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." }
+     "ssd": { "model": "...", "size_bytes": "0", "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." },
+     "hdd": { "model": "...", "size_bytes": "0", "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." }
    }
    ```
 
-6. Run it. Leave out `-PinFile` to run the device rows on virtual disks, which caps the claim at `VirtualMachinesValidated`:
+5. Run it. The device rows and the data rows named for the hard drive run on the PC, and everything else on the VM rig. Leave out `-PinFile` and `-PcFile` to run the device rows on virtual disks, which caps the claim at `VirtualMachinesValidated`:
 
    ```powershell
-   pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json>
+   pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json> -PcFile <pc.json>
    ```
 
    It stops at the first group that fails, with that group's evidence kept. A failed row is a finding: fix the code, and a code fix starts again from step 1.
-7. Read the block below, which step 6 regenerated, with its claim level and the words the site may use.
-8. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
+6. Read the block below, which step 5 regenerated, with its claim level and the words the site may use.
+7. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
 
 ### What a run takes
 

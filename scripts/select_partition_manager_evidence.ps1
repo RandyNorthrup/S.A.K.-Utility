@@ -9,7 +9,9 @@
     history, can never be picked up as current.
 
     It refuses a row that does not hold, and it refuses evidence that holds a name the owner wants
-    kept private (-DenyNames, from the credentials file, never from the repository).
+    kept private (-DenyNames, from the credentials file, never from the repository). A row with no
+    evidence stops it, unless that row accepts only a physical device, which a run with no device
+    could not have run. The status lists that row as not run.
 #>
 
 [CmdletBinding()]
@@ -18,6 +20,7 @@ param(
     [string]$OutputRoot = 'artifacts\partition-manager-certification\evidence\current',
     [string[]]$DenyNames = @(),
     [string]$CodeDigest = '',
+    [string]$MatrixPath = '',
     [switch]$AllowIncomplete
 )
 
@@ -25,7 +28,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'partition_manager_row_evidence.ps1')
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$matrix = Get-Content -LiteralPath (Join-Path $projectRoot 'certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json') -Raw | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($MatrixPath)) { $MatrixPath = Join-Path $projectRoot 'certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json' }
+$matrix = Get-Content -LiteralPath $MatrixPath -Raw | ConvertFrom-Json
 if ([string]::IsNullOrWhiteSpace($CodeDigest)) {
     $CodeDigest = ((& python (Join-Path $PSScriptRoot 'partition_manager_code_digest.py') --root $projectRoot) | ConvertFrom-Json).code_digest
 }
@@ -37,7 +41,7 @@ $completed = @()
 foreach ($spec in @($matrix.vhd_scenarios) + @($matrix.external_gates)) {
     $rowDir = Join-Path $RunDir "$($spec.id)"
     if (-not (Test-Path -LiteralPath (Join-Path $rowDir 'report.json'))) {
-        if ($AllowIncomplete) { continue }
+        if ($AllowIncomplete -or (@($spec.ran_on.accepted) -join ',') -ceq 'physical') { continue }
         throw "The run has no evidence for $($spec.id)"
     }
     $reasons = @(Test-PmRowEvidence -Spec $spec -RowDir $rowDir -CurrentCodeDigest $CodeDigest)
@@ -54,7 +58,7 @@ foreach ($spec in @($matrix.vhd_scenarios) + @($matrix.external_gates)) {
 if ($rows.Count -eq 0) { throw 'The run holds no row' }
 if (@($commits | Sort-Object -Unique).Count -ne 1) { throw "The rows come from more than one commit: $(@($commits | Sort-Object -Unique) -join ', ')" }
 
-Remove-Item -LiteralPath $output -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 foreach ($row in $rows) { Copy-Item -LiteralPath (Join-Path $RunDir $row.id) -Destination $output -Recurse }
 $index = [ordered]@{

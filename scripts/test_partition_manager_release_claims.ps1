@@ -119,6 +119,7 @@ foreach ($name in 'PARTITION_MANAGER_CERTIFICATION_MATRIX.json', 'APPLE_FILESYST
 
 $vhdId = "$($Script:FirstVhd.id)"
 $externalId = "$($Script:FirstExternal.id)"
+$physicalOnlyId = 'external.hdd-defrag-execution'
 $vhdNo = "| ``$vhdId`` | $($Script:FirstVhd.name) | no |"
 $vhdYes = "| ``$vhdId`` | $($Script:FirstVhd.name) | yes |"
 $refusal = 'Do not mark the Partition Manager destructive paths fully certified until those reports exist.'
@@ -155,6 +156,11 @@ $cases = @(
     @{ name = 'virtual machines only'; status = $virtual; update = $true
         contains = @('Current claim level: `VirtualMachinesValidated`.', 'Nothing here is a statement about hardware.', 'Incomplete VHD scenarios: none.', 'nothing yet')
         absent = @(' | no |', 'remains partial', $refusal) },
+    @{ name = 'virtual machines with only a device-only row missing'; status = (New-Status 'VirtualMachinesValidated' -ExternalGaps @($physicalOnlyId) -Virtual @($physicalOnlyId)); update = $true
+        contains = @('Current claim level: `VirtualMachinesValidated`.', "Incomplete external gates: $physicalOnlyId.", 'Nothing here is a statement about hardware.')
+        absent = @('remains partial', $refusal) },
+    @{ name = 'named devices with a device-only row missing'; status = (New-Status 'NamedDevicesValidated' -ExternalGaps @($physicalOnlyId)); update = $true; error = 'contradicts its incomplete evidence sets' },
+    @{ name = 'the VHD level with only a device-only row missing'; status = (New-Status 'VhdDataDiskCertified' -ExternalGaps @($physicalOnlyId)); update = $true; error = 'contradicts its incomplete evidence sets' },
     @{ name = 'named devices'; status = $named; update = $true
         contains = @('Current claim level: `NamedDevicesValidated`.', 'That says those devices, and no others.', 'physical: Some Drive, USB', 'Incomplete external gates: none.')
         absent = @(' | no |', 'remains partial', $refusal) },
