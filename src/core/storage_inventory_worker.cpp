@@ -621,9 +621,13 @@ void markAdministratorStatePending(PartitionInventory* inventory) {
 void appendVolumeProbeWarnings(PartitionInventory* inventory) {
     for (const auto& disk : inventory->disks) {
         for (const auto& partition : disk.partitions) {
+            // A locked volume has no readable file system, so fsutil cannot answer, and that says
+            // nothing about whether this scan can be trusted. Saying it did would stop every Apply
+            // on the PC, including the one that unlocks it.
             if (!partition.volume || !partition.volume->hasDriveLetter() ||
                 partition.volume->dirty_bit_known ||
-                partition.volume->administrator_state_pending) {
+                partition.volume->administrator_state_pending ||
+                (partition.volume->bitlocker_state_known && partition.volume->bitlocker_locked)) {
                 continue;
             }
             const QString reason = partition.volume->dirty_bit_error.trimmed().isEmpty()

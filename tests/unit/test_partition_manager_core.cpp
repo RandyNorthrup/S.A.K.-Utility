@@ -18779,6 +18779,15 @@ void PartitionManagerCoreTests::safetyValidator_pendingStateQueuesAndKnownStateD
     const auto apply = StorageInventoryWorker::parseInventoryJson(json);
     QVERIFY2(PartitionSafetyValidator::validate(apply, operation).blockers.contains(unknown),
              "a volume whose state should be known and is not is refused");
+    const auto says_dirty_unknown = [](const QStringList& warnings) {
+        return std::ranges::any_of(warnings, [](const QString& warning) {
+            return warning.contains(QStringLiteral("dirty"), Qt::CaseInsensitive);
+        });
+    };
+    QVERIFY2(!says_dirty_unknown(PartitionSafetyValidator::validate(browsing, operation).warnings),
+             "a pending dirty state raises nothing while it queues");
+    QVERIFY2(says_dirty_unknown(PartitionSafetyValidator::validate(apply, operation).warnings),
+             "and an unread one still warns once Apply has looked");
 }
 
 // A raw probe a standard user may not make must not make a queue look stale once Apply can make it.
@@ -18889,6 +18898,63 @@ void PartitionManagerCoreTests::scriptBuilder_copyPartitionHoldsItsSourceAndRead
         PartitionOperationType::ClonePartition, target, raw));
     QVERIFY2(fromDisk.valid(), qPrintable(fromDisk.blockers.join(QStringLiteral("; "))));
     QVERIFY(!fromDisk.script.contains(QStringLiteral("$sakCopyLock")));
+}
+
+// fsutil cannot read a locked volume. That must not read as this scan being unreliable.
+void PartitionManagerCoreTests::lockedVolumeDoesNotStopApply() {
+    QJsonObject disk = standardUserInventoryDisk();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject partition = partitions.first().toObject();
+    QJsonObject volume = partition.value(QStringLiteral("Volume")).toObject();
+    volume[QStringLiteral("BitLockerStateKnown")] = true;
+    volume[QStringLiteral("BitLockerStateError")] = QString();
+    volume[QStringLiteral("BitLockerEnabled")] = true;
+    volume[QStringLiteral("BitLockerLocked")] = false;
+    volume[QStringLiteral("DirtyBitKnown")] = false;
+    volume[QStringLiteral("DirtyBitError")] = QStringLiteral("fsutil exited 1: Error 87");
+    const auto dirty_warned = [](const PartitionInventory& inventory) {
+        return std::ranges::any_of(inventory.warnings, [](const QString& warning) {
+            return warning.contains(QStringLiteral("Dirty-bit query failed"));
+        });
+    };
+    const auto with_volume = [&disk, &partitions, &partition](const QJsonObject& changed) {
+        partition[QStringLiteral("Volume")] = changed;
+        partitions[0] = partition;
+        disk[QStringLiteral("Partitions")] = partitions;
+        return StorageInventoryWorker::parseInventoryJson(QJsonDocument(QJsonArray{disk}).toJson());
+    };
+    QVERIFY2(dirty_warned(with_volume(volume)),
+             "an unlocked volume fsutil cannot read is still a failed read");
+    volume[QStringLiteral("BitLockerLocked")] = true;
+    const auto locked = with_volume(volume);
+    QVERIFY(locked.disks.first().partitions.first().volume->bitlocker_locked);
+    QVERIFY2(!dirty_warned(locked), qPrintable(locked.warnings.join(QLatin1Char('|'))));
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{1};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 1'048'576;
+    target.drive_letter = QStringLiteral("K");
+    QJsonObject payload;
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    const auto format =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, payload);
+    const auto validation = PartitionSafetyValidator::validate(locked, format);
+    QVERIFY2(!validation.blockers.isEmpty(), "and it stays refused for being locked");
+    QVERIFY2(!validation.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("dirty")),
+             "and nobody is told a locked volume's dirty state is a concern");
+}
+
+void PartitionManagerCoreTests::fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore() {
+    FileRecoveryRestoreOptions options;
+    options.image_path = QStringLiteral("\\\\.\\PhysicalDrive9");
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    options.destination_directory = destination.path();
+    const auto result = FileRecoveryEngine::restoreCandidates(options);
+    QVERIFY2(result.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("whole-disk path")),
+             qPrintable(result.warnings.join(QLatin1Char(' '))));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_fullFormatSaysWhyOnAThinDisk() {

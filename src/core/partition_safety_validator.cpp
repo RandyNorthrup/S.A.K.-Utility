@@ -325,7 +325,7 @@ bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType typ
 bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
     return partition.volume && partition.volume->hasDriveLetter() &&
            !partition.volume->dirty_bit_known && !partition.volume->administrator_state_pending &&
-           type != PartitionOperationType::RepairBoot;
+           !partition.volume->bitlocker_locked && type != PartitionOperationType::RepairBoot;
 }
 
 QString unknownDirtyVolumeWarning(const PartitionInfoEx& partition) {
