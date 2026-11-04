@@ -23,6 +23,7 @@ COMMERCIAL_FIXTURE_FILES = (
     Path("src/gui/partition_manager_panel.cpp"),
     Path("src/core/partition_script_builder.cpp"),
     Path("src/core/partition_safety_validator.cpp"),
+    Path("src/core/partition_scripts/os_migration.ps1"),
     Path("tests/unit/test_partition_manager_panel.cpp"),
     Path("tests/unit/test_partition_manager_core.cpp"),
 )
