@@ -122,6 +122,8 @@ private Q_SLOTS:
     void apfsUnknownModeIsRefused() const;
     void diskCopyWizardHasNoUnprobedCustomTarget();
     void diskCopyWizardOffersOnlyWhatTheCopyDoes();
+    void diskCopyWizardShowsTheRunningDiskTurnedOff();
+    void diskCopyWizardCannotFinishWithNoTarget();
     void migrationWizardSaysSnapshotAndOffersTheChoice();
     void migrationWizardQueuesItsPlanAndTheChoice();
     void migrationWizardShowsWhyATargetIsRefused();
@@ -2875,6 +2877,111 @@ void PartitionManagerPanelTests::diskCopyWizardHasNoUnprobedCustomTarget() {
         QVERIFY(target->findText(QStringLiteral("Custom path")) < 0);
         QVERIFY(findAccessibleWidget<QLineEdit>(wizard, QStringLiteral("Custom target path")) ==
                 nullptr);
+        inspected = true;
+        wizard->reject();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCloneDisk", Qt::DirectConnection));
+    QVERIFY(inspected);
+}
+
+// Certification builds a request's target with partitionSelectionTarget. If a row of the table came
+// to mean something else, certification would be testing a request no person's click makes.
+void PartitionManagerPanelTests::aSelectedRowQueuesWhatTheStepClientBuilds() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    inventory.disks[0].partitions[0].offset_bytes = kTestMegabyteBytes;
+    inventory.disks[0].size_bytes = 512 * kTestMegabyteBytes;
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onDeletePartition", Qt::DirectConnection));
+
+    const auto queued = panel.testQueuedOperationsForReview();
+    QCOMPARE(queued.size(), 1);
+    const auto built = sak::partitionSelectionTarget(inventory.disks[0].partitions[0]);
+    const auto& target = queued.first().target;
+    QCOMPARE(target.kind, built.kind);
+    QCOMPARE(target.disk_number.value(), built.disk_number.value());
+    QCOMPARE(target.partition_number.value(), built.partition_number.value());
+    QCOMPARE(target.offset_bytes, built.offset_bytes);
+    QCOMPARE(target.size_bytes, built.size_bytes);
+    QCOMPARE(target.drive_letter, built.drive_letter);
+}
+
+// The safety checks refuse the disk this PC runs from, and that used to come only after Finish.
+void PartitionManagerPanelTests::diskCopyWizardShowsTheRunningDiskTurnedOff() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = imageSourceMappingInventory();
+    inventory.disks[1].is_boot = true;
+    sak::PartitionDiskInfo other = inventory.disks.last();
+    other.is_boot = false;
+    other.disk_number = sak::DiskNumber{2};
+    inventory.disks.append(other);
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        auto* target = findAccessibleWidget<QComboBox>(wizard, QStringLiteral("Target disk"));
+        QVERIFY(target != nullptr);
+        QCOMPARE(target->count(), 2);
+        const int running = target->findText(QStringLiteral("Disk 1"), Qt::MatchStartsWith);
+        QVERIFY(running >= 0);
+        QVERIFY2(target->itemText(running).contains(QStringLiteral("this PC runs from it")),
+                 "the list should say why the disk is not a choice");
+        const auto flags = target->model()->flags(target->model()->index(running, 0));
+        QVERIFY2(!flags.testFlag(Qt::ItemIsEnabled), "the running disk should not be selectable");
+        QVERIFY(target->itemData(running).toString().isEmpty());
+        QCOMPARE(target->currentData().toString(), QStringLiteral("\\\\.\\PhysicalDrive2"));
+        inspected = true;
+        wizard->reject();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCloneDisk", Qt::DirectConnection));
+    QVERIFY(inspected);
+}
+
+// With the running disk the only other one there is nothing to copy to, and Finish would close the
+// wizard having done nothing.
+void PartitionManagerPanelTests::diskCopyWizardCannotFinishWithNoTarget() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = imageSourceMappingInventory();
+    inventory.disks[1].is_boot = true;
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        auto* target = findAccessibleWidget<QComboBox>(wizard, QStringLiteral("Target disk"));
+        QVERIFY(target != nullptr);
+        QCOMPARE(target->currentIndex(), -1);
+        while (wizard->currentPage()->nextId() != -1) {
+            wizard->next();
+        }
+        auto* review = wizard->currentPage();
+        QVERIFY(review != nullptr);
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Confirm target disk overwrite"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        QVERIFY2(!review->isComplete(), "Finish should stay off with no target to write to");
+        const auto labels = wizard->findChildren<QLabel*>();
+        const bool says_why = std::ranges::any_of(labels, [](const QLabel* label) {
+            return label->text().contains(QStringLiteral("no other disk can be the target"));
+        });
+        QVERIFY2(says_why, "the review should say why Finish is off");
         inspected = true;
         wizard->reject();
     });

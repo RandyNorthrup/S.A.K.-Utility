@@ -83,6 +83,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStandardItemModel>
 #include <QStorageInfo>
 #include <QStyledItemDelegate>
 #include <QTableWidget>
@@ -7938,6 +7939,9 @@ public:
         connect(m_box, &QCheckBox::toggled, this, &QWizardPage::completeChanged);
     }
 
+    // What the wizard must also have before Finish can do anything, such as a target to write to.
+    void setRequiredChoice(const QComboBox* choice) { m_required_choice = choice; }
+
     [[nodiscard]] bool isComplete() const override {
         return QWizardPage::isComplete() && m_box != nullptr && m_box->isChecked();
     }
@@ -8033,18 +8037,32 @@ QComboBox* addTargetDiskSelector(QFormLayout* form,
                                  uint32_t source_disk) {
     auto* combo = new QComboBox(parent);
     combo->setAccessibleName(QStringLiteral("Target disk"));
+    auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+    int first_usable = -1;
     for (const auto& disk : inventory.disks) {
         if (disk.disk_number.value() == source_disk || disk.size_bytes == 0) {
             continue;
         }
-        combo->addItem(QStringLiteral("Disk %1 - %2 - %3")
-                           .arg(disk.disk_number.value())
-                           .arg(disk.model, formatPartitionBytes(disk.size_bytes)),
-                       physicalDrivePath(disk.disk_number.value()));
-        combo->setItemData(combo->count() - 1,
+        const QString name = QStringLiteral("Disk %1 - %2 - %3")
+                                 .arg(disk.disk_number.value())
+                                 .arg(disk.model, formatPartitionBytes(disk.size_bytes));
+        const int index = combo->count();
+        // The safety checks refuse the disk this PC runs from, so offering it only moves the
+        // refusal to after Finish. It stays in the list, off, so a person can see why it is not
+        // one of the choices rather than wonder where it went.
+        if (disk.is_boot || disk.is_system) {
+            combo->addItem(name +
+                           QStringLiteral(" - this PC runs from it, so it cannot be a target"));
+            model->item(index)->setEnabled(false);
+            continue;
+        }
+        combo->addItem(name, rawDiskPath(disk.disk_number.value()));
+        combo->setItemData(index,
                            QVariant::fromValue<qulonglong>(disk.size_bytes),
                            kWizardDiskSizeRole);
+        first_usable = first_usable < 0 ? index : first_usable;
     }
+    combo->setCurrentIndex(first_usable);
     form->addRow(QStringLiteral("Target disk:"), combo);
     return combo;
 }
@@ -8119,6 +8137,8 @@ void addDiskReviewPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
     nameConfirmationBox(widgets->target_wipe, QStringLiteral("Confirm target disk overwrite"));
     review_layout->addWidget(widgets->target_wipe);
     review_page->setConfirmationBox(widgets->target_wipe);
+    // Finish needs a target to act on: with none, it would close having done nothing.
+    review_page->setRequiredChoice(widgets->target_disk);
     wizard->addPage(review_page);
 }
 
@@ -8136,6 +8156,9 @@ QString diskWizardSizingText(const DiskCopyWizardConfig& config,
     const uint64_t target_size = selectedDiskWizardTargetSize(widgets);
     QString text = QStringLiteral("Source size: %1\nTarget size: %2")
                        .arg(formatPartitionBytes(source_size), formatPartitionBytes(target_size));
+    if (selectedDiskWizardTarget(widgets).isEmpty()) {
+        text += QStringLiteral("\nBlocked: no other disk can be the target.");
+    }
     if (target_size != 0 && source_size > target_size) {
         text += QStringLiteral("\nBlocked: target disk is smaller than source disk.");
     }
