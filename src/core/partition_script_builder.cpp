@@ -2009,6 +2009,28 @@ QString sakShadowBackupFunctionScript() {
         "}\n");
 }
 
+QString fileManifestFunctionScript() {
+    return QStringLiteral(
+        "function Get-SakFileManifest([string]$root) {\n"
+        "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
+        // Every NTFS root holds System Volume Information, which an administrator may not
+        // list, and which belongs to the volume and not to the files it is moving. Listing
+        // it stopped each of these scripts, so the two folders Windows keeps there are left
+        // out.
+        "  @(Get-ChildItem -LiteralPath $rootFull -Force | Where-Object { @('System Volume "
+        "Information', '$RECYCLE.BIN') -notcontains $_.Name } | ForEach-Object { if "
+        "($_.PSIsContainer) { Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File "
+        "} "
+        "else { $_ } } | ForEach-Object {\n"
+        "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
+        "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
+        "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash "
+        "= "
+        "$hash }\n"
+        "  } | Sort-Object RelativePath)\n"
+        "}\n");
+}
+
 QString backupRestoreHelpersScript() {
     return sakVolumeGuidFunctionScript() + sakShadowBackupFunctionScript() +
            QStringLiteral(
@@ -2021,17 +2043,9 @@ QString backupRestoreHelpersScript() {
                // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
                "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
                "code {0}' -f $code); exit $code }\n"
-               "}\n"
-               "function Get-SakFileManifest([string]$root) {\n"
-               "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
-               "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
-               "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
-               "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
-               "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash "
-               "= "
-               "$hash }\n"
-               "  } | Sort-Object RelativePath)\n"
-               "}\n"
+               "}\n") +
+           fileManifestFunctionScript() +
+           QStringLiteral(
                "function Assert-SakBackupRoot([string]$backupRoot, [string[]]$blockedRoots) {\n"
                "  $full = [System.IO.Path]::GetFullPath($backupRoot)\n"
                "  if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw 'Backup "
@@ -3534,17 +3548,8 @@ static QString robocopyManifestFunctionsScript() {
                // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
                "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
                "code {0}' -f $code); exit $code }\n"
-               "}\n"
-               "function Get-SakFileManifest([string]$root) {\n"
-               "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
-               "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
-               "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
-               "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
-               "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash "
-               "= "
-               "$hash }\n"
-               "  } | Sort-Object RelativePath)\n"
-               "}\n");
+               "}\n") +
+           fileManifestFunctionScript();
 }
 
 struct AllocateFreeSpacePayload {
@@ -5269,6 +5274,11 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
     return out;
 }
 
+namespace {
+// More than Windows blanks of a partition it creates, measured at about 33 KB.
+constexpr uint64_t kRecoveredPartitionHeadBytes = 1024ULL * 1024ULL;
+}  // namespace
+
 PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
     const PartitionOperation& operation) const {
     const uint64_t offset = payloadUInt64(operation, QStringLiteral("offset_bytes"));
@@ -5288,21 +5298,51 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
     out.preview = QStringLiteral("Restore recovered partition on Disk %1 at %2")
                       .arg(operation.target.disk_number.value())
                       .arg(formatPartitionBytes(offset));
-    out.script = commonHeader(out.preview) +
-                 QStringLiteral(
-                     "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
-                     "if ($disk.IsReadOnly) { throw 'Target disk is read-only' }\n"
-                     "$existing = @(Get-Partition -DiskNumber %1 -ErrorAction Stop)\n"
-                     "$start = [uint64]%2\n"
-                     "$end = [uint64](%2 + %3)\n"
-                     "if ($start -gt [uint64]$disk.Size -or [uint64]%3 -gt ([uint64]$disk.Size - "
-                     "$start)) { throw 'Candidate exceeds disk bounds' }\n"
-                     "foreach ($p in $existing) { $pStart = [uint64]$p.Offset; $pEnd = "
-                     "[uint64]($p.Offset + $p.Size); if ($start -lt $pEnd -and $end -gt "
-                     "$pStart) { throw 'Candidate overlaps existing partition' } }\n"
-                     "New-Partition -DiskNumber %1 -Offset %2 -Size %3 %4\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(uintArg(offset), uintArg(size), typeArg);
+    out.script =
+        commonHeader(out.preview) +
+        QStringLiteral(
+            "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
+            "if ($disk.IsReadOnly) { throw 'Target disk is read-only' }\n"
+            "$existing = @(Get-Partition -DiskNumber %1 -ErrorAction Stop)\n"
+            "$start = [uint64]%2\n"
+            "$end = [uint64](%2 + %3)\n"
+            "if ($start -gt [uint64]$disk.Size -or [uint64]%3 -gt ([uint64]$disk.Size - "
+            "$start)) { throw 'Candidate exceeds disk bounds' }\n"
+            "foreach ($p in $existing) { $pStart = [uint64]$p.Offset; $pEnd = "
+            "[uint64]($p.Offset + $p.Size); if ($start -lt $pEnd -and $end -gt "
+            "$pStart) { throw 'Candidate overlaps existing partition' } }\n"
+            // Windows blanks the start of a partition it creates, about 33 KB, and a boot
+            // sector is there. So a restored partition read as an empty one, and its files
+            // were out of reach. The start goes back as it was, and the volume is dismounted
+            // so that Windows looks at it again.
+            "$sakHeadBytes = [int][Math]::Min([uint64]%5, [uint64]%3)\n"
+            "$sakHead = New-Object byte[] $sakHeadBytes\n"
+            "$sakDiskPath = '\\\\.\\PhysicalDrive%1'\n"
+            "$sakRaw = [System.IO.File]::Open($sakDiskPath, 'Open', 'Read', 'ReadWrite')\n"
+            "try {\n"
+            "  $sakRaw.Position = [int64]$start\n"
+            "  $sakHave = 0\n"
+            "  while ($sakHave -lt $sakHeadBytes) {\n"
+            "    $sakRead = $sakRaw.Read($sakHead, $sakHave, $sakHeadBytes - $sakHave)\n"
+            "    if ($sakRead -le 0) { throw 'Could not read the start of the candidate' }\n"
+            "    $sakHave += $sakRead\n"
+            "  }\n"
+            "} finally { $sakRaw.Dispose() }\n"
+            "$sakNew = New-Partition -DiskNumber %1 -Offset %2 -Size %3 %4 -ErrorAction "
+            "Stop\n"
+            "$sakRaw = [System.IO.File]::Open($sakDiskPath, 'Open', 'ReadWrite', "
+            "'ReadWrite')\n"
+            "try {\n"
+            "  $sakRaw.Position = [int64]$start\n"
+            "  $sakRaw.Write($sakHead, 0, $sakHeadBytes)\n"
+            "  $sakRaw.Flush()\n"
+            "} finally { $sakRaw.Dispose() }\n"
+            "foreach ($sakPath in @($sakNew.AccessPaths | Where-Object { $_ -like "
+            "'\\\\?\\Volume*' })) { & fsutil.exe volume dismount $sakPath.TrimEnd('\\') "
+            "| Out-Null }\n"
+            "Update-HostStorageCache -ErrorAction Stop\n")
+            .arg(operation.target.disk_number.value())
+            .arg(uintArg(offset), uintArg(size), typeArg, uintArg(kRecoveredPartitionHeadBytes));
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }

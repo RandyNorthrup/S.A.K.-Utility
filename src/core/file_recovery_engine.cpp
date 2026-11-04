@@ -284,14 +284,23 @@ bool destinationIsSeparate(const QFileInfo& imageInfo, const QDir& destination) 
     return !imageDir.isEmpty() && imageDir != destinationPath;
 }
 
+// A raw device reads only in whole sectors, and fails any other length with "the parameter is
+// incorrect". A recovered file starts wherever it starts, so this reads whole sectors around it and
+// cuts the file out. This covers the largest sector size Windows supports.
+constexpr uint64_t kRawReadAlignmentBytes = 4096;
+
 QByteArray readSequentialBytes(QFile* image, uint64_t offset, uint64_t size) {
     if (!image->seek(0)) {
         return {};
     }
+    const uint64_t lead = offset % kRawReadAlignmentBytes;
+    const uint64_t first = offset - lead;
+    const uint64_t tail = (lead + size) % kRawReadAlignmentBytes;
+    const uint64_t whole = lead + size + (tail == 0 ? 0 : kRawReadAlignmentBytes - tail);
     uint64_t skipped = 0;
-    while (skipped < offset) {
+    while (skipped < first) {
         const qint64 chunkSize = static_cast<qint64>(
-            std::min<uint64_t>(static_cast<uint64_t>(kHashChunkBytes), offset - skipped));
+            std::min<uint64_t>(static_cast<uint64_t>(kHashChunkBytes), first - skipped));
         const QByteArray chunk = image->read(chunkSize);
         if (chunk.isEmpty()) {
             return {};
@@ -304,17 +313,17 @@ QByteArray readSequentialBytes(QFile* image, uint64_t offset, uint64_t size) {
     // untrusted uint64) could otherwise ask QByteArray to preallocate an unsatisfiable buffer and
     // abort. Anything larger grows through append instead, still bounded by the source (F3).
     bytes.reserve(
-        static_cast<qsizetype>(std::min<uint64_t>(size, kFileRecoveryDefaultMaxCandidateBytes)));
-    while (static_cast<uint64_t>(bytes.size()) < size) {
+        static_cast<qsizetype>(std::min<uint64_t>(whole, kFileRecoveryDefaultMaxCandidateBytes)));
+    while (static_cast<uint64_t>(bytes.size()) < whole) {
         const qint64 chunkSize = static_cast<qint64>(std::min<uint64_t>(
-            static_cast<uint64_t>(kHashChunkBytes), size - static_cast<uint64_t>(bytes.size())));
+            static_cast<uint64_t>(kHashChunkBytes), whole - static_cast<uint64_t>(bytes.size())));
         const QByteArray chunk = image->read(chunkSize);
         if (chunk.isEmpty()) {
             return {};
         }
         bytes.append(chunk);
     }
-    return bytes;
+    return bytes.mid(static_cast<qsizetype>(lead), static_cast<qsizetype>(size));
 }
 
 QByteArray readCandidateBytes(QFile* image, const FileRecoveryCandidate& candidate) {

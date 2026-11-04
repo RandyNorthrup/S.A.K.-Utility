@@ -1816,6 +1816,8 @@ private Q_SLOTS:
     void scriptBuilder_copyPartitionHoldsItsSourceAndReadsItAll();
     void lockedVolumeDoesNotStopApply();
     void scriptBuilder_backupReadsItsShadowCopyThroughALink();
+    void scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVolume();
+    void scriptBuilder_restoredPartitionKeepsItsStart();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
@@ -21781,6 +21783,58 @@ void PartitionManagerCoreTests::scriptBuilder_backupReadsItsShadowCopyThroughALi
         move.script.indexOf(QStringLiteral("Remove-CimInstance -InputObject $shadow"));
     QVERIFY2(link >= 0 && copy > link, "it reads through a link it made first");
     QVERIFY2(unlink > copy && release > unlink, "and takes the link away before the snapshot");
+}
+
+// Every NTFS root holds a folder an administrator may not list, and listing it stopped the script.
+void PartitionManagerCoreTests::scriptBuilder_restoredPartitionKeepsItsStart() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{3};
+    pinDiskTargetIdentity(&target);
+    QJsonObject payload;
+    payload[QStringLiteral("offset_bytes")] = QStringLiteral("134217728");
+    payload[QStringLiteral("size_bytes")] = QStringLiteral("268435456");
+    payload[QStringLiteral("type_id")] = QStringLiteral("{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}");
+    payload[QStringLiteral("partition_style")] = QStringLiteral("GPT");
+    const PartitionScriptBuilder builder;
+    const auto restore = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::RestoreRecoveredPartition, target, payload));
+    QVERIFY2(restore.valid(), qPrintable(restore.blockers.join(QStringLiteral("; "))));
+    const auto read = restore.script.indexOf(QStringLiteral("$sakRaw.Read($sakHead"));
+    const auto create = restore.script.indexOf(QStringLiteral("New-Partition -DiskNumber 3"));
+    const auto write = restore.script.indexOf(QStringLiteral("$sakRaw.Write($sakHead"));
+    const auto dismount = restore.script.indexOf(QStringLiteral("fsutil.exe volume dismount"));
+    QVERIFY2(read >= 0 && create > read, "the start must be read before Windows blanks it");
+    QVERIFY2(write > create, "and put back after");
+    QVERIFY2(dismount > write, "and Windows made to look at it again");
+    QVERIFY(restore.script.contains(QStringLiteral("PhysicalDrive3")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVolume() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.size_bytes = 1024ULL * 1024ULL * 1024ULL;
+    target.drive_letter = QStringLiteral("T");
+    QJsonObject payload;
+    payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("2147483648");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("1073741824");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("T");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("label")] = QStringLiteral("Moved");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const PartitionScriptBuilder builder;
+    const auto move = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::MovePartition, target, payload));
+    QVERIFY2(move.valid(), qPrintable(move.blockers.join(QStringLiteral("; "))));
+    QVERIFY(move.script.contains(QStringLiteral("function Get-SakFileManifest")));
+    QVERIFY2(move.script.contains(QStringLiteral("'System Volume Information', '$RECYCLE.BIN'")),
+             "the folders Windows keeps must be left out");
+    QVERIFY2(!move.script.contains(
+                 QStringLiteral("Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File")),
+             "a recursive listing from the root stops at System Volume Information");
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScripts() {
