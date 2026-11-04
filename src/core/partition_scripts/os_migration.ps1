@@ -90,7 +90,8 @@ function Assert-SakWindowsFits {
 }
 
 # A partition that will be formatted must not get a letter while raw, or Windows offers on screen to
-# format it. Taken off again in Set-SakFormattedPartitionVisible.
+# format it. GPT has an attribute for that. MBR does not, and a hidden type leaves it with no volume at
+# all, until Format-SakTargetVolume changes the type just before formatting it.
 function New-SakLayoutEntry($from, [int64]$offset, [int64]$length, [bool]$hideRaw) {
   $entry = New-Object SakMigration.LayoutEntry
   $entry.Offset = $offset
@@ -182,7 +183,7 @@ function Set-SakTargetOnline {
   $deadline = (Get-Date).AddMinutes(2)
   while ((Get-Date) -lt $deadline) {
     $waiting = @(Get-Partition -DiskNumber $sakTargetDisk -ErrorAction Stop | Where-Object {
-      "$($_.Type)" -ne 'Reserved' -and -not (@($_.AccessPaths) | Where-Object { $_ -like '\\?\Volume*' }) })
+      "$($_.Type)" -ne 'Reserved' -and $_.MbrType -ne 0x17 -and -not (@($_.AccessPaths) | Where-Object { $_ -like '\\?\Volume*' }) })
     if ($waiting.Count -eq 0) { return }
     Start-Sleep -Seconds 1
   }
@@ -220,21 +221,28 @@ function Invoke-SakDism([string[]]$toolArgs) {
   } finally { $ErrorActionPreference = $previous }
   if ($code -ne 0) { throw ('DISM failed with exit code {0}: {1}' -f $code, (($tail | Select-Object -Last 4) -join ' ')) }
 }
-function Set-SakFormattedPartitionVisible($partition) {
-  if ($sakScheme -eq 'GPT') {
-    Set-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -NoDefaultDriveLetter $false -ErrorAction Stop
-  } else {
+function Format-SakTargetVolume($partition, [string]$label) {
+  if ($sakScheme -eq 'MBR') {
     Set-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -MbrType 7 -ErrorAction Stop
+    $deadline = (Get-Date).AddMinutes(2)
+    while (-not (@((Get-SakTargetPartition $partition.Offset).AccessPaths) | Where-Object { $_ -like '\\?\Volume*' })) {
+      if ((Get-Date) -gt $deadline) { throw "The partition at byte $($partition.Offset) got no volume when its type changed" }
+      Start-Sleep -Milliseconds 300
+    }
+    $partition = Get-SakTargetPartition $partition.Offset
   }
+  Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel $label -Confirm:$false -ErrorAction Stop | Out-Null
 }
 function Invoke-SakImageRoute {
   $windows = $sakPartitions | Where-Object { $_.Kind -eq 'Windows' } | Select-Object -First 1
   $winPartition = Get-SakTargetPartition $windows.TargetOffset
   $scratchPartition = Get-SakTargetPartition $sakScratchOffset
   $label = "$((Get-Volume -Partition (Get-Partition -DiskNumber $sakSourceDisk -PartitionNumber $windows.SourceNumber)).FileSystemLabel)"
-  Format-Volume -Partition $winPartition -FileSystem NTFS -NewFileSystemLabel $label -Confirm:$false -ErrorAction Stop | Out-Null
-  Format-Volume -Partition $scratchPartition -FileSystem NTFS -NewFileSystemLabel 'SAKSCRATCH' -Confirm:$false -ErrorAction Stop | Out-Null
-  Set-SakFormattedPartitionVisible $winPartition
+  Format-SakTargetVolume $winPartition $label
+  Format-SakTargetVolume $scratchPartition 'SAKSCRATCH'
+  if ($sakScheme -eq 'GPT') {
+    Set-Partition -DiskNumber $sakTargetDisk -PartitionNumber $winPartition.PartitionNumber -NoDefaultDriveLetter $false -ErrorAction Stop
+  }
   $winLetter = Add-SakTargetLetter $winPartition
   $scratchLetter = Add-SakTargetLetter $scratchPartition
   $snapshotLetter = Get-SakFreeBootLetter 'R'

@@ -461,6 +461,16 @@ void PartitionOsMigrationTests::scriptReleasesSnapshotsAndNeverTouchesFirmware()
     QVERIFY(text.contains(QStringLiteral("  Set-SakTargetBoot\n")));
     QVERIFY(text.contains(QStringLiteral("  Set-SakTargetRecovery $windowsRoot\n")));
     QVERIFY(text.contains(QStringLiteral("/ConfigFile:$config")));
+    // On MBR a hidden partition has no volume, which a real run found: bringing the disk online
+    // must not wait for one, and formatting must change the type first.
+    QVERIFY(text.contains(QStringLiteral("$_.MbrType -ne 0x17 -and")));
+    const qsizetype formatter = text.indexOf(QStringLiteral("function Format-SakTargetVolume"));
+    QVERIFY(formatter >= 0);
+    const qsizetype unhide = text.indexOf(QStringLiteral("-MbrType 7"), formatter);
+    const qsizetype format = text.indexOf(QStringLiteral("Format-Volume -Partition"), formatter);
+    QVERIFY(unhide > formatter && format > unhide);
+    QVERIFY(text.contains(QStringLiteral("Format-SakTargetVolume $winPartition $label")));
+    QVERIFY(text.contains(QStringLiteral("Format-SakTargetVolume $scratchPartition 'SAKSCRATCH'")));
     QVERIFY(!text.contains(QStringLiteral("\\Windows\\CSC'")));
     QVERIFY(text.contains(QStringLiteral("[Guid]::NewGuid()")));
 }
