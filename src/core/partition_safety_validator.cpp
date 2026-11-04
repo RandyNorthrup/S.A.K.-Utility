@@ -246,8 +246,11 @@ bool operationTargetScopeMismatch(const PartitionOperation& operation) {
 }
 
 bool blocksDataDiskStyleConversion(const PartitionDiskInfo& disk, PartitionOperationType type) {
-    return type == PartitionOperationType::ConvertPartitionStyle && !disk.partitions.isEmpty() &&
-           !disk.is_system;
+    // Windows puts a Microsoft Reserved partition on a GPT disk as it initializes it. It holds no
+    // files, and a disk with only that on it is what a person calls empty.
+    const bool holds_data = std::ranges::any_of(
+        disk.partitions, [](const PartitionInfoEx& partition) { return !partition.is_msr; });
+    return type == PartitionOperationType::ConvertPartitionStyle && holds_data && !disk.is_system;
 }
 
 bool blocksUnsafeSystemStyleConversion(const PartitionDiskInfo& disk,

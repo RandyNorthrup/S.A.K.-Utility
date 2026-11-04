@@ -1808,6 +1808,8 @@ private Q_SLOTS:
     void scriptBuilder_mergeRejectsTraversalTargetFolder();
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
+    void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
+    void scriptBuilder_styleConversionLooksPastReservedPartition();
     void scriptBuilder_rejectsEnumArgumentCommandInjection();
     void scriptBuilder_stripsControlCharsFromDiskPartLabel();
     void safetyValidator_requiresCloneOverwriteConfirmation();
@@ -18669,6 +18671,74 @@ void PartitionManagerCoreTests::scriptBuilder_buildsEmptyDataDiskStyleConversion
     QVERIFY(script.script.contains(QStringLiteral("Clear-Disk -Number 4 -RemoveData")));
     QVERIFY(
         script.script.contains(QStringLiteral("Initialize-Disk -Number 4 -PartitionStyle MBR")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_reservedPartitionIsEmptyForStyleConversion() {
+    PartitionDiskInfo disk;
+    disk.disk_number = DiskNumber{1};
+    disk.unique_id = QStringLiteral("disk-1");
+    disk.partition_style = QStringLiteral("GPT");
+    disk.health_status = QStringLiteral("Healthy");
+    disk.operational_status = QStringLiteral("Online");
+    disk.size_bytes = 1024ULL * 1024ULL * 1024ULL;
+    PartitionInfoEx reserved;
+    reserved.disk_number = disk.disk_number;
+    reserved.partition_number = PartitionNumber{1};
+    reserved.type_name = QStringLiteral("Reserved");
+    reserved.is_msr = true;
+    reserved.size_bytes = 16ULL * 1024ULL * 1024ULL;
+    disk.partitions.append(reserved);
+    PartitionInventory inventory;
+    inventory.layout_hash = QStringLiteral("style");
+    inventory.disks.append(disk);
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = disk.disk_number;
+    target.disk_unique_id = disk.unique_id;
+    target.size_bytes = disk.size_bytes;
+    QJsonObject payload;
+    payload[QStringLiteral("target_style")] = QStringLiteral("MBR");
+    const auto operation = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPartitionStyle, target, payload);
+    const auto reasons = [&inventory, &operation]() {
+        return PartitionSafetyValidator::validate(inventory, operation).blockers;
+    };
+    const QString refusal =
+        QStringLiteral("Data disk partition-style conversion requires an empty disk in v1");
+    QVERIFY2(!reasons().contains(refusal), "a disk with only a reserved partition is empty");
+
+    PartitionInfoEx data = reserved;
+    data.partition_number = PartitionNumber{2};
+    data.type_name = QStringLiteral("Basic");
+    data.is_msr = false;
+    inventory.disks[0].partitions.append(data);
+    QVERIFY2(reasons().contains(refusal), "a disk with a data partition is not");
+}
+
+void PartitionManagerCoreTests::scriptBuilder_styleConversionLooksPastReservedPartition() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{1};
+    pinDiskTargetIdentity(&target);
+    QJsonObject payload;
+    payload[QStringLiteral("target_style")] = QStringLiteral("MBR");
+    const PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPartitionStyle, target, payload));
+    QVERIFY(script.valid());
+    QVERIFY2(script.script.contains(QStringLiteral("-ne 'Reserved'")),
+             "the script's own empty check must agree with the validator's");
+    // An initialized MBR disk with no partitions makes Get-Partition throw not-found, which must
+    // read as empty. Only that error may: any other failure still has to stop the wipe.
+    QVERIFY2(script.script.contains(QStringLiteral("function Get-SakOptionalDiskPartitions")),
+             "an empty MBR disk must not stop the conversion");
+    QVERIFY2(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")),
+             "only not-found may read as empty");
+    QVERIFY2(script.script.contains(QStringLiteral("$parts = @(Get-SakOptionalDiskPartitions")),
+             "the empty check must use the function that tolerates not-found");
+    QVERIFY2(!script.script.contains(QStringLiteral("$parts = @(Get-Partition")),
+             "a bare Get-Partition throws on an empty MBR disk");
 }
 
 void PartitionManagerCoreTests::scriptBuilder_rejectsEnumArgumentCommandInjection() {

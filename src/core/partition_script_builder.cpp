@@ -5435,7 +5435,7 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          "exit $LASTEXITCODE\n")
                          .arg(operation.target.disk_number.value());
     } else {
-        out.script = commonHeader(out.preview) +
+        out.script = commonHeader(out.preview) + optionalDiskPartitionsFunctionScript() +
                      QStringLiteral(
                          "Set-Disk -Number %1 -IsOffline $false -ErrorAction Stop\n"
                          "Set-Disk -Number %1 -IsReadOnly $false -ErrorAction Stop\n"
@@ -5448,7 +5448,8 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          // of being swallowed into an empty list that passes the
                          // empty-disk gate and wipes a disk that actually holds data.
                          "if ($disk.PartitionStyle -ne 'RAW') {\n"
-                         "  $parts = @(Get-Partition -DiskNumber %1 -ErrorAction Stop)\n"
+                         "  $parts = @(Get-SakOptionalDiskPartitions -DiskNumber %1 | "
+                         "Where-Object { \"$($_.Type)\" -ne 'Reserved' })\n"
                          "  if ($parts.Count -gt 0) { throw 'Data disk partition-style "
                          "conversion requires an empty disk' }\n"
                          "  Clear-Disk -Number %1 -RemoveData -Confirm:$false\n"
