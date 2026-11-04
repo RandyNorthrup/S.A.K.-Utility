@@ -460,6 +460,29 @@ add_test(NAME test_partition_os_migration COMMAND test_partition_os_migration
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_partition_os_migration")
 
+# test_elevated_helper_connection - the real helper over a real pipe. Asks for elevation, so it runs
+# where that asks nobody anything (CI) and skips everywhere else.
+add_executable(test_elevated_helper_connection
+    unit/test_elevated_helper_connection.cpp
+)
+set_target_properties(test_elevated_helper_connection PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevated_helper_connection PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_elevated_helper_connection PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_elevated_helper_connection PRIVATE QT_NO_KEYWORDS)
+add_dependencies(test_elevated_helper_connection sak_elevated_helper)
+add_test(NAME test_elevated_helper_connection COMMAND test_elevated_helper_connection
+         -o "${TEST_OUTPUT_DIR}/test_elevated_helper_connection.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_elevated_helper_connection PROPERTIES TIMEOUT 300)
+message(STATUS "Added unit test: test_elevated_helper_connection")
 
 # test_partition_manager_controller - async preflight/apply/verification state machine
 add_executable(test_partition_manager_controller
