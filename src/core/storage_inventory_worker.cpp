@@ -996,7 +996,8 @@ $disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
     HealthStatus = "$($disk.HealthStatus)"
     OperationalStatus = @($disk.OperationalStatus) -join ', '
     BusType = "$($disk.BusType)"
-    MediaType = "$($disk.MediaType)"
+    # Get-Disk has no media type. Only the physical disk says HDD, SSD or Unspecified.
+    MediaType = if ($physical) { "$($physical.MediaType)" } else { '' }
     PartitionScheme = "$($disk.PartitionStyle)"
     SmartSummary = if ($reliability) { 'Storage reliability counters available' } else { '' }
     ReliabilityQuerySucceeded = [bool]$reliability

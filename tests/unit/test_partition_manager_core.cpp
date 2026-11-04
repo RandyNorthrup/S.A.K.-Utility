@@ -1820,6 +1820,7 @@ private Q_SLOTS:
     void scriptBuilder_restoredPartitionKeepsItsStart();
     void safetyValidator_copyingFromAReadOnlyPartitionOnlyReadsIt();
     void scanListsWhatGetDiskLeavesOut();
+    void scanReadsMediaTypeFromThePhysicalDisk();
     void dynamicDiskFromTheScanConvertsAndNothingElse();
     void scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
@@ -21837,6 +21838,32 @@ void PartitionManagerCoreTests::safetyValidator_copyingFromAReadOnlyPartitionOnl
         PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, {});
     QVERIFY2(PartitionSafetyValidator::validate(inventory, format).blockers.contains(refusal),
              "and anything that writes to it stays refused");
+}
+
+// Get-Disk has no MediaType, so every disk scanned as neither SSD nor HDD: an HDD defrag was
+// refused on any hard drive whose name does not say so, and an SSD wipe never warned that it is not
+// a purge.
+void PartitionManagerCoreTests::scanReadsMediaTypeFromThePhysicalDisk() {
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript();
+    QVERIFY2(script.contains(QStringLiteral(
+                 "MediaType = if ($physical) { \"$($physical.MediaType)\" } else { '' }")),
+             "the media type comes from the physical disk");
+    QVERIFY2(!script.contains(QStringLiteral("$($disk.MediaType)")), "Get-Disk has none to give");
+
+    // What the parser makes of it, on a hard drive whose name does not say what it is.
+    QJsonArray disks = QJsonDocument::fromJson(fixtureJson()).array();
+    QJsonObject disk = disks.first().toObject();
+    disk.insert(QStringLiteral("FriendlyName"), QStringLiteral("Expansion Desk"));
+    disk.insert(QStringLiteral("BusType"), QStringLiteral("USB"));
+    disk.insert(QStringLiteral("MediaType"), QStringLiteral("HDD"));
+    disks[0] = disk;
+    const auto hdd = StorageInventoryWorker::parseInventoryJson(QJsonDocument(disks).toJson());
+    QCOMPARE(hdd.disks.first().media_type, QStringLiteral("HDD"));
+    QVERIFY2(diskLooksHdd(hdd.disks.first()), "a hard drive with a plain name is a hard drive");
+    disk.insert(QStringLiteral("MediaType"), QString());
+    disks[0] = disk;
+    const auto unknown = StorageInventoryWorker::parseInventoryJson(QJsonDocument(disks).toJson());
+    QVERIFY2(!diskLooksHdd(unknown.disks.first()), "and without its media type nothing says so");
 }
 
 // Get-Disk does not list a dynamic disk, so a scan built on it alone hid a real disk.
