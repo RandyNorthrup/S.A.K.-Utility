@@ -7,6 +7,7 @@
 #include "sak/storage_inventory_worker.h"
 // sak::jsonUInt64 -- the clamped inventory field reader.
 #include "sak/elevation_broker.h"
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_safety_validator.h"
@@ -18,11 +19,18 @@
 #include <QJsonObject>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <thread>
 
 namespace sak {
 
 namespace {
+
+constexpr auto kHelperScanCancelPoll = std::chrono::milliseconds(200);
+constexpr int kHelperScanTimeoutSeconds = 300;
+constexpr int kHelperScanOutputBytes = 8 * 1024 * 1024;
 
 bool cancellationRequested(const CancelCheck& should_cancel) {
     return should_cancel && should_cancel();
@@ -162,6 +170,19 @@ QString diskOfflineStateToken(const PartitionDiskInfo& disk) {
 }
 
 QString buildLayoutHash(const PartitionInventory& inventory) {
+    // What a raw probe found depends on whether this scan could read a raw partition, which a
+    // standard-user scan cannot. The queue's hash has to mean the same before and after Apply's
+    // own scan reads it, so only what Windows reports to anyone goes in.
+    const auto fileSystemAnyoneCanRead = [](const PartitionInfoEx& partition) {
+        if (!partition.volume) {
+            return QString();
+        }
+        const QString& source = partition.volume->file_system_source;
+        return source == PartitionFileSystemDetector::windowsVolumeSource() ||
+                       source == PartitionFileSystemDetector::inferredProtectedSource()
+                   ? partition.volume->file_system
+                   : QString();
+    };
     QCryptographicHash hash(QCryptographicHash::Sha256);
     for (const auto& disk : inventory.disks) {
         // is_system/is_boot are folded in so that a change to a disk's boot or
@@ -182,7 +203,7 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
                              .arg(partition.partition_guid)
                              .arg(partition.offset_bytes)
                              .arg(partition.size_bytes)
-                             .arg(partition.volume ? partition.volume->file_system : QString())
+                             .arg(fileSystemAnyoneCanRead(partition))
                              .arg(partition.volume ? partition.volume->drive_letter : QString())
                              .toUtf8());
         }
@@ -315,7 +336,35 @@ struct RawProbeContext {
     bool* elevated_probe_unavailable{nullptr};
     PartitionInventory* inventory{nullptr};
     CancelCheck should_cancel;
+    // A scan that may not ask for elevation expects to be refused a raw read. Apply's scan makes
+    // it.
+    bool refusal_is_expected{false};
 };
+
+/// The second try, through the partition's own device path. If it fails too, the error says why
+/// both did.
+std::optional<QByteArray> readProbeBytesFromPartitionAlias(const PartitionDiskInfo& disk,
+                                                           const PartitionInfoEx& partition,
+                                                           const RawProbeContext& context,
+                                                           QString* local_probe_error) {
+    const QString partitionPath = partitionDevicePath(disk, partition);
+    if (partitionPath.isEmpty() || cancellationRequested(context.should_cancel)) {
+        return std::nullopt;
+    }
+    QString partitionProbeError;
+    auto bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
+        partitionPath, 0, partition.size_bytes, &partitionProbeError);
+    if (!bytes.has_value()) {
+        *local_probe_error =
+            QStringLiteral("%1; partition alias %2: %3")
+                .arg(normalizedProbeError(*local_probe_error,
+                                          QStringLiteral("physical drive read failed")),
+                     partitionPath,
+                     normalizedProbeError(partitionProbeError,
+                                          QStringLiteral("local partition read failed")));
+    }
+    return bytes;
+}
 
 std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
                                                   const PartitionInfoEx& partition,
@@ -330,21 +379,9 @@ std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
         return bytes;
     }
 
-    const QString partitionPath = partitionDevicePath(disk, partition);
-    QString partitionProbeError;
-    if (!partitionPath.isEmpty() && !cancellationRequested(context.should_cancel)) {
-        bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
-            partitionPath, 0, partition.size_bytes, &partitionProbeError);
-        if (bytes.has_value()) {
-            return bytes;
-        }
-        localProbeError =
-            QStringLiteral("%1; partition alias %2: %3")
-                .arg(normalizedProbeError(localProbeError,
-                                          QStringLiteral("physical drive read failed")),
-                     partitionPath,
-                     normalizedProbeError(partitionProbeError,
-                                          QStringLiteral("local partition read failed")));
+    bytes = readProbeBytesFromPartitionAlias(disk, partition, context, &localProbeError);
+    if (bytes.has_value()) {
+        return bytes;
     }
 
     if (cancellationRequested(context.should_cancel)) {
@@ -356,7 +393,10 @@ std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
         return bytes;
     }
 
-    appendRawProbeWarning(context.inventory, disk, partition, localProbeError, elevatedProbeError);
+    if (!context.refusal_is_expected) {
+        appendRawProbeWarning(
+            context.inventory, disk, partition, localProbeError, elevatedProbeError);
+    }
     if (elevatedProbeErrorDisablesRetry(elevatedProbeError)) {
         *context.elevated_probe_unavailable = true;
     }
@@ -437,7 +477,8 @@ void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
 
 void applyRawFileSystemDetection(PartitionInventory* inventory,
                                  bool allow_elevation,
-                                 const CancelCheck& should_cancel) {
+                                 const CancelCheck& should_cancel,
+                                 bool refusal_is_expected = false) {
     if (inventory == nullptr) {
         return;
     }
@@ -463,7 +504,8 @@ void applyRawFileSystemDetection(PartitionInventory* inventory,
             const RawProbeContext context{.broker = elevatedBroker.get(),
                                           .elevated_probe_unavailable = &elevatedProbeUnavailable,
                                           .inventory = inventory,
-                                          .should_cancel = should_cancel};
+                                          .should_cancel = should_cancel,
+                                          .refusal_is_expected = refusal_is_expected};
             applyRawFileSystemDetectionToPartition(disk, &partition, context);
         }
     }
@@ -562,11 +604,26 @@ void appendPartitionEnumerationWarnings(PartitionInventory* inventory) {
     }
 }
 
+// Under a standard-user token this state cannot be read, and Apply's own scan reads it.
+void markAdministratorStatePending(PartitionInventory* inventory) {
+    for (auto& disk : inventory->disks) {
+        disk.reliability_query_succeeded = true;
+        for (auto& partition : disk.partitions) {
+            if (!partition.volume || !partition.volume->hasDriveLetter()) {
+                continue;
+            }
+            partition.volume->administrator_state_pending =
+                !partition.volume->dirty_bit_known || !partition.volume->bitlocker_state_known;
+        }
+    }
+}
+
 void appendVolumeProbeWarnings(PartitionInventory* inventory) {
     for (const auto& disk : inventory->disks) {
         for (const auto& partition : disk.partitions) {
             if (!partition.volume || !partition.volume->hasDriveLetter() ||
-                partition.volume->dirty_bit_known) {
+                partition.volume->dirty_bit_known ||
+                partition.volume->administrator_state_pending) {
                 continue;
             }
             const QString reason = partition.volume->dirty_bit_error.trimmed().isEmpty()
@@ -577,6 +634,30 @@ void appendVolumeProbeWarnings(PartitionInventory* inventory) {
                                "dirty state is unknown")
                     .arg(partition.volume->drive_letter, reason));
         }
+    }
+}
+
+void appendPartitionMetadataWarnings(const PartitionDiskInfo& disk,
+                                     const PartitionInfoEx& partition,
+                                     PartitionInventory* inventory) {
+    if (partition.volume_lookup_failed) {
+        const QString reason = partition.volume_lookup_error.trimmed().isEmpty()
+                                   ? QStringLiteral("no error text reported")
+                                   : partition.volume_lookup_error.trimmed();
+        inventory->warnings.append(
+            QStringLiteral("Volume lookup failed for disk %1 partition %2: %3; mounted "
+                           "volume metadata is unknown")
+                .arg(disk.disk_number.value())
+                .arg(partition.partition_number.value())
+                .arg(reason));
+    }
+    if (partition.volume && !partition.volume->bitlocker_state_known &&
+        !partition.volume->administrator_state_pending &&
+        !partition.volume->bitlocker_state_error.trimmed().isEmpty()) {
+        inventory->warnings.append(QStringLiteral("BitLocker query failed for volume %1: %2; "
+                                                  "protection and lock state are unknown")
+                                       .arg(partition.volume->drive_letter,
+                                            partition.volume->bitlocker_state_error.trimmed()));
     }
 }
 
@@ -593,25 +674,7 @@ void appendInventoryMetadataWarnings(PartitionInventory* inventory) {
                     .arg(reason));
         }
         for (const auto& partition : disk.partitions) {
-            if (partition.volume_lookup_failed) {
-                const QString reason = partition.volume_lookup_error.trimmed().isEmpty()
-                                           ? QStringLiteral("no error text reported")
-                                           : partition.volume_lookup_error.trimmed();
-                inventory->warnings.append(
-                    QStringLiteral("Volume lookup failed for disk %1 partition %2: %3; mounted "
-                                   "volume metadata is unknown")
-                        .arg(disk.disk_number.value())
-                        .arg(partition.partition_number.value())
-                        .arg(reason));
-            }
-            if (partition.volume && !partition.volume->bitlocker_state_known &&
-                !partition.volume->bitlocker_state_error.trimmed().isEmpty()) {
-                inventory->warnings.append(
-                    QStringLiteral("BitLocker query failed for volume %1: %2; protection and "
-                                   "lock state are unknown")
-                        .arg(partition.volume->drive_letter,
-                             partition.volume->bitlocker_state_error.trimmed()));
-            }
+            appendPartitionMetadataWarnings(disk, partition, inventory);
         }
     }
 }
@@ -646,10 +709,110 @@ PartitionInventory StorageInventoryWorker::scanCurrentSystem(bool allow_elevatio
     return scanCurrentSystemResult(allow_elevation, should_cancel).inventory;
 }
 
+ProcessResult runPrivilegedInventoryScript(bool process_is_elevated,
+                                           const PrivilegedInventoryRunners& runners,
+                                           QStringList* notes) {
+    if (process_is_elevated) {
+        return runners.in_this_process();
+    }
+    auto from_helper = runners.in_helper();
+    if (from_helper.has_value()) {
+        return std::move(*from_helper);
+    }
+    notes->append(QStringLiteral("Apply needs administrator rights to read BitLocker and "
+                                 "dirty-volume state right before it writes, and could not get "
+                                 "them (%1). Nothing was changed")
+                      .arg(from_helper.error()));
+    return runners.in_this_process();
+}
+
+namespace {
+
+std::expected<ProcessResult, QString> runInventoryScriptInHelper(const CancelCheck& should_cancel) {
+    const auto broker = ElevationBroker::sessionBroker();
+    std::atomic_bool finished{false};
+    std::jthread canceller([&finished, &broker, &should_cancel]() {
+        while (!finished.load()) {
+            if (cancellationRequested(should_cancel)) {
+                broker->cancelCurrentTask();
+                return;
+            }
+            std::this_thread::sleep_for(kHelperScanCancelPoll);
+        }
+    });
+    QJsonObject payload;
+    payload[QStringLiteral("command")] = StorageInventoryWorker::inventoryPowerShellScript();
+    payload[QStringLiteral("timeout_seconds")] = kHelperScanTimeoutSeconds;
+    payload[QStringLiteral("max_output_bytes")] = kHelperScanOutputBytes;
+    const auto elevated =
+        broker->executeTask(QStringLiteral("RunPowerShell"), QStringLiteral("Scan disks"), payload);
+    finished.store(true);
+    if (!elevated.has_value()) {
+        return std::unexpected(elevationErrorText(elevated.error()));
+    }
+    ProcessResult result;
+    result.exit_code = elevated->data.value(QStringLiteral("exit_code")).toInt(-1);
+    result.std_out = elevated->data.value(QStringLiteral("stdout")).toString();
+    result.std_err = elevated->data.value(QStringLiteral("stderr")).toString();
+    result.cancelled = elevated->data.value(QStringLiteral("cancelled")).toBool(false);
+    if (!elevated->success && result.exit_code != 0 && result.std_err.trimmed().isEmpty()) {
+        result.std_err = elevated->error_message;
+    }
+    return result;
+}
+
+}  // namespace
+
+StorageInventoryScanResult StorageInventoryWorker::scanForBrowsing(
+    const CancelCheck& should_cancel) {
+    const bool elevated = ElevationManager::isElevated();
+    return finishScan(
+        runPowerShell(
+            inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel),
+        elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
+        elevated,
+        should_cancel);
+}
+
+StorageInventoryScanResult StorageInventoryWorker::scanForApply(const CancelCheck& should_cancel) {
+    QStringList notes;
+    const ProcessResult result = runPrivilegedInventoryScript(
+        ElevationManager::isElevated(),
+        {.in_this_process =
+             [&should_cancel]() {
+                 return runPowerShell(inventoryPowerShellScript(),
+                                      sak::kTimeoutProcessLongMs,
+                                      true,
+                                      true,
+                                      should_cancel);
+             },
+         .in_helper = [&should_cancel]() { return runInventoryScriptInHelper(should_cancel); }},
+        &notes);
+    // With the helper refused, the list still comes back for the panel to show, and the note is the
+    // one warning on it: that is what stops the preflight, and what the person is told.
+    auto scan = finishScan(result,
+                           notes.isEmpty() ? ReadLevel::Everything
+                                           : ReadLevel::WhatAStandardUserCanRead,
+                           notes.isEmpty(),
+                           should_cancel);
+    scan.inventory.warnings.append(notes);
+    return scan;
+}
+
 StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
     bool allow_elevation, const CancelCheck& should_cancel) {
-    const auto result = runPowerShell(
-        inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel);
+    return finishScan(
+        runPowerShell(
+            inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel),
+        ReadLevel::Everything,
+        allow_elevation,
+        should_cancel);
+}
+
+StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResult& result,
+                                                              ReadLevel level,
+                                                              bool allow_elevation,
+                                                              const CancelCheck& should_cancel) {
     if (!result.succeeded()) {
         PartitionInventory inventory;
         inventory.captured_at = QDateTime::currentDateTime();
@@ -664,8 +827,9 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
                 .cancelled = result.cancelled || cancellationRequested(should_cancel)};
     }
 
-    auto inventory = parseInventoryJson(result.std_out.toUtf8());
-    applyRawFileSystemDetection(&inventory, allow_elevation, should_cancel);
+    auto inventory = parseInventory(result.std_out.toUtf8(), level);
+    applyRawFileSystemDetection(
+        &inventory, allow_elevation, should_cancel, level == ReadLevel::WhatAStandardUserCanRead);
     if (cancellationRequested(should_cancel) &&
         !inventory.warnings.contains(QStringLiteral("Inventory scan cancelled"))) {
         inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
@@ -675,6 +839,20 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
 }
 
 PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& json_data) {
+    return parseInventory(json_data, ReadLevel::Everything);
+}
+
+QString StorageInventoryWorker::layoutHash(const PartitionInventory& inventory) {
+    return buildLayoutHash(inventory);
+}
+
+PartitionInventory StorageInventoryWorker::parseStandardUserInventoryJson(
+    const QByteArray& json_data) {
+    return parseInventory(json_data, ReadLevel::WhatAStandardUserCanRead);
+}
+
+PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json_data,
+                                                          ReadLevel level) {
     PartitionInventory inventory;
     inventory.captured_at = QDateTime::currentDateTime();
     QJsonParseError error{};
@@ -690,6 +868,9 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
         if (entry.isObject()) {
             inventory.disks.append(parseDisk(entry.toObject()));
         }
+    }
+    if (level == ReadLevel::WhatAStandardUserCanRead) {
+        markAdministratorStatePending(&inventory);
     }
     appendPartitionEnumerationWarnings(&inventory);
     appendVolumeProbeWarnings(&inventory);

@@ -83,6 +83,7 @@ public Q_SLOTS:
     // guard without dispatching a real (destructive) apply.
     void setTestState(PartitionManagerState state);
     void setInventoryScannerForTesting(InventoryScanner scanner);
+    void setApplyInventoryScannerForTesting(InventoryScanner scanner);
     void setApplyExecutorForTesting(ApplyExecutor executor);
     void setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner);
 #endif
@@ -94,6 +95,8 @@ Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     /// A request was checked and not added to the queue, for these reasons.
     void queueRefused(const QStringList& reasons);
+    /// Apply read the disks again and refused to start, for these reasons. Nothing was written.
+    void applyRefused(const QStringList& reasons);
     void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
     void executionFinished(const sak::PartitionExecutionResult& result);
@@ -133,6 +136,7 @@ private:
     std::optional<PendingApplyRequest> m_active_apply_request;
     std::optional<PartitionExecutionResult> m_pending_execution_result;
     std::function<StorageInventoryScanResult(const CancelCheck&)> m_inventory_scanner;
+    std::function<StorageInventoryScanResult(const CancelCheck&)> m_apply_inventory_scanner;
     std::function<PartitionExecutionResult(
         const QVector<PartitionOperation>&, bool, bool, const CancelCheck&)>
         m_apply_executor_for_testing;
@@ -159,7 +163,7 @@ private:
         const PartitionInventory& inventory, const PartitionOperation& operation);
     [[nodiscard]] static bool projectQueuedOperation(PartitionInventory* inventory,
                                                      const PartitionOperation& operation);
-    void startInventoryScan(InventoryScanPurpose purpose);
+    void startInventoryScan(InventoryScanPurpose purpose, bool with_elevation = false);
     void finishInventoryScan(QFutureWatcher<StorageInventoryScanResult>* watcher);
     [[nodiscard]] PartitionManagerState finishRefresh(PartitionInventory inventory, bool cancelled);
     [[nodiscard]] std::optional<PartitionManagerState> finishApplyPreflight(

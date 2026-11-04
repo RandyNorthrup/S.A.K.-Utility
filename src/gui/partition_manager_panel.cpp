@@ -376,8 +376,12 @@ template <typename Value>
 [[nodiscard]] QString bitLockerMountPoint(const PartitionVolumeInfo* volume);
 
 [[nodiscard]] bool bitLockerVolumeCanQueue(const PartitionVolumeInfo* volume) {
-    return volume != nullptr && volume->bitlocker_state_known && volume->bitlocker_enabled &&
-           !bitLockerMountPoint(volume).isEmpty();
+    if (volume == nullptr || bitLockerMountPoint(volume).isEmpty()) {
+        return false;
+    }
+    // A scan without administrator rights cannot say, and Apply reads it before it acts.
+    return (volume->bitlocker_state_known && volume->bitlocker_enabled) ||
+           volume->administrator_state_pending;
 }
 
 const QColor kPartitionColorGptPrimary{42, 151, 207};
@@ -5856,6 +5860,9 @@ QString dirtyBitProperty(const PartitionVolumeInfo& volume) {
     if (volume.dirty_bit_known) {
         return propertyYesNo(volume.dirty_bit_set);
     }
+    if (volume.administrator_state_pending) {
+        return QObject::tr("Unknown until Apply");
+    }
     return volume.dirty_bit_error.trimmed().isEmpty()
                ? QObject::tr("Unknown")
                : QObject::tr("Unknown (%1)").arg(volume.dirty_bit_error.trimmed());
@@ -5864,6 +5871,9 @@ QString dirtyBitProperty(const PartitionVolumeInfo& volume) {
 QString bitLockerStateProperty(const PartitionVolumeInfo& volume, bool value) {
     if (volume.bitlocker_state_known) {
         return propertyYesNo(value);
+    }
+    if (volume.administrator_state_pending) {
+        return QObject::tr("Unknown until Apply");
     }
     return volume.bitlocker_state_error.trimmed().isEmpty()
                ? QObject::tr("Unknown")
@@ -7034,6 +7044,9 @@ QString bitLockerProtectionText(const PartitionVolumeInfo* volume) {
     if (volume == nullptr) {
         return QObject::tr("No mounted volume selected");
     }
+    if (!volume->bitlocker_state_known && volume->administrator_state_pending) {
+        return QObject::tr("Unknown until Apply");
+    }
     if (!volume->bitlocker_state_known) {
         return volume->bitlocker_state_error.trimmed().isEmpty()
                    ? QObject::tr("Unknown")
@@ -7045,6 +7058,9 @@ QString bitLockerProtectionText(const PartitionVolumeInfo* volume) {
 QString bitLockerLockText(const PartitionVolumeInfo* volume) {
     if (volume == nullptr) {
         return QObject::tr("Not locked");
+    }
+    if (!volume->bitlocker_state_known && volume->administrator_state_pending) {
+        return QObject::tr("Unknown until Apply");
     }
     if (!volume->bitlocker_state_known) {
         return volume->bitlocker_state_error.trimmed().isEmpty()
@@ -9455,6 +9471,12 @@ void PartitionManagerPanel::connectController() {
                 showWarningLogged(this,
                                   tr("Not Added to the Queue"),
                                   reasons.join(QLatin1Char('\n')));
+            });
+    connect(m_controller.get(),
+            &PartitionManagerController::applyRefused,
+            this,
+            [this](const QStringList& reasons) {
+                showWarningLogged(this, tr("Not Applied"), reasons.join(QLatin1Char('\n')));
             });
     connect(m_controller.get(), &PartitionManagerController::stateChanged, this, [this]() {
         updateActionState();

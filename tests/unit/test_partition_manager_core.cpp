@@ -1806,6 +1806,11 @@ private Q_SLOTS:
     void safetyValidator_blocksUnsafeParityOperations();
     void scriptBuilder_buildsClearLevelDiskWipeScript();
     void scriptBuilder_mergeRejectsTraversalTargetFolder();
+    void applyScanRunsInTheHelperWhenNotElevated();
+    void applyScanSaysWhyAFailedHelperStopsIt();
+    void standardUserScanMarksWhatItCannotReadAsPending();
+    void safetyValidator_pendingStateQueuesAndKnownStateDecides();
+    void layoutHashIsTheSameWhoeverScanned();
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
@@ -18632,6 +18637,164 @@ void PartitionManagerCoreTests::scriptBuilder_mergeRejectsTraversalTargetFolder(
     const auto ok = builder.buildScript(
         PartitionOperationPlanner::makeOperation(PartitionOperationType::Merge, target, payload));
     QVERIFY2(ok.valid(), qPrintable(ok.blockers.join(QStringLiteral("; "))));
+}
+
+// Windows puts a Microsoft Reserved partition on a GPT disk as it initializes it, so a disk with
+// only that on it is empty to a person, and refusing it made an empty GPT disk unconvertible.
+// Apply's scan is the one that must read everything, so it runs where it can.
+void PartitionManagerCoreTests::applyScanRunsInTheHelperWhenNotElevated() {
+    int here = 0;
+    int helper = 0;
+    const PrivilegedInventoryRunners runners{
+        .in_this_process =
+            [&here]() {
+                ++here;
+                ProcessResult result;
+                result.exit_code = 0;
+                result.std_out = QStringLiteral("from here");
+                return result;
+            },
+        .in_helper = [&helper]() -> std::expected<ProcessResult, QString> {
+            ++helper;
+            ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral("from the helper");
+            return result;
+        }};
+    QStringList notes;
+    QCOMPARE(runPrivilegedInventoryScript(false, runners, &notes).std_out,
+             QStringLiteral("from the helper"));
+    QCOMPARE(helper, 1);
+    QCOMPARE(here, 0);
+    QVERIFY(notes.isEmpty());
+
+    QCOMPARE(runPrivilegedInventoryScript(true, runners, &notes).std_out,
+             QStringLiteral("from here"));
+    QCOMPARE(helper, 1);
+    QCOMPARE(here, 1);
+    QVERIFY2(notes.isEmpty(), "an elevated process reads everything itself");
+}
+
+// Declining the prompt must stop Apply and say why, and the panel keeps its list.
+void PartitionManagerCoreTests::applyScanSaysWhyAFailedHelperStopsIt() {
+    int here = 0;
+    const PrivilegedInventoryRunners runners{
+        .in_this_process =
+            [&here]() {
+                ++here;
+                ProcessResult result;
+                result.exit_code = 0;
+                return result;
+            },
+        .in_helper = []() -> std::expected<ProcessResult, QString> {
+            return std::unexpected(QStringLiteral("the prompt was declined"));
+        }};
+    QStringList notes;
+    QVERIFY(runPrivilegedInventoryScript(false, runners, &notes).succeeded());
+    QCOMPARE(here, 1);
+    QCOMPARE(notes.size(), 1);
+    QVERIFY(notes.first().contains(QStringLiteral("the prompt was declined")));
+    QVERIFY(notes.first().contains(QStringLiteral("Nothing was changed")));
+}
+
+namespace {
+
+QJsonObject standardUserInventoryDisk() {
+    QJsonObject volume{{QStringLiteral("UniqueId"), QStringLiteral("\\\\?\\Volume{V}\\")},
+                       {QStringLiteral("DriveLetter"), QStringLiteral("K")},
+                       {QStringLiteral("FileSystem"), QStringLiteral("NTFS")},
+                       {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
+                       {QStringLiteral("Size"), 1'048'576},
+                       {QStringLiteral("SizeRemaining"), 1024},
+                       {QStringLiteral("BitLockerStateKnown"), false},
+                       {QStringLiteral("BitLockerStateError"), QStringLiteral("Access denied")},
+                       {QStringLiteral("DirtyBitKnown"), false},
+                       {QStringLiteral("DirtyBitError"), QStringLiteral("fsutil exited 1")}};
+    QJsonObject partition{{QStringLiteral("PartitionNumber"), 1},
+                          {QStringLiteral("Type"), QStringLiteral("Basic")},
+                          {QStringLiteral("Offset"), 1'048'576},
+                          {QStringLiteral("Size"), 1'048'576},
+                          {QStringLiteral("Volume"), volume}};
+    return {{QStringLiteral("Number"), 1},
+            {QStringLiteral("UniqueId"), QStringLiteral("DISK")},
+            {QStringLiteral("FriendlyName"), QStringLiteral("Model")},
+            {QStringLiteral("PartitionStyle"), QStringLiteral("GPT")},
+            {QStringLiteral("Size"), 1'073'741'824},
+            {QStringLiteral("IsOffline"), false},
+            {QStringLiteral("Partitions"), QJsonArray{partition}}};
+}
+
+}  // namespace
+
+// A scan without administrator rights cannot read these. It says so, and that must not read as a
+// failed scan, or a person who only wants to look gets a warning, and no Apply can start.
+void PartitionManagerCoreTests::standardUserScanMarksWhatItCannotReadAsPending() {
+    const QByteArray json = QJsonDocument(QJsonArray{standardUserInventoryDisk()}).toJson();
+    const auto browsing = StorageInventoryWorker::parseStandardUserInventoryJson(json);
+    const auto& volume = *browsing.disks.first().partitions.first().volume;
+    QVERIFY(volume.administrator_state_pending);
+    const bool warned = std::ranges::any_of(browsing.warnings, [](const QString& warning) {
+        return warning.contains(QStringLiteral("BitLocker query failed")) ||
+               warning.contains(QStringLiteral("Dirty-bit query failed"));
+    });
+    QVERIFY2(!warned, qPrintable(browsing.warnings.join(QLatin1Char('|'))));
+
+    // The same answers from a scan that should have read them are a failure.
+    const auto apply = StorageInventoryWorker::parseInventoryJson(json);
+    QVERIFY(!apply.disks.first().partitions.first().volume->administrator_state_pending);
+    const auto warned_about = [&apply](const char* text) {
+        return std::ranges::any_of(apply.warnings, [text](const QString& warning) {
+            return warning.contains(QLatin1String(text));
+        });
+    };
+    QVERIFY(warned_about("BitLocker query failed"));
+    QVERIFY(warned_about("Dirty-bit query failed"));
+}
+
+// Only the scan that promises to look again may wave a volume through.
+void PartitionManagerCoreTests::safetyValidator_pendingStateQueuesAndKnownStateDecides() {
+    const QByteArray json = QJsonDocument(QJsonArray{standardUserInventoryDisk()}).toJson();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{1};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 1'048'576;
+    target.drive_letter = QStringLiteral("K");
+    QJsonObject payload;
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    const auto operation =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, payload);
+    const QString unknown = QStringLiteral(
+        "BitLocker protection and lock state could not be "
+        "determined");
+    const auto browsing = StorageInventoryWorker::parseStandardUserInventoryJson(json);
+    QVERIFY2(!PartitionSafetyValidator::validate(browsing, operation).blockers.contains(unknown),
+             "a volume whose state is pending queues");
+    const auto apply = StorageInventoryWorker::parseInventoryJson(json);
+    QVERIFY2(PartitionSafetyValidator::validate(apply, operation).blockers.contains(unknown),
+             "a volume whose state should be known and is not is refused");
+}
+
+// A raw probe a standard user may not make must not make a queue look stale once Apply can make it.
+void PartitionManagerCoreTests::layoutHashIsTheSameWhoeverScanned() {
+    const QByteArray json = QJsonDocument(QJsonArray{standardUserInventoryDisk()}).toJson();
+    auto first = StorageInventoryWorker::parseInventoryJson(json);
+    const QString windows_hash = first.layout_hash;
+    QVERIFY(!windows_hash.isEmpty());
+    QJsonObject disk = standardUserInventoryDisk();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject partition = partitions.first().toObject();
+    partition.remove(QStringLiteral("Volume"));
+    partitions[0] = partition;
+    disk[QStringLiteral("Partitions")] = partitions;
+    auto raw = StorageInventoryWorker::parseInventoryJson(QJsonDocument(QJsonArray{disk}).toJson());
+    const QString before_probe = raw.layout_hash;
+    PartitionVolumeInfo probed;
+    probed.file_system = QStringLiteral("ext4");
+    probed.file_system_source = QStringLiteral("raw probe");
+    raw.disks[0].partitions[0].volume = probed;
+    QCOMPARE(StorageInventoryWorker::layoutHash(raw), before_probe);
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeSystemStyleConversion() {

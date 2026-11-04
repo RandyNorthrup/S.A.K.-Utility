@@ -78,6 +78,42 @@ sak::PartitionTarget testDiskTarget() {
     return target;
 }
 
+sak::PartitionInventory volumeInventory() {
+    auto inventory = healthyInventory();
+    auto& disk = inventory.disks[0];
+    disk.partition_style = QStringLiteral("GPT");
+    sak::PartitionVolumeInfo volume;
+    volume.drive_letter = QStringLiteral("K");
+    volume.volume_guid = QStringLiteral("volume-k");
+    volume.file_system = QStringLiteral("NTFS");
+    volume.total_bytes = 256 * 1024 * 1024;
+    volume.free_bytes = 128 * 1024 * 1024;
+    volume.bitlocker_state_known = true;
+    volume.dirty_bit_known = true;
+    sak::PartitionInfoEx partition;
+    partition.disk_number = disk.disk_number;
+    partition.partition_number = sak::PartitionNumber{1};
+    partition.type_name = QStringLiteral("Basic");
+    partition.offset_bytes = 1024 * 1024;
+    partition.size_bytes = volume.total_bytes;
+    partition.volume = volume;
+    disk.partitions.append(partition);
+    return inventory;
+}
+
+sak::PartitionTarget volumeTarget() {
+    const auto inventory = volumeInventory();
+    const auto& partition = inventory.disks.first().partitions.first();
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Partition;
+    target.disk_number = partition.disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    target.drive_letter = QStringLiteral("K");
+    return target;
+}
+
 sak::PartitionExecutionResult successfulResult(bool dry_run) {
     sak::PartitionExecutionResult result;
     result.batch_id = QStringLiteral("controller-test");
@@ -124,6 +160,9 @@ private Q_SLOTS:
     void refreshDerivesReadyPartialAndFailedStates();
     void queueCapacityRefusalIsAtomic();
     void controllerBatchQueueRefusalIsAtomic();
+    void onlyApplyScansWithElevation();
+    void applyRefusesOnWhatItsOwnScanFinds();
+    void applyStopsAndSaysWhyWithoutTheHelper();
     void queueRefusalGivesItsReasons();
     void logTextIsPlainAndWhole();
     void quickPartitionBatchUsesSequentialProjectedInventory();
@@ -250,6 +289,117 @@ void PartitionManagerControllerTests::controllerBatchQueueRefusalIsAtomic() {
 }
 
 // The status bar said only that a batch failed validation. The reason is what a person acts on.
+// Apply is what may ask for elevation, so it scans the other way from a refresh.
+void PartitionManagerControllerTests::onlyApplyScansWithElevation() {
+    sak::PartitionManagerController controller;
+    int browsing = 0;
+    int applying = 0;
+    controller.setInventoryScannerForTesting([&browsing](const sak::CancelCheck&) {
+        ++browsing;
+        return inventoryResult(healthyInventory());
+    });
+    controller.setApplyInventoryScannerForTesting([&applying](const sak::CancelCheck&) {
+        ++applying;
+        return inventoryResult(healthyInventory());
+    });
+    controller.setApplyExecutorForTesting(
+        [](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            result.success = true;
+            return result;
+        });
+    controller.refreshInventory();
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QCOMPARE(browsing, 1);
+    QCOMPARE(applying, 0);
+
+    QVERIFY(controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                      testDiskTarget(),
+                                      QJsonObject{{"target_style", "GPT"}}));
+    // A dry run writes nothing and may not ask.
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), true, false));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QCOMPARE(browsing, 2);
+    QCOMPARE(applying, 0);
+
+    if (controller.queue().isEmpty()) {
+        QVERIFY(controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                          testDiskTarget(),
+                                          QJsonObject{{"target_style", "GPT"}}));
+    }
+    const int browsing_before = browsing;
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QCOMPARE(applying, 2);  // the preflight, and the check after writing
+    QCOMPARE(browsing, browsing_before);
+}
+
+// What Apply's scan finds is what decides, right before the write, and it says why.
+void PartitionManagerControllerTests::applyRefusesOnWhatItsOwnScanFinds() {
+    sak::PartitionManagerController controller;
+    auto browsing_view = volumeInventory();
+    browsing_view.disks[0].partitions[0].volume->bitlocker_state_known = false;
+    browsing_view.disks[0].partitions[0].volume->bitlocker_state_error = QStringLiteral("denied");
+    browsing_view.disks[0].partitions[0].volume->administrator_state_pending = true;
+    controller.setTestInventory(browsing_view);
+    auto apply_view = volumeInventory();
+    apply_view.disks[0].partitions[0].volume->bitlocker_state_known = true;
+    apply_view.disks[0].partitions[0].volume->bitlocker_enabled = true;
+    apply_view.disks[0].partitions[0].volume->bitlocker_locked = true;
+    controller.setApplyInventoryScannerForTesting(
+        [apply_view](const sak::CancelCheck&) { return inventoryResult(apply_view); });
+    bool executed = false;
+    controller.setApplyExecutorForTesting(
+        [&executed](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            executed = true;
+            return sak::PartitionExecutionResult{};
+        });
+    QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+
+    QVERIFY2(controller.queueOperation(sak::PartitionOperationType::Format,
+                                       volumeTarget(),
+                                       QJsonObject{{"file_system", "NTFS"}}),
+             "a volume whose state is pending queues");
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY2(!executed, "a locked volume must stop Apply before it writes");
+    QCOMPARE(refused.size(), 1);
+    QVERIFY(refused.first()
+                .first()
+                .toStringList()
+                .join(QLatin1Char(' '))
+                .contains(QStringLiteral("BitLocker volume is locked")));
+}
+
+// With the prompt declined the inventory carries the reason, and Apply stops on it.
+void PartitionManagerControllerTests::applyStopsAndSaysWhyWithoutTheHelper() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    auto declined = healthyInventory();
+    declined.warnings.append(QStringLiteral("Apply could not get administrator rights"));
+    controller.setApplyInventoryScannerForTesting(
+        [declined](const sak::CancelCheck&) { return inventoryResult(declined); });
+    bool executed = false;
+    controller.setApplyExecutorForTesting(
+        [&executed](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            executed = true;
+            return sak::PartitionExecutionResult{};
+        });
+    QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+    QVERIFY(controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                      testDiskTarget(),
+                                      QJsonObject{{"target_style", "GPT"}}));
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY(!executed);
+    QCOMPARE(refused.size(), 1);
+    QVERIFY(refused.first()
+                .first()
+                .toStringList()
+                .join(QLatin1Char(' '))
+                .contains(QStringLiteral("administrator rights")));
+}
+
 void PartitionManagerControllerTests::queueRefusalGivesItsReasons() {
     sak::PartitionManagerController controller;
     controller.setTestInventory(healthyInventory());

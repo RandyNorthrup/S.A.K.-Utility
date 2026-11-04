@@ -108,7 +108,10 @@ bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& o
 PartitionManagerController::PartitionManagerController(QObject* parent)
     : QObject(parent)
     , m_inventory_scanner([](const CancelCheck& should_cancel) {
-        return StorageInventoryWorker::scanCurrentSystemResult(true, should_cancel);
+        return StorageInventoryWorker::scanForBrowsing(should_cancel);
+    })
+    , m_apply_inventory_scanner([](const CancelCheck& should_cancel) {
+        return StorageInventoryWorker::scanForApply(should_cancel);
     })
     , m_file_system_check_runner([](const PartitionFileSystemReadOnlyCheckRequest& request,
                                     const CancelCheck& should_cancel) {
@@ -341,7 +344,9 @@ bool PartitionManagerController::applyQueue(const PartitionQueueReviewToken& rev
     m_pending_apply_request = PendingApplyRequest{.dry_run = dry_run,
                                                   .use_elevation = use_elevation,
                                                   .reviewed = reviewed};
-    startInventoryScan(InventoryScanPurpose::ApplyPreflight);
+    // This scan is the job's one prompt, if it needs one: a press of Apply is what asks for it, the
+    // helper it starts does the writing, and what it reads is what the writing is checked against.
+    startInventoryScan(InventoryScanPurpose::ApplyPreflight, use_elevation && !dry_run);
     return true;
 }
 
@@ -590,10 +595,11 @@ bool PartitionManagerController::revalidateQueuedOperations(
     return allowed && m_queue.canApply(inventory.layout_hash);
 }
 
-void PartitionManagerController::startInventoryScan(InventoryScanPurpose purpose) {
+void PartitionManagerController::startInventoryScan(InventoryScanPurpose purpose,
+                                                    bool with_elevation) {
     auto cancel_requested = std::make_shared<std::atomic_bool>(false);
     auto* watcher = new QFutureWatcher<StorageInventoryScanResult>(this);
-    const auto scanner = m_inventory_scanner;
+    const auto scanner = with_elevation ? m_apply_inventory_scanner : m_inventory_scanner;
     m_inventory_cancel = cancel_requested;
     m_inventory_scan_purpose = purpose;
     m_inventory_watcher = watcher;
@@ -688,7 +694,8 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
         Q_EMIT progressUpdate(kPercentMax, kPercentMax);
         Q_EMIT statusMessage(QStringLiteral("Partition apply preflight failed: %1")
                                  .arg(inventoryFailureMessage(m_inventory)),
-                             sak::kTimerStatusDefaultMs);
+                             sak::kTimerStatusLongMs);
+        Q_EMIT applyRefused({inventoryFailureMessage(m_inventory)});
         return PartitionManagerState::Failed;
     }
     if (!reviewTokenMatches(request->reviewed) ||
@@ -707,9 +714,15 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
         Q_EMIT progressUpdate(kPercentMax, kPercentMax);
-        Q_EMIT statusMessage(QStringLiteral(
-                                 "Partition queue failed fresh safety validation; review blockers"),
-                             sak::kTimerStatusDefaultMs);
+        QStringList reasons;
+        for (const auto& operation : m_queue.operations()) {
+            reasons.append(operation.blockers);
+        }
+        reasons.removeDuplicates();
+        Q_EMIT statusMessage(
+            QStringLiteral("Not applied: %1").arg(reasons.join(QStringLiteral("; "))),
+            sak::kTimerStatusLongMs);
+        Q_EMIT applyRefused(reasons);
         return PartitionManagerState::QueueDirty;
     }
     m_apply_before_inventory = m_inventory;
@@ -791,7 +804,7 @@ void PartitionManagerController::finishApplyExecution(
         return;
     }
     m_pending_execution_result = std::move(result);
-    startInventoryScan(InventoryScanPurpose::ApplyVerification);
+    startInventoryScan(InventoryScanPurpose::ApplyVerification, request.use_elevation);
     QObject::disconnect(watcher, nullptr, this, nullptr);
     m_apply_watcher = nullptr;
     m_apply_cancel.reset();
@@ -959,7 +972,14 @@ void PartitionManagerController::setTestState(PartitionManagerState state) {
 
 void PartitionManagerController::setInventoryScannerForTesting(InventoryScanner scanner) {
     if (!interactionBlocked() && scanner) {
-        m_inventory_scanner = std::move(scanner);
+        m_inventory_scanner = scanner;
+        m_apply_inventory_scanner = std::move(scanner);
+    }
+}
+
+void PartitionManagerController::setApplyInventoryScannerForTesting(InventoryScanner scanner) {
+    if (!interactionBlocked() && scanner) {
+        m_apply_inventory_scanner = std::move(scanner);
     }
 }
 

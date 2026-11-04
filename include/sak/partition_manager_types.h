@@ -190,6 +190,10 @@ struct PartitionVolumeInfo {
     bool dirty_bit_set{false};
     QString dirty_bit_error;
     bool bitlocker_state_known{false};
+    /// This scan could not read BitLocker or dirty state because it ran without administrator
+    /// rights. Partition Manager reads them again in the helper when a person presses Apply, and
+    /// refuses there, so this leaves nothing unchecked. Only that scan sets it.
+    bool administrator_state_pending{false};
     QString bitlocker_state_error;
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }

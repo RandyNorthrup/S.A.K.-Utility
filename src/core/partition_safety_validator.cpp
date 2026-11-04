@@ -311,7 +311,9 @@ bool hasUnlockedBitLockerVolume(const PartitionInfoEx& partition) {
 }
 
 bool hasUnknownBitLockerState(const PartitionInfoEx& partition) {
+    // Pending means Apply reads it in the helper and comes back here before anything is written.
     return partition.volume && !partition.volume->bitlocker_state_known &&
+           !partition.volume->administrator_state_pending &&
            !partition.volume->bitlocker_state_error.trimmed().isEmpty();
 }
 
@@ -322,7 +324,8 @@ bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType typ
 
 bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
     return partition.volume && partition.volume->hasDriveLetter() &&
-           !partition.volume->dirty_bit_known && type != PartitionOperationType::RepairBoot;
+           !partition.volume->dirty_bit_known && !partition.volume->administrator_state_pending &&
+           type != PartitionOperationType::RepairBoot;
 }
 
 QString unknownDirtyVolumeWarning(const PartitionInfoEx& partition) {
