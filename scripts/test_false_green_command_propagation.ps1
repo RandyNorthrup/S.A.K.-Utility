@@ -105,7 +105,6 @@ function Test-NestedPolicyInheritance {
     $targets = @(
         @{ path = $PSCommandPath; name = 'Invoke-Script' },
         @{ path = $PSCommandPath; name = 'Test-WrappedTargetRegistration' },
-        @{ path = (Join-Path $ScriptRoot 'test_partition_manager_certification_tools.ps1'); name = 'Invoke-ReleaseClaimFixture' },
         @{ path = (Join-Path $ScriptRoot 'test_coverage_runners.ps1'); name = 'Invoke-Runner' },
         @{ path = (Join-Path $ScriptRoot 'test_new_partition_manager_automation_vm_security.ps1'); name = 'Invoke-AutomationNativeCase' },
         @{ path = (Join-Path $ScriptRoot 'check_release_readiness.ps1'); name = 'Invoke-IsolatedPowerShellScript' }

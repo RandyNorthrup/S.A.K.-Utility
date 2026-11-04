@@ -2250,31 +2250,7 @@ enough workspace for the elevated disposable-VHD certification run. Default
 readiness records blockers without failing a non-admin developer shell; use
 `scripts/test_partition_manager_vhd_preflight.ps1 -RequireAdministrator
 -RequireReady` immediately before starting a strict VHD run.
-For the strict elevated VHD handoff, run
-`scripts/run_partition_manager_vhd_certification_strict.ps1 -RelaunchElevated`;
-it fails unless strict VHD evidence verifies and every disposable-VHD scenario
-passes.
-
-```powershell
-powershell -NoProfile -File scripts/check_release_readiness.ps1 `
-  -PartitionCertificationRoot artifacts\partition-manager-certification\vhd-strict `
-  -RequirePartitionVhdEvidence
-```
-
-Add `-PartitionExternalEvidenceManifest <path>`,
-`-PartitionExternalEvidenceChecklist <path>`, and
-`-RequirePartitionExternalEvidence` only after every external VM/hardware/lab
-gate is filled with passed, non-empty evidence and the paired checklist verifies
-against the same matrix. Strict external evidence fails without the checklist.
-For the final strict hardware evidence handoff, run
-`scripts/run_partition_manager_hardware_certification_strict.ps1` with the
-strict VHD certification root, external manifest, checklist, and evidence
-directory. It is non-mutating and requires `HardwareCertified` status before
-any release claim uses that wording.
-If `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` gains a VHD scenario,
-the matrix-integrity guard requires the harness and certification documentation
-to include the new scenario before readiness can pass. Rerun the elevated VHD
-matrix before using `-RequirePartitionVhdEvidence`.
+Partition Manager certification runs on the rig, and its evidence is committed. `docs/PARTITION_MANAGER_CERTIFICATION.md` has the procedure, and readiness checks what was committed.
 
 ## Clean VM Manual QA
 

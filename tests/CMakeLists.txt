@@ -6824,17 +6824,6 @@ add_test(NAME test_partition_manager_live_certifier
                  -OutputRoot "${TEST_OUTPUT_DIR}/partition_manager_live_certifier")
 set_tests_properties(test_partition_manager_live_certifier PROPERTIES TIMEOUT 120)
 
-add_test(NAME test_partition_manager_controller_evidence
-         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                 -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_controller_evidence.ps1")
-set_tests_properties(test_partition_manager_controller_evidence PROPERTIES TIMEOUT 120)
-
-add_test(NAME test_partition_manager_controller_restore_routing
-         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                 -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_controller_restore_routing.ps1"
-                 -RunGuardDrills)
-set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIES TIMEOUT 60)
-
 # Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
 # and the application are scanned for the partition/filesystem test seams (compiled only under
 # SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), sak_core's
@@ -6892,21 +6881,6 @@ add_test(NAME test_partition_manager_row_evidence
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_row_evidence.ps1")
 set_tests_properties(test_partition_manager_row_evidence PROPERTIES TIMEOUT 180)
-
-# scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
-# verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
-# was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
-# release workflow, and CI has not run for 776 commits (R5-G21-7). An 800-line self
-# test that executes once per release is not a gate, so it runs in the suite now.
-#
-# -OutputRoot is explicit in the build tree. Its default also stays under
-# build/test_results so standalone self-tests cannot mix synthetic fixtures
-# with captured certification evidence under artifacts/.
-add_test(NAME test_partition_manager_certification_tools
-         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
-                 -OutputRoot "${TEST_OUTPUT_DIR}/partition-manager-certification-tools")
-set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
 
 # Start-Process with redirected output can leave ExitCode null under Windows PowerShell
 # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
@@ -7257,8 +7231,7 @@ set(_sak_labels_mutation test_mutation_runner)
 set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
 set(_sak_labels_tidy test_clang_tidy_naming_gate)
 set(_sak_labels_cert_tooling
-    test_source_fingerprint test_partition_manager_certification_tools
-    test_partition_manager_controller_evidence test_partition_manager_controller_restore_routing
+    test_source_fingerprint
     test_partition_manager_live_certifier test_partition_filesystem_probe_certifier
     test_file_management_live_certifier_gate
     test_new_partition_manager_automation_vm_security

@@ -292,13 +292,7 @@ foreach ($m in [regex]::Matches($testsCMakeText, $loopPattern)) {
 # wired somewhere" was not the same as "it runs".
 $ScriptsDir = Join-Path $ProjectRoot 'scripts'
 
-# Not a test despite the name: it emits a host-readiness preflight report for the
-# destructive disposable-VHD matrix, so its result describes the machine it runs on
-# rather than the code. Registering it would make the suite pass or fail on whether this
-# particular host happens to be ready for elevated VHD work.
-$NonTestScripts = @(
-    'test_partition_manager_vhd_preflight'
-)
+$NonTestScripts = @()
 
 $psSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.ps1') +
              @(Get-ChildItem -Path $ScriptsDir -File -Filter 'test_*.ps1')
