@@ -97,6 +97,8 @@ $virtualMachine = @{ class = 'virtual_machine'; kind = 'VDI'; model = 'VBOX HARD
 $virtualHdd = @{ class = 'virtual_machine'; kind = 'VDI'; model = 'VBOX HARDDISK'; bus_type = 'SATA'; media_type = 'HDD'; size_bytes = '1073741824' }
 $nvme = @{ class = 'physical'; kind = 'USB passthrough'; model = 'NS-PCNVMEHDE(-C)'; bus_type = 'USB'; media_type = 'SSD'; size_bytes = '256060514304' }
 $seagate = @{ class = 'physical'; kind = 'USB passthrough'; model = 'Seagate Expansion Desk'; bus_type = 'USB'; media_type = 'HDD'; size_bytes = '8001563221504' }
+$internalSsd = @{ class = 'physical'; kind = 'NVMe inside a physical PC'; model = 'Fast Drive'; bus_type = 'NVMe'; media_type = 'SSD'; size_bytes = '512110190592' }
+$internalHdd = @{ class = 'physical'; kind = 'SATA inside a physical PC'; model = 'Slow Drive'; bus_type = 'SATA'; media_type = 'HDD'; size_bytes = '1000204886016' }
 
 New-Item -ItemType Directory -Force -Path $Script:Root | Out-Null
 [IO.File]::WriteAllText($Script:MatrixPath, ($Script:Specs | ConvertTo-Json -Depth 12))
@@ -165,6 +167,33 @@ try {
     Assert-That ($status.site_wording -notmatch '(?i)certif') 'The words never say certified'
     Assert-That ($status.site_wording -notmatch 'Apple-certified') 'The words never say Apple-certified'
 
+    # A drive inside a PC is said to have been tested, and what was not is still said.
+    $nvmeInside = Join-Path $Script:Root 'nvme-inside'
+    Write-Row -RunDir $nvmeInside -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $nvmeInside -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $nvmeInside -Id 'external.ssd-secure-erase' -Media $internalSsd
+    Write-Row -RunDir $nvmeInside -Id 'external.hdd' -Media $seagate
+    Write-Index -RunDir $nvmeInside -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd')
+    $status = Get-Status -RunDir $nvmeInside
+    Assert-That ($status.site_wording -cmatch 'one Fast Drive 512 GB NVMe SSD') 'It names the drive inside a PC' $status.site_wording
+    Assert-That ($status.site_wording -cmatch 'Internal SATA drives were not tested') 'It says SATA was not tested' $status.site_wording
+    Assert-That ($status.site_wording -cnotmatch 'NVMe drives were not tested') 'It does not say NVMe was not tested' $status.site_wording
+
+    $bothInside = Join-Path $Script:Root 'both-inside'
+    Write-Row -RunDir $bothInside -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $bothInside -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $bothInside -Id 'external.ssd-secure-erase' -Media $internalSsd
+    Write-Row -RunDir $bothInside -Id 'external.hdd' -Media $internalHdd
+    Write-Index -RunDir $bothInside -Ids @('vhd.a', 'external.boot', 'external.ssd-secure-erase', 'external.hdd')
+    $status = Get-Status -RunDir $bothInside
+    Assert-That ($status.site_wording -cnotmatch 'were not tested') 'With both tested, it does not say either was not' $status.site_wording
+    Assert-That ($status.site_wording -cmatch 'Results on other devices may differ\.') 'It still says other devices may differ' $status.site_wording
+
+    # A claim level with no words stops, rather than saying something.
+    $threw = $false
+    try { Get-PmSiteWording -ClaimLevel 'HardwareCertified' -Version $version | Out-Null } catch { $threw = "$($_.Exception.Message)" -match 'no words' }
+    Assert-That $threw 'A level with no words stops'
+
     # A device of the wrong kind stays out.
     $wrong = Join-Path $Script:Root 'wrong'
     Write-Row -RunDir $wrong -Id 'vhd.a' -Media $virtualDisk
@@ -175,6 +204,15 @@ try {
     $status = Get-Status -RunDir $wrong
     Assert-That ($status.claim_level -ceq 'VhdDataDiskCertified') 'A hard drive cannot pass for an SSD' $status.claim_level
     Assert-That (@($status.external_gates.incomplete_ids) -ccontains 'external.ssd-secure-erase') 'It says which row'
+
+    # A device whose only row was refused is not named: nothing was shown to work on it.
+    $refused = Join-Path $Script:Root 'refused'
+    Write-Row -RunDir $refused -Id 'vhd.a' -Media $virtualDisk
+    Write-Row -RunDir $refused -Id 'external.boot' -Media $virtualMachine
+    Write-Row -RunDir $refused -Id 'external.hdd' -Media $nvme
+    Write-Index -RunDir $refused -Ids @('vhd.a', 'external.boot', 'external.hdd')
+    $status = Get-Status -RunDir $refused
+    Assert-That ($status.site_wording -notmatch 'NS-PCNVMEHDE') 'A refused row names no device' $status.site_wording
 
     # A row that failed, a row that is stale, a report changed after selection.
     $failed = Join-Path $Script:Root 'failed'

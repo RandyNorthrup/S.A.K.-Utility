@@ -62,7 +62,9 @@ function Get-PmDeviceSentences {
     $devices = @(Get-PmNamedDevices -Rows $Rows)
     if ($devices.Count -eq 0) { return @() }
     $sentences = @("Some operations were also tested on one $(Format-PmList -Items @($devices | ForEach-Object { $_ }))." -replace ', and ', ', and one ' -replace ' and (?!one )', ' and one ')
-    $sentences += 'Internal SATA and NVMe drives were not tested, and results on other devices may differ.'
+    $buses = @(Get-PmRowsOnDevices -Rows $Rows | ForEach-Object { "$($_.ran_on.bus_type)" })
+    $notTested = @('SATA', 'NVMe' | Where-Object { $buses -cnotcontains $_ })
+    $sentences += if ($notTested.Count -gt 0) { "Internal $($notTested -join ' and ') drives were not tested, and results on other devices may differ." } else { 'Results on other devices may differ.' }
     $erase = @(Get-PmRowsOnDevices -Rows $Rows | Where-Object { $_.id -ceq 'external.ssd-secure-erase' })
     if ($erase.Count -gt 0) {
         $sentences += 'SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize.'

@@ -38,7 +38,7 @@ function Get-CertReadPin {
         if ("$($disk.BusType)" -cne "$($wanted.bus_type)") { throw "The pinned disk is on $($disk.BusType), not $($wanted.bus_type)" }
         $pin = Get-CertPin -DiskNumber $disk.Number
         if ($pin.confirmation -cne "$($wanted.confirmation)") { throw 'The typed confirmation does not name this disk' }
-        return [pscustomobject]@{ number = [int]$disk.Number; pin = $pin; class = 'physical'; kind = 'USB passthrough' }
+        return [pscustomobject]@{ number = [int]$disk.Number; pin = $pin; class = 'physical'; kind = (Get-CertDeviceKind -BusType "$($disk.BusType)") }
     }
     if ($DataDiskBytes -eq 0) { throw 'This row needs -PhysicalPins or -DataDiskBytes' }
     $found = @(Get-Disk | Where-Object { [uint64]$_.Size -eq $DataDiskBytes })
@@ -63,7 +63,7 @@ function Get-CertDataFixture {
     }
     $disk = New-CertVhd -Name $Name -SizeMB $SizeMB
     Initialize-Disk -Number $disk -PartitionStyle $Style
-    return [pscustomobject]@{ number = $disk; media = (Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM') }
+    return [pscustomobject]@{ number = $disk; media = (Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind) }
 }
 
 function Remove-CertDevicePartitions {
@@ -200,7 +200,8 @@ function New-CertBitLockerVolume {
         if ((Get-Date) -gt $deadline) { throw 'BitLocker did not finish encrypting the fixture' }
         Start-Sleep -Seconds 3
     }
-    Add-BitLockerKeyProtector -MountPoint "$($volume.letter):" -RecoveryPasswordProtector | Out-Null
+    # Its warning prints the recovery password, and a job log is not where that goes.
+    Add-BitLockerKeyProtector -MountPoint "$($volume.letter):" -RecoveryPasswordProtector -WarningAction SilentlyContinue | Out-Null
     $recovery = ((Get-BitLockerVolume -MountPoint "$($volume.letter):").KeyProtector | Where-Object KeyProtectorType -eq 'RecoveryPassword' | Select-Object -First 1).RecoveryPassword
     return [pscustomobject]@{ partition_number = $volume.partition_number; letter = $volume.letter; files = $files; recovery_password = $recovery; secure = $secure }
 }
@@ -262,7 +263,7 @@ $Script:CertRowBodies = @{}
 $Script:CertRowBodies['vhd.create-format-resize-delete'] = {
     $disk = New-CertGptVhd -Name 'cfrd'
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     Invoke-CertStep -Step 'create' -Operation 'Create' -Pin $pin -Choices @{
         size_mib = 256; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 4096
         partition_type = $Script:GptBasicData; label = 'SAKCERT'; full_format = $false
@@ -297,7 +298,7 @@ $Script:CertRowBodies['vhd.create-format-resize-delete'] = {
 $Script:CertRowBodies['vhd.fat32-to-ntfs'] = {
     $disk = New-CertGptVhd -Name 'fat32'
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (512 * $Script:CertMiB) -FileSystem 'FAT32' -Label 'SAKFAT' -ClusterBytes 4096
     $filesBefore = Write-RbFixtureTree -Root "$($volume.letter):\fixture"
     $before = Get-RbVolumeFacts -Letter $volume.letter
@@ -317,7 +318,7 @@ function Invoke-CertQuickPartition {
     $old = New-CertVolume -DiskNumber $disk -SizeBytes ($OldSizeMB * $Script:CertMiB) -Label 'SAKOLD'
     Write-CertMarkerFile -Letter $old.letter
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     Invoke-CertStep -Step 'layout' -Operation 'QuickPartition' -Pin $pin -Choices $Options | Out-Null
     $after = Get-CertSnapshot -DiskNumber $disk
     $summary = Get-CertVolumesSummary -DiskNumber $disk
@@ -374,7 +375,7 @@ $Script:CertRowBodies['vhd.quick-partition-mbr'] = {
 $Script:CertRowBodies['vhd.adjacent-extend'] = {
     $disk = New-CertGptVhd -Name 'extend'
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:CertMiB) -Label 'SAKEXT'
     $filesBefore = Write-RbFixtureTree -Root "$($volume.letter):\fixture"
     $snapshots = [ordered]@{ before = Get-CertSnapshot -DiskNumber $disk }
@@ -389,7 +390,7 @@ $Script:CertRowBodies['vhd.adjacent-extend'] = {
 $Script:CertRowBodies['vhd.recovered-partition-restore'] = {
     $disk = New-CertGptVhd -Name 'recover'
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:CertMiB) -Label 'SAKREC' -Offset (128 * $Script:CertMiB)
     $filesBefore = Write-RbFixtureTree -Root "$($volume.letter):\fixture"
     Write-VolumeCache -DriveLetter $volume.letter
@@ -420,7 +421,7 @@ $Script:CertRowBodies['vhd.recovered-partition-restore'] = {
 $Script:CertRowBodies['vhd.empty-style-conversion'] = {
     $disk = New-CertGptVhd -Name 'style'
     $pin = Get-CertPin -DiskNumber $disk
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $snapshots = [ordered]@{ before = Get-CertSnapshot -DiskNumber $disk }
     Invoke-CertStep -Step 'to_mbr' -Operation 'ConvertPartitionStyle' -Pin $pin -Choices @{ target_style = 'MBR' } | Out-Null
     $snapshots.mbr = Get-CertSnapshot -DiskNumber $disk
@@ -462,7 +463,7 @@ $Script:CertRowBodies['vhd.clear-disk-wipe'] = {
 $Script:CertRowBodies['vhd.image-clone'] = {
     $source = New-CertGptVhd -Name 'clone-source' -SizeMB 512
     $target = New-CertGptVhd -Name 'clone-target' -SizeMB 768
-    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $source -SizeBytes (256 * $Script:CertMiB) -Label 'SAKCLONE'
     $filesSource = Write-RbFixtureTree -Root "$($volume.letter):\fixture"
     Write-VolumeCache -DriveLetter $volume.letter
@@ -511,7 +512,7 @@ $Script:CertRowBodies['vhd.image-clone'] = {
 $Script:CertRowBodies['vhd.image-restore'] = {
     $source = New-CertGptVhd -Name 'image-source' -SizeMB 512
     $target = New-CertGptVhd -Name 'image-target' -SizeMB 768
-    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $source -SizeBytes (256 * $Script:CertMiB) -Label 'SAKIMG'
     $filesSource = Write-RbFixtureTree -Root "$($volume.letter):\fixture"
     Write-VolumeCache -DriveLetter $volume.letter
@@ -552,7 +553,7 @@ $Script:CertRowBodies['vhd.image-restore'] = {
 $Script:CertRowBodies['vhd.partition-clone-region'] = {
     $source = New-CertGptVhd -Name 'region-source' -SizeMB 512
     $target = New-CertGptVhd -Name 'region-target' -SizeMB 768
-    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $source -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $source -SizeBytes (128 * $Script:CertMiB) -Label 'SAKSRC'
     Write-RbFixtureTree -Root "$($volume.letter):\fixture" | Out-Null
     Write-VolumeCache -DriveLetter $volume.letter
@@ -619,7 +620,7 @@ $Script:CertRowBodies['external.usb-removable'] = {
 
 $Script:CertRowBodies['external.file-level-data-recovery'] = {
     $disk = New-CertGptVhd -Name 'recovery' -SizeMB 512
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:CertMiB) -Label 'SAKFILES'
     $folder = "$($volume.letter):\photos"
     $hashes = New-CertRecoveryFixture -Folder $folder
@@ -753,7 +754,7 @@ $Script:CertRowBodies['external.hardware-wipe'] = {
 
 $Script:CertRowBodies['external.bitlocker'] = {
     $disk = New-CertGptVhd -Name 'bitlocker'
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertBitLockerVolume -DiskNumber $disk -Password 'R7-throwaway-pass-1'
     $letter = $volume.letter
     Lock-BitLocker -MountPoint "${letter}:" -ForceDismount | Out-Null
@@ -776,7 +777,7 @@ $Script:CertRowBodies['external.bitlocker'] = {
 
 $Script:CertRowBodies['external.bitlocker-mutation'] = {
     $disk = New-CertGptVhd -Name 'bitlocker2'
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertBitLockerVolume -DiskNumber $disk -Password 'R7-throwaway-pass-2'
     $letter = $volume.letter
     Lock-BitLocker -MountPoint "${letter}:" -ForceDismount | Out-Null
@@ -873,7 +874,7 @@ $Script:CertRowBodies['external.cluster-size-change'] = {
 $Script:CertRowBodies['external.primary-logical-conversion'] = {
     $disk = New-CertVhd -Name 'logical'
     Initialize-Disk -Number $disk -PartitionStyle MBR
-    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind 'VHDX in a VM'
+    $media = Get-CertMedia -DiskNumber $disk -Class 'virtual_disk' -Kind $Script:VhdKind
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (384 * $Script:CertMiB) -Label 'SAKLOG'
     $filesBefore = Write-RbFixtureTree -Root "$($volume.letter):\fixture" -FileCount 8
     $snapshots = [ordered]@{ before = Get-CertSnapshot -DiskNumber $disk }
@@ -962,7 +963,10 @@ function Invoke-CertBreakBootFiles {
             Remove-Item -LiteralPath "${letter}:\bootmgr" -Force
             Remove-Item -LiteralPath "${letter}:\Boot" -Recurse -Force
         }
-        $left = @(Get-ChildItem -LiteralPath "${letter}:\" -Force -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(BCD.*|bootmgfw\.efi|bootx64\.efi|bootmgr)$' }).Count
+        # What the firmware or the boot code would load. EFI\Microsoft\Recovery holds a BCD of its own,
+        # which starts nothing.
+        $loaded = if ($Mode -eq 'UEFI') { @('EFI\Boot\bootx64.efi', 'EFI\Microsoft\Boot\bootmgfw.efi', 'EFI\Microsoft\Boot\BCD') } else { @('bootmgr', 'Boot\BCD') }
+        $left = @($loaded | Where-Object { Test-Path -LiteralPath "${letter}:\$_" }).Count
     } finally {
         Remove-PartitionAccessPath -DiskNumber $DiskNumber -PartitionNumber $system.PartitionNumber -AccessPath "${letter}:\"
     }
@@ -982,6 +986,7 @@ function Invoke-CertBreakBootFiles {
 
 function Invoke-CertBootRepairPhase {
     param([ValidateSet('UEFI', 'BIOS')] [string]$Mode)
+    Assert-CertBootRowInVm
     $found = Get-CertReadPin -Role 'any'
     $media = Get-CertMedia -DiskNumber $found.number -Class 'virtual_machine' -Kind 'Windows on a VirtualBox VDI'
     $state = Join-Path $OutputRoot "$($Script:RowId).phase.json"
@@ -1002,6 +1007,7 @@ $Script:CertRowBodies['external.boot-repair-uefi'] = { Invoke-CertBootRepairPhas
 $Script:CertRowBodies['external.boot-repair-bios'] = { Invoke-CertBootRepairPhase -Mode 'BIOS' }
 
 $Script:CertRowBodies['external.os-migration-reboot'] = {
+    Assert-CertBootRowInVm
     $found = Get-CertReadPin -Role 'any'
     $media = Get-CertMedia -DiskNumber $found.number -Class 'virtual_machine' -Kind 'Windows on a VirtualBox VDI'
     Set-Content -LiteralPath 'C:\SAKCert\source-marker.txt' -Value $Script:RunId -Encoding ASCII
@@ -1013,6 +1019,7 @@ $Script:CertRowBodies['external.os-migration-reboot'] = {
 
 $Script:CertRowBodies['external.system-mbr2gpt'] = {
     # This runs in a VM that boots from the MBR disk it converts. The host then turns on EFI.
+    Assert-CertBootRowInVm
     $disk = @(Get-Disk | Where-Object IsBoot)[0]
     if ("$($disk.PartitionStyle)" -ne 'MBR') { throw 'mbr2gpt needs a Windows running from an MBR disk' }
     $number = [int]$disk.Number

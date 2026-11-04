@@ -344,7 +344,7 @@ $features = @(
             @{
                 kind = "independent readback"
                 path = "scripts\partition_manager_readback.ps1"
-                patterns = @("ConvertFrom-RbPartitionTable", "Get-RbRangeSha256", "Get-RbRangeDifferences", "Find-RbMarkerAnywhere", "Assert-RbInDisposableVm")
+                patterns = @("ConvertFrom-RbPartitionTable", "Get-RbRangeSha256", "Get-RbRangeDifferences", "Find-RbMarkerAnywhere", "Assert-RbDisposableMachine")
             },
             @{
                 kind = "code digest"
@@ -359,7 +359,7 @@ $features = @(
             @{
                 kind = "row orchestrator"
                 path = "scripts\run_partition_manager_app_certification.ps1"
-                patterns = @("Invoke-CertStep", "Assert-RbInDisposableVm", "New-PmRowReport")
+                patterns = @("Invoke-CertStep", "Assert-RbDisposableMachine", "New-PmRowReport")
             },
             @{
                 kind = "final run"

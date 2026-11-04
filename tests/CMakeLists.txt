@@ -6868,6 +6868,25 @@ add_test(NAME test_partition_manager_certification_status
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_status.ps1")
 set_tests_properties(test_partition_manager_certification_status PROPERTIES TIMEOUT 180)
 
+# What the claim checker writes into the certification document, and what it refuses.
+add_test(NAME test_partition_manager_release_claims
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_release_claims.ps1")
+set_tests_properties(test_partition_manager_release_claims PROPERTIES TIMEOUT 300)
+
+# The shared storage helper's answers, with stand-ins for Windows' commands, and that Partition
+# Manager's run scripts hide no failure.
+add_test(NAME test_partition_manager_storage_helpers
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_storage_helpers.ps1")
+set_tests_properties(test_partition_manager_storage_helpers PROPERTIES TIMEOUT 120)
+
+# How the certification rig reaches a physical PC, with stand-ins for ssh and scp.
+add_test(NAME test_partition_manager_rig_pc_target
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_rig_pc_target.ps1")
+set_tests_properties(test_partition_manager_rig_pc_target PROPERTIES TIMEOUT 300)
+
 # What the verifier refuses in a certification row's evidence, on synthetic files.
 add_test(NAME test_partition_manager_row_evidence
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7223,7 +7242,9 @@ set(_sak_labels_tooling
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
     test_partition_manager_code_digest test_partition_manager_row_evidence
-    test_partition_manager_certification_status test_partition_manager_matrix_generated)
+    test_partition_manager_certification_status test_partition_manager_matrix_generated
+    test_partition_manager_release_claims test_partition_manager_rig_pc_target
+    test_partition_manager_storage_helpers)
 set(_sak_labels_tooling_extended
     test_process_capture_ownership test_process_capture_ownership_windows_powershell
     test_process_capture_deadline test_process_capture_deadline_windows_powershell

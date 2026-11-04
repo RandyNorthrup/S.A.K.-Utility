@@ -10,8 +10,11 @@
 
     Without -PinFile the device rows run on virtual disks, and the claim cannot rise past
     VirtualMachinesValidated. With -PinFile they run on the pinned devices, and only their rows
-    touch those devices. Make the pin file from a device passed through to the VM, read in the VM,
-    just before the run. The steps are in docs/PARTITION_MANAGER_CERTIFICATION.md.
+    touch those devices. Make the pin file with the rig's WritePins just before the run, from the
+    machine that holds them. The steps are in docs/PARTITION_MANAGER_CERTIFICATION.md.
+
+    With -PcFile as well, those devices are on the physical PC that file names, reached over SSH. The
+    other rows still run on the VM rig, because they need its throwaway disks and its VMs.
 
     Run it from the host, with the VM signed in. It changes no disk of this machine.
 
@@ -22,6 +25,10 @@
     The pinned devices, by model, size, serial and typed confirmation. Holds serial numbers, so it
     stays out of the repository.
 
+.PARAMETER PcFile
+    The physical PC that holds the pinned devices: host, key, machine_uuid, confirmation, and optional
+    port, jump and deny_names. Prepare it once with the rig's PcPrepare. It stays out of the repository.
+
 .PARAMETER RunName
     A name for this run's evidence folder. It defaults to the commit.
 #>
@@ -31,6 +38,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$ReleaseDir,
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$PinFile = '',
+    [string]$PcFile = '',
     [string]$RunName = '',
     [string]$WorkDir = 'temp\partition-manager-final'
 )
@@ -73,21 +81,41 @@ if (-not $client.Contains("$($code.code_digest)")) {
 & pwsh -NoProfile -File $Rig -Action Deploy -CredFile $credentials -StageDir $stage
 if ($LASTEXITCODE -ne 0) { throw 'Deploying to the VM failed' }
 
-$plan = @('vhd', 'data', 'boot-uefi', 'boot-bios')
+if ($PcFile -and -not $PinFile) { throw '-PcFile needs -PinFile: it says where the pinned devices are' }
+$pc = ''
+$deny = @()
+if ($PcFile) {
+    $pc = Resolve-FinalPath $PcFile
+    & pwsh -NoProfile -File $Rig -Action Deploy -PcFile $pc -StageDir $stage
+    if ($LASTEXITCODE -ne 0) { throw 'Deploying to the physical PC failed' }
+    & pwsh -NoProfile -File $Rig -Action On -PcFile $pc
+    if ($LASTEXITCODE -ne 0) { throw 'The physical PC is not ready' }
+    $deny = @((Get-Content -LiteralPath $pc -Raw | ConvertFrom-Json).deny_names | Where-Object { $_ })
+}
+
+# The data rows the owner named for the hard drive run there. The rest need a virtual disk or a VDI.
+$deviceDataRows = @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number')
+$plan = @(@{ group = 'vhd' })
 if ($PinFile) {
     $pins = Resolve-FinalPath $PinFile
     if (-not (Test-Path -LiteralPath $pins)) { throw "No pin file at $pins" }
-    $plan += @('ssd-device', 'hdd-device')
+    $plan += @{ group = 'data'; rows = @('external.file-level-data-recovery', 'external.bitlocker', 'external.bitlocker-mutation', 'external.primary-logical-conversion', 'external.dynamic-to-basic') }
+    $plan += @(@{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-device'; device = $true }, @{ group = 'hdd-device'; device = $true }, @{ group = 'data-device'; device = $true; rows = $deviceDataRows })
 } else {
     $pins = ''
-    $plan += @('ssd-virtual', 'hdd-virtual', 'usb-virtual')
+    $plan += @(@{ group = 'data' }, @{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-virtual' }, @{ group = 'hdd-virtual' }, @{ group = 'usb-virtual' })
 }
 
 $started = Get-Date
-foreach ($group in $plan) {
+foreach ($step in $plan) {
+    $group = $step.group
     Say "Group $group"
     $arguments = @('-NoProfile', '-File', $Groups, '-Group', $group, '-EvidenceDir', $evidence, '-CredFile', $credentials, '-StageDir', $stage)
-    if ($pins) { $arguments += @('-PinFile', $pins) }
+    if ($step.rows) { $arguments += @('-Rows', ($step.rows -join ',')) }
+    if ($step.device) {
+        $arguments += @('-PinFile', $pins)
+        if ($pc) { $arguments += @('-PcFile', $pc) }
+    }
     & pwsh @arguments
     if ($LASTEXITCODE -ne 0) { throw "Group $group failed. Its evidence is in $evidence" }
 }
@@ -95,7 +123,7 @@ Say "All groups ran in $([int]((Get-Date) - $started).TotalMinutes) minutes"
 
 Say 'Check every row, and select this run as current'
 $cred = Get-Content -LiteralPath $credentials -Raw | ConvertFrom-Json
-& (Join-Path $PSScriptRoot 'select_partition_manager_evidence.ps1') -RunDir $evidence -DenyNames @($cred.denyNames) -CodeDigest $code.code_digest
+& (Join-Path $PSScriptRoot 'select_partition_manager_evidence.ps1') -RunDir $evidence -DenyNames (@($cred.denyNames) + $deny) -CodeDigest $code.code_digest
 
 Say 'Regenerate the state block'
 & (Join-Path $PSScriptRoot 'check_partition_manager_release_claims.ps1') -Update

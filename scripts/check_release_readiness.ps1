@@ -124,6 +124,7 @@ try {
             "scripts/generate_partition_manager_matrix.py",
             "scripts/test_partition_manager_row_evidence.ps1",
             "scripts/test_partition_manager_certification_status.ps1",
+            "scripts/test_partition_manager_release_claims.ps1",
             "scripts/partition_manager_storage.ps1",
             "scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1",
             "scripts/run_partition_manager_ext_filesystem_vm_gate.ps1",
@@ -248,6 +249,9 @@ try {
     }
     Invoke-ReleaseReadinessScript -Name "scripts/test_partition_manager_certification_status.ps1" -Body {
         & scripts/test_partition_manager_certification_status.ps1
+    }
+    Invoke-ReleaseReadinessScript -Name "scripts/test_partition_manager_release_claims.ps1" -Body {
+        & scripts/test_partition_manager_release_claims.ps1
     }
 
     if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {

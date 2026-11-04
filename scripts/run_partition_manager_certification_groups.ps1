@@ -21,8 +21,12 @@
     ssd-virtual  The SSD rows on a VDI the guest is told does not rotate and can discard.
     hdd-virtual  The defrag row on a plain VDI.
     usb-virtual  The USB row on a VDI behind a virtual USB controller, with no host device involved.
-    ssd-device, hdd-device    The device rows on the pinned device, passed through over USB.
+    ssd-device, hdd-device    The device rows on the pinned device.
     data-device  Data-volume rows, on small partitions of the pinned hard drive. No whole-disk pass.
+
+    With -PcFile the device groups run on the physical PC that file names, on drives pinned there. The
+    other groups need things only the VM rig has: throwaway disks it can attach, and a VM of its own to
+    start a disk in. They stop rather than run somewhere else.
 #>
 
 [CmdletBinding()]
@@ -35,6 +39,7 @@ param(
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$StageDir = '',
     [string]$PinFile = '',
+    [string]$PcFile = '',
     [string]$Vm = 'Windows 11',
     [int]$RowMinutes = 240
 )
@@ -48,7 +53,10 @@ $Script:MiB = [uint64]1048576
 
 function Invoke-Rig {
     param([Parameter(Mandatory = $true)] [string]$Action, [hashtable]$More = @{})
-    $arguments = @{ Action = $Action; CredFile = $CredFile; Vm = $Vm; EvidenceDir = $EvidenceDir; JobMinutes = $RowMinutes } + $More
+    $arguments = @{ Action = $Action; CredFile = $CredFile; Vm = $Vm; EvidenceDir = $EvidenceDir; JobMinutes = $RowMinutes }
+    # A step may say more, or say otherwise.
+    foreach ($key in $More.Keys) { $arguments[$key] = $More[$key] }
+    if ($PcFile) { $arguments.PcFile = $PcFile }
     & pwsh -NoProfile -File $Rig @(ConvertTo-RigArguments -Arguments $arguments)
     if ($LASTEXITCODE -ne 0) { throw "The rig stopped on $Action with exit code $LASTEXITCODE" }
 }
@@ -90,7 +98,8 @@ function Get-Proof {
     $output = Join-Path $RowDir "$Name.json"
     $more = @{ Disk = $Disk; ProofName = "sakcert-$Name"; Firmware = $Firmware; ProofOutput = $output; MarkerPath = $MarkerPath }
     if ($ExpectNoBoot) { $more.ExpectNoBoot = $true }
-    Invoke-Rig -Action 'BootProof' -More $more
+    # The rig's own output is for reading. Left in this function's output, it would become the result.
+    Invoke-Rig -Action 'BootProof' -More $more | ForEach-Object { Write-Host "$_" }
     return (Get-Content -LiteralPath $output -Raw | ConvertFrom-Json)
 }
 
@@ -167,7 +176,7 @@ function Invoke-BootRepairRow {
     Copy-Item -LiteralPath (Join-Path $hold "$Firmware-before.json"), (Join-Path $hold "$Firmware-broken.json"), (Join-Path $hold "$Firmware-after.json") -Destination $row
     Add-PmRowHostEvidence -RowDir $row -Values @{ boot_before = $before; boot_broken = $broken; boot_after = $after } `
         -ExtraFiles @("$Firmware-before.json", "$Firmware-broken.json", "$Firmware-after.json")
-    Remove-Item -LiteralPath $hold -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $hold -Recurse -Force
 }
 
 function Invoke-SystemMbr2Gpt {
@@ -204,7 +213,7 @@ function Invoke-BuildBiosDisk {
     $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-bios-$PID.ps1"
     [IO.File]::WriteAllText($job, "& 'C:\SAKCert\scripts\partition_manager_certification_bios_fixture.ps1' -TargetBytes $([uint64]$SizeMiB * $Script:MiB) -ScratchBytes $([uint64]$ScratchMiB * $Script:MiB)`n")
     Invoke-Rig -Action 'GuestJob' -More @{ JobFile = $job; JobMinutes = 180 }
-    Remove-Item -LiteralPath $job -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $job
     Invoke-Rig -Action 'Off'
     Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
     Invoke-Rig -Action 'DetachDisk' -More @{ Port = 3 }
@@ -218,6 +227,8 @@ $DataRows = @('external.file-level-data-recovery', 'external.bitlocker', 'extern
     'external.partition-move', 'external.cluster-size-change', 'external.primary-logical-conversion',
     'external.volume-serial-number')
 
+if ($PcFile -and @('ssd-device', 'hdd-device', 'data-device') -cnotcontains $Group) { throw "The group $Group runs on the VM rig. Only the device groups run on a physical PC" }
+if ($Group -clike '*-device' -and -not $PinFile) { throw "The group $Group needs -PinFile" }
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 switch ($Group) {
     'vhd' {

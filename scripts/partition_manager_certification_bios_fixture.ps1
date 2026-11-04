@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'partition_manager_readback.ps1')
-Assert-RbInDisposableVm
+if (-not (Test-RbInVirtualBox -Facts (Get-RbMachineFacts))) { throw 'This builds a BIOS install for the VM rig, and runs only in a VM.' }
 
 function Get-Throwaway {
     param([uint64]$Bytes)

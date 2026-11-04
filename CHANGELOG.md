@@ -8,6 +8,46 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Partition Manager works from an app that is not running as administrator** - Windows lets only an
+  administrator ask whether a volume is locked by BitLocker or marked as needing repair, so from a normal app
+  every volume read as unknown and every Apply stopped. Scanning disks now never asks for approval, and those
+  details say "Unknown until Apply". Pressing Apply raises the one Windows prompt, reads every disk again right
+  before writing, and refuses there with the reason in a "Not Applied" window. Say no to the prompt and nothing
+  changes, and the queue stays as it was.
+- **Move, Allocate Free Space, Change Cluster Size, Primary/Logical, Volume Serial and Dynamic to Basic work on NTFS
+  again** - Each backs a volume up first, from a Volume Shadow Copy. Since 2026-07-22 the copy tool could not open
+  the path it was given, and the check after it stopped at a folder an administrator may not list. Every one of them
+  stopped on NTFS before changing anything.
+- **Dynamic disks show in Partition Manager, and can be converted** - Windows' Get-Disk does not list a dynamic disk,
+  so one was missing from the table and Convert Dynamic Disk to Basic could never be reached. It now shows, marked
+  Dynamic, with its volumes. It stays read-only to everything but that conversion, which refuses a volume that also
+  lies on another disk.
+- **A locked BitLocker volume no longer stops every Apply** - One locked volume anywhere on the PC stopped every
+  batch, including the one that would unlock it.
+- **Copy Partition works on a mounted volume, and holds it still** - It read a live volume, and always failed at the
+  end of an NTFS one, because a file system hides its last sectors. It now locks the volume first and reads all of
+  it, as Create Image does. A volume that cannot be locked, such as the one Windows runs from, stops with the reason.
+  A read-only partition can now be copied.
+- **Restore Recovered Partition leaves a partition you can read** - Windows blanks the start of a partition it
+  creates, where the boot sector is, so a restored partition read as empty. The start now goes back as it was.
+- **Data Recovery finds and restores from a drive or volume** - It called every complete scan of one partial, it
+  could not restore anything from one because a device reads only in whole sectors, and on any NTFS volume it lost
+  the first JPEG inside a false start in Windows' own tables. A whole-disk path now says why it cannot restore, and
+  what to scan instead.
+- **Convert MBR/GPT works on an empty disk in both directions** - An empty GPT disk was refused because of the small
+  reserved partition Windows makes on it, and an empty MBR disk stopped with an error.
+- **Copy Disk turns off the disk this PC runs from** - The wizard listed it as a target and refused it only after
+  Finish. It now stays in the list, turned off, with the reason beside it, and with no other disk to copy to, Finish
+  stays off and says why.
+- **Wiping or fully formatting a virtual disk file says why it cannot** - Windows does not allow a full format on a
+  thin-provisioned disk, and said only "Not Supported" after the disk had been cleared. S.A.K. now checks first and
+  nothing changes.
+- **Tool buttons return before their dialog opens, on every panel** - 128 more buttons and menu actions now do what
+  round 6 did for Partition Manager's sidebar, and a check stops a new one being added.
+- **Partition Manager's certification now tests the app** - Its rows used to run Windows and VirtualBox commands, so
+  they tested those. Each row now goes through the app's own request building, controller and elevated helper, from
+  a client running as a standard user, and a separate tool reads the disk back. The result says what each row ran on,
+  and the old rows and their evidence no longer count. The final run on these rows has not happened yet.
 - **Migrate OS works from a snapshot and fits the new drive** - It used to copy a running Windows disk byte
   for byte, so files could change under the copy, and it refused any drive smaller than the old disk. Each
   volume is now read from a Volume Shadow Copy snapshot taken at the start, and the EFI, reserved and

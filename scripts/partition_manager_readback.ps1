@@ -10,7 +10,8 @@
 
     The parsers at the top touch nothing, so the verifier can run them on any machine over the raw
     bytes a snapshot stored, and catch a snapshot whose summary does not match its own bytes. The
-    functions below them read real disks. They run only inside the disposable certification VM.
+    functions below them read real disks. They run only in the disposable certification VM, or on a
+    physical PC named as disposable (Assert-RbDisposableMachine).
 #>
 
 Set-StrictMode -Version 2.0
@@ -150,12 +151,52 @@ function ConvertFrom-RbPartitionTable {
     }
 }
 
-function Assert-RbInDisposableVm {
-    # Everything below reads and scans disks. The owner's PC is not somewhere this runs.
+function Get-RbMachineFacts {
     $system = Get-CimInstance -ClassName Win32_ComputerSystem
-    if ("$($system.Model)" -cne 'VirtualBox' -or "$($system.Manufacturer)" -notmatch 'innotek') {
-        throw "This runs only inside a VirtualBox certification VM, not on '$($system.Manufacturer) $($system.Model)'."
+    $product = Get-CimInstance -ClassName Win32_ComputerSystemProduct
+    return [pscustomobject]@{
+        manufacturer = "$($system.Manufacturer)".Trim()
+        model = "$($system.Model)".Trim()
+        uuid = "$($product.UUID)".Trim().ToUpperInvariant()
     }
+}
+
+function Test-RbInVirtualBox {
+    param([Parameter(Mandatory = $true)] [object]$Facts)
+    return ($Facts.model -ceq 'VirtualBox' -and $Facts.manufacturer -match 'innotek')
+}
+
+function Get-RbDisposableMachineWords {
+    # What a person types to say this machine, and only this one, may be changed.
+    param([Parameter(Mandatory = $true)] [object]$Facts)
+    return "DISPOSABLE $($Facts.manufacturer) $($Facts.model) $($Facts.uuid)"
+}
+
+function Get-RbMachineRefusal {
+    <#
+    .SYNOPSIS
+        Why this machine may not run the rows. Empty if it may: a VirtualBox guest, or a physical PC
+        that a person named as disposable, by its own id and in typed words that name it.
+    #>
+    param([Parameter(Mandatory = $true)] [object]$Facts, [AllowNull()] [object]$Approval)
+    if (Test-RbInVirtualBox -Facts $Facts) { return '' }
+    $name = "$($Facts.manufacturer) $($Facts.model)"
+    if ($null -eq $Approval) { return "This runs only in a VirtualBox certification VM, or on a physical PC named as disposable, not on '$name'." }
+    # Boards with no id of their own report these, and two such boards would look like one machine.
+    if ($Facts.uuid -notmatch '^[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}$' -or $Facts.uuid -match '^(0{8}-0{4}-0{4}-0{4}-0{12}|F{8}-F{4}-F{4}-F{4}-F{12})$') {
+        return "'$name' has no id of its own ('$($Facts.uuid)'), so an approval cannot name it."
+    }
+    if ("$($Approval.machine_uuid)".ToUpperInvariant() -cne $Facts.uuid) { return "The approval on this machine names another one, not '$name'." }
+    if ("$($Approval.confirmation)" -cne (Get-RbDisposableMachineWords -Facts $Facts)) { return "The approval's typed words do not name this machine. They must be: $(Get-RbDisposableMachineWords -Facts $Facts)" }
+    return ''
+}
+
+function Assert-RbDisposableMachine {
+    # Everything below reads and scans disks. The owner's PC is not somewhere this runs.
+    param([string]$ApprovalPath = 'C:\SAKCert\disposable-machine.json')
+    $approval = if (Test-Path -LiteralPath $ApprovalPath -PathType Leaf) { Get-Content -LiteralPath $ApprovalPath -Raw | ConvertFrom-Json } else { $null }
+    $why = Get-RbMachineRefusal -Facts (Get-RbMachineFacts) -Approval $approval
+    if ($why) { throw $why }
 }
 
 function Read-RbBytes {

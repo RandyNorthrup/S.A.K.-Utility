@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Runs Partition Manager certification rows inside the disposable VM, through the real app path.
+    Runs Partition Manager certification rows on a disposable machine, through the real app path.
 
 .DESCRIPTION
     Each row arranges its fixture with Windows' own tools, runs each operation as a person's Apply
@@ -10,13 +10,14 @@
     runs. The row writes what it read back. It decides nothing: the verifier checks the readback
     against certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json afterwards.
 
-    It runs only in a VirtualBox guest, and only as administrator. On any other machine it stops
-    before it reads a disk.
+    It runs only as administrator, in a VirtualBox guest or on a physical PC named as disposable by
+    the approval the rig's PcPrepare writes. On any other machine it stops before it reads a disk.
 
-    Physical disks are named by a pin file, written by a person from what the host says. A row on a
-    real device stops unless the device matches the pin in model, serial and size immediately
-    before the step. -DataRowsOnDevice puts the data rows that allow it on the pinned hard drive,
-    in small partitions, in place of a VHD.
+    Physical disks are named by a pin file, read from the machine that holds them. A row on a real
+    device stops unless the device matches the pin in model, serial and size immediately before the
+    step. -DataRowsOnDevice puts the data rows that allow it on the pinned hard drive, in small
+    partitions, in place of a VHD. A row says what it ran on from what Windows reports at that moment,
+    and which machine it ran on.
 
 .PARAMETER Rows
     Row ids to run. Boot rows run one phase at a time, driven from the host.
@@ -47,7 +48,9 @@ $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'partition_manager_readback.ps1')
 . (Join-Path $PSScriptRoot 'partition_manager_row_evidence.ps1')
 
-Assert-RbInDisposableVm
+Assert-RbDisposableMachine
+$Script:InVirtualBox = Test-RbInVirtualBox -Facts (Get-RbMachineFacts)
+$Script:VhdKind = if ($Script:InVirtualBox) { 'VHDX in a VM' } else { 'VHDX on a physical PC' }
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'This arranges fixtures and reads raw disks, so it runs as administrator.'
@@ -64,6 +67,8 @@ function Initialize-CertGuest {
     # The app's helper asks for elevation through a consent prompt, which nobody in this session
     # can answer. Windows' own setting answers it, and every report says this was on.
     $policy = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    # With UAC off every process is elevated, and "the client was not elevated" could not be true.
+    if ((Get-ItemProperty -Path $policy -Name EnableLUA).EnableLUA -ne 1) { throw 'UAC is off on this machine, so no standard-user token exists to run the client under' }
     Set-ItemProperty -Path $policy -Name ConsentPromptBehaviorAdmin -Value 0 -Type DWord
     Set-ItemProperty -Path $policy -Name PromptOnSecureDesktop -Value 0 -Type DWord
     New-Item -ItemType Directory -Force -Path $WorkRoot, $OutputRoot | Out-Null
@@ -100,6 +105,20 @@ function Get-CertRig {
         os_build = "$($os.BuildNumber)"
         consent_prompt_answered_by_policy = $true
     }
+}
+
+function Get-CertDeviceKind {
+    # How a real device reaches this Windows, from where it is running and what Windows says now.
+    param([Parameter(Mandatory = $true)] [string]$BusType)
+    if ($Script:InVirtualBox) { return "$BusType device passed through to a VM" }
+    if ($BusType -ceq 'USB') { return 'USB on a physical PC' }
+    return "$BusType inside a physical PC"
+}
+
+function Assert-CertBootRowInVm {
+    # A boot row changes the Windows it boots from, and proves itself by starting that disk in a VM
+    # of its own. On a physical PC nothing here could prove that, or put the machine back.
+    if (-not $Script:InVirtualBox) { throw 'Boot rows run on the VM rig. No chain here proves a boot on a physical PC' }
 }
 
 function Get-CertPin {
@@ -161,8 +180,11 @@ function New-CertVhd {
 
 function Remove-CertVhds {
     foreach ($path in @($Script:RowVhds)) {
-        try { Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Out-Null } catch { }
-        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        # A row's own failure matters more than its tidying up, so this says what it left and goes on.
+        try {
+            Dismount-DiskImage -ImagePath $path -ErrorAction Stop | Out-Null
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        } catch { Write-Warning "A VHD was left behind: $path. $($_.Exception.Message)" }
     }
     $Script:RowVhds.Clear()
 }
@@ -198,12 +220,14 @@ function Get-CertHelperObservation {
     param([string]$ClientPidPath, [hashtable]$Seen)
     if (-not (Test-Path -LiteralPath $ClientPidPath)) { return }
     $clientPid = 0
-    if (-not [int]::TryParse(("$(Get-Content -LiteralPath $ClientPidPath -ErrorAction SilentlyContinue)").Trim(), [ref]$clientPid)) { return }
+    # The client's task may still be writing this. The next look will see it.
+    $written = try { Get-Content -LiteralPath $ClientPidPath } catch { '' }
+    if (-not [int]::TryParse("$written".Trim(), [ref]$clientPid)) { return }
     if (-not $Seen.ContainsKey('client_token_elevated')) {
         $elevated = Get-RbProcessElevation -ProcessId $clientPid
         if ($null -ne $elevated) { $Seen.client_token_elevated = $elevated; $Seen.client_pid = $clientPid }
     }
-    $helpers = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='sak_elevated_helper.exe'" -ErrorAction SilentlyContinue)
+    $helpers = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='sak_elevated_helper.exe'")
     foreach ($helper in $helpers) {
         # A process just started can list no path yet. The next look will see it.
         if ("$($helper.CommandLine)" -match "--parent-pid\s+$clientPid\b" -and -not $Seen.ContainsKey('helper_pid') -and $helper.ExecutablePath) {
@@ -219,7 +243,7 @@ function Invoke-CertClient {
     # Runs the client under this signed-in user's standard-user token, through a task, and watches
     # the helper it starts. Returns what Windows said about both.
     param([Parameter(Mandatory = $true)] [string]$JobPath, [int]$TimeoutSeconds)
-    foreach ($suffix in '.done', '.pid', '.out', '.err') { Remove-Item -LiteralPath "$JobPath$suffix" -ErrorAction SilentlyContinue }
+    foreach ($suffix in '.done', '.pid', '.out', '.err') { if (Test-Path -LiteralPath "$JobPath$suffix") { Remove-Item -LiteralPath "$JobPath$suffix" } }
     Set-Content -LiteralPath (Join-Path $WorkRoot 'client-job.txt') -Value $JobPath -Encoding ASCII
     $started = & schtasks.exe /Run /TN $Script:ClientTask 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "The client task did not start: $started" }
@@ -282,7 +306,7 @@ function Invoke-CertStep {
     [IO.File]::WriteAllText($jobPath, ($job | ConvertTo-Json -Depth 8))
     Write-Host "[$(Get-Date -Format HH:mm:ss)] $($Script:RowId) $Step ($Operation)"
     $seen = if ($Elevated) { Invoke-CertElevatedClient -JobPath $jobPath -TimeoutSeconds $TimeoutSeconds } else { Invoke-CertClient -JobPath $jobPath -TimeoutSeconds $TimeoutSeconds }
-    Remove-Item -LiteralPath $jobPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $jobPath
     Start-Sleep -Seconds 3
     Update-HostStorageCache
     [void]$Script:RowSteps.Add([ordered]@{
@@ -293,7 +317,7 @@ function Invoke-CertStep {
         observed = $seen
     })
     if (-not (Test-Path -LiteralPath $reportPath)) {
-        $err = Get-Content -LiteralPath "$jobPath.err" -ErrorAction SilentlyContinue | Select-Object -Last 8 | Out-String
+        $err = if (Test-Path -LiteralPath "$jobPath.err") { Get-Content -LiteralPath "$jobPath.err" | Select-Object -Last 8 | Out-String } else { '' }
         throw "$Step wrote no report (exit $($seen.exit_code)): $err"
     }
     $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
@@ -385,8 +409,10 @@ function Wait-CertVolumeReady {
         Start-Sleep -Seconds 2
     }
     $facts = if ($DiskNumber -ge 0) {
-        (Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
-                "$($_.PartitionNumber):$($_.Type):$($_.DriveLetter):$(@($_.AccessPaths) -join '+')" }) -join ' | '
+        try {
+            (Get-Partition -DiskNumber $DiskNumber | ForEach-Object {
+                    "$($_.PartitionNumber):$($_.Type):$($_.DriveLetter):$(@($_.AccessPaths) -join '+')" }) -join ' | '
+        } catch { "unreadable: $($_.Exception.Message)" }
     } else { '' }
     throw "${Letter}: never became readable. Partitions: $facts"
 }
@@ -425,7 +451,7 @@ function Invoke-CertRow {
     param([Parameter(Mandatory = $true)] [string]$Id)
     $Script:RowId = $Id
     $Script:RowDir = Join-Path $OutputRoot $Id
-    Remove-Item -LiteralPath $Script:RowDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Script:RowDir) { Remove-Item -LiteralPath $Script:RowDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $Script:RowDir | Out-Null
     $Script:RowSteps = New-Object System.Collections.ArrayList
     $Script:RowVhds = New-Object System.Collections.Generic.List[string]

@@ -207,6 +207,29 @@ try {
     $blank = ConvertFrom-RbPartitionTable -Raw ([pscustomobject]@{ lba0_hex = ('00' * 512) })
     if ($blank.style -cne 'RAW') { $Script:Failures.Add('A blank disk was read as partitioned') } else { $Script:Passes++ }
 
+    # Which machine may run the rows at all.
+    $vbox = [pscustomobject]@{ manufacturer = 'innotek GmbH'; model = 'VirtualBox'; uuid = '6D68F30A-E2E3-40EA-8BB1-B2F3AB9B36F2' }
+    $pc = [pscustomobject]@{ manufacturer = 'Dell Inc.'; model = 'OptiPlex 7040'; uuid = '4C4C4544-0044-3510-8052-B4C04F4A3132' }
+    $words = "DISPOSABLE Dell Inc. OptiPlex 7040 $($pc.uuid)"
+    $named = [pscustomobject]@{ machine_uuid = $pc.uuid; confirmation = $words }
+    $machineCases = @(
+        @{ name = 'a VirtualBox guest needs no approval'; facts = $vbox; approval = $null; want = '' },
+        @{ name = 'a PC named as disposable may run'; facts = $pc; approval = $named; want = '' },
+        @{ name = 'a lower-case id in the approval names the same machine'; facts = $pc; approval = [pscustomobject]@{ machine_uuid = $pc.uuid.ToLowerInvariant(); confirmation = $words }; want = '' },
+        @{ name = 'any other machine, with no approval, stops'; facts = $pc; approval = $null; want = 'runs only in a VirtualBox' },
+        @{ name = 'an approval for another machine stops'; facts = $pc; approval = [pscustomobject]@{ machine_uuid = $vbox.uuid; confirmation = $words }; want = 'names another one' },
+        @{ name = 'words for another machine stop'; facts = $pc; approval = [pscustomobject]@{ machine_uuid = $pc.uuid; confirmation = "DISPOSABLE Dell Inc. OptiPlex 9020 $($pc.uuid)" }; want = 'do not name this machine' },
+        @{ name = 'a machine that only calls itself VirtualBox stops'; facts = [pscustomobject]@{ manufacturer = 'Dell Inc.'; model = 'VirtualBox'; uuid = $pc.uuid }; approval = $null; want = 'runs only in a VirtualBox' },
+        @{ name = 'a board with a blank id cannot be named'; facts = [pscustomobject]@{ manufacturer = 'Dell Inc.'; model = 'OptiPlex 7040'; uuid = 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF' }; approval = [pscustomobject]@{ machine_uuid = 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'; confirmation = 'DISPOSABLE Dell Inc. OptiPlex 7040 FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF' }; want = 'no id of its own' },
+        @{ name = 'a board with a zero id cannot be named'; facts = [pscustomobject]@{ manufacturer = 'Dell Inc.'; model = 'OptiPlex 7040'; uuid = '00000000-0000-0000-0000-000000000000' }; approval = [pscustomobject]@{ machine_uuid = '00000000-0000-0000-0000-000000000000'; confirmation = 'DISPOSABLE Dell Inc. OptiPlex 7040 00000000-0000-0000-0000-000000000000' }; want = 'no id of its own' },
+        @{ name = 'an id that is not one cannot be named'; facts = [pscustomobject]@{ manufacturer = 'Dell Inc.'; model = 'OptiPlex 7040'; uuid = 'TO BE FILLED BY O.E.M.' }; approval = [pscustomobject]@{ machine_uuid = 'TO BE FILLED BY O.E.M.'; confirmation = 'DISPOSABLE Dell Inc. OptiPlex 7040 TO BE FILLED BY O.E.M.' }; want = 'no id of its own' }
+    )
+    foreach ($case in $machineCases) {
+        $why = Get-RbMachineRefusal -Facts $case.facts -Approval $case.approval
+        $held = if ($case.want) { $why.Contains($case.want) } else { $why -ceq '' }
+        if ($held) { $Script:Passes++ } else { $Script:Failures.Add("Machine: $($case.name): '$why'") }
+    }
+
     # The row that passes.
     $good = Join-Path $Script:Root 'good'
     New-Evidence -Dir $good

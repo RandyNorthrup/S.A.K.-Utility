@@ -19,6 +19,11 @@
       On / Off     Starts the VM and signs in, or shuts it down.
       Snapshot / Restore
       NewDisk / AttachDisk / DetachDisk / DeleteDisk
+      PcPrepare    With -PcFile, makes a physical PC ready: checks it is the machine the file names,
+                   that UAC is on and someone is signed in, writes the approval the rows look for,
+                   registers the elevated task, and lists its disks. Run once per PC.
+      WritePins    Writes -PinFile from -PinSpec, reading the disks on the VM or PC. Refuses a disk that
+                   runs that Windows, and prints no serial number.
       RootWrapper / RootTidy  VirtualBox on macOS needs root to capture a USB device. With a sudoers
                    rule for VBoxManage and VBoxHeadless, RootWrapper writes a small script that runs
                    VBoxManage as root with this user's VirtualBox folder, and setting
@@ -38,7 +43,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Stage', 'Deploy', 'On', 'Off', 'Snapshot', 'Restore', 'NewDisk', 'AttachDisk', 'DetachDisk', 'DeleteDisk',
         'Rows', 'BootProof', 'VmCreate', 'VmFirmware', 'VmRemove', 'VmFacts', 'UsbList', 'UsbOn', 'UsbOff', 'GuestJob',
-        'RootWrapper', 'RootTidy')]
+        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins')]
     [string]$Action,
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$Vm = 'Windows 11',
@@ -63,7 +68,9 @@ param(
     [int]$WaitMinutes = 20,
     [switch]$ExpectNoBoot,
     [string]$JobFile = '',
-    [int]$JobMinutes = 240
+    [int]$JobMinutes = 240,
+    [string]$PcFile = '',
+    [string]$PinSpec = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,13 +83,84 @@ $Script:VBox = if ($env:SAK_RIG_VBOX) { $env:SAK_RIG_VBOX } else { '/Application
 $Script:GuestPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $Script:ThrowawayVm = '^sakcert-[a-z0-9-]+$'
 
+function Remove-RigFile {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
+}
+
 function Resolve-RigPath {
     param([string]$Path)
     if ([IO.Path]::IsPathRooted($Path)) { return $Path }
     return (Join-Path $ProjectRoot $Path)
 }
 
-$Script:Cred = if ($Action -ne 'Stage') { [IO.File]::ReadAllText((Resolve-RigPath $CredFile)) | ConvertFrom-Json } else { $null }
+function Read-RigPc {
+    <#
+    .SYNOPSIS
+        The physical PC this run may change, from a file a person wrote. It holds the machine's id and
+        the words that name it, and stays out of the repository. Refuses the machine this runs on.
+    #>
+    $pc = [IO.File]::ReadAllText((Resolve-RigPath $PcFile)) | ConvertFrom-Json
+    foreach ($field in 'host', 'key', 'machine_uuid', 'confirmation') {
+        if ([string]::IsNullOrWhiteSpace("$($pc.$field)")) { throw "$PcFile has no $field" }
+    }
+    $here = "$((Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID)".Trim().ToUpperInvariant()
+    if ("$($pc.machine_uuid)".ToUpperInvariant() -ceq $here) { throw "$PcFile names the machine this is running on. Certification does not change this machine" }
+    return $pc
+}
+
+$Script:Pc = if ($PcFile) { Read-RigPc } else { $null }
+$Script:PcActions = @('Stage', 'Deploy', 'On', 'Rows', 'GuestJob', 'PcPrepare', 'WritePins')
+if ($null -ne $Script:Pc -and $Script:PcActions -cnotcontains $Action) { throw "$Action needs a VM, and -PcFile names a physical PC" }
+if ($Action -ceq 'PcPrepare' -and $null -eq $Script:Pc) { throw 'PcPrepare needs -PcFile' }
+$Script:Cred = if ($Action -ne 'Stage' -and $null -eq $Script:Pc) { [IO.File]::ReadAllText((Resolve-RigPath $CredFile)) | ConvertFrom-Json } else { $null }
+
+function Get-PcSshOptions {
+    # What ssh and scp share. -P on scp and -p on ssh are the only difference, so the port is apart.
+    # The PC's host key is kept beside the PC file: trusted the first time, and held to after that.
+    $options = @('-i', "$($Script:Pc.key)", '-o', 'ConnectTimeout=15', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=30',
+        '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=$((Resolve-RigPath $PcFile).Replace('\', '/')).known_hosts")
+    if ("$($Script:Pc.jump)") { $options += @('-J', "$($Script:Pc.jump)") }
+    return $options
+}
+
+function Invoke-PcPS {
+    # Key sign-in gives an administrator its elevated token, in a session of its own.
+    param([string]$Code)
+    $prefix = "`$ProgressPreference='SilentlyContinue';`$ErrorActionPreference='Stop';"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix + $Code + "`n;exit 0"))
+    $port = if ("$($Script:Pc.port)") { @('-p', "$($Script:Pc.port)") } else { @() }
+    $output = & ssh -n @(Get-PcSshOptions) @port "$($Script:Pc.host)" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded" 2>&1
+    $code = $LASTEXITCODE
+    $text = @($output | ForEach-Object { "$_" })
+    if ($code -ne 0) { throw "The command on $($Script:Pc.host) failed with exit code ${code}: $($text -join ' | ')" }
+    return $text
+}
+
+function Get-PcScpTarget {
+    # scp reads a Windows path after the host, with forward slashes.
+    param([string]$Path)
+    return "$($Script:Pc.host):$($Path.Replace('\', '/'))"
+}
+
+function Get-PcScpPort {
+    if ("$($Script:Pc.port)") { return @('-P', "$($Script:Pc.port)") }
+    return @()
+}
+
+function Wait-RigPc {
+    # The elevated task runs in a signed-in session, and quietly does not run without one.
+    $deadline = (Get-Date).AddMinutes($WaitMinutes)
+    $seen = ''
+    do {
+        try {
+            $seen = (Invoke-PcPS -Code "(quser 2>&1 | Out-String)") -join ' '
+            if ($seen -match '(?i)\bconsole\b') { return "signed in: $($Script:Pc.host)" }
+        } catch { $seen = $_.Exception.Message }
+        if ((Get-Date) -lt $deadline) { Start-Sleep -Seconds 15 }
+    } while ((Get-Date) -lt $deadline)
+    throw "$($Script:Pc.host) has no one signed in at its console: $seen"
+}
 
 function Get-RigSshArguments {
     return @('-i', $Script:Cred.macKey, '-o', 'ConnectTimeout=15', '-o', 'BatchMode=yes', $Script:Cred.macHost)
@@ -140,6 +218,7 @@ function ConvertTo-BashWord {
 
 function Invoke-GuestPS {
     param([string]$Code, [int]$TimeoutMs = 600000, [string]$VmName = $Vm)
+    if ($null -ne $Script:Pc) { return (Invoke-PcPS -Code $Code) }
     $prefix = "`$ProgressPreference='SilentlyContinue';`$ErrorActionPreference='Stop';"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix + $Code + "`n;exit 0"))
     $body = "run --exe $(ConvertTo-BashWord $Script:GuestPowerShell) --timeout $TimeoutMs --wait-stdout --wait-stderr -- -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
@@ -154,6 +233,11 @@ function Send-ToMac {
 
 function Send-ToGuest {
     param([string[]]$LocalPaths, [string]$GuestFolder, [string]$VmName = $Vm)
+    if ($null -ne $Script:Pc) {
+        & scp -q @(Get-PcSshOptions) @(Get-PcScpPort) @LocalPaths (Get-PcScpTarget -Path ($GuestFolder.TrimEnd('\') + '\'))
+        if ($LASTEXITCODE -ne 0) { throw "scp to $($Script:Pc.host) failed with exit code $LASTEXITCODE" }
+        return
+    }
     Invoke-Mac "mkdir -p ~/$MacWork/push; rm -f ~/$MacWork/push/*" | Out-Null
     $names = @()
     foreach ($path in $LocalPaths) {
@@ -167,6 +251,11 @@ function Send-ToGuest {
 
 function Get-FromGuest {
     param([string]$GuestPath, [string]$LocalFolder, [string]$VmName = $Vm)
+    if ($null -ne $Script:Pc) {
+        & scp -q @(Get-PcSshOptions) @(Get-PcScpPort) (Get-PcScpTarget -Path $GuestPath) $LocalFolder
+        if ($LASTEXITCODE -ne 0) { throw "scp from $($Script:Pc.host) failed with exit code $LASTEXITCODE" }
+        return
+    }
     $leaf = Split-Path -Leaf $GuestPath
     Invoke-GuestControl -Body "from --target-directory `"`$HOME/$MacWork/`" $(ConvertTo-BashWord $GuestPath)" -VmName $VmName | Out-Null
     & scp -q -i $Script:Cred.macKey -o ConnectTimeout=15 -o BatchMode=yes "$($Script:Cred.macHost):$MacWork/$leaf" $LocalFolder
@@ -239,7 +328,7 @@ function Invoke-GuestElevated {
     $stub = Join-Path ([IO.Path]::GetTempPath()) "sakcert-stub-$PID.ps1"
     [IO.File]::WriteAllText($stub, @"
 `$r = '$Script:GuestRoot\jobs'
-Remove-Item "`$r\done.txt" -ErrorAction SilentlyContinue
+if (Test-Path "`$r\done.txt") { Remove-Item "`$r\done.txt" }
 'started' | Set-Content -LiteralPath "`$r\started.txt"
 try {
     & "`$r\$leaf" *> "`$r\$leaf.log"
@@ -251,10 +340,10 @@ try {
 }
 "@)
     try {
-        Invoke-GuestPS -Code "New-Item -ItemType Directory -Force '$Script:GuestRoot\jobs' | Out-Null; Remove-Item '$Script:GuestRoot\jobs\started.txt' -ErrorAction SilentlyContinue" -VmName $VmName | Out-Null
+        Invoke-GuestPS -Code "New-Item -ItemType Directory -Force '$Script:GuestRoot\jobs' | Out-Null; if (Test-Path '$Script:GuestRoot\jobs\started.txt') { Remove-Item '$Script:GuestRoot\jobs\started.txt' }" -VmName $VmName | Out-Null
         Send-ToGuest -LocalPaths @($LocalScript, $stub) -GuestFolder "$Script:GuestRoot\jobs" -VmName $VmName
         $stubLeaf = Split-Path -Leaf $stub
-        Invoke-GuestPS -Code "Copy-Item '$Script:GuestRoot\jobs\$stubLeaf' 'C:\SAKCapture\Capture-Shots.ps1' -Force; Remove-Item '$Script:GuestRoot\jobs\done.txt' -ErrorAction SilentlyContinue; schtasks.exe /End /TN SAKCaptureElevated 2>&1 | Out-Null; `$r = schtasks.exe /Run /TN SAKCaptureElevated 2>&1; `$r -join ' '" -VmName $VmName
+        Invoke-GuestPS -Code "Copy-Item '$Script:GuestRoot\jobs\$stubLeaf' 'C:\SAKCapture\Capture-Shots.ps1' -Force; if (Test-Path '$Script:GuestRoot\jobs\done.txt') { Remove-Item '$Script:GuestRoot\jobs\done.txt' }; schtasks.exe /End /TN SAKCaptureElevated 2>&1 | Out-Null; `$r = schtasks.exe /Run /TN SAKCaptureElevated 2>&1; `$r -join ' '" -VmName $VmName
         $deadline = (Get-Date).AddMinutes($Minutes)
         $startBy = (Get-Date).AddMinutes(3)
         $state = ''
@@ -265,15 +354,15 @@ try {
             if ($state -match 'WAITING' -and (Get-Date) -gt $startBy) { throw "The guest's elevated task did not start the job: is anyone signed in?" }
         }
         if ($state -notmatch 'DONE') { "NOT DONE after $Minutes minutes" }
-        Invoke-GuestPS -Code "Get-Content -LiteralPath '$Script:GuestRoot\jobs\$leaf.log' -ErrorAction SilentlyContinue" -TimeoutMs 900000 -VmName $VmName
-    } finally { Remove-Item -LiteralPath $stub -ErrorAction SilentlyContinue }
+        Invoke-GuestPS -Code "if (Test-Path -LiteralPath '$Script:GuestRoot\jobs\$leaf.log') { Get-Content -LiteralPath '$Script:GuestRoot\jobs\$leaf.log' }" -TimeoutMs 900000 -VmName $VmName
+    } finally { Remove-RigFile -Path $stub }
 }
 
 function New-RigStage {
     $release = Resolve-RigPath $ReleaseDir
     $stage = Resolve-RigPath $StageDir
     if (-not (Test-Path -LiteralPath (Join-Path $release 'partition_manager_live_certifier.exe'))) { throw "No step client in $release" }
-    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-RigFile -Path $stage
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe')
     Copy-Item (Join-Path $release 'sak_elevated_helper.exe') $stage
@@ -300,9 +389,9 @@ function Send-RigStage {
     param([string]$VmName = $Vm)
     $stage = Resolve-RigPath $StageDir
     $zip = "$stage.zip"
-    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+    Remove-RigFile -Path $zip
     Compress-Archive -Path "$stage\*" -DestinationPath $zip
-    Invoke-GuestPS -Code "New-Item -ItemType Directory -Force '$Script:GuestRoot\stage','$Script:GuestRoot\scripts','$Script:GuestRoot\jobs' | Out-Null; Remove-Item '$Script:GuestRoot\stage\*' -Recurse -Force -ErrorAction SilentlyContinue" -VmName $VmName | Out-Null
+    Invoke-GuestPS -Code "New-Item -ItemType Directory -Force '$Script:GuestRoot\stage','$Script:GuestRoot\scripts','$Script:GuestRoot\jobs' | Out-Null; Remove-Item '$Script:GuestRoot\stage\*' -Recurse -Force" -VmName $VmName | Out-Null
     Send-ToGuest -LocalPaths @($zip) -GuestFolder $Script:GuestRoot -VmName $VmName
     Invoke-GuestPS -Code "Expand-Archive -LiteralPath '$Script:GuestRoot\$(Split-Path -Leaf $zip)' -DestinationPath '$Script:GuestRoot\stage' -Force; (Get-ChildItem '$Script:GuestRoot\stage').Count" -VmName $VmName
     $scripts = @('run_partition_manager_app_certification.ps1', 'partition_manager_certification_row_bodies.ps1', 'partition_manager_readback.ps1',
@@ -330,12 +419,16 @@ function Invoke-RigRows {
         Invoke-GuestElevated -LocalScript $job -Minutes $JobMinutes -VmName $VmName
         $local = Resolve-RigPath $EvidenceDir
         New-Item -ItemType Directory -Force -Path $local | Out-Null
+        # Only the rows asked for. Another row already here may hold what only the host could see, which
+        # the guest's copy of it does not.
         $archive = "sakcert-evidence-$PID.zip"
-        Invoke-GuestPS -Code "Remove-Item '$Script:GuestRoot\$archive' -ErrorAction SilentlyContinue; Compress-Archive -Path '$Script:GuestEvidence\*' -DestinationPath '$Script:GuestRoot\$archive' -Force" -VmName $VmName | Out-Null
+        $wanted = ($Rows | ForEach-Object { "'$Script:GuestEvidence\$_'" }) -join ','
+        Invoke-GuestPS -Code "if (Test-Path '$Script:GuestRoot\$archive') { Remove-Item '$Script:GuestRoot\$archive' }; Compress-Archive -Path @($wanted) -DestinationPath '$Script:GuestRoot\$archive' -Force" -VmName $VmName | Out-Null
         Get-FromGuest -GuestPath "$Script:GuestRoot\$archive" -LocalFolder $local -VmName $VmName
+        foreach ($row in $Rows) { Remove-RigFile -Path (Join-Path $local $row) }
         Expand-Archive -LiteralPath (Join-Path $local $archive) -DestinationPath $local -Force
         Remove-Item -LiteralPath (Join-Path $local $archive)
-    } finally { Remove-Item -LiteralPath $job -ErrorAction SilentlyContinue }
+    } finally { Remove-RigFile -Path $job }
 }
 
 function Get-RigShot {
@@ -387,7 +480,7 @@ function Get-RigBootFacts {
 `$facts | ConvertTo-Json | Set-Content -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json' -Encoding UTF8
 "@)
     Invoke-GuestElevated -LocalScript $job -Minutes 25 -VmName $VmName | Out-Null
-    Remove-Item -LiteralPath $job -ErrorAction SilentlyContinue
+    Remove-RigFile -Path $job
     return (((Invoke-GuestPS -Code "Get-Content -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json' -Raw" -VmName $VmName) -join "`n") | ConvertFrom-Json)
 }
 
@@ -427,6 +520,70 @@ function Invoke-RigBootProof {
     $result | ConvertTo-Json
 }
 
+function Invoke-RigPcPrepare {
+    $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-pc-prepare-$PID.ps1"
+    Invoke-PcPS -Code "New-Item -ItemType Directory -Force 'C:\SAKCapture','$Script:GuestRoot\stage','$Script:GuestRoot\scripts','$Script:GuestRoot\jobs','$Script:GuestRoot\evidence','$Script:GuestRoot\work' | Out-Null" | Out-Null
+    Send-ToGuest -LocalPaths @((Join-Path $PSScriptRoot 'partition_manager_readback.ps1')) -GuestFolder "$Script:GuestRoot\scripts"
+    $approval = [ordered]@{ machine_uuid = "$($Script:Pc.machine_uuid)"; confirmation = "$($Script:Pc.confirmation)" } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText($job, @"
+`$ErrorActionPreference = 'Stop'
+. '$Script:GuestRoot\scripts\partition_manager_readback.ps1'
+[IO.File]::WriteAllText('$Script:GuestRoot\disposable-machine.json', '$($approval.Replace("'", "''"))')
+Assert-RbDisposableMachine -ApprovalPath '$Script:GuestRoot\disposable-machine.json'
+`$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'This sign-in has no elevated token: sign in by key as an administrator' }
+`$policy = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+if ((Get-ItemProperty -Path `$policy -Name EnableLUA).EnableLUA -ne 1) { throw 'UAC is off. Rows need a real standard-user token: turn it on and restart' }
+Set-ItemProperty -Path `$policy -Name ConsentPromptBehaviorAdmin -Value 0 -Type DWord
+Set-ItemProperty -Path `$policy -Name PromptOnSecureDesktop -Value 0 -Type DWord
+if (-not (Test-Path -LiteralPath 'C:\SAKCapture\Capture-Shots.ps1')) { Set-Content -LiteralPath 'C:\SAKCapture\Capture-Shots.ps1' -Value '' }
+`$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\SAKCapture\Capture-Shots.ps1'
+`$task = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
+`$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 2) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName SAKCaptureElevated -Action `$action -Principal `$task -Settings `$settings -Force | Out-Null
+`$facts = Get-RbMachineFacts
+`$os = Get-CimInstance -ClassName Win32_OperatingSystem
+"`$(`$facts.manufacturer) `$(`$facts.model), firmware `$env:firmware_type, `$(`$os.Caption) build `$(`$os.BuildNumber)"
+Get-Disk | ForEach-Object {
+    `$disk = `$_
+    `$physical = Get-PhysicalDisk | Where-Object { "`$(`$_.DeviceId)" -eq "`$(`$disk.Number)" } | Select-Object -First 1
+    "disk `$(`$disk.Number): '`$(`$disk.FriendlyName)' `$([uint64]`$disk.Size) bytes, bus `$(`$disk.BusType), media '`$(`$physical.MediaType)', style `$(`$disk.PartitionStyle), boot `$(`$disk.IsBoot), system `$(`$disk.IsSystem)"
+}
+"@)
+    try {
+        Send-ToGuest -LocalPaths @($job) -GuestFolder "$Script:GuestRoot\jobs"
+        Invoke-PcPS -Code "& '$Script:GuestRoot\jobs\$(Split-Path -Leaf $job)'"
+    } finally { Remove-RigFile -Path $job }
+    Wait-RigPc
+}
+
+function Get-RigPinFile {
+    <#
+    .SYNOPSIS
+        Reads the disks on the target and writes the pin file. -PinSpec is role=model|bytes, separated
+        by semicolons. A role needs exactly one match, and that disk must not run this Windows. Prints
+        no serial number.
+    #>
+    if ([string]::IsNullOrWhiteSpace($PinSpec) -or [string]::IsNullOrWhiteSpace($PinFile)) { throw 'WritePins needs -PinSpec and -PinFile' }
+    $raw = (Invoke-GuestPS -Code "@(Get-Disk | ForEach-Object { [pscustomobject]@{ number = [int]`$_.Number; model = `"`$(`$_.FriendlyName)`"; size_bytes = `"`$([uint64]`$_.Size)`"; serial_number = `"`$(`$_.SerialNumber)`".Trim(); bus_type = `"`$(`$_.BusType)`"; unique_id = `"`$(`$_.UniqueId)`".Trim(); boot = [bool]`$_.IsBoot; system = [bool]`$_.IsSystem } }) | ConvertTo-Json -Depth 3 -Compress") -join ''
+    $disks = @($raw | ConvertFrom-Json)
+    $pins = [ordered]@{}
+    foreach ($entry in ($PinSpec -split ';' | Where-Object { $_ })) {
+        if ($entry -notmatch '^(ssd|hdd|any)=(.+)\|(\d+)$') { throw "A pin is role=model|bytes, not '$entry'" }
+        $role, $model, $bytes = $Matches[1], $Matches[2], $Matches[3]
+        $found = @($disks | Where-Object { "$($_.model)" -ceq $model -and "$($_.size_bytes)" -ceq $bytes })
+        if ($found.Count -ne 1) { throw "Expected one disk that is $model, $bytes bytes: found $($found.Count)" }
+        $disk = $found[0]
+        if ($disk.boot -or $disk.system) { throw "$model runs the Windows on that machine, and a pin is for a disk the rows may change" }
+        $pins[$role] = [ordered]@{
+            unique_id = $disk.unique_id; serial_number = $disk.serial_number; model = $disk.model; size_bytes = $disk.size_bytes; bus_type = $disk.bus_type
+            confirmation = "CERTIFY $($disk.model) $($disk.serial_number) $($disk.size_bytes)"
+        }
+        "$role is disk $($disk.number): $($disk.model), $($disk.size_bytes) bytes, $($disk.bus_type)"
+    }
+    [IO.File]::WriteAllText((Resolve-RigPath $PinFile), ($pins | ConvertTo-Json -Depth 4))
+}
+
 function Get-UsbDevices {
     # The two devices the owner named, by what they report, and nothing else on this Mac.
     return @(
@@ -438,7 +595,9 @@ function Get-UsbDevices {
 switch ($Action) {
     'Stage' { New-RigStage }
     'Deploy' { Send-RigStage }
-    'On' { Start-RigVm }
+    'On' { if ($null -ne $Script:Pc) { Wait-RigPc } else { Start-RigVm } }
+    'PcPrepare' { Invoke-RigPcPrepare }
+    'WritePins' { Get-RigPinFile }
     'Off' { Stop-RigVm }
     'Snapshot' { Invoke-MacVBox "`"`$V`" snapshot '$Vm' take '$SnapshotName' 2>&1 | tail -1; `"`$V`" snapshot '$Vm' list --machinereadable | grep -E '^CurrentSnapshotName'" }
     'Restore' { Invoke-MacVBox "`"`$V`" snapshot '$Vm' restore '$SnapshotName' 2>&1 | tail -1; `"`$V`" showvminfo '$Vm' --machinereadable | grep '^VMState='" }
