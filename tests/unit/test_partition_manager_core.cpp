@@ -1813,6 +1813,8 @@ private Q_SLOTS:
     void layoutHashIsTheSameWhoeverScanned();
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
+    void scriptBuilder_copyPartitionHoldsItsSourceAndReadsItAll();
+    void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
     void scriptBuilder_styleConversionLooksPastReservedPartition();
     void scriptBuilder_rejectsEnumArgumentCommandInjection();
@@ -18834,6 +18836,98 @@ void PartitionManagerCoreTests::scriptBuilder_buildsEmptyDataDiskStyleConversion
     QVERIFY(script.script.contains(QStringLiteral("Clear-Disk -Number 4 -RemoveData")));
     QVERIFY(
         script.script.contains(QStringLiteral("Initialize-Disk -Number 4 -PartitionStyle MBR")));
+}
+
+// A plain read of a mounted volume is a live view, and ends before the partition does.
+void PartitionManagerCoreTests::scriptBuilder_copyPartitionHoldsItsSourceAndReadsItAll() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\T:");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+    pinRawTargetIdentity(&payload);
+    const PartitionScriptBuilder builder;
+    const auto copy = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, payload));
+    QVERIFY2(copy.valid(), qPrintable(copy.blockers.join(QStringLiteral("; "))));
+    const auto lock =
+        copy.script.indexOf(QStringLiteral("$sakCopyLock = Open-SakImageVolumeLock $src"));
+    const auto read =
+        copy.script.indexOf(QStringLiteral("$in = Open-SakImageLockedRead $sakCopyLock"));
+    const auto write =
+        copy.script.indexOf(QStringLiteral("$sakRawTargetDisk = Assert-SakRawWriteTarget"));
+    QVERIFY2(lock >= 0, "the source volume must be locked");
+    QVERIFY2(read > lock, "it must be read through that lock");
+    QVERIFY2(write > read, "the target must not be touched until the source is held");
+    QVERIFY2(copy.script.contains(QStringLiteral("function Open-SakImageVolumeLock")),
+             "the function it calls must be in the script");
+    QVERIFY2(copy.script.contains(QStringLiteral("function Open-SakImageLockedRead")),
+             "the function it calls must be in the script");
+    QVERIFY2(copy.script.contains(QStringLiteral("[Sak.CopyVolumeLock]::Acquire")),
+             "and has to use the type this script defines");
+    QVERIFY2(copy.script.contains(QStringLiteral("AllowExtendedRead")),
+             "the last sectors of the partition must be readable");
+    QVERIFY2(!copy.script.contains(QStringLiteral("$in = Open-SakRead $src")),
+             "a plain read of a mounted volume is what this replaces");
+    QVERIFY2(copy.script.contains(QStringLiteral("Copy Partition cannot lock the source volume")),
+             "the refusal must name the job a person asked for");
+    QVERIFY2(!copy.script.contains(QStringLiteral("Create Image")),
+             "this is not Create Image, whatever it shares with it");
+
+    // A raw disk has no file system to lock, and no sectors hidden from it.
+    QJsonObject raw = payload;
+    raw[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    const auto fromDisk = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, raw));
+    QVERIFY2(fromDisk.valid(), qPrintable(fromDisk.blockers.join(QStringLiteral("; "))));
+    QVERIFY(!fromDisk.script.contains(QStringLiteral("$sakCopyLock")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_fullFormatSaysWhyOnAThinDisk() {
+    const QString thinCheck = QStringLiteral("ProvisioningType)\" -eq 'Thin'");
+    const QString reason = QStringLiteral("thin-provisioned disk");
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&disk);
+    const PartitionScriptBuilder builder;
+
+    const auto wipe = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk, disk, {}));
+    QVERIFY2(wipe.valid(), qPrintable(wipe.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(wipe.script.contains(thinCheck), "Wipe Disk must look before it clears anything");
+    QVERIFY2(wipe.script.contains(reason), "and say why");
+    QVERIFY2(wipe.script.indexOf(thinCheck) <
+                 wipe.script.indexOf(QStringLiteral("Clear-Disk -Number 4")),
+             "the check must run before the disk is cleared");
+
+    PartitionTarget partition;
+    partition.kind = PartitionTargetKind::Partition;
+    partition.disk_number = DiskNumber{4};
+    partition.partition_number = PartitionNumber{2};
+    partition.size_bytes = 1'048'576;
+    pinDiskTargetIdentity(&partition);
+    partition.offset_bytes = 1'048'576;
+    QJsonObject format;
+    format[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    format[QStringLiteral("label")] = QStringLiteral("Data");
+    format[QStringLiteral("full_format")] = false;
+    const auto quick = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, partition, format));
+    QVERIFY2(quick.valid(), qPrintable(quick.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(!quick.script.contains(thinCheck), "Windows allows a quick format on a thin disk");
+    format[QStringLiteral("full_format")] = true;
+    const auto full = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, partition, format));
+    QVERIFY2(full.valid(), qPrintable(full.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(full.script.contains(thinCheck), "a full format must look too");
+    QVERIFY2(full.script.indexOf(thinCheck) < full.script.indexOf(QStringLiteral("Format-Volume")),
+             "before it starts");
 }
 
 void PartitionManagerCoreTests::safetyValidator_reservedPartitionIsEmptyForStyleConversion() {

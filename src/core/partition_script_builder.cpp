@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QStringList>
 
 #include <algorithm>
@@ -2637,6 +2638,19 @@ QString cloneTransferVerificationFunctionsScript() {
                "} }\n");
 }
 
+// Windows does not allow a full format on a thin-provisioned disk, which is how it reports a
+// virtual disk file, and says only "Not Supported". Say why, before anything has changed.
+QString fullFormatAllowedScript(uint32_t disk_number, const QString& what) {
+    return QStringLiteral(
+               "if (\"$((Get-Disk -Number %1 -ErrorAction Stop).ProvisioningType)\" -eq 'Thin') { "
+               "throw %2 }\n")
+        .arg(disk_number)
+        .arg(PartitionScriptBuilder::quotePowerShell(
+            what + QStringLiteral(" needs a full format, and Windows does not allow one on a "
+                                  "thin-provisioned disk, such as a virtual disk file. Nothing "
+                                  "was changed.")));
+}
+
 QString cloneTransferRawTargetFunctionsScript(const PartitionOperation& operation) {
     return QStringLiteral(
                "$sakExpectedTargetUniqueId = %1\n"
@@ -3212,6 +3226,27 @@ if ($sakImageCleanupErrors.Count -gt 0) {
 )PS");
 }
 
+bool isVolumeDevicePath(const QString& path) {
+    static const QRegularExpression pattern(QStringLiteral("^\\\\\\\\\\.\\\\[A-Za-z]:$"));
+    return pattern.match(path).hasMatch();
+}
+
+// A mounted volume opened with a plain read gives a live view, and stops before the partition
+// ends: a file system does not expose the last sectors (NTFS keeps a boot sector copy there), so
+// copying the partition's full size always ran out of source. Create Image already holds its
+// volume still and reads it whole. This is that same lock, under its own type and words, so a copy
+// that cannot have it stops rather than copying a volume that is changing.
+QString partitionCopySourceScript() {
+    return imageVolumeLockNativeScript()
+               .replace(QStringLiteral("Sak.ImageVolumeLock"), QStringLiteral("Sak.CopyVolumeLock"))
+               .replace(QStringLiteral("class ImageVolumeLock"),
+                        QStringLiteral("class CopyVolumeLock"))
+               .replace(QStringLiteral("Create Image"), QStringLiteral("Copy Partition")) +
+           QStringLiteral(
+               "$sakCopyLock = Open-SakImageVolumeLock $src\n"
+               "$in = Open-SakImageLockedRead $sakCopyLock\n");
+}
+
 QString cloneTransferScript(const CloneTransferSpec& spec,
                             const PartitionOperation& operation,
                             bool source_already_open = false) {
@@ -3223,6 +3258,10 @@ QString cloneTransferScript(const CloneTransferSpec& spec,
                imageSourceAcquireScript(operation) + imageSourceOpenScript() +
                cloneTransferExecutionScript(true, imageSourcePostVerificationScript()) +
                imageSourceReleaseScript();
+    }
+    if (operation.type == PartitionOperationType::ClonePartition &&
+        isVolumeDevicePath(spec.source)) {
+        return script + partitionCopySourceScript() + cloneTransferExecutionScript(true, QString());
     }
     return script + cloneTransferExecutionScript(source_already_open, QString());
 }
@@ -4698,6 +4737,10 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
                            spec.file_system,
                            QString::number(operation.target.disk_number.value()));
     out.script = commonHeader(out.preview) +
+                 (spec.full_format_arg.isEmpty()
+                      ? QString()
+                      : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                                QStringLiteral("This new partition"))) +
                  newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
                  QStringLiteral(
                      "Format-Volume -Partition $p -FileSystem %1 -NewFileSystemLabel %2%3%4 "
@@ -4752,6 +4795,9 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                       .arg(operation.target.partition_number.value())
                       .arg(fs.toUpper());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 (fullArg.isEmpty() ? QString()
+                                    : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                                              QStringLiteral("This format"))) +
                  QStringLiteral(
                      "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 "
                      "-Confirm:$false\n")
@@ -5443,10 +5489,12 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          "if ($disk.IsBoot -or $disk.IsSystem) { throw 'System disk conversion "
                          "must use MBR2GPT' }\n"
                          // A RAW disk has no partitions by definition, so only a
-                         // non-RAW disk is enumerated -- and that enumeration uses
-                         // -ErrorAction Stop so an enumeration FAILURE aborts instead
-                         // of being swallowed into an empty list that passes the
-                         // empty-disk gate and wipes a disk that actually holds data.
+                         // non-RAW disk is enumerated. An initialized MBR disk with no
+                         // partitions is normal and Get-Partition calls that not-found,
+                         // so the helper turns only that into an empty list. Any other
+                         // enumeration FAILURE still aborts instead of being swallowed
+                         // into an empty list that passes the empty-disk gate and wipes
+                         // a disk that actually holds data.
                          "if ($disk.PartitionStyle -ne 'RAW') {\n"
                          "  $parts = @(Get-SakOptionalDiskPartitions -DiskNumber %1 | "
                          "Where-Object { \"$($_.Type)\" -ne 'Reserved' })\n"
@@ -5956,7 +6004,10 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
                           "$volume.DriveLetter -ReTrim -Verbose -ErrorAction Stop }\n")
                           .arg(operation.target.disk_number.value())
                 : QString();
-        out.script = commonHeader(out.preview) + ssdPrelude +
+        out.script = commonHeader(out.preview) +
+                     fullFormatAllowedScript(operation.target.disk_number.value(),
+                                             QStringLiteral("Wipe Disk")) +
+                     ssdPrelude +
                      QStringLiteral(
                          "Clear-Disk -Number %1 -RemoveData -RemoveOEM -Confirm:$false\n"
                          "Initialize-Disk -Number %1 -PartitionStyle GPT\n"
@@ -5974,6 +6025,8 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 fullFormatAllowedScript(operation.target.disk_number.value(),
+                                         QStringLiteral("Wiping a partition")) +
                  QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full -Confirm:$false\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
