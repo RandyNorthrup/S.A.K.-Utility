@@ -23,6 +23,10 @@
     ssd-device, hdd-device    The device rows on the pinned device.
     data-device  Data-volume rows, on small partitions of the pinned hard drive. No whole-disk pass.
 
+.PARAMETER ReuseBiosDisk
+    For a trial: boot-bios starts from the BIOS install an earlier trial left, which takes over an hour
+    to build. Its first proof still shows that it starts. The final run builds it again.
+
     With -PcFile the device groups run on the physical PC that file names, on drives pinned there. The
     other groups need things only the VM rig has: throwaway disks it can attach, and a VM of its own to
     start a disk in. They stop rather than run somewhere else.
@@ -39,6 +43,7 @@ param(
     [string]$StageDir = '',
     [string]$PinFile = '',
     [string]$PcFile = '',
+    [switch]$ReuseBiosDisk,
     [string]$Vm = 'Windows 11',
     [int]$RowMinutes = 240
 )
@@ -256,8 +261,12 @@ switch ($Group) {
     }
     'boot-bios' {
         $disk = 'cert-bios'
-        Say 'A BIOS install to start from'
-        Invoke-BuildBiosDisk -Disk $disk -SizeMiB 102400 -ScratchMiB 40960
+        if ($ReuseBiosDisk) {
+            Say 'The BIOS install an earlier trial built'
+        } else {
+            Say 'A BIOS install to start from'
+            Invoke-BuildBiosDisk -Disk $disk -SizeMiB 102400 -ScratchMiB 40960
+        }
         Say 'BIOS boot repair'
         Invoke-BootRepairRow -Id 'external.boot-repair-bios' -Disk $disk -Bytes ([uint64]102400 * $Script:MiB) -Firmware 'bios'
         Say 'System MBR to GPT, on the Windows that disk runs'

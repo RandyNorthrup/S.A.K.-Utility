@@ -190,6 +190,10 @@ try {
     $shape = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'WritePins', '-PcFile', $pc, '-PinFile', $pinPath, '-PinSpec', 'boot=Boot Drive|512110190592')
     Assert-That ($shape.code -ne 0 -and $shape.text -match 'A pin is role') 'A role that is not one stops it' $shape.text
 
+    # The final run never reuses a trial's disk.
+    $finalText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_partition_manager_final_certification.ps1') -Raw
+    Assert-That ($finalText -notmatch 'ReuseBiosDisk') 'The final run builds its BIOS install' ''
+
     # What the final run sends where. -PlanOnly reaches nothing.
     $final = Join-Path $PSScriptRoot 'run_partition_manager_final_certification.ps1'
     $onPc = Invoke-Script -Path $final -Arguments @('-ReleaseDir', 'x', '-PinFile', 'pins.json', '-PcFile', $pc, '-PlanOnly')

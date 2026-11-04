@@ -440,11 +440,30 @@ function Get-RigShot {
     return (Join-Path $Folder "$Name.png")
 }
 
+function Stop-RigThrowawayVm {
+    <#
+    .SYNOPSIS
+        Shuts a Windows that started down from inside, as a person would. Pulling the power leaves it
+        recording a failed shutdown, and on BIOS the next start then stops at "Your PC couldn't turn
+        off properly" until someone presses Enter. A VM that never started is powered off.
+    #>
+    param([string]$VmName)
+    if ((Get-VmState -VmName $VmName) -ne 'running') { return 'not running' }
+    try { Invoke-GuestPS -Code "shutdown.exe /s /t 2 /f; 'asked'" -TimeoutMs 60000 -VmName $VmName | Out-Null } catch { return 'no Windows to ask, so powered off' }
+    $deadline = (Get-Date).AddMinutes(5)
+    while ((Get-Date) -lt $deadline) {
+        if ((Get-VmState -VmName $VmName) -eq 'poweroff') { return 'shut down from inside' }
+        Start-Sleep -Seconds 6
+    }
+    return 'did not shut down within 5 minutes, so powered off'
+}
+
 function Remove-RigThrowawayVm {
     param([string]$VmName)
+    "shutdown: $(Stop-RigThrowawayVm -VmName $VmName)"
     # unregistervm --delete also deletes a disk still attached, so it runs only once the disk is off.
     Invoke-MacVBox @"
-"`$V" controlvm '$VmName' poweroff 2>&1 | tail -1
+"`$V" controlvm '$VmName' poweroff 2>/dev/null | tail -1
 for i in 1 2 3 4 5 6 7 8 9 10; do s=`$("`$V" showvminfo '$VmName' --machinereadable | grep '^VMState=' | cut -d'"' -f2); [ "`$s" = poweroff ] && break; /bin/sleep 3; done
 for j in 1 2 3 4 5 6; do "`$V" storageattach '$VmName' --storagectl SATA --port 0 --device 0 --medium none 2>/dev/null && break; /bin/sleep 3; done
 if "`$V" showvminfo '$VmName' --machinereadable | grep -q '^"SATA-0-0"="none"'; then "`$V" unregistervm '$VmName' --delete 2>&1 | tail -1; else echo 'disk still attached: VM kept, so its disk is not deleted'; fi
