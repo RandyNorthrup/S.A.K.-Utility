@@ -1951,6 +1951,10 @@ QString sakShadowBackupFunctionScript() {
     // fallback FAILS CLOSED for VSS-capable filesystems (NTFS/ReFS/unknown) rather
     // than destroying the source after only a torn live copy; only FAT/FAT32/exFAT
     // (genuinely no VSS support) fall back to a warned live copy.
+    //
+    // robocopy cannot open a \\?\GLOBALROOT device path: it stops with error 67, "the network name
+    // cannot be found". So it reads the snapshot through a directory link, kept on the system
+    // volume because the backup volume may not hold links. The link goes before the snapshot does.
     return QStringLiteral(
         "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
         "  $volume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n"
@@ -1968,8 +1972,18 @@ QString sakShadowBackupFunctionScript() {
         "    }\n"
         "  } catch { $shadowFailure = $_.Exception.Message; $shadow = $null }\n"
         "  if ($shadow -and $shadow.DeviceObject) {\n"
-        "    try { Invoke-SakRobocopy ($shadow.DeviceObject + '\\') $backupPath }\n"
-        "    finally { Remove-CimInstance -InputObject $shadow -ErrorAction Stop }\n"
+        "    $shadowLink = Join-Path ([System.IO.Path]::GetTempPath()) ('sak-shadow-' + "
+        "[guid]::NewGuid().ToString('N'))\n"
+        "    try {\n"
+        "      $null = & cmd.exe /c mklink /D $shadowLink ($shadow.DeviceObject + '\\')\n"
+        "      if ($LASTEXITCODE -ne 0) { throw ('Could not link to the shadow copy of {0}' -f "
+        "$volume) }\n"
+        "      Invoke-SakRobocopy ($shadowLink + '\\') $backupPath\n"
+        "    } finally {\n"
+        "      if ([System.IO.Directory]::Exists($shadowLink)) { "
+        "[System.IO.Directory]::Delete($shadowLink) }\n"
+        "      Remove-CimInstance -InputObject $shadow -ErrorAction Stop\n"
+        "    }\n"
         "  } else {\n"
         "    $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat\n"
         "    if ($fsFormat -notmatch '^(FAT|FAT32|exFAT)$') { throw ('VSS shadow copy unavailable "

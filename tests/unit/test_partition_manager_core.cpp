@@ -1814,6 +1814,9 @@ private Q_SLOTS:
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
     void scriptBuilder_copyPartitionHoldsItsSourceAndReadsItAll();
+    void lockedVolumeDoesNotStopApply();
+    void scriptBuilder_backupReadsItsShadowCopyThroughALink();
+    void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
     void scriptBuilder_styleConversionLooksPastReservedPartition();
@@ -21682,6 +21685,36 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePay
                                      PartitionOperationType::AllocateFreeSpace, target, staleSize));
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("stale")));
+}
+
+// robocopy cannot open a \\?\GLOBALROOT path, so every backup of an NTFS volume stopped there.
+void PartitionManagerCoreTests::scriptBuilder_backupReadsItsShadowCopyThroughALink() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.size_bytes = 1024ULL * 1024ULL * 1024ULL;
+    target.drive_letter = QStringLiteral("T");
+    QJsonObject payload;
+    payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("2147483648");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("1073741824");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("T");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("label")] = QStringLiteral("Moved");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const PartitionScriptBuilder builder;
+    const auto move = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::MovePartition, target, payload));
+    QVERIFY2(move.valid(), qPrintable(move.blockers.join(QStringLiteral("; "))));
+    QVERIFY(!move.script.contains(QStringLiteral("Invoke-SakRobocopy ($shadow.DeviceObject")));
+    const auto link = move.script.indexOf(QStringLiteral("mklink /D $shadowLink"));
+    const auto copy = move.script.indexOf(QStringLiteral("Invoke-SakRobocopy ($shadowLink"));
+    const auto unlink = move.script.indexOf(QStringLiteral("Directory]::Delete($shadowLink)"));
+    const auto release =
+        move.script.indexOf(QStringLiteral("Remove-CimInstance -InputObject $shadow"));
+    QVERIFY2(link >= 0 && copy > link, "it reads through a link it made first");
+    QVERIFY2(unlink > copy && release > unlink, "and takes the link away before the snapshot");
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScripts() {
