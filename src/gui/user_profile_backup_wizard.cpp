@@ -7,6 +7,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QDir>
 #include <QHBoxLayout>
@@ -40,7 +41,7 @@ enum UserProfileColumn {
 
 UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(parent) {
     setWindowTitle(tr("User Profile Backup Wizard"));
-    setWizardStyle(QWizard::ModernStyle);
+    useAppWizardStyle(this);
     setOption(QWizard::HaveHelpButton, false);
     setOption(QWizard::NoBackButtonOnStartPage, true);
     setOption(QWizard::NoBackButtonOnLastPage, true);

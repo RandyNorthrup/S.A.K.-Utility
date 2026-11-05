@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -145,6 +146,9 @@ private Q_SLOTS:
     // header under the one Email Tools already shows above its sub-tabs.
     void ribbonLabelsAreNoteSized();
     void thePanelHasNoHeaderOfItsOwn();
+    // Capture notes item 16: the ribbon's Attachments button and the detail pane's Attachments tab
+    // had one accessible name.
+    void noButtonSharesItsNameWithATab();
 
 private:
     void openMailbox();
@@ -399,6 +403,21 @@ void EmailInspectorPanelTests::thePanelHasNoHeaderOfItsOwn() {
     for (const QLabel* label : m_panel->findChildren<QLabel*>()) {
         QVERIFY2(label->text() != QStringLiteral("Email Tools"),
                  "the inspector draws its own Email Tools header");
+    }
+}
+
+void EmailInspectorPanelTests::noButtonSharesItsNameWithATab() {
+    QStringList tabs;
+    for (const QTabWidget* tab_widget : m_panel->findChildren<QTabWidget*>()) {
+        for (int index = 0; index < tab_widget->count(); ++index) {
+            tabs << tab_widget->tabText(index).remove(QLatin1Char('&'));
+        }
+    }
+    QVERIFY(tabs.contains(QStringLiteral("Attachments")));
+    for (const QAbstractButton* button : m_panel->findChildren<QAbstractButton*>()) {
+        QVERIFY2(!tabs.contains(button->accessibleName()),
+                 qPrintable(QStringLiteral("a button and a tab are both named \"%1\"")
+                                .arg(button->accessibleName())));
     }
 }
 

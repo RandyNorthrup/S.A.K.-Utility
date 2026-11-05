@@ -587,6 +587,8 @@ void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ri
                                             QStringLiteral(":/icons/icons/icons8-attachment.svg"),
                                             tr("Browse all attachments in this mailbox"),
                                             ribbon);
+    // The detail pane's Attachments tab has that name; a screen reader could not tell them apart.
+    m_attachments_button->setAccessibleName(QStringLiteral("Browse Attachments"));
     m_attachments_button->setEnabled(false);
     connect(m_attachments_button,
             &QToolButton::clicked,

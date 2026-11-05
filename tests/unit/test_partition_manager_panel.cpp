@@ -122,6 +122,7 @@ private Q_SLOTS:
     void scaledBytesDivisionBoundaries() const;
     void customRawCloneTargetsMustExist() const;
     void apfsUnknownModeIsRefused() const;
+    void everyWizardUsesTheAppsWizardStyle();
     void diskCopyWizardHasNoUnprobedCustomTarget();
     void aSelectedRowQueuesWhatTheStepClientBuilds();
     void diskCopyWizardOffersOnlyWhatTheCopyDoes();
@@ -3232,6 +3233,47 @@ void PartitionManagerPanelTests::migrationWizardSaysSnapshotAndOffersTheChoice()
     });
     QVERIFY(QMetaObject::invokeMethod(&clone_panel, "onCloneDisk", Qt::DirectConnection));
     QVERIFY(clone_inspected);
+}
+
+// Capture notes item 66: left to the platform, these wizards took Windows' Aero frame in light and
+// Qt's classic one ("< Back", "Next >") in dark, which no offscreen test can show. Each now sets
+// the style the backup and restore wizards use, so the platform's choice no longer applies.
+void PartitionManagerPanelTests::everyWizardUsesTheAppsWizardStyle() {
+    struct Opening {
+        const char* slot = nullptr;
+        int row = 0;
+        sak::PartitionInventory inventory;
+    };
+    const QList<Opening> openings = {
+        {.slot = "onCloneDisk", .row = 0, .inventory = imageSourceMappingInventory()},
+        {.slot = "onMigrateOs",
+         .row = 0,
+         .inventory = migrationInventoryFixture(512 * kMigrationGiB)},
+        {.slot = "onCopyPartitionWizard",
+         .row = 1,
+         .inventory = modalTargetBindingInventoryFixture()},
+        {.slot = "onPartitionRecoveryWizard", .row = 0, .inventory = applyReviewInventoryFixture()},
+    };
+    for (const Opening& opening : openings) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(opening.inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        table->selectRow(opening.row);
+        QWizard::WizardStyle style = QWizard::NStyles;
+        const ScopedModalInspection inspection([&]() {
+            auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(wizard);
+            QVERIFY2(wizard != nullptr, opening.slot);
+            style = wizard->wizardStyle();
+            wizard->reject();
+        });
+        QVERIFY(QMetaObject::invokeMethod(&panel, opening.slot, Qt::DirectConnection));
+        QVERIFY2(style == QWizard::ModernStyle,
+                 qPrintable(QStringLiteral("%1: style %2")
+                                .arg(QString::fromLatin1(opening.slot))
+                                .arg(int(style))));
+    }
 }
 
 void PartitionManagerPanelTests::migrationWizardQueuesItsPlanAndTheChoice() {

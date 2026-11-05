@@ -153,6 +153,7 @@ private Q_SLOTS:
     void restoreStartsOnlyFromItsNamedLastStep();
     void lastStepSaysWhatHappensToExistingFiles();
     void lastStepRefusesAWrongPassword();
+    void lastStepNotesHaveNoStandInMarks();
     void lastStepRefusesToAssignToAFolderWithNoAccount();
     void lastStepAsksForAdministratorForNetworkSettings();
     void filterBoxesReachTheRulesTheRunUses();
@@ -615,6 +616,28 @@ void UserProfileAppRestoreFlowTests::lastStepSaysWhatHappensToExistingFiles() {
     QVERIFY2(summary.contains(QStringLiteral("<b>overwrite</b>")), qPrintable(summary));
     QVERIFY2(summary.contains(QStringLiteral("follow the conflict rule")), qPrintable(summary));
     QVERIFY2(summary.contains(QStringLiteral("no Windows account")), qPrintable(summary));
+}
+
+// UI review S5: "[OK]" and "(!)" stood in for icons in the last step's permission notes.
+void UserProfileAppRestoreFlowTests::lastStepNotesHaveNoStandInMarks() {
+    sak::UserMapping merge;
+    merge.source_username = QStringLiteral("Sam");
+    merge.destination_username = QStringLiteral("Sam");
+    merge.mode = sak::MergeMode::MergeIntoDestination;
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setUserMappings({merge});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QVERIFY(page->m_permissionModeCombo->count() > 1);
+    for (int index = 0; index < page->m_permissionModeCombo->count(); ++index) {
+        page->m_permissionModeCombo->setCurrentIndex(index);
+        page->updateSummary();
+        const QString summary = page->m_summaryLabel->text();
+        for (const QString mark : {QStringLiteral("[OK]"), QStringLiteral("(!)")}) {
+            QVERIFY2(!summary.contains(mark), qPrintable(summary));
+        }
+    }
 }
 
 void UserProfileAppRestoreFlowTests::lastStepRefusesAWrongPassword() {

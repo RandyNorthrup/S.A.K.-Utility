@@ -8166,6 +8166,7 @@ PartitionWizardResult diskCopyWizardResult(const DiskCopyWizardConfig& config,
 
 std::optional<PartitionWizardResult> runDiskCopyWizard(const DiskCopyWizardConfig& config) {
     QWizard wizard(config.parent);
+    useAppWizardStyle(&wizard);
     wizard.setWindowTitle(config.title);
     wizard.setAccessibleName(config.title);
     addSourcePage(&wizard, QStringLiteral("Source"), config.source_identity);
@@ -8385,6 +8386,7 @@ std::optional<PartitionWizardResult> runPartitionCopyWizard(QWidget* parent,
                                                             const PartitionInventory& inventory,
                                                             uint64_t source_size) {
     QWizard wizard(parent);
+    useAppWizardStyle(&wizard);
     wizard.setWindowTitle(QStringLiteral("Copy Partition Wizard"));
     wizard.setAccessibleName(QStringLiteral("Copy Partition Wizard"));
     addSourcePage(&wizard, QStringLiteral("Source Partition"), source_identity);
@@ -8492,6 +8494,7 @@ PartitionWizardResult recoveryWizardResult(const RecoveryWizardWidgets& widgets)
 std::optional<PartitionWizardResult> runRecoveryWizard(QWidget* parent,
                                                        const QString& source_identity) {
     QWizard wizard(parent);
+    useAppWizardStyle(&wizard);
     wizard.setWindowTitle(QStringLiteral("Partition Recovery Wizard"));
     wizard.setAccessibleName(QStringLiteral("Partition Recovery Wizard"));
     addSourcePage(&wizard, QStringLiteral("Source Disk"), source_identity);

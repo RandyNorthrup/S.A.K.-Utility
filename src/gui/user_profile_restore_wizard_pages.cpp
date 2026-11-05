@@ -1527,11 +1527,11 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
 
     if (mode == PermissionMode::PreserveOriginal) {
         warning = tr(
-            "(!) <b>Warning:</b> Preserving original permissions may cause access issues "
+            "<b>Warning:</b> Preserving original permissions may cause access issues "
             "if SIDs don't match.");
     } else if (mode == PermissionMode::StripAll) {
         warning = tr(
-            "[OK] <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
+            "<b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
             "from parent folders.");
     } else if (mode == PermissionMode::AssignToDestination) {
         warning = tr("<b>Info:</b> Files will be owned by the destination user.");

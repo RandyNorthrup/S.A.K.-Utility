@@ -26,7 +26,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   Partition rows fit their editors; the disk map legend and the before-and-after bars use the map's colours; the
   Email Inspector shows one header; Run Details reads as text; Wi-Fi's Delete Selected needs a selected row; Image
   Details values sit next to their labels; a listening connection's state no longer draws black in dark; File
-  Explorer lists drives as "Local Disk (C:)", folders you pick show with backslashes, and install dates read as dates.
+  Explorer lists drives as "Local Disk (C:)", folders you pick show with backslashes, and install dates read as dates;
+  the Partition Manager wizards keep one look in light and dark, the one the backup and restore wizards use; and the
+  email ribbon's Attachments button no longer shares its screen-reader name with the Attachments tab.
 - **Partition Manager works from an app that is not running as administrator** - Windows lets only an
   administrator ask whether a volume is locked by BitLocker or marked as needing repair, so from a normal app
   every volume read as unknown and every Apply stopped. Scanning disks now never asks for approval, and those

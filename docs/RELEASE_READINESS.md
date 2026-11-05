@@ -1120,9 +1120,11 @@ pause button tone is unchanged.
 Application Management and Network Management), through `addLogFooter`. Image Flasher's step buttons are a fixed
 footer. Sub-tab margins, form label columns, header labels that fit, rows that fit their editors, hidden form rows.
 
-**Copy.** One dash style (" - "), no "[x]", "[shield]", "[save]", "[FOLDER]", "(i)" or "(!)" stand-ins, plurals that
+**Copy.** One dash style (" - "), no "[x]", "[OK]", "[shield]", "[save]", "[FOLDER]", "(i)" or "(!)" stand-ins, plurals that
 agree, the About date, the converter's totals, drive names as Windows shows them ("Local Disk (C:)"), picked folders
-with backslashes, install dates as dates.
+with backslashes, install dates as dates. One wizard style (ModernStyle) for every wizard: left to Windows, the
+Partition Manager wizards used the Aero frame in light and Qt's classic one in dark. The email ribbon's Attachments
+button is named "Browse Attachments" for screen readers, apart from the Attachments tab.
 
 **Stress test.** A 1-minute run kept going in the capture VM: a memory pass over gigabytes never checked for the end
 of the run, and the stress threads crowded out the window and the run's clock. Passes check every 8 MiB; stress threads

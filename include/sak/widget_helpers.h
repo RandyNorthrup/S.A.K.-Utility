@@ -28,6 +28,7 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QWizard>
 
 #include <algorithm>
 #include <initializer_list>
@@ -116,6 +117,14 @@ inline QIcon tabIcon(const QString& path, int size) {
         icon.addPixmap(selected, QIcon::Normal, QIcon::On);
     }
     return icon;
+}
+
+/// @brief One look for every wizard, in both themes. Left to the platform, a wizard took Windows'
+///        Aero frame in light and fell back to the classic one, with "< Back" and "Next >", in
+///        dark; the backup and restore wizards chose ModernStyle, so the Partition Manager wizards
+///        looked different from them in light and from themselves in dark.
+inline void useAppWizardStyle(QWizard* wizard) {
+    wizard->setWizardStyle(QWizard::ModernStyle);
 }
 
 /// @brief Sets @p item's text colour, or clears it back to the view's own when @p color is

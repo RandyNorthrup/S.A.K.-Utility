@@ -295,14 +295,14 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
     m_restoreSuccess = success;
 
     if (success) {
-        m_statusLabel->setText(tr("[OK] Restore completed successfully!"));
+        m_statusLabel->setText(tr("Restore completed successfully!"));
         m_overallProgressBar->setRange(0, kPercentMax);
         m_overallProgressBar->setValue(kPercentMax);
         m_overallProgressBar->setFormat(
             tr("Restore complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
         m_overallProgressBar->setAccessibleDescription(m_overallProgressBar->format());
     } else {
-        m_statusLabel->setText(tr("[X] Restore failed"));
+        m_statusLabel->setText(tr("Restore failed"));
     }
 
     m_logText->append(QString("\n=== RESTORE COMPLETE ===\n%1").arg(message));

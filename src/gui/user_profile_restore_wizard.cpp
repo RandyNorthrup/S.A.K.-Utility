@@ -5,6 +5,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -187,7 +188,7 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
     // Qt::RichText (setupUi), so both must be escaped before they enter the template.
     const QString info =
         QString(
-            "<b>[OK] Valid Backup Found</b><br>"
+            "<b>Valid Backup Found</b><br>"
             "<b>Version:</b> %1<br>"
             "<b>Created:</b> %2<br>"
             "<b>Source Machine:</b> %3<br>"
@@ -226,7 +227,7 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     , m_verifyFiles(true)
     , m_createBackup(false) {
     setWindowTitle(tr("Restore User Profiles"));
-    setWizardStyle(QWizard::ModernStyle);
+    useAppWizardStyle(this);
     setOption(QWizard::HaveHelpButton, false);
     setOption(QWizard::NoCancelButton, false);
 
