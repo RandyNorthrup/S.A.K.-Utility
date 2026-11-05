@@ -64,31 +64,30 @@ constexpr int kMaxStressDurationMinutes = 7 * 24 * 60;  // 10080 minutes
 // above any legitimate oversubscription need on real hardware.
 constexpr int kMaxCpuStressThreads = 4096;
 
-/// @brief Pattern-fill a memory region with a known repeating pattern
-/// @param data Pointer to memory
-/// @param size Size in bytes
-/// @param seed Seed for pattern generation
-void patternFill(volatile uint64_t* data, size_t count, uint64_t seed) {
-    for (size_t i = 0; i < count; ++i) {
+// A memory pass writes and checks the buffer this many words at a time, looking for a stop request
+// between chunks. One pass over a buffer of several gigabytes is a single loop otherwise, and on a
+// machine that is paging it can take minutes: a 1-minute run then kept going long after its time
+// was up, and Stop did nothing until the pass ended.
+constexpr size_t kMemoryStressChunkWords = (8ULL * sak::kBytesPerMB) / sizeof(uint64_t);
+
+/// @brief Pattern-fill words [begin, end) of a memory region with a known repeating pattern
+void patternFill(volatile uint64_t* data, size_t begin, size_t end, uint64_t seed) {
+    for (size_t i = begin; i < end; ++i) {
         data[i] = seed ^ (i * kMemoryPatternMultiplier);
     }
 }
 
-/// @brief Verify pattern integrity
+/// @brief Verify the pattern in words [begin, end)
 /// @return Number of mismatches
-int patternVerify(const volatile uint64_t* data, size_t count, uint64_t seed) {
+size_t patternVerify(const volatile uint64_t* data, size_t begin, size_t end, uint64_t seed) {
     size_t errors = 0;
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = begin; i < end; ++i) {
         const uint64_t expected = seed ^ (i * kMemoryPatternMultiplier);
         if (data[i] != expected) {
             ++errors;
         }
     }
-    // A single >16 GiB pass has > INT_MAX words, so a fully-corrupt pass would
-    // overflow the signed int result type (and StressTestResult::memory_pattern_errors,
-    // whose type is fixed in the public header). Saturate instead of invoking UB.
-    constexpr size_t kMaxInt = static_cast<size_t>(std::numeric_limits<int>::max());
-    return static_cast<int>(std::min(errors, kMaxInt));
+    return errors;
 }
 
 constexpr int kStatusIntervalSec = 5;  // Report status every 5 seconds
@@ -386,26 +385,34 @@ void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futur
                                                   std::thread::hardware_concurrency());
 
         for (int thread_index = 0; thread_index < threads; ++thread_index) {
-            futures.push_back(std::async(std::launch::async, [this]() { runCpuStress(); }));
+            futures.push_back(std::async(std::launch::async, [this]() {
+                runAtStressPriority([this]() { runCpuStress(); });
+            }));
         }
         logInfo("Launched {} CPU stress threads", threads);
     }
 
     if (m_config.stress_memory) {
         futures.push_back(std::async(std::launch::async, [this]() {
-            const int errors = runMemoryStress();
-            m_error_count.fetch_add(errors, std::memory_order_relaxed);
+            runAtStressPriority([this]() {
+                const int errors = runMemoryStress();
+                m_error_count.fetch_add(errors, std::memory_order_relaxed);
+            });
         }));
         logInfo("Launched memory stress thread");
     }
 
     if (m_config.stress_disk) {
-        futures.push_back(std::async(std::launch::async, [this]() { runDiskStress(); }));
+        futures.push_back(std::async(std::launch::async, [this]() {
+            runAtStressPriority([this]() { runDiskStress(); });
+        }));
         logInfo("Launched disk stress thread");
     }
 
     if (m_config.stress_gpu) {
-        futures.push_back(std::async(std::launch::async, [this]() { runGpuStress(); }));
+        futures.push_back(std::async(std::launch::async, [this]() {
+            runAtStressPriority([this]() { runGpuStress(); });
+        }));
         logInfo("Launched GPU stress thread");
     }
 }
@@ -578,21 +585,22 @@ int StressTestWorker::runMemoryStress() {
     }
 
     const size_t count = alloc_size / sizeof(uint64_t);
-    // Accumulate in 64-bit: a single fully-corrupt pass saturates at INT_MAX, and summing
-    // several such passes into an int would overflow (signed UB). Clamp back to INT_MAX
-    // only when reporting into the int result field / int return value.
+    // Accumulate in 64-bit: summing several fully-corrupt passes into an int would overflow
+    // (signed UB). Clamp back to INT_MAX only when reporting into the int result field / int
+    // return value.
     int64_t total_errors = 0;
     uint64_t total_bytes_written = 0;
     uint64_t pattern_seed = kInitialMemoryPatternSeed;
+    const auto should_stop = [this]() {
+        return childrenShouldStop();
+    };
 
     while (!childrenShouldStop()) {
-        patternFill(data, count, pattern_seed);
-        total_bytes_written += alloc_size;
-
-        const int errors = patternVerify(data, count, pattern_seed);
-        if (errors > 0) {
-            logError("Memory stress: {} pattern errors with seed {:#x}", errors, pattern_seed);
-            total_errors += errors;
+        const MemoryPassOutcome pass = memoryPatternPass(data, count, pattern_seed, should_stop);
+        total_bytes_written += pass.words_written * sizeof(uint64_t);
+        if (pass.errors > 0) {
+            logError("Memory stress: {} pattern errors with seed {:#x}", pass.errors, pattern_seed);
+            total_errors += static_cast<int64_t>(pass.errors);
         }
 
         ++pattern_seed;
@@ -610,6 +618,40 @@ int StressTestWorker::runMemoryStress() {
             total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB),
             reported_errors);
     return reported_errors;
+}
+
+StressTestWorker::MemoryPassOutcome StressTestWorker::memoryPatternPass(
+    volatile uint64_t* data,
+    size_t count,
+    uint64_t seed,
+    const std::function<bool()>& should_stop) {
+    MemoryPassOutcome outcome;
+    for (size_t begin = 0; begin < count; begin += kMemoryStressChunkWords) {
+        if (should_stop()) {
+            return outcome;  // a part-written pass is not checked: its tail holds the old pattern
+        }
+        const size_t end = std::min(count, begin + kMemoryStressChunkWords);
+        patternFill(data, begin, end, seed);
+        outcome.words_written = end;
+    }
+    for (size_t begin = 0; begin < count; begin += kMemoryStressChunkWords) {
+        if (should_stop()) {
+            return outcome;  // mismatches already found are real and stay counted
+        }
+        const size_t end = std::min(count, begin + kMemoryStressChunkWords);
+        outcome.errors += patternVerify(data, begin, end, seed);
+        outcome.words_checked = end;
+    }
+    outcome.completed = true;
+    return outcome;
+}
+
+void StressTestWorker::runAtStressPriority(const std::function<void()>& work) {
+    // Below normal: the stress threads still take every cycle nothing else wants, but the window,
+    // the run's own clock and the Stop button keep answering. At normal priority, one thread per
+    // logical CPU left the window and the monitor waiting behind them.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    work();
 }
 
 size_t StressTestWorker::determineTargetMemoryBytes() const {

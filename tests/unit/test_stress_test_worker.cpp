@@ -12,6 +12,10 @@
 
 #include <cmath>
 #include <limits>
+#include <thread>
+#include <vector>
+
+#include <Windows.h>
 
 using namespace sak;
 
@@ -55,6 +59,11 @@ private Q_SLOTS:
     void execute_nonPositiveDuration_failsClosed();
     void execute_excessiveDuration_failsClosed();
     void execute_invalidMemoryPercent_failsClosed();
+    // A 1-minute run kept going: one memory pass over gigabytes never looked for the end of the
+    // run, and the stress threads crowded out the window and the run's clock.
+    void memoryPassStopsWithinOneChunk();
+    void memoryPassCountsAMismatch();
+    void stressThreadsRunBelowNormalPriority();
 };
 
 void TestStressTestWorker::construction_default() {
@@ -363,6 +372,59 @@ void TestStressTestWorker::aSystemDriveRunWritesToTheTempFolder() {
     const QString folder = QFileInfo(path.mid(4)).absolutePath();
     QCOMPARE(QFileInfo(folder).canonicalFilePath().toLower(),
              QFileInfo(temp).canonicalFilePath().toLower());
+}
+
+namespace {
+// Four 8 MiB chunks: big enough that a pass has to stop part way, small enough for any machine.
+constexpr size_t kChunkWords = (8ULL * 1024 * 1024) / sizeof(uint64_t);
+constexpr size_t kPassWords = 4 * kChunkWords;
+}  // namespace
+
+// The run's end (or Stop) is asked about before every chunk, so a pass ends within one chunk
+// instead of finishing the whole buffer first.
+void TestStressTestWorker::memoryPassStopsWithinOneChunk() {
+    std::vector<uint64_t> buffer(kPassWords, 0);
+    int asked = 0;
+    const auto stop_after_first_chunk = [&asked]() {
+        ++asked;
+        return asked > 1;
+    };
+    const auto outcome = StressTestWorker::memoryPatternPass(
+        buffer.data(), buffer.size(), 1, stop_after_first_chunk);
+    QVERIFY(!outcome.completed);
+    QCOMPARE(outcome.words_written, kChunkWords);
+    QCOMPARE(outcome.words_checked, size_t{0});
+    QCOMPARE(asked, 2);
+}
+
+// The check half still compares every word: one word changed between writing and checking is
+// one error, and a pass that was not stopped says it completed.
+void TestStressTestWorker::memoryPassCountsAMismatch() {
+    std::vector<uint64_t> buffer(kPassWords, 0);
+    int asked = 0;
+    const auto corrupt_once_written = [&asked, &buffer]() {
+        ++asked;
+        if (asked == 5) {  // four fill chunks, then the first check chunk
+            buffer[kChunkWords + 3] ^= 1ULL;
+        }
+        return false;
+    };
+    const auto outcome =
+        StressTestWorker::memoryPatternPass(buffer.data(), buffer.size(), 7, corrupt_once_written);
+    QVERIFY(outcome.completed);
+    QCOMPARE(outcome.words_written, kPassWords);
+    QCOMPARE(outcome.words_checked, kPassWords);
+    QCOMPARE(outcome.errors, size_t{1});
+}
+
+void TestStressTestWorker::stressThreadsRunBelowNormalPriority() {
+    int priority = THREAD_PRIORITY_ERROR_RETURN;
+    std::thread child([&priority]() {
+        StressTestWorker::runAtStressPriority(
+            [&priority]() { priority = GetThreadPriority(GetCurrentThread()); });
+    });
+    child.join();
+    QCOMPARE(priority, THREAD_PRIORITY_BELOW_NORMAL);
 }
 
 QTEST_MAIN(TestStressTestWorker)

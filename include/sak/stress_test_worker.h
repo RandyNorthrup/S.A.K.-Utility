@@ -14,6 +14,8 @@
 #include <QObject>
 
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <future>
 #include <vector>
 
@@ -76,6 +78,26 @@ public:
     ///         and a bogus/hostile positive count is clamped so it cannot spawn unbounded threads.
     /// @note Pure + static for unit testing.
     [[nodiscard]] static int resolveCpuThreadCount(int configThreads, unsigned int hwConcurrency);
+
+    /// @brief What one write-then-verify memory pass did before it ended or was stopped.
+    struct MemoryPassOutcome {
+        size_t words_written{0};  ///< Words of the buffer filled with this pass's pattern
+        size_t words_checked{0};  ///< Words compared against the pattern
+        size_t errors{0};         ///< Mismatches among the words checked
+        bool completed{false};    ///< The whole buffer was written and checked
+    };
+
+    /// @brief Fill @p count words with @p seed's pattern, then check them, a chunk at a time.
+    /// @details @p should_stop is asked before every chunk, so a stop request or the end of the
+    ///          run is seen within one chunk however large the buffer is. Pure; testable.
+    [[nodiscard]] static MemoryPassOutcome memoryPatternPass(
+        volatile uint64_t* data,
+        size_t count,
+        uint64_t seed,
+        const std::function<bool()>& should_stop);
+
+    /// @brief Run @p work on the calling thread at the priority every stress thread uses.
+    static void runAtStressPriority(const std::function<void()>& work);
 
 Q_SIGNALS:
     /// @brief Emitted when the stress test completes (or is aborted)
