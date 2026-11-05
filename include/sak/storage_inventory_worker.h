@@ -72,7 +72,10 @@ public:
         const QByteArray& json_data);
     /// What a queue is checked against: the same whoever scanned, elevated or not.
     [[nodiscard]] static QString layoutHash(const PartitionInventory& inventory);
-    [[nodiscard]] static QString inventoryPowerShellScript();
+    /// @param read_administrator_state false for a process without administrator rights: it then
+    ///        skips the BitLocker, dirty-bit and reliability reads Windows refuses it anyway. Each
+    ///        refused BitLocker read took five seconds, so five drive letters ran out the time.
+    [[nodiscard]] static QString inventoryPowerShellScript(bool read_administrator_state = true);
 
 Q_SIGNALS:
     void inventoryReady(const sak::PartitionInventory& inventory);

@@ -771,12 +771,14 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(const CancelChe
 StorageInventoryScanResult StorageInventoryWorker::scanForBrowsing(
     const CancelCheck& should_cancel) {
     const bool elevated = ElevationManager::isElevated();
-    return finishScan(
-        runPowerShell(
-            inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel),
-        elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
-        elevated,
-        should_cancel);
+    return finishScan(runPowerShell(inventoryPowerShellScript(elevated),
+                                    sak::kTimeoutProcessLongMs,
+                                    true,
+                                    true,
+                                    should_cancel),
+                      elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
+                      elevated,
+                      should_cancel);
 }
 
 StorageInventoryScanResult StorageInventoryWorker::scanForApply(const CancelCheck& should_cancel) {
@@ -785,7 +787,9 @@ StorageInventoryScanResult StorageInventoryWorker::scanForApply(const CancelChec
         ElevationManager::isElevated(),
         {.in_this_process =
              [&should_cancel]() {
-                 return runPowerShell(inventoryPowerShellScript(),
+                 // Here when this process is elevated, or when the helper was refused and the
+                 // list is read for the panel at what a standard user can read.
+                 return runPowerShell(inventoryPowerShellScript(ElevationManager::isElevated()),
                                       sak::kTimeoutProcessLongMs,
                                       true,
                                       true,
@@ -806,12 +810,17 @@ StorageInventoryScanResult StorageInventoryWorker::scanForApply(const CancelChec
 
 StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
     bool allow_elevation, const CancelCheck& should_cancel) {
-    return finishScan(
-        runPowerShell(
-            inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel),
-        ReadLevel::Everything,
-        allow_elevation,
-        should_cancel);
+    // Without administrator rights this skips what the browsing scan skips: Windows refuses those
+    // reads, and each refusal took five seconds.
+    const bool elevated = ElevationManager::isElevated();
+    return finishScan(runPowerShell(inventoryPowerShellScript(elevated),
+                                    sak::kTimeoutProcessLongMs,
+                                    true,
+                                    true,
+                                    should_cancel),
+                      elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
+                      allow_elevation,
+                      should_cancel);
 }
 
 StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResult& result,
@@ -874,6 +883,11 @@ PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json
             inventory.disks.append(parseDisk(entry.toObject()));
         }
     }
+    // Disk number order. A dynamic disk is found after the disks Get-Disk lists, so it came last,
+    // under Disk 5 and below the fold, and read as missing.
+    std::ranges::stable_sort(inventory.disks, {}, [](const PartitionDiskInfo& disk) {
+        return disk.disk_number.value();
+    });
     if (level == ReadLevel::WhatAStandardUserCanRead) {
         markAdministratorStatePending(&inventory);
     }
@@ -912,6 +926,19 @@ try {
 
 static QString inventoryPowerShellVolumeLookupScript() {
     return QStringLiteral(R"PS(
+# The physical disk behind a disk: by number, else by a serial no other disk shares. Never by model
+# name: every disk of one model has it, and the first one listed lent its media type to the rest.
+function Get-SakPhysicalDiskFor {
+  param([Parameter(Mandatory = $true)]$Disk, $PhysicalDisks)
+  $byNumber = @($PhysicalDisks | Where-Object { "$($_.DeviceId)" -eq "$($Disk.Number)" })
+  if ($byNumber.Count -eq 1) { return $byNumber[0] }
+  $serial = "$($Disk.SerialNumber)".Trim()
+  if (-not $serial) { return $null }
+  $bySerial = @($PhysicalDisks | Where-Object { "$($_.SerialNumber)".Trim() -eq $serial })
+  if ($bySerial.Count -eq 1) { return $bySerial[0] }
+  return $null
+}
+
 function Get-SakVolumeForPartition {
   param([Parameter(Mandatory = $true)]$Partition)
 
@@ -962,14 +989,12 @@ static QString inventoryPowerShellDiskPrefixScript() {
     return QStringLiteral(R"PS(
 $disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
   $disk = $_
-  $physical = $physicalDisks | Where-Object {
-    "$($_.DeviceId)" -eq "$($disk.Number)" -or
-    ($_.SerialNumber -and $disk.SerialNumber -and "$($_.SerialNumber)" -eq "$($disk.SerialNumber)") -or
-    ($_.FriendlyName -and $disk.FriendlyName -and "$($_.FriendlyName)" -eq "$($disk.FriendlyName)")
-  } | Select-Object -First 1
+  $physical = Get-SakPhysicalDiskFor -Disk $disk -PhysicalDisks $physicalDisks
   $reliability = $null
   $reliabilityError = ''
-  if ($physicalDiskQueryFailed) {
+  if (-not $sakReadAdministratorState) {
+    # Windows gives these counters to an administrator only. Apply's own scan reads them.
+  } elseif ($physicalDiskQueryFailed) {
     $reliabilityError = "Get-PhysicalDisk failed: $physicalDiskQueryError"
   } elseif (-not $physical) {
     $reliabilityError = 'No matching physical disk was reported'
@@ -1031,7 +1056,7 @@ static QString inventoryPowerShellPartitionProbeScript() {
       $bitlocker = $null
       $bitLockerKnown = $false
       $bitLockerError = ''
-      if ($volume -and $volume.DriveLetter) {
+      if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
         if (-not $bitLockerCommandAvailable) {
           $bitLockerError = $bitLockerCommandError
         } else {
@@ -1061,7 +1086,7 @@ static QString inventoryPowerShellPartitionResultScript() {
       $dirty = $false
       $dirtyKnown = $false
       $dirtyError = ''
-      if ($volume -and $volume.DriveLetter) {
+      if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
         $dirtyOutput = @(& fsutil.exe dirty query "$($volume.DriveLetter):" 2>&1)
         $dirtyExit = $LASTEXITCODE
         $dirtyText = ($dirtyOutput | ForEach-Object { "$_" }) -join ' '
@@ -1152,9 +1177,11 @@ function Get-SakPartitionsForDisk {
 )PS");
 }
 
-QString StorageInventoryWorker::inventoryPowerShellScript() {
+QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrator_state) {
     // Both helper functions must be defined BEFORE the Get-Disk pipeline that calls them.
-    return inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
+    return QStringLiteral("$sakReadAdministratorState = %1\n")
+               .arg(read_administrator_state ? QStringLiteral("$true") : QStringLiteral("$false")) +
+           inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
            inventoryPowerShellPartitionQueryScript() + dynamicDiskFunctionsScript() +
            inventoryPowerShellDiskPrefixScript() + inventoryPowerShellPartitionProbeScript() +
            inventoryPowerShellPartitionResultScript() + inventoryPowerShellFooterScript();

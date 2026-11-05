@@ -1821,6 +1821,9 @@ private Q_SLOTS:
     void safetyValidator_copyingFromAReadOnlyPartitionOnlyReadsIt();
     void scanListsWhatGetDiskLeavesOut();
     void scanReadsMediaTypeFromThePhysicalDisk();
+    void standardScanSkipsWhatOnlyAnAdministratorMayRead();
+    void physicalDiskIsMatchedByNumberOrAUniqueSerial();
+    void disksAreListedInNumberOrder();
     void dynamicDiskFromTheScanConvertsAndNothingElse();
     void scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
@@ -21864,6 +21867,88 @@ void PartitionManagerCoreTests::scanReadsMediaTypeFromThePhysicalDisk() {
     disks[0] = disk;
     const auto unknown = StorageInventoryWorker::parseInventoryJson(QJsonDocument(disks).toJson());
     QVERIFY2(!diskLooksHdd(unknown.disks.first()), "and without its media type nothing says so");
+}
+
+// Without administrator rights each Get-BitLockerVolume took five seconds to be refused, and the
+// whole scan had thirty, so a PC with five drive letters returned no disks at all. A standard scan
+// now skips the three reads Windows refuses it; Apply's own scan, elevated, still makes them.
+void PartitionManagerCoreTests::standardScanSkipsWhatOnlyAnAdministratorMayRead() {
+    const QString standard = StorageInventoryWorker::inventoryPowerShellScript(false);
+    const QString elevated = StorageInventoryWorker::inventoryPowerShellScript(true);
+    QVERIFY(standard.startsWith(QStringLiteral("$sakReadAdministratorState = $false\n")));
+    QVERIFY(elevated.startsWith(QStringLiteral("$sakReadAdministratorState = $true\n")));
+    QCOMPARE(StorageInventoryWorker::inventoryPowerShellScript(), elevated);
+    // Each admin-only read sits behind the flag.
+    for (const auto& [read, guard] :
+         {std::pair{QStringLiteral("Get-BitLockerVolume -MountPoint"),
+                    QStringLiteral("if ($volume -and $volume.DriveLetter -and "
+                                   "$sakReadAdministratorState) {")},
+          std::pair{QStringLiteral("& fsutil.exe dirty query"),
+                    QStringLiteral("if ($volume -and $volume.DriveLetter -and "
+                                   "$sakReadAdministratorState) {")},
+          std::pair{QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop"),
+                    QStringLiteral("if (-not $sakReadAdministratorState) {")}}) {
+        const qsizetype at = standard.indexOf(read);
+        QVERIFY2(at > 0, qPrintable(read));
+        const qsizetype guarded = standard.lastIndexOf(guard, at);
+        QVERIFY2(guarded > 0, qPrintable(read));
+        // No other block opens between the guard and the read.
+        QVERIFY2(!standard.mid(guarded + guard.size(), at - guarded - guard.size())
+                      .contains(QStringLiteral("$partition = $_")),
+                 qPrintable(read));
+    }
+}
+
+// Real PowerShell, no disk: Get-PhysicalDisk lists in its own order, and in a VM every disk is
+// "VBOX HARDDISK". Matching by model name gave disk 1, an SSD, the first-listed disk's media type.
+void PartitionManagerCoreTests::physicalDiskIsMatchedByNumberOrAUniqueSerial() {
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript();
+    const qsizetype start = script.indexOf(QStringLiteral("function Get-SakPhysicalDiskFor"));
+    const qsizetype end = script.indexOf(QStringLiteral("function Get-SakVolumeForPartition"));
+    QVERIFY(start >= 0 && end > start);
+    const QString probe =
+        script.mid(start, end - start) +
+        QStringLiteral(
+            "function P($id, $serial, $media) { [pscustomobject]@{ DeviceId = $id; SerialNumber = "
+            "$serial; FriendlyName = 'VBOX HARDDISK'; MediaType = $media } }\n"
+            "function D($n, $serial) { [pscustomobject]@{ Number = $n; SerialNumber = $serial; "
+            "FriendlyName = 'VBOX HARDDISK' } }\n"
+            "$pd = @((P '0' 'S0' 'Unspecified'), (P '1' 'S1' 'SSD'), (P '3' 'S3' 'HDD'))\n"
+            "'number=' + (Get-SakPhysicalDiskFor -Disk (D 1 'S1') -PhysicalDisks $pd).MediaType\n"
+            "'serial=' + (Get-SakPhysicalDiskFor -Disk (D 7 ' S3 ') -PhysicalDisks $pd).MediaType\n"
+            "'nameonly=' + [bool](Get-SakPhysicalDiskFor -Disk (D 9 '') -PhysicalDisks $pd)\n"
+            "$twins = @((P '5' 'X' 'SSD'), (P '6' 'X' 'HDD'))\n"
+            "'sharedserial=' + [bool](Get-SakPhysicalDiskFor -Disk (D 8 'X') -PhysicalDisks "
+            "$twins)\n");
+    const ProcessResult proc = sak::runPowerShell(probe, 60'000);
+    QVERIFY2(proc.succeeded(), qPrintable(proc.std_err));
+    const QStringList lines = proc.std_out.split(QRegularExpression(QStringLiteral("\\r?\\n")),
+                                                 Qt::SkipEmptyParts);
+    QCOMPARE(lines,
+             QStringList({QStringLiteral("number=SSD"),
+                          QStringLiteral("serial=HDD"),
+                          QStringLiteral("nameonly=False"),
+                          QStringLiteral("sharedserial=False")}));
+}
+
+// The scan appends a dynamic disk after every disk Get-Disk lists, so Disk 1 came after Disk 5,
+// below the fold, and read as missing from the scan.
+void PartitionManagerCoreTests::disksAreListedInNumberOrder() {
+    QJsonArray disks = QJsonDocument::fromJson(fixtureJson()).array();
+    QVERIFY(!disks.isEmpty());
+    QJsonArray shuffled;
+    for (const int number : {5, 0, 1}) {
+        QJsonObject disk = disks.first().toObject();
+        disk.insert(QStringLiteral("Number"), number);
+        disk.insert(QStringLiteral("UniqueId"), QStringLiteral("disk-%1").arg(number));
+        shuffled.append(disk);
+    }
+    const auto inventory =
+        StorageInventoryWorker::parseInventoryJson(QJsonDocument(shuffled).toJson());
+    QCOMPARE(inventory.disks.size(), 3);
+    QCOMPARE(inventory.disks.at(0).disk_number.value(), 0U);
+    QCOMPARE(inventory.disks.at(1).disk_number.value(), 1U);
+    QCOMPARE(inventory.disks.at(2).disk_number.value(), 5U);
 }
 
 // Get-Disk does not list a dynamic disk, so a scan built on it alone hid a real disk.
