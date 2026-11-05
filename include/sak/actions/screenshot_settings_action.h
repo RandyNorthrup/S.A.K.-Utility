@@ -7,11 +7,11 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QImage>
 #include <QString>
 #include <qwindowdefs.h>              // WId
 
 class ScreenshotSettingsActionTests;  // unit-test friend (global namespace)
-class QImage;
 
 namespace sak {
 
@@ -53,17 +53,23 @@ private:
     ///        (QGuiApplication::screens()/QScreen access is GUI-thread-affine);
     ///        detectMonitorCount() marshals it there from the worker thread.
     static int countMonitorsOnGui();
-    /// @brief Grab @p window (0 = whole primary screen) and save it as PNG to @p filepath.
-    ///        MUST run on the GUI thread (QScreen::grabWindow has GUI-thread affinity). Returns
-    ///        false on no primary screen, a null grab, or a failed save.
-    static bool grabAndSaveOnGui(WId window, const QString& filepath);
     /// @brief True when a picture is one colour throughout, which is what copying a window drawn
     ///        by the compositor gives. Such a picture is a failed capture, never a saved one.
     [[nodiscard]] static bool pictureIsBlank(const QImage& image);
-    /// @brief Marshal grabAndSaveOnGui onto the GUI thread (BlockingQueuedConnection) so a worker
-    ///        thread can capture safely; fails closed (returns false) if there is no
-    ///        QCoreApplication or the invocation cannot be marshalled.
-    static bool captureWindowToPng(WId window, const QString& filepath);
+    /// @brief True when @p now shows a page that has finished drawing: not one colour, the same
+    ///        as @p moment_before, and not @p previous_page, which the reused window showed last.
+    [[nodiscard]] static bool pageIsDrawn(const QImage& now,
+                                          const QImage& moment_before,
+                                          const QImage& previous_page);
+    /// @brief The picture @p window renders of itself, taken on the GUI thread
+    ///        (BlockingQueuedConnection) so a worker thread can capture safely; null (fails
+    ///        closed) if there is no QCoreApplication or the invocation cannot be marshalled.
+    static QImage renderOnGui(WId window);
+    /// @brief Brings @p window to the front and waits, bounded and cancellable, for it to draw a
+    ///        page other than the last one saved. Null when it does not.
+    QImage waitForDrawnPage(WId window);
+    /// The last page saved, which the reused Settings window shows until it draws the next.
+    QImage m_previous_page;
 
     static QMap<QString, QString> buildSettingsPageMap();
     bool captureSettingsPage(const QString& ms_uri,

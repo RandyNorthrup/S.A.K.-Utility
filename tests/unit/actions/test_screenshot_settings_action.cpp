@@ -33,6 +33,7 @@ private Q_SLOTS:
     void windowToClose_neverTheUsersOwnSettingsWindow();
     void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
     void aBlankPictureIsAFailedCapture();
+    void aPageIsSavedOnlyOnceSettingsHasDrawnIt();
     void reportPathLine_onlyAdvertisesWrittenReport();
     void createCaptureFolder_reportsAFolderItCannotCreate();
     void buildScreenshotReportText_containsPagesAndSections();
@@ -44,8 +45,8 @@ private Q_SLOTS:
     void buildExecutionResult_failsClosedOnPartialOrUnwrittenReport();
     void buildExecutionResult_failsClosedOnUnwrittenReport();
     void buildExecutionResult_failsClosedOnZeroCapture();
-    void captureWindowToPng_failsClosedWithoutScreen();
-    void captureWindowToPng_failsClosedWhenMarshalledFromWorkerThread();
+    void renderOnGui_failsClosedWithoutAWindow();
+    void renderOnGui_failsClosedWhenMarshalledFromWorkerThread();
 
 private:
     // The 3-page context both fail-closed slots drive, parameterised only by the one field that
@@ -361,40 +362,32 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnZeroCaptur
                  QStringLiteral("\n\nCheck display permissions and Settings app availability"));
 }
 
-void ScreenshotSettingsActionTests::captureWindowToPng_failsClosedWithoutScreen() {
-    // CODEX_REVIEW_4 M-B3-9: the capture now marshals onto the GUI thread (grabWindow has
-    // GUI-thread affinity) and fails closed. In this GUILESS harness there is no primary screen,
-    // so the grab must return false and never write a file (rather than crash or claim success).
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = QDir(dir.path()).filePath(QStringLiteral("shot.png"));
-    QVERIFY(!ScreenshotSettingsAction::captureWindowToPng(0, path));
-    QVERIFY(!QFileInfo::exists(path));
+void ScreenshotSettingsActionTests::renderOnGui_failsClosedWithoutAWindow() {
+    // CODEX_REVIEW_4 M-B3-9: the picture is taken on the GUI thread and fails closed. With no
+    // window there is nothing to render, so the picture is null (rather than a crash, or a picture
+    // of whatever is on top).
+    QVERIFY(ScreenshotSettingsAction::renderOnGui(0).isNull());
 }
 
-void ScreenshotSettingsActionTests::captureWindowToPng_failsClosedWhenMarshalledFromWorkerThread() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = QDir(dir.path()).filePath(QStringLiteral("worker_shot.png"));
-
+void ScreenshotSettingsActionTests::renderOnGui_failsClosedWhenMarshalledFromWorkerThread() {
     // Force the M-B3-9 marshalled arm: calling from a worker thread makes
     // QThread::currentThread() != app->thread(), so the same-thread early return is skipped --
     // the arm the case above can never reach. The local event loop below runs on the GUI thread
-    // and services the BlockingQueuedConnection, so the returned value must be the GUI-side grab
+    // and services the BlockingQueuedConnection, so the returned picture must be the GUI-side
     // result, not the mere fact that the invocation was delivered.
-    bool captured = true;  // poisoned: a fail-open `return invoked` would leave this true
-    std::unique_ptr<QThread> worker(QThread::create(
-        [&captured, path]() { captured = ScreenshotSettingsAction::captureWindowToPng(0, path); }));
+    QImage poisoned(4, 4, QImage::Format_RGB32);  // a fail-open path would leave this set
+    poisoned.fill(Qt::red);
+    QImage rendered = poisoned;
+    std::unique_ptr<QThread> worker(
+        QThread::create([&rendered]() { rendered = ScreenshotSettingsAction::renderOnGui(0); }));
     QEventLoop loop;
     QObject::connect(worker.get(), &QThread::finished, &loop, &QEventLoop::quit);
     worker->start();
     loop.exec();
     QVERIFY(worker->wait(30'000));
-
-    QVERIFY2(!captured,
-             "a worker-thread capture must return the GUI-side grab result, not merely that "
-             "the invocation was delivered");
-    QVERIFY(!QFileInfo::exists(path));
+    QVERIFY2(rendered.isNull(),
+             "a worker-thread capture must return the GUI-side picture, not merely that the "
+             "invocation was delivered");
 }
 
 // The action used to force-kill every SystemSettings.exe by name -- including a Settings window
@@ -414,6 +407,38 @@ void ScreenshotSettingsActionTests::windowToClose_neverTheUsersOwnSettingsWindow
 // Eight pages saved as eight 1024x768 pictures of one colour: copying the pixels of a window the
 // compositor draws gives that. A blank is now a failed try, and the capture asks the frame window
 // a person sees to render itself.
+// Settings navigates its one window, so a picture taken as soon as it answered was the page before:
+// in the capture VM all fifteen pages were saved, and every one after the first showed System >
+// About. A page is saved once its picture is not blank, has stopped changing, and is not the
+// last page saved.
+void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceSettingsHasDrawnIt() {
+    QImage about(64, 48, QImage::Format_RGB32);
+    about.fill(QColor(243, 243, 243));
+    about.setPixel(10, 10, qRgb(0, 0, 0));
+    QImage display = about;
+    display.setPixel(20, 20, qRgb(0, 120, 215));
+    QImage spinner = display;
+    spinner.setPixel(30, 30, qRgb(128, 128, 128));
+    QImage blank(64, 48, QImage::Format_RGB32);
+    blank.fill(QColor(243, 243, 243));
+
+    QVERIFY(Action::pageIsDrawn(display, display, about));
+    QVERIFY(Action::pageIsDrawn(about, about, QImage()));    // the first page has no page before it
+    QVERIFY(!Action::pageIsDrawn(about, about, about));      // still the last page
+    QVERIFY(!Action::pageIsDrawn(display, spinner, about));  // still changing
+    QVERIFY(!Action::pageIsDrawn(display, QImage(), about));  // nothing to compare with yet
+    QVERIFY(!Action::pageIsDrawn(blank, blank, about));
+
+    // Settings is brought to the front first: a window behind another one stops drawing.
+    QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
+                   .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString source = QString::fromUtf8(file.readAll());
+    QVERIFY(source.contains(QStringLiteral("SetForegroundWindow(hwnd);")));
+    QVERIFY(
+        source.contains(QStringLiteral("const QImage page = waitForDrawnPage(settings_window);")));
+}
+
 void ScreenshotSettingsActionTests::aBlankPictureIsAFailedCapture() {
     QImage blank(1024, 768, QImage::Format_RGB32);
     blank.fill(QColor(32, 32, 32));

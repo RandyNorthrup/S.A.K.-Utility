@@ -39,6 +39,10 @@ constexpr int kSettingsWindowWaitMs = 15'000;
 constexpr int kSettingsPollMs = 100;
 constexpr UINT kSettingsResponsiveTimeoutMs = 2000;
 constexpr int kSettingsCloseWaitMs = 5000;
+// How long a page may take to draw after Settings is asked for it, and how long a picture must
+// stay the same to count as drawn.
+constexpr int kSettingsPageDrawWaitMs = 10'000;
+constexpr int kSettingsPageSettleMs = 300;
 constexpr int kMsPerSecond = 1000;
 constexpr int kScreenshotReportFieldWidth = 61;
 
@@ -96,37 +100,61 @@ bool ScreenshotSettingsAction::pictureIsBlank(const QImage& image) {
     return true;
 }
 
-bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
-    const QImage shot = renderWindowContent(reinterpret_cast<HWND>(window));
-    // A blank picture saved as a screenshot is evidence of nothing; count it as a failed try.
-    if (pictureIsBlank(shot)) {
-        return false;
-    }
-    return shot.save(filepath, "PNG");
+bool ScreenshotSettingsAction::pageIsDrawn(const QImage& now,
+                                           const QImage& moment_before,
+                                           const QImage& previous_page) {
+    // Settings navigates its one window, so until it has drawn the new page it still shows the
+    // last one: every page after the first was saved as a picture of System > About. Drawn means
+    // not one colour, the same as a moment ago (no loading spinner or slide-in mid-way), and not
+    // the page before it.
+    return !pictureIsBlank(now) && now == moment_before && now != previous_page;
 }
 
-bool ScreenshotSettingsAction::captureWindowToPng(WId window, const QString& filepath) {
-    // QScreen::grabWindow has GUI-thread affinity, but execute() runs on the quick-action worker
-    // thread. Marshal the grab onto the GUI thread and block until it finishes. Fail closed if
-    // there is no application object or the invocation cannot be marshalled.
+QImage ScreenshotSettingsAction::renderOnGui(WId window) {
+    // execute() runs on the quick-action worker thread; the picture is taken on the GUI thread,
+    // and the worker blocks until it is. Fail closed (a null picture) if there is no application
+    // object or the invocation cannot be marshalled.
     QCoreApplication* app = QCoreApplication::instance();
     if (app == nullptr) {
         sak::logError("ScreenshotSettingsAction: no QCoreApplication to marshal capture onto");
-        return false;
+        return {};
     }
     if (QThread::currentThread() == app->thread()) {
-        return grabAndSaveOnGui(window, filepath);
+        return renderWindowContent(reinterpret_cast<HWND>(window));
     }
-    bool ok = false;
+    QImage shot;
     const bool invoked = QMetaObject::invokeMethod(
         app,
-        [window, filepath, &ok]() { ok = grabAndSaveOnGui(window, filepath); },
+        [window, &shot]() { shot = renderWindowContent(reinterpret_cast<HWND>(window)); },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
         sak::logError("ScreenshotSettingsAction: failed to marshal capture onto the GUI thread");
-        return false;
+        return {};
     }
-    return ok;
+    return shot;
+}
+
+QImage ScreenshotSettingsAction::waitForDrawnPage(WId window) {
+    // A Settings window behind another one stops drawing, so it would never show the new page.
+    const auto hwnd = reinterpret_cast<HWND>(window);
+    if (IsIconic(hwnd) != 0) {
+        ShowWindow(hwnd, SW_RESTORE);
+    }
+    SetForegroundWindow(hwnd);
+    QDeadlineTimer deadline(kSettingsPageDrawWaitMs);
+    QImage moment_before;
+    while (!isCancelled()) {
+        QImage now = renderOnGui(window);
+        if (pageIsDrawn(now, moment_before, m_previous_page)) {
+            return now;
+        }
+        if (deadline.hasExpired()) {
+            return {};
+        }
+        moment_before = std::move(now);
+        QThread::msleep(kSettingsPageSettleMs);
+    }
+    return {};
 }
 
 void ScreenshotSettingsAction::execute() {
@@ -387,8 +415,16 @@ bool ScreenshotSettingsAction::captureSettingsWindow(WId settings_window,
         return false;
     }
     const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
-    // grabWindow must run on the GUI thread; execute() runs on the worker thread, so marshal it.
-    return captureWindowToPng(settings_window, filepath);
+    // A blank picture, or the last page again, saved as a screenshot is evidence of nothing; count
+    // it as a failed try.
+    const QImage page = waitForDrawnPage(settings_window);
+    if (page.isNull()) {
+        sak::logWarning("ScreenshotSettingsAction: Settings did not draw page {}",
+                        page_name.toStdString());
+        return false;
+    }
+    m_previous_page = page;
+    return page.save(filepath, "PNG");
 }
 
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
