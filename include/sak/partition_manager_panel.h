@@ -66,6 +66,9 @@ public:
     // Replaces the executor so a test can observe what a run-now scan executes without
     // launching the elevated helper.
     void setTestApplyExecutorForReview(PartitionManagerController::ApplyExecutor executor);
+    // Replaces the scan made with administrator rights (the helper's, in a standard session).
+    void setTestElevatedInventoryScannerForReview(
+        PartitionManagerController::InventoryScanner scanner);
 #endif
 
 Q_SIGNALS:
@@ -243,6 +246,14 @@ private:
     /// @brief Health/operational/temperature/wear/error fragments shown in a disk row tooltip
     static QStringList diskStatusParts(const PartitionDiskInfo& disk);
     void addDiskRow(const PartitionDiskInfo& disk);
+    void addDiskContentRows(const PartitionDiskInfo& disk);
+    /// Manage BitLocker for the selected volume. A standard scan cannot read BitLocker, so the
+    /// first open reads it with administrator rights and opens again when that scan is in.
+    void manageBitLocker(bool may_read_with_administrator_rights);
+    void reopenBitLockerAfterAdministratorRead();
+    /// @return true when a read was started and the dialog opens when it is in.
+    bool startBitLockerReadWithAdministratorRights(const PartitionTarget& target,
+                                                   const PartitionVolumeInfo& volume);
     void addPartitionRow(const PartitionDiskInfo& disk, const PartitionInfoEx& partition);
     void addUnallocatedRow(const UnallocatedRegion& region);
     void attachDiskMapContextMenu(QWidget* widget, const PartitionTarget& target);
@@ -300,6 +311,8 @@ private:
     [[nodiscard]] static QColor unallocatedColor();
 
     std::unique_ptr<PartitionManagerController> m_controller;
+    // The volume Manage BitLocker is reading with administrator rights, until that scan is in.
+    std::optional<PartitionTarget> m_bitlocker_read_target;
     QTableWidget* m_table{nullptr};
     QWidget* m_disk_map_container{nullptr};
     QListWidget* m_queue_list{nullptr};

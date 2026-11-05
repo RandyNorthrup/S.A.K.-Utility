@@ -231,6 +231,17 @@ void PartitionManagerController::refreshInventory() {
     startInventoryScan(InventoryScanPurpose::Refresh);
 }
 
+bool PartitionManagerController::refreshInventoryWithAdministratorRights() {
+    if (interactionBlocked()) {
+        Q_EMIT statusMessage(
+            QStringLiteral("Partition Manager: wait for the active operation before refreshing"),
+            sak::kTimerStatusDefaultMs);
+        return false;
+    }
+    startInventoryScan(InventoryScanPurpose::Refresh, true);
+    return true;
+}
+
 bool PartitionManagerController::queueOperation(PartitionOperationType type,
                                                 const PartitionTarget& target,
                                                 const QJsonObject& payload) {

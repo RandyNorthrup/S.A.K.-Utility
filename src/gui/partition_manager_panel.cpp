@@ -399,6 +399,8 @@ const QColor kPartitionColorRaid5{226, 84, 74};
 const QColor kPartitionColorUnallocated{70, 78, 88};
 constexpr const char* kActionTargetKindsProperty = "partitionActionTargetKinds";
 constexpr const char* kActionTargetAny = "any";
+// A tool that works without a selection: it asks for its own source, or opens another panel.
+constexpr const char* kActionTargetNone = "none";
 constexpr const char* kActionTargetDisk = "disk";
 constexpr const char* kActionTargetPartition = "partition";
 constexpr const char* kActionTargetUnallocated = "unallocated";
@@ -644,9 +646,18 @@ PartitionActionAvailability partitionActionAvailability(const PartitionInfoEx* p
     return fileSystemActionAvailability(partitionFileSystemName(partition), policy);
 }
 
+bool buttonNeedsNoTarget(const QAbstractButton* button) {
+    return (button != nullptr) && button->property(kActionTargetKindsProperty)
+                                      .toStringList()
+                                      .contains(QString::fromLatin1(kActionTargetNone));
+}
+
 PartitionActionAvailability buttonActionAvailability(const QAbstractButton* button,
                                                      const std::optional<PartitionTarget>& target,
                                                      const PartitionInfoEx* partition) {
+    if (buttonNeedsNoTarget(button)) {
+        return {.enabled = true, .reason = {}};
+    }
     if ((button == nullptr) || !target) {
         return {.enabled = false,
                 .reason = QObject::tr("Select a disk, partition, or unallocated region first.")};
@@ -7963,7 +7974,8 @@ uint64_t parseWizardUInt64(const QLineEdit* edit) {
 QComboBox* addTargetDiskSelector(QFormLayout* form,
                                  QWidget* parent,
                                  const PartitionInventory& inventory,
-                                 uint32_t source_disk) {
+                                 uint32_t source_disk,
+                                 const std::function<bool(const PartitionDiskInfo&)>& can_hold) {
     auto* combo = new QComboBox(parent);
     combo->setAccessibleName(QStringLiteral("Target disk"));
     auto* model = qobject_cast<QStandardItemModel*>(combo->model());
@@ -7989,7 +8001,11 @@ QComboBox* addTargetDiskSelector(QFormLayout* form,
         combo->setItemData(index,
                            QVariant::fromValue<qulonglong>(disk.size_bytes),
                            kWizardDiskSizeRole);
-        first_usable = first_usable < 0 ? index : first_usable;
+        // The first disk the copy fits on, or none: starting on one the Review page then calls
+        // Blocked had a person read the refusal before they had chosen anything.
+        if (first_usable < 0 && can_hold(disk)) {
+            first_usable = index;
+        }
     }
     combo->setCurrentIndex(first_usable);
     form->addRow(QStringLiteral("Target disk:"), combo);
@@ -8008,8 +8024,21 @@ void addDiskTargetPage(QWizard* wizard,
     auto* target_page = new QWizardPage(wizard);
     target_page->setTitle(QStringLiteral("Target Disk"));
     auto* target_layout = new QFormLayout(target_page);
+    const PartitionDiskInfo* source = findWizardDisk(*config.inventory, config.source_disk);
+    const uint64_t source_bytes = sourceDiskSize(*config.inventory, config.source_disk);
+    const bool os_migration = config.os_migration;
     widgets->target_disk =
-        addTargetDiskSelector(target_layout, target_page, *config.inventory, config.source_disk);
+        addTargetDiskSelector(target_layout,
+                              target_page,
+                              *config.inventory,
+                              config.source_disk,
+                              [source, source_bytes, os_migration](const PartitionDiskInfo& disk) {
+                                  if (os_migration) {
+                                      return source != nullptr &&
+                                             planOsMigration(*source, disk.size_bytes).canRun();
+                                  }
+                                  return source_bytes != 0 && disk.size_bytes >= source_bytes;
+                              });
     wizard->addPage(target_page);
 }
 
@@ -8699,6 +8728,11 @@ void PartitionManagerPanel::setTestApplyExecutorForReview(
     PartitionManagerController::ApplyExecutor executor) {
     m_controller->setApplyExecutorForTesting(std::move(executor));
 }
+
+void PartitionManagerPanel::setTestElevatedInventoryScannerForReview(
+    PartitionManagerController::InventoryScanner scanner) {
+    m_controller->setApplyInventoryScannerForTesting(std::move(scanner));
+}
 #endif
 
 void PartitionManagerPanel::setupUi() {
@@ -8883,7 +8917,7 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActi
                            tr("Standalone tool: scan an image or raw volume and restore found "
                               "files now (runs immediately, not added to the queue)"),
                            &PartitionManagerPanel::onDataRecovery,
-                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetNone})}),
             makeActionSpec(tr("Extend Partition"),
                            kIconResize,
                            tr("Extend into adjacent free space"),
@@ -9089,7 +9123,7 @@ PartitionManagerPanel::maintenanceOperationActionSpecs() const {
                            kIconSurface,
                            tr("Open Benchmark and Diagnostics"),
                            &PartitionManagerPanel::onOpenDiskBenchmark,
-                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetNone})}),
             makeActionSpec(tr("Space Analyzer"),
                            kIconSurface,
                            tr("Analyze tree, file, and file-type usage"),
@@ -9118,7 +9152,7 @@ PartitionManagerPanel::maintenanceOperationActionSpecs() const {
                            kIconOsDrive,
                            tr("Open Image Flasher"),
                            &PartitionManagerPanel::onOpenBootableMedia,
-                           {.target_kinds = actionTargetKindList({kActionTargetAny})})};
+                           {.target_kinds = actionTargetKindList({kActionTargetNone})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOperationActionSpecs()
@@ -9383,6 +9417,10 @@ void PartitionManagerPanel::connectControllerSignals() {
             this,
             &PartitionManagerPanel::rebuildTable);
     connect(m_controller.get(),
+            &PartitionManagerController::inventoryChanged,
+            this,
+            &PartitionManagerPanel::reopenBitLockerAfterAdministratorRead);
+    connect(m_controller.get(),
             &PartitionManagerController::queueChanged,
             this,
             &PartitionManagerPanel::rebuildQueue);
@@ -9468,16 +9506,39 @@ void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
     m_table->setRowCount(0);
     for (const auto& disk : inventory.disks) {
         addDiskRow(disk);
-        for (const auto& partition : disk.partitions) {
-            addPartitionRow(disk, partition);
-        }
-        for (const auto& region : disk.unallocated_regions) {
-            addUnallocatedRow(region);
-        }
+        addDiskContentRows(disk);
     }
     m_table->resizeColumnsToContents();
     Q_EMIT statusMessage(inventorySummaryText(inventory), 0);
     updateActionState();
+}
+
+void PartitionManagerPanel::addDiskContentRows(const PartitionDiskInfo& disk) {
+    // In the order they sit on the disk, as the map draws them. Every partition and then every gap
+    // put free space at the start of a disk at the bottom of its rows, under the last partition.
+    struct ContentRow {
+        uint64_t offset;
+        const PartitionInfoEx* partition;
+        const UnallocatedRegion* region;
+    };
+    QVector<ContentRow> rows;
+    rows.reserve(disk.partitions.size() + disk.unallocated_regions.size());
+    for (const auto& partition : disk.partitions) {
+        rows.append({.offset = partition.offset_bytes, .partition = &partition, .region = nullptr});
+    }
+    for (const auto& region : disk.unallocated_regions) {
+        rows.append({.offset = region.offset_bytes, .partition = nullptr, .region = &region});
+    }
+    std::ranges::stable_sort(rows, [](const ContentRow& lhs, const ContentRow& rhs) {
+        return lhs.offset < rhs.offset;
+    });
+    for (const auto& row : rows) {
+        if (row.partition != nullptr) {
+            addPartitionRow(disk, *row.partition);
+        } else {
+            addUnallocatedRow(*row.region);
+        }
+    }
 }
 
 void PartitionManagerPanel::rebuildDiskMap(const PartitionInventory& inventory) {
@@ -9711,9 +9772,11 @@ QStringList PartitionManagerPanel::diskStatusParts(const PartitionDiskInfo& disk
 void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
+    // The size travels with the row like a partition's does: Restore Disk Image reads the target's
+    // size from it, and without it refused every disk as "size is unknown".
     const QVariantMap row_data{{QStringLiteral("kind"), rowKindName(TableRowKind::Disk)},
-                               {QStringLiteral("disk"),
-                                static_cast<int>(disk.disk_number.value())}};
+                               {QStringLiteral("disk"), static_cast<int>(disk.disk_number.value())},
+                               {QStringLiteral("size"), QString::number(disk.size_bytes)}};
     auto* target = new QTableWidgetItem(QIcon(kIconDisk),
                                         tr("Disk %1").arg(disk.disk_number.value()));
     auto font = target->font();
@@ -11043,11 +11106,50 @@ void PartitionManagerPanel::onSetPartitionTypeId() {
 }
 
 void PartitionManagerPanel::onManageBitLocker() {
+    manageBitLocker(true);
+}
+
+bool PartitionManagerPanel::startBitLockerReadWithAdministratorRights(
+    const PartitionTarget& target, const PartitionVolumeInfo& volume) {
+    if (volume.bitlocker_state_known || !volume.administrator_state_pending) {
+        return false;
+    }
+    // A scan without administrator rights cannot read BitLocker, and this dialog is about nothing
+    // else, so opening it reads the state the way Apply would: one UAC prompt.
+    m_bitlocker_read_target = target;
+    if (!m_controller->refreshInventoryWithAdministratorRights()) {
+        m_bitlocker_read_target.reset();
+        return false;
+    }
+    Q_EMIT statusMessage(tr("Reading BitLocker state with administrator rights..."),
+                         sak::kTimerStatusDefaultMs);
+    return true;
+}
+
+void PartitionManagerPanel::reopenBitLockerAfterAdministratorRead() {
+    if (!m_bitlocker_read_target) {
+        return;
+    }
+    const PartitionTarget target = *m_bitlocker_read_target;
+    m_bitlocker_read_target.reset();
+    // After the scan has finished, not inside its signal: until then the panel is still busy and
+    // has no selection to open the dialog for.
+    QTimer::singleShot(0, this, [this, target]() {
+        selectTargetInTable(target);
+        manageBitLocker(false);
+    });
+}
+
+void PartitionManagerPanel::manageBitLocker(bool may_read_with_administrator_rights) {
     const auto target = selectedTarget();
     const auto selection = copyPartitionSelection(selectedDisk(), selectedPartition());
     const auto* disk = optionalValuePointer(selection.disk);
     const auto* partition = optionalValuePointer(selection.partition);
     const auto* volume = optionalValuePointer(selection.volume);
+    if (may_read_with_administrator_rights && target && volume != nullptr &&
+        startBitLockerReadWithAdministratorRights(*target, *volume)) {
+        return;
+    }
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
     const QStringList commands = bitLockerCommandLines(volume);
     const auto action = showBitLockerDialog(this,

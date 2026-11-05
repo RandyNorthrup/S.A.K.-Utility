@@ -6,6 +6,7 @@
 #include "sak/partition_manager_panel.h"
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_os_migration.h"
+#include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/windows11_theme.h"
 
@@ -83,6 +84,7 @@ private Q_SLOTS:
     void sidebarIsFixedAndHasNoRedundantPreviewBox();
     void sidebarActionsRenderAsCompactTextLinks();
     void sidebarActionsGateBySelectedTargetKind();
+    void tableRowsFollowTheDiskAndCarryItsSize();
     void nonNativeFilesystemActionsExposeReadOnlyHfsCheck();
     void partitionOperationsScrollInsideGroup();
     void diskMapLegendContainsCommercialColorRoles();
@@ -150,6 +152,7 @@ private Q_SLOTS:
     void extFilesystemWriteActionsQueueWithConfirmation() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
+    void manageBitLockerReadsWhatAStandardScanCannot();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
     void readOnlyScansRunNowWithoutQueueing();
@@ -208,6 +211,18 @@ public:
 private:
     QTimer m_timer;
 };
+
+// The table lists a disk's partitions and gaps in disk order, so a gap is found by kind, not by
+// being last.
+void selectFirstUnallocatedRow(QTableWidget* table) {
+    for (int row = 0; row < table->rowCount(); ++row) {
+        if (table->item(row, 0)->data(Qt::UserRole).toMap().value(QStringLiteral("kind")) ==
+            QStringLiteral("unallocated")) {
+            table->selectRow(row);
+            return;
+        }
+    }
+}
 
 auto rejectDialogOnReturn(QDialog* dialog) {
     // QtTest assertions return from timer callbacks, leaving dialog.exec() running unless
@@ -1492,7 +1507,7 @@ void queueUnallocatedAllocateAndVerifyResize() {
     panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
-    table->selectRow(table->rowCount() - 1);
+    selectFirstUnallocatedRow(table);
     bool inspected = false;
     const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -1530,7 +1545,7 @@ void queueUnallocatedAllocateAndVerifyMove() {
     panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
-    table->selectRow(table->rowCount() - 1);
+    selectFirstUnallocatedRow(table);
     bool inspected = false;
     const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -1957,7 +1972,9 @@ void PartitionManagerPanelTests::sidebarActionsGateBySelectedTargetKind() {
     QVERIFY(!copyDisk->isEnabled());
     QVERIFY(!resize->isEnabled());
     QVERIFY(!create->isEnabled());
-    QVERIFY(!dataRecovery->isEnabled());
+    // Data Recovery asks for its own source (an image file or a raw volume), so it never needed
+    // a row selected first.
+    QVERIFY(dataRecovery->isEnabled());
     QVERIFY(!properties->isEnabled());
 
     table->selectRow(0);
@@ -1982,8 +1999,11 @@ void PartitionManagerPanelTests::sidebarActionsGateBySelectedTargetKind() {
     QVERIFY(!copyDisk->isEnabled());
     QVERIFY(!create->isEnabled());
 
-    table->selectRow(table->rowCount() - 1);
+    // The gap between the two partitions: the rows follow the disk, as the map does.
+    table->selectRow(2);
     QApplication::processEvents();
+    QCOMPARE(table->item(2, 0)->data(Qt::UserRole).toMap().value(QStringLiteral("kind")).toString(),
+             QStringLiteral("unallocated"));
     QVERIFY(create->isEnabled());
     QVERIFY(allocate->isEnabled());
     QVERIFY(dataRecovery->isEnabled());
@@ -1991,6 +2011,35 @@ void PartitionManagerPanelTests::sidebarActionsGateBySelectedTargetKind() {
     QVERIFY(!quickPartition->isEnabled());
     QVERIFY(!copyPartition->isEnabled());
     QVERIFY(!resize->isEnabled());
+}
+
+// Restore Disk Image read the target's size from the selected row, and a disk row had none, so it
+// refused every disk as "size is unknown". The rows also listed every partition and then every gap,
+// so free space at the start of a disk sat at the bottom, while the map drew it first.
+void PartitionManagerPanelTests::tableRowsFollowTheDiskAndCarryItsSize() {
+    sak::PartitionManagerPanel panel;
+    const auto inventory = unallocatedAllocateInventoryFixture();
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    QCOMPARE(table->rowCount(), 4);
+
+    const auto disk_row = table->item(0, 0)->data(Qt::UserRole).toMap();
+    QCOMPARE(disk_row.value(QStringLiteral("kind")).toString(), QStringLiteral("disk"));
+    QCOMPARE(disk_row.value(QStringLiteral("size")).toString().toULongLong(),
+             inventory.disks.first().size_bytes);
+
+    const QStringList expected{QStringLiteral("partition"),
+                               QStringLiteral("unallocated"),
+                               QStringLiteral("partition")};
+    uint64_t previous_offset = 0;
+    for (int row = 1; row < table->rowCount(); ++row) {
+        const auto data = table->item(row, 0)->data(Qt::UserRole).toMap();
+        QCOMPARE(data.value(QStringLiteral("kind")).toString(), expected.at(row - 1));
+        const uint64_t offset = data.value(QStringLiteral("offset")).toString().toULongLong();
+        QVERIFY2(offset > previous_offset, qPrintable(QString::number(offset)));
+        previous_offset = offset;
+    }
 }
 
 void PartitionManagerPanelTests::nonNativeFilesystemActionsExposeReadOnlyHfsCheck() {
@@ -3420,6 +3469,18 @@ void PartitionManagerPanelTests::migrationWizardShowsWhyATargetIsRefused() {
         auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
         const auto reject_on_return = rejectDialogOnReturn(wizard);
         QVERIFY(wizard != nullptr);
+        // The only other disk is too small, so nothing is chosen for the person: the list used to
+        // start on it, and the Review page then called the wizard's own choice Blocked.
+        QComboBox* target = nullptr;
+        for (auto* combo : wizard->findChildren<QComboBox*>()) {
+            if (combo->accessibleName() == QStringLiteral("Target disk")) {
+                target = combo;
+            }
+        }
+        QVERIFY(target != nullptr);
+        QCOMPARE(target->currentIndex(), -1);
+        // Chosen anyway, it says why it is refused.
+        target->setCurrentIndex(0);
         const QString text = wizardLabelsText(wizard);
         QVERIFY2(text.contains(QStringLiteral("Blocked: Target disk is too small for the data")),
                  qPrintable(text));
@@ -4122,6 +4183,75 @@ void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() 
         operations.first().payload.value(QStringLiteral("apfs_cow_mutation_certified")).toBool());
     QVERIFY(
         !operations.first().payload.contains(QStringLiteral("apfs_generated_layout_confirmed")));
+}
+
+// A scan without administrator rights cannot read BitLocker, so the dialog whose whole job is
+// BitLocker said "Unknown until Apply" on a protected volume, and Queue Unlock stayed off even when
+// it was locked. Opening it now reads the state with administrator rights, then shows it.
+void PartitionManagerPanelTests::manageBitLockerReadsWhatAStandardScanCannot() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    auto& pending = *inventory.disks[0].partitions[0].volume;
+    pending.bitlocker_state_known = false;
+    pending.administrator_state_pending = true;
+    panel.setTestInventoryForReview(inventory);
+
+    auto read = inventory;
+    auto& known = *read.disks[0].partitions[0].volume;
+    known.bitlocker_state_known = true;
+    known.bitlocker_enabled = true;
+    known.bitlocker_locked = true;
+    known.administrator_state_pending = false;
+    read.layout_hash = sak::StorageInventoryWorker::layoutHash(read);
+    int elevated_scans = 0;
+    panel.setTestElevatedInventoryScannerForReview([&](const auto& /*should_cancel*/) {
+        ++elevated_scans;
+        return sak::StorageInventoryScanResult{.inventory = read, .cancelled = false};
+    });
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Manage BitLocker"));
+    QVERIFY2(button != nullptr, "Manage BitLocker action should exist");
+
+    QString protection;
+    QString lock_state;
+    bool unlock_enabled = false;
+    QTimer watcher;
+    QObject::connect(&watcher, &QTimer::timeout, &watcher, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr ||
+            dialog->objectName() != QStringLiteral("partitionBitLockerDialog")) {
+            return;
+        }
+        auto* status =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionBitLockerStatusTable"));
+        if (status != nullptr) {
+            protection = propertyTableValue(status, QStringLiteral("Protection"));
+            lock_state = propertyTableValue(status, QStringLiteral("Lock state"));
+        }
+        for (auto* push : dialog->findChildren<QPushButton*>()) {
+            if (push->text() == QStringLiteral("Queue Unlock")) {
+                unlock_enabled = push->isEnabled();
+            }
+        }
+        dialog->reject();
+    });
+    watcher.start(20);
+    pressAction(button);
+    QTRY_VERIFY_WITH_TIMEOUT(!protection.isEmpty(), 10'000);
+    QCOMPARE(elevated_scans, 1);
+    QCOMPARE(protection, QStringLiteral("Protection on"));
+    QCOMPARE(lock_state, QStringLiteral("Locked"));
+    QVERIFY(unlock_enabled);
+
+    // Read once: the state is known now, so opening it again asks for nothing.
+    protection.clear();
+    table->selectRow(1);
+    pressAction(button);
+    QTRY_VERIFY_WITH_TIMEOUT(!protection.isEmpty(), 10'000);
+    QCOMPARE(elevated_scans, 1);
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {

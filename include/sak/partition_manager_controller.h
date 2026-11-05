@@ -54,6 +54,10 @@ public:
 
 public Q_SLOTS:
     void refreshInventory();
+    /// The same refresh, read with administrator rights: in the helper (one UAC prompt for the
+    /// session) when this process has none. For the state a standard scan cannot read.
+    /// @return false when an operation is running and nothing was started.
+    bool refreshInventoryWithAdministratorRights();
     bool queueOperation(PartitionOperationType type,
                         const PartitionTarget& target,
                         const QJsonObject& payload = {});
