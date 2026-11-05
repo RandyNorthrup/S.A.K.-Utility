@@ -59,9 +59,10 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(pare
     setPage(Page_KnownNetworks, new UserProfileBackupKnownNetworksPage(this));
     setPage(Page_EthernetSettings, new UserProfileBackupEthernetSettingsPage(this));
     setPage(Page_BackupSettings, new UserProfileBackupSettingsPage(m_manifest, this));
-
-    // Note: Execute page will be created in BackupSettingsPage::validatePage
-    // after we have the destination path
+    // Registered now, not when Backup Settings is accepted: QWizard shows Finish on a page with no
+    // page after it, and Finish closes the wizard, so a page added only then was never reached.
+    // Backup Settings hands it the users and the screened destination when it is accepted.
+    setPage(Page_Execute, new UserProfileBackupExecutePage(m_manifest, {}, QString(), this));
 
     // Set initial page
     setStartId(Page_Welcome);

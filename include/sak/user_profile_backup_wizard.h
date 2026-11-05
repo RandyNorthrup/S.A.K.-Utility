@@ -420,7 +420,7 @@ private:
     bool validateDestination();
     /// @brief Ask before reusing an existing folder; true when the run may proceed
     bool confirmExistingDestination(const QString& destination);
-    void installExecutePage();
+    void passRunInputsToExecutePage();
 
     BackupManifest& m_manifest;
     QString m_destinationPath;
@@ -463,6 +463,11 @@ public:
     [[nodiscard]] bool isBackupRunning() const;
     /// Cooperatively cancels a running backup; the worker stops at its next file boundary.
     void cancelBackup();
+
+    /// @brief The users and screened destination the run will use, set when Backup Settings is
+    ///        accepted. The page is registered with the wizard from the start, so that Backup
+    ///        Settings offers Next rather than Finish, and only learns what to back up here.
+    void setRunInputs(const QVector<UserProfile>& users, const QString& destination_path);
 
     void initializePage() override;
     bool isComplete() const override;

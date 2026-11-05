@@ -887,10 +887,11 @@ void UserProfileAppRestoreFlowTests::executePageRunsWhatTheWizardChose() {
 
     sak::UserProfileBackupWizard wizard;
     wizard.setAppDataSources({source});
-    sak::BackupManifest manifest;
     const QString backup_path = destination.filePath(QStringLiteral("backup"));
-    auto* page = new sak::UserProfileBackupExecutePage(manifest, {user}, backup_path, &wizard);
-    wizard.setPage(sak::UserProfileBackupWizard::Page_Execute, page);
+    auto* page = qobject_cast<sak::UserProfileBackupExecutePage*>(
+        wizard.page(sak::UserProfileBackupWizard::Page_Execute));
+    QVERIFY(page != nullptr);
+    page->setRunInputs({user}, backup_path);
 
     page->onStartBackup();
     QTRY_VERIFY_WITH_TIMEOUT(page->isComplete(), 30'000);
@@ -967,6 +968,8 @@ void UserProfileAppRestoreFlowTests::wholeRestoreWizardRunsOnARealBackup() {
     QVERIFY(QFile::exists(landed.filePath(kWalkAppData + QStringLiteral("/settings.ini"))));
 }
 
+// Walks the wizard with the buttons a person sees. wizard.next() alone reached the last page while
+// the window itself showed Finish on Backup Settings, and Finish closed it with nothing backed up.
 void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
     QTemporaryDir destination;
     QVERIFY(destination.isValid());
@@ -979,9 +982,19 @@ void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
     }
     auto* settings = qobject_cast<sak::UserProfileBackupSettingsPage*>(wizard.currentPage());
     QVERIFY(settings != nullptr);
-    settings->m_destinationEdit->setText(destination.filePath(QStringLiteral("backup")));
-    wizard.next();
+    QVERIFY(!settings->isFinalPage());
+    QVERIFY(!wizard.button(QWizard::NextButton)->isHidden());
+    QVERIFY(wizard.button(QWizard::FinishButton)->isHidden());
+
+    const QString backup_path = destination.filePath(QStringLiteral("backup"));
+    settings->m_destinationEdit->setText(backup_path);
+    wizard.button(QWizard::NextButton)->click();
     QCOMPARE(wizard.currentId(), static_cast<int>(sak::UserProfileBackupWizard::Page_Execute));
+    auto* execute = qobject_cast<sak::UserProfileBackupExecutePage*>(wizard.currentPage());
+    QVERIFY(execute != nullptr);
+    // The screened destination reached the page that runs the backup.
+    QVERIFY2(execute->m_destinationPath.endsWith(QStringLiteral("backup")),
+             qPrintable(execute->m_destinationPath));
 }
 
 // UI review S5, S17, DF13: "[shield]", "[save]" and "(i)" stood in for icons, the users table's

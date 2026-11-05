@@ -864,14 +864,17 @@ bool UserProfileBackupSettingsPage::validateDestination() {
     return true;
 }
 
-void UserProfileBackupSettingsPage::installExecutePage() {
+void UserProfileBackupSettingsPage::passRunInputsToExecutePage() {
     auto* wizard = qobject_cast<UserProfileBackupWizard*>(this->wizard());
-    if (wizard != nullptr) {
-        // Use the wizard's real scanned-users list; the old "scannedUsers"
-        // property was never set, so the execute page always backed up nothing.
-        wizard->setPage(UserProfileBackupWizard::Page_Execute,
-                        new UserProfileBackupExecutePage(
-                            m_manifest, wizard->scannedUsers(), m_destinationPath, wizard));
+    if (wizard == nullptr) {
+        return;
+    }
+    // Use the wizard's real scanned-users list; the old "scannedUsers"
+    // property was never set, so the execute page always backed up nothing.
+    auto* execute = qobject_cast<UserProfileBackupExecutePage*>(
+        wizard->page(UserProfileBackupWizard::Page_Execute));
+    if (execute != nullptr) {
+        execute->setRunInputs(wizard->scannedUsers(), m_destinationPath);
     }
 }
 
@@ -888,7 +891,7 @@ bool UserProfileBackupSettingsPage::validatePage() {
     m_manifest.version = "1.0";
     m_manifest.created = QDateTime::currentDateTime();
     m_manifest.source_machine = QSysInfo::machineHostName();
-    installExecutePage();
+    passRunInputsToExecutePage();
 
     return true;
 }

@@ -134,6 +134,7 @@ void UserProfileBackupExecutePage::setupUi() {
     // Log output
     layout->addWidget(new QLabel(tr("Log:"), this));
     m_logEdit = new QTextEdit(this);
+    m_logEdit->setAccessibleName(tr("Backup log"));
     m_logEdit->setReadOnly(true);
     m_logEdit->setMaximumHeight(sak::kLogAreaSmallMaxH);
     layout->addWidget(m_logEdit);
@@ -149,6 +150,12 @@ void UserProfileBackupExecutePage::setupUi() {
     layout->addStretch();
 
     Q_ASSERT(m_statusLabel);
+}
+
+void UserProfileBackupExecutePage::setRunInputs(const QVector<UserProfile>& users,
+                                                const QString& destination_path) {
+    m_users = users;
+    m_destinationPath = destination_path;
 }
 
 void UserProfileBackupExecutePage::initializePage() {
