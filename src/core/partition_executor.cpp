@@ -269,6 +269,59 @@ PartitionExecutionStep PartitionExecutor::executeScript(const PartitionOperation
                          : executeLocalScript(operation, script);
 }
 
+QMetaObject::Connection PartitionExecutor::relayHelperProgress(
+    ElevationBroker* broker, const std::shared_ptr<QString>& pending_output) {
+    // The script's own output goes to the log a line at a time. Passed on as progress it reached
+    // the status bar as raw "STDOUT|..." text with the bar stuck at 50%, and the log stayed empty.
+    return connect(broker,
+                   &ElevationBroker::progressUpdated,
+                   this,
+                   [this, pending_output](int percent, const QString& status) {
+                       bool is_output = false;
+                       const QStringList lines =
+                           completedOutputLines(status, pending_output.get(), &is_output);
+                       if (!is_output) {
+                           Q_EMIT progressUpdated(percent, status);
+                           return;
+                       }
+                       for (const QString& line : lines) {
+                           Q_EMIT logMessage(line);
+                       }
+                   });
+}
+
+void PartitionExecutor::flushHelperOutput(const QString& pending_output) {
+    // A last line the script wrote without a newline still reaches the log.
+    if (!pending_output.trimmed().isEmpty()) {
+        Q_EMIT logMessage(pending_output.trimmed());
+    }
+}
+
+QStringList PartitionExecutor::completedOutputLines(const QString& frame,
+                                                    QString* pending,
+                                                    bool* is_output) {
+    static const QString kStdout = QStringLiteral("STDOUT|");
+    static const QString kStderr = QStringLiteral("STDERR|");
+    const bool out = frame.startsWith(kStdout);
+    const bool err = frame.startsWith(kStderr);
+    *is_output = out || err;
+    if (!*is_output) {
+        return {};
+    }
+    pending->append(frame.mid(kStdout.size()));
+    QStringList lines;
+    qsizetype newline = pending->indexOf(QLatin1Char('\n'));
+    while (newline >= 0) {
+        const QString line = pending->left(newline).trimmed();
+        if (!line.isEmpty()) {
+            lines.append(err ? QStringLiteral("[stderr] ") + line : line);
+        }
+        pending->remove(0, newline + 1);
+        newline = pending->indexOf(QLatin1Char('\n'));
+    }
+    return lines;
+}
+
 PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionOperation& operation,
                                                                 const PartitionScript& script) {
     auto step = newScriptExecutionStep(operation);
@@ -281,10 +334,11 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
     // a batch costs one UAC prompt instead of one per operation. Its progress connection is
     // per operation and is dropped again below, since the broker outlives this executor.
     const auto broker = ElevationBroker::sessionBroker();
-    const QMetaObject::Connection progress = connect(
-        broker.get(), &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
-    const auto clear_broker = qScopeGuard([this, broker, progress]() {
+    auto pending_output = std::make_shared<QString>();
+    const QMetaObject::Connection progress = relayHelperProgress(broker.get(), pending_output);
+    const auto clear_broker = qScopeGuard([this, broker, progress, pending_output]() {
         QObject::disconnect(progress);
+        flushHelperOutput(*pending_output);
         clearActiveBroker(broker);
     });
     setActiveBroker(broker);

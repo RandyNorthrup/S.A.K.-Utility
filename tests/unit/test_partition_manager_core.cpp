@@ -1587,6 +1587,7 @@ private Q_SLOTS:
     void fileSystemDetector_readsProbeBytesFromPath();
     void fileSystemDetector_supplementsApfsSpaceManagerFromCheckpointData();
     void extFileSystemReader_listsDirectoriesAndReadsFiles();
+    void extFileSystemReader_readsAVolumeThatTakesOnlyWholeSectors();
     void extFileSystemReader_exportsDirectoriesRecursively();
     void extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths();
     void extFileSystemReader_rejectsMalformedSuperblockGeometry();
@@ -1644,6 +1645,7 @@ private Q_SLOTS:
     void apfsWriter_preflightFailsClosedUntilCertified();
     void partitionExecutor_honorsPreDispatchCancel();
     void partitionExecutor_exceptionClearsOwnedBroker();
+    void partitionExecutor_scriptOutputGoesToTheLog();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
@@ -3525,6 +3527,48 @@ void PartitionManagerCoreTests::fileSystemDetector_supplementsApfsSpaceManagerFr
                          {QStringLiteral("APFS space manager source: checkpoint data random read"),
                           QStringLiteral("APFS space manager block: 545"),
                           QStringLiteral("APFS space manager free blocks: 777")});
+}
+
+namespace {
+
+// What a raw Windows volume handle is: a seek or a read off a 512-byte boundary fails.
+class WholeSectorDevice final : public QIODevice {
+public:
+    explicit WholeSectorDevice(QByteArray bytes) : m_bytes(std::move(bytes)) {}
+    bool isSequential() const override { return false; }
+    qint64 size() const override { return m_bytes.size(); }
+    bool seek(qint64 pos) override { return (pos % kSector) == 0 && QIODevice::seek(pos); }
+
+protected:
+    qint64 readData(char* data, qint64 max_size) override {
+        if ((pos() % kSector) != 0 || (max_size % kSector) != 0) {
+            return -1;
+        }
+        const qint64 count = std::min<qint64>(max_size, m_bytes.size() - pos());
+        std::copy_n(m_bytes.constData() + pos(), std::max<qint64>(count, 0), data);
+        return std::max<qint64>(count, 0);
+    }
+    qint64 writeData(const char*, qint64) override { return -1; }
+
+private:
+    static constexpr qint64 kSector = 512;
+    QByteArray m_bytes;
+};
+
+}  // namespace
+
+// Browse failed "Unable to read ext inode" on a real ext4 partition: the root inode is not on a
+// sector boundary, and a raw volume takes only whole sectors.
+void PartitionManagerCoreTests::extFileSystemReader_readsAVolumeThatTakesOnlyWholeSectors() {
+    WholeSectorDevice device(extReaderFixture());
+    QVERIFY(device.open(QIODevice::ReadOnly | QIODevice::Unbuffered));
+    const auto root = PartitionExtFileSystemReader::listDirectory(&device, QStringLiteral("/"), 20);
+    QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(root.entries.size(), 3);
+    const auto docs =
+        PartitionExtFileSystemReader::listDirectory(&device, QStringLiteral("/docs"), 20);
+    QVERIFY2(docs.ok, qPrintable(docs.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docs.entries.first().name, QStringLiteral("note.txt"));
 }
 
 void PartitionManagerCoreTests::extFileSystemReader_listsDirectoriesAndReadsFiles() {
@@ -8428,6 +8472,64 @@ void PartitionManagerCoreTests::partitionExecutor_honorsPreDispatchCancel() {
     QVERIFY(result.cancelled);
     QVERIFY(!result.success);
     QVERIFY(result.steps.isEmpty());  // returned before any operation ran
+}
+
+// The recovery scan's output reached the status bar as "STDOUT|Candidate partition boot sector at
+// byte offset 16777216 (NTFS)", with the bar at 50%, and the log window stayed empty.
+void PartitionManagerCoreTests::partitionExecutor_scriptOutputGoesToTheLog() {
+    QString pending;
+    bool is_output = false;
+    QCOMPARE(PartitionExecutor::completedOutputLines(
+                 QStringLiteral("STDOUT|Candidate partition boot sector at byte offset 16777216 "
+                                "(NTFS)\r\nPartition 2 is at"),
+                 &pending,
+                 &is_output),
+             QStringList({QStringLiteral(
+                 "Candidate partition boot sector at byte offset 16777216 (NTFS)")}));
+    QVERIFY(is_output);
+    QCOMPARE(PartitionExecutor::completedOutputLines(
+                 QStringLiteral("STDOUT| byte offset 1048576 (NTFS) and is not lost\n"),
+                 &pending,
+                 &is_output),
+             QStringList(
+                 {QStringLiteral("Partition 2 is at byte offset 1048576 (NTFS) and is not lost")}));
+    QVERIFY(pending.isEmpty());
+    QCOMPARE(PartitionExecutor::completedOutputLines(
+                 QStringLiteral("STDERR|Access denied\n"), &pending, &is_output),
+             QStringList({QStringLiteral("[stderr] Access denied")}));
+    QVERIFY(PartitionExecutor::completedOutputLines(
+                QStringLiteral("Running Partition Recovery Scan"), &pending, &is_output)
+                .isEmpty());
+    QVERIFY(!is_output);
+
+    // Through the executor itself: the frames reach logMessage, and none reaches the status.
+    PartitionExecutor executor;
+    QSignalSpy progress(&executor, &PartitionExecutor::progressUpdated);
+    QSignalSpy logged(&executor, &PartitionExecutor::logMessage);
+    const auto resetObserver =
+        qScopeGuard([]() { PartitionExecutor::setBrokerRegisteredObserverForTesting({}); });
+    PartitionExecutor::setBrokerRegisteredObserverForTesting(
+        [](const std::shared_ptr<ElevationBroker>& broker) {
+            Q_EMIT broker->progressUpdated(
+                50,
+                QStringLiteral(
+                    "STDOUT|Candidate partition boot sector at byte offset 3238002688 (NTFS)\n"));
+            Q_EMIT broker->progressUpdated(5, QStringLiteral("Running"));
+            throw std::runtime_error("stop before the helper");
+        });
+    PartitionOperation operation;
+    operation.id = QStringLiteral("log-route");
+    operation.summary = QStringLiteral("log route");
+    PartitionScript script;
+    script.script = QStringLiteral("Write-Output 'not reached'");
+    try {
+        std::ignore = executor.executeElevatedScript(operation, script);
+    } catch (const std::runtime_error&) {}
+    QCOMPARE(logged.size(), 1);
+    QCOMPARE(logged.first().first().toString(),
+             QStringLiteral("Candidate partition boot sector at byte offset 3238002688 (NTFS)"));
+    QCOMPARE(progress.size(), 1);
+    QCOMPARE(progress.first().at(1).toString(), QStringLiteral("Running"));
 }
 
 void PartitionManagerCoreTests::partitionExecutor_exceptionClearsOwnedBroker() {

@@ -131,7 +131,9 @@ public:
         LARGE_INTEGER target{};
         target.QuadPart = pos;
         if (SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN) == 0) {
-            if (!writable_ || (pos % kRawAlignment) == 0) {
+            // A volume handle refuses a position off a sector boundary, read-only or not. The
+            // aligned start is set instead and readUnaligned/writeUnaligned cut out the bytes.
+            if ((pos % kRawAlignment) == 0) {
                 setErrorString(win32ErrorMessage(GetLastError()));
                 return false;
             }

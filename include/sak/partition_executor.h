@@ -41,6 +41,13 @@ public:
                                                         const QString& structured_error,
                                                         const QString& std_err,
                                                         int exit_code);
+    /// The helper streams a script's output as progress frames "STDOUT|<chunk>" and
+    /// "STDERR|<chunk>". Appends @p chunk's text to @p pending and returns the lines it
+    /// completed, leaving a partial last line in @p pending. Empty for any other frame, and
+    /// @p is_output says which it was.
+    [[nodiscard]] static QStringList completedOutputLines(const QString& frame,
+                                                          QString* pending,
+                                                          bool* is_output);
 
 #ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief Test-only: called with each broker right after an elevated operation registers
@@ -62,6 +69,10 @@ private:
     mutable std::mutex m_active_broker_mutex;
     std::shared_ptr<ElevationBroker> m_active_broker;
 
+    /// Pass the helper's progress on, and the script output it carries to logMessage.
+    void flushHelperOutput(const QString& pending_output);
+    [[nodiscard]] QMetaObject::Connection relayHelperProgress(
+        ElevationBroker* broker, const std::shared_ptr<QString>& pending_output);
     [[nodiscard]] PartitionExecutionStep executeOperation(const PartitionOperation& operation,
                                                           bool dry_run,
                                                           bool use_elevation);

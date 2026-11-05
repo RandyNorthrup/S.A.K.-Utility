@@ -27,6 +27,9 @@ namespace sak {
 namespace {
 
 constexpr uint64_t kExtSuperblockOffset = 1024;
+// A raw volume opened by Windows takes only seeks and reads on whole sectors. 4096 is a multiple
+// of every sector size in use, so a read is widened to it and the bytes asked for cut out.
+constexpr uint64_t kExtDeviceAlignment = 4096;
 constexpr qsizetype kExtSuperblockSize = 1024;
 constexpr qsizetype kExtMagicOffset = 0x38;
 constexpr qsizetype kExtInodesCountOffset = 0x0;
@@ -555,14 +558,27 @@ private:
         if (length < 0 || offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
             return std::nullopt;
         }
-        if (!m_device->seek(static_cast<qint64>(offset))) {
+        // Inode 2, the root directory, sits 256 bytes into its sector, so Browse of a real ext4
+        // partition failed "Unable to read ext inode" while Inspect, which reads only whole
+        // sectors, saw the file system fine. Widen every read to whole aligned blocks.
+        const uint64_t start = offset - (offset % kExtDeviceAlignment);
+        const uint64_t prefix = offset - start;
+        uint64_t end = 0;
+        if (!checkedAdd(offset, static_cast<uint64_t>(length), &end) ||
+            end > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) - kExtDeviceAlignment) {
             return std::nullopt;
         }
-        QByteArray bytes = m_device->read(length);
-        if (bytes.size() != length) {
+        const uint64_t rounded_end = ((end + kExtDeviceAlignment - 1) / kExtDeviceAlignment) *
+                                     kExtDeviceAlignment;
+        if (!m_device->seek(static_cast<qint64>(start))) {
             return std::nullopt;
         }
-        return bytes;
+        // The last block of an image file may be short; only the bytes asked for must be there.
+        const QByteArray window = m_device->read(static_cast<qint64>(rounded_end - start));
+        if (static_cast<uint64_t>(window.size()) < prefix + static_cast<uint64_t>(length)) {
+            return std::nullopt;
+        }
+        return window.mid(static_cast<qsizetype>(prefix), length);
     }
 
     [[nodiscard]] std::optional<QByteArray> readBlock(uint64_t blockNumber) {

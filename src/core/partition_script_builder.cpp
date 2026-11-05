@@ -5250,6 +5250,13 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
         commonHeader(out.preview) + bootSectorKindFunctionScript() +
         QStringLiteral(
             "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
+            // The partitions there now are not lost ones: the first "candidate" every scan
+            // reported was the disk's own first partition, at 16 MiB.
+            "$sakLive = @{}\n"
+            "try { $sakParts = @(Get-Partition -DiskNumber %1 -ErrorAction Stop) } catch { "
+            "if (\"$($_.FullyQualifiedErrorId)\" -notlike 'CmdletizationQuery_NotFound*') "
+            "{ throw }; $sakParts = @() }\n"
+            "foreach ($p in $sakParts) { $sakLive[[uint64]$p.Offset] = $p.PartitionNumber }\n"
             "$path = '\\\\.\\PhysicalDrive%1'\n"
             "$limit = [uint64]$disk.Size\n"
             "if (-not %2) { $limit = [Math]::Min([uint64]$disk.Size, [uint64]137438953472) }\n"
@@ -5262,7 +5269,10 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
             "    [void]$stream.Seek([int64]$offset, [System.IO.SeekOrigin]::Begin)\n"
             "    [void]$stream.Read($buffer, 0, $buffer.Length)\n"
             "    $kind = Get-SakBootSectorKind $buffer\n"
-            "    if ($kind) {\n"
+            "    if ($kind -and $sakLive.ContainsKey([uint64]$offset)) {\n"
+            "      Write-Output \"Partition $($sakLive[[uint64]$offset]) is at byte offset "
+            "$offset ($kind) and is not lost\"\n"
+            "    } elseif ($kind) {\n"
             "      Write-Output \"Candidate partition boot sector at byte offset $offset "
             "($kind)\"\n"
             "    }\n"
