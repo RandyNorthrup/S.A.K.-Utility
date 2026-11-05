@@ -59,6 +59,47 @@ bool isReparsePoint(const QString& path) {
     return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 
+// The hidden, system junctions Windows makes in every profile for programs written for Windows XP.
+// Each points at a folder of the same profile (Documents\My Music at Music) and holds nothing of
+// its own.
+const QStringList& windowsCompatibilityLinkNames() {
+    static const QStringList names = {QStringLiteral("My Music"),
+                                      QStringLiteral("My Pictures"),
+                                      QStringLiteral("My Videos"),
+                                      QStringLiteral("My Documents"),
+                                      QStringLiteral("Application Data"),
+                                      QStringLiteral("Cookies"),
+                                      QStringLiteral("History"),
+                                      QStringLiteral("Local Settings"),
+                                      QStringLiteral("NetHood"),
+                                      QStringLiteral("PrintHood"),
+                                      QStringLiteral("Recent"),
+                                      QStringLiteral("SendTo"),
+                                      QStringLiteral("Start Menu"),
+                                      QStringLiteral("Templates"),
+                                      QStringLiteral("Temporary Internet Files")};
+    return names;
+}
+
+// True for one of those junctions: a mount-point link, hidden and system, with one of their names.
+// A link of any other kind, or a plain one with the same name, is not one of them.
+bool isWindowsCompatibilityLink(const QString& path) {
+    const QString extended = UserProfileBackupWorker::extendedLengthPath(
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()));
+    WIN32_FIND_DATAW data{};
+    const HANDLE find = FindFirstFileW(extended.toStdWString().c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    FindClose(find);
+    constexpr DWORD kLinkAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
+                                      FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
+    return (data.dwFileAttributes & kLinkAttributes) == kLinkAttributes &&
+           data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT &&
+           windowsCompatibilityLinkNames().contains(QFileInfo(path).fileName(),
+                                                    Qt::CaseInsensitive);
+}
+
 // True if @p path resolves through a reparse point anywhere between @p root (inclusive) and the
 // leaf. mkpath would silently create the remainder INSIDE a planted junction: an attacker with
 // write access to the technician-chosen backup @p root can pre-plant e.g. <root>\<user> ->
@@ -493,8 +534,8 @@ void UserProfileBackupWorker::emitBackupSummary() {
             .arg(m_filesErrored)
             .arg(static_cast<double>(m_bytesCopied) / sak::kBytesPerMBf, 0, 'f', 1);
 
-    Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
-    Q_EMIT logMessage(summary, false);
+    // The outcome and the summary go to the wizard with backupComplete, and it logs them: logged
+    // here as well, each appeared twice, and "=== Backup Complete ===" stood over a failed run.
     if (m_verify) {
         Q_EMIT logMessage(
             tr("Checked %1 stored file(s) against their originals").arg(m_filesVerified), false);
@@ -679,6 +720,21 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
     return true;
 }
 
+bool UserProfileBackupWorker::skipWindowsCompatibilityLink(const QString& sourceItem) {
+    if (!isWindowsCompatibilityLink(sourceItem)) {
+        return false;
+    }
+    // Not followed, as no link is, and nothing is left out by that: the folder it points at is a
+    // folder of its own. Counted as an error, every profile's Documents\My Music, My Pictures and
+    // My Videos made every backup on every PC say "not everything was copied".
+    Q_EMIT logMessage(tr("Skipping %1: a link Windows makes in every profile for older programs, "
+                         "not a folder of its own")
+                          .arg(sourceItem),
+                      false);
+    ++m_filesSkipped;
+    return true;
+}
+
 void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
                                                  const QString& destDir,
                                                  const FolderSelection& folderConfig,
@@ -695,6 +751,9 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
     // directory one can loop back into the profile or point outside it (foreign/privileged data),
     // and a FILE symlink would pull the content of its target (e.g. a system file) into the backup.
     if (isReparsePoint(sourceItem)) {
+        if (skipWindowsCompatibilityLink(sourceItem)) {
+            return;
+        }
         // A reparse-point child is not followed, so it is not backed up. Count it as an error
         // rather than an untracked silent skip so the run cannot report a clean success while
         // omitting the linked subtree/file (B7-20).

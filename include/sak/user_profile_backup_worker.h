@@ -230,6 +230,9 @@ private:
                             const QString& destDir,
                             const FolderSelection& folderConfig,
                             int depth);
+    /// True, logged and counted as skipped, when @p sourceItem is a junction Windows makes in
+    /// every profile (Documents\My Music and the like).
+    bool skipWindowsCompatibilityLink(const QString& sourceItem);
     bool createDirectory(const QString& path);
 
     // Validation

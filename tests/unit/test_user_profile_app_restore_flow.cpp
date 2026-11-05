@@ -900,6 +900,15 @@ void UserProfileAppRestoreFlowTests::executePageRunsWhatTheWizardChose() {
     QVERIFY2(page->m_logEdit->toPlainText().contains(
                  QStringLiteral("Checked 1 stored file(s) against their originals")),
              qPrintable(page->m_logEdit->toPlainText()));
+    // The page and the worker both wrote the start and the outcome, so in the capture VM's log
+    // each appeared twice, and "=== Backup Complete ===" stood over "=== Backup Failed ===".
+    const QString log = page->m_logEdit->toPlainText();
+    for (const QString& once : {QStringLiteral("=== Backup Started ==="),
+                                QStringLiteral("Users to backup: 1"),
+                                QStringLiteral("=== Backup Complete ==="),
+                                QStringLiteral("Files copied: 1\n")}) {
+        QVERIFY2(log.count(once) == 1, qPrintable(once + QStringLiteral(" in\n") + log));
+    }
 
     const auto stored = sak::BackupManifest::loadFromFile(backup_path + "/manifest.json");
     QCOMPARE(stored.users.size(), 1);

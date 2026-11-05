@@ -8,12 +8,16 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include <atomic>
 #include <limits>
+#include <utility>
+
+#include <windows.h>
 
 using namespace sak;
 
@@ -44,6 +48,8 @@ private Q_SLOTS:
     // -- B7-20: incomplete backups must not report a clean success --
     void backupMissingSelectedFolderReportsFailure();
     void backupExistingFolderReportsSuccess();
+    void windowsCompatibilityLinkIsSkippedNotCounted();
+    void anyOtherLinkStillCountsAsAnError();
 
     // -- R5-G19-1: the transforms must actually be applied, not just accepted --
     void encryptedBackupStoresCiphertextAndRestoresIt();
@@ -81,7 +87,60 @@ private:
                                    const sak::FolderSelection& folder,
                                    const QString& destPath,
                                    const UserProfileBackupWorker::BackupOptions& options);
+    /// A Documents folder holding hello.txt and a junction @p link_name to the profile's Music
+    /// folder, hidden and system when @p windows_attributes, as Windows makes My Music.
+    static bool makeDocumentsWithLink(const QString& profile,
+                                      const QString& link_name,
+                                      bool windows_attributes);
+    static sak::FolderSelection documentsFolder();
 };
+
+namespace {
+bool makeJunction(const QString& link, const QString& target) {
+    // mklink /J needs no administrator rights. No console window: the test may run on a desktop.
+    QProcess mklink;
+    mklink.setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments* args) { args->flags |= CREATE_NO_WINDOW; });
+    mklink.start(QStringLiteral("cmd.exe"),
+                 {QStringLiteral("/d"),
+                  QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(link),
+                  QDir::toNativeSeparators(target)});
+    return mklink.waitForFinished() && mklink.exitStatus() == QProcess::NormalExit &&
+           mklink.exitCode() == 0;
+}
+}  // namespace
+
+bool TestUserProfileBackupWorker::makeDocumentsWithLink(const QString& profile,
+                                                        const QString& link_name,
+                                                        bool windows_attributes) {
+    const QDir root(profile);
+    if (!root.mkpath(QStringLiteral("Documents")) || !root.mkpath(QStringLiteral("Music"))) {
+        return false;
+    }
+    QFile hello(root.filePath(QStringLiteral("Documents/hello.txt")));
+    if (!hello.open(QIODevice::WriteOnly) || hello.write("hello") < 0) {
+        return false;
+    }
+    hello.close();
+    const QString link = root.filePath(QStringLiteral("Documents/") + link_name);
+    if (!makeJunction(link, root.filePath(QStringLiteral("Music")))) {
+        return false;
+    }
+    return !windows_attributes ||
+           SetFileAttributesW(QDir::toNativeSeparators(link).toStdWString().c_str(),
+                              FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != FALSE;
+}
+
+sak::FolderSelection TestUserProfileBackupWorker::documentsFolder() {
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    return folder;
+}
 
 TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
     UserProfileBackupWorker& worker,
@@ -162,6 +221,55 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
              QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
                             "Files skipped: 0\nSkipped (elevation required): 0\nErrors: 1\nTotal "
                             "size: 0.0 MB"));
+}
+
+// Windows makes Documents\My Music, My Pictures and My Videos in every profile: hidden, system
+// junctions to the profile's own folders. Counted as errors, every backup on every PC said "not
+// everything was copied" (the capture VM's: 12 errors, one for each of three links in four
+// profiles). Not followed, and not an error.
+void TestUserProfileBackupWorker::windowsCompatibilityLinkIsSkippedNotCounted() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(makeDocumentsWithLink(srcDir.path(), QStringLiteral("My Music"), true));
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    UserProfileBackupWorker worker;
+    QSignalSpy log(&worker, &UserProfileBackupWorker::logMessage);
+    const BackupRun run = runBackup(
+        worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(run.success, qPrintable(run.message));
+    QVERIFY(run.message.contains(QStringLiteral("Files copied: 1\nFiles skipped: 1\n")));
+    QVERIFY(run.message.contains(QStringLiteral("Errors: 0")));
+    bool said = false;
+    for (const auto& entry : log) {
+        said = said || entry.at(0).toString().contains(
+                           QStringLiteral("a link Windows makes in every profile"));
+    }
+    QVERIFY(said);
+    // Not followed: nothing of Music is in the backup.
+    QVERIFY(
+        !QFileInfo::exists(destParent.filePath(QStringLiteral("dest/tester/Documents/My Music"))));
+}
+
+// The same junction without Windows' attributes, or Windows' attributes on another name, is not
+// one of those links: it is refused and counted, as every link was (B7-20).
+void TestUserProfileBackupWorker::anyOtherLinkStillCountsAsAnError() {
+    for (const auto& [name, windows_attributes] : {std::pair{QStringLiteral("My Music"), false},
+                                                   std::pair{QStringLiteral("Linked"), true}}) {
+        QTemporaryDir srcDir;
+        QVERIFY(srcDir.isValid());
+        QVERIFY(makeDocumentsWithLink(srcDir.path(), name, windows_attributes));
+        QTemporaryDir destParent;
+        QVERIFY(destParent.isValid());
+        UserProfileBackupWorker worker;
+        const BackupRun run = runBackup(
+            worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+        QVERIFY2(run.completed, qPrintable(name));
+        QVERIFY2(!run.success, qPrintable(name));
+        QVERIFY2(run.message.contains(QStringLiteral("Errors: 1")), qPrintable(run.message));
+    }
 }
 
 void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {

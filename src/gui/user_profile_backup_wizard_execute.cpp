@@ -182,9 +182,8 @@ void UserProfileBackupExecutePage::onStartBackup() {
     m_startButton->setEnabled(false);
     m_statusLabel->setText(tr("Backup in progress..."));
 
-    appendLog(tr("=== Backup Started ==="));
-    appendLog(tr("Destination: %1").arg(m_destinationPath));
-    appendLog(tr("Users to backup: %1").arg(m_users.size()));
+    // The worker logs the start, the destination and the users. Written here too, each appeared
+    // twice. The outcome and its summary are this page's, below in onBackupComplete.
 
     // Get smart filter and permission mode from wizard
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
