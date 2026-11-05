@@ -864,7 +864,7 @@ void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs
     applyFilter();
     m_program_empty_state->clearLoading();
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Ready"), sak::kTimerStatusMessageMs);
     logMessage(QString("Found %1 installed programs.").arg(programs.size()));
 }
@@ -872,7 +872,7 @@ void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs
 void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
     m_program_empty_state->clearLoading();
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Enumeration failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Enumeration failed: %1").arg(error));
     sak::logError("Enumeration failed: {}", error.toStdString());
@@ -887,7 +887,7 @@ void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
 void AdvancedUninstallPanel::onEnumerationCancelled() {
     m_program_empty_state->clearLoading();
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Enumeration cancelled"), sak::kTimerStatusDefaultMs);
     logMessage("Program enumeration cancelled.");
 }
@@ -940,7 +940,7 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
     m_auto_cleanup_in_progress = false;
     m_auto_cleanup_failure_reported = false;
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
 
     QString result_str;
     switch (report.uninstallResult) {
@@ -981,7 +981,7 @@ void AdvancedUninstallPanel::onUninstallFailed(int error_code, const QString& er
     m_auto_cleanup_in_progress = false;
     m_auto_cleanup_failure_reported = false;
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Uninstall failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Uninstall failed (%1): %2").arg(error_code).arg(error));
     sak::logError("Uninstall failed ({}): {}", error_code, error.toStdString());
@@ -998,7 +998,7 @@ void AdvancedUninstallPanel::onUninstallCancelled() {
     m_auto_cleanup_in_progress = false;
     m_auto_cleanup_failure_reported = false;
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Uninstall cancelled"), sak::kTimerStatusDefaultMs);
     logMessage("Uninstall operation cancelled by user.");
 }
@@ -1042,7 +1042,7 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
     }
 
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     logMessage(msg);
 
@@ -1073,7 +1073,7 @@ void AdvancedUninstallPanel::onCleanupCancelled() {
     m_auto_cleanup_in_progress = false;
     m_auto_cleanup_failure_reported = false;
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Cleanup cancelled"), sak::kTimerStatusDefaultMs);
     logMessage("Cleanup cancelled.");
 }
@@ -1082,7 +1082,7 @@ void AdvancedUninstallPanel::onCleanupFailed(int error_code, const QString& erro
     m_auto_cleanup_failure_reported = m_auto_cleanup_in_progress;
     m_auto_cleanup_in_progress = false;
     setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
+    endStatusBarProgress();
     Q_EMIT statusMessage(tr("Cleanup failed"), sak::kTimerStatusDefaultMs);
     logMessage(tr("Cleanup failed (error %1): %2").arg(error_code).arg(error));
     sak::showWarningLogged(
@@ -1097,7 +1097,7 @@ void AdvancedUninstallPanel::onBatchFailed(const QString& error) {
     if (m_controller->currentState() == AdvancedUninstallController::State::Idle) {
         m_auto_cleanup_in_progress = false;
         setOperationRunning(false);
-        Q_EMIT progressUpdate(0, 1);
+        endStatusBarProgress();
     }
     m_auto_cleanup_failure_reported = false;
     Q_EMIT statusMessage(tr("Batch uninstall failed"), sak::kTimerStatusDefaultMs);
@@ -1682,6 +1682,13 @@ QString AdvancedUninstallPanel::totalSizeText(qint64 bytes) const {
 
 void AdvancedUninstallPanel::logMessage(const QString& message) {
     Q_EMIT logOutput(message);
+}
+
+void AdvancedUninstallPanel::endStatusBarProgress() {
+    // The work has ended, so the status bar's bar is told it reached its end and hides it. Each end
+    // used to send 0 of 1, which the status bar showed as a 0% bar beside "Ready" until the next
+    // operation.
+    Q_EMIT progressUpdate(1, 1);
 }
 
 void AdvancedUninstallPanel::setOperationRunning(bool running) {

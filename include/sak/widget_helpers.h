@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QString>
+#include <QStyledItemDelegate>
 #include <QTableView>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -119,12 +120,56 @@ inline QIcon tabIcon(const QString& path, int size) {
     return icon;
 }
 
+/// @brief Keeps the back arrow Qt makes for the Aero wizard frame hidden. Qt creates it with every
+///        wizard; under ModernStyle it still came up, greyed, in the top-left corner of the page,
+///        over the first letter of the title. A wizard here goes back with its own Back button.
+class AeroBackArrowHider final : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::Show) {
+            if (auto* arrow = qobject_cast<QWidget*>(watched)) {
+                // Queued: hiding a widget inside its own Show event leaves Qt's state half set.
+                QMetaObject::invokeMethod(arrow, &QWidget::hide, Qt::QueuedConnection);
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
 /// @brief One look for every wizard, in both themes. Left to the platform, a wizard took Windows'
 ///        Aero frame in light and fell back to the classic one, with "< Back" and "Next >", in
 ///        dark; the backup and restore wizards chose ModernStyle, so the Partition Manager wizards
 ///        looked different from them in light and from themselves in dark.
 inline void useAppWizardStyle(QWizard* wizard) {
     wizard->setWizardStyle(QWizard::ModernStyle);
+    for (QWidget* child : wizard->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+        if (child->inherits("QVistaBackButton")) {
+            child->hide();
+            child->installEventFilter(new AeroBackArrowHider(child));
+        }
+    }
+}
+
+/// @brief An item delegate that puts a cell widget in its whole cell. Qt places a cell widget in
+///        the item's text area, which the theme's 6 px item padding shrinks on every side, so an
+///        editor lost 12 px of a row sized for it and its text was cut through the middle.
+class WholeCellWidgetDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void updateEditorGeometry(QWidget* editor,
+                              const QStyleOptionViewItem& option,
+                              const QModelIndex& /*index*/) const override {
+        editor->setGeometry(option.rect);
+    }
+};
+
+/// @brief Gives @p view's cell widgets (setCellWidget, setItemWidget) their whole cells.
+inline void placeCellWidgetsInWholeCells(QAbstractItemView* view) {
+    view->setItemDelegate(new WholeCellWidgetDelegate(view));
 }
 
 /// @brief Sets @p item's text colour, or clears it back to the view's own when @p color is

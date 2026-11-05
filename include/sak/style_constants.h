@@ -58,6 +58,7 @@ constexpr int kToolButtonMenuIndicatorOffsetPx = -4;
 constexpr auto kButtonPaddingDefaultCss = "8px 20px";
 constexpr auto kButtonPaddingCompactCss = "8px 14px";
 constexpr auto kButtonPaddingSlimCss = "5px 14px";
+constexpr auto kButtonPaddingNoneCss = "0px";  ///< A button sized to one glyph
 
 // -- Common UI Dimensions ----------------------------------------------------
 
@@ -322,6 +323,18 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
 
         QDialog, QGroupBox {
             background-color: %4;
+        }
+
+        /* A prompt has room for what it asks for, such as an API key or a GUID, and its question
+           wraps instead of stretching the window across the screen. The field sets the width: a
+           window's own min-width does not reach a top-level dialog. */
+        QInputDialog QLineEdit, QInputDialog QComboBox, QInputDialog QSpinBox,
+        QInputDialog QDoubleSpinBox {
+            min-width: 400px;
+        }
+
+        QInputDialog QLabel {
+            qproperty-wordWrap: true;
         }
 
         QToolTip {
@@ -1352,6 +1365,11 @@ inline const QString kSecondaryButtonStyle = actionButtonStyle("QPushButton", kS
 inline const QString kCompactSecondaryButtonStyle =
     actionButtonStyle("QPushButton", kSecondaryButtonTone, false, kButtonPaddingSlimCss);
 
+/// Secondary button sized to a single glyph, such as a square previous or next arrow. On a 28 px
+/// button the default 8px 20px padding left no room for the arrow, and it drew blank.
+inline const QString kGlyphSecondaryButtonStyle =
+    actionButtonStyle("QPushButton", kSecondaryButtonTone, false, kButtonPaddingNoneCss);
+
 /// Success action button -- green gradient, uniform with theme QPushButton.
 inline const QString kSuccessButtonStyle = actionButtonStyle("QPushButton", kSuccessButtonTone);
 
@@ -1996,8 +2014,9 @@ inline QString sectionLabelStyle(const char* color = kColorTextHeading, int marg
     return style;
 }
 
-inline QString checkboxColorStyle(const QString& color) {
-    return QStringLiteral("QCheckBox { color: %1; }").arg(color);
+/// A check box's text in @p color, or in that token's dark-theme value when the dark theme is on.
+inline QString checkboxColorStyle(const char* color) {
+    return QStringLiteral("QCheckBox { color: %1; }").arg(cssColor(color));
 }
 
 inline QString calendarEventTableStyle() {

@@ -153,7 +153,8 @@ void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* main_layout) {
     auto* save_group = new QGroupBox("Save Location", this);
     auto* save_layout = new QHBoxLayout(save_group);
 
-    m_saveLocationEdit = new QLineEdit(getDefaultSavePath(), save_group);
+    // Backslashes, as Windows writes a path (UI review S21).
+    m_saveLocationEdit = new QLineEdit(QDir::toNativeSeparators(getDefaultSavePath()), save_group);
     m_saveLocationEdit->setAccessibleName(tr("Save location"));
     save_layout->addWidget(m_saveLocationEdit);
 

@@ -107,99 +107,99 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">AI Assistant</div>
     <ul>
-        <li><b>Codex-style Technician Chat</b> &mdash; Prompt/result transcript, session picker, rename/new chat controls, prompt history, context chips, and expandable run details</li>
-        <li><b>OpenAI Integration</b> &mdash; User-supplied API key with encrypted app-local storage, model selection, Responses API conversation state, web citations, and token usage tracking</li>
-        <li><b>Context &amp; Instructions</b> &mdash; Attach screenshots, documents, and Markdown instruction files to the active session without cross-session artifact pollution</li>
-        <li><b>PC Actions</b> &mdash; PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, package-manager actions, and offline downloader actions with approval gates and cancellation</li>
-        <li><b>Multi-Agent Workflows</b> &mdash; Overseer-led workflow execution with specialized subagents, shared session memory, progress tracking, recovery policy, verification, cleanup, and human handoff</li>
-        <li><b>Technician Workflow Library</b> &mdash; Health checks, drive diagnostics, Windows Update repair, network repair, BSOD triage, printer troubleshooting, startup triage, malware removal, cleanup, bloatware/adware removal, offline installers, deployment bundles, clean uninstall, and service reports</li>
-        <li><b>Reports &amp; Artifacts</b> &mdash; Manual HTML/Markdown/text reports generated from the actual session transcript, findings, actions, evidence, verification, and remaining recommendations</li>
+        <li><b>Codex-style Technician Chat</b> - Prompt/result transcript, session picker, rename/new chat controls, prompt history, context chips, and expandable run details</li>
+        <li><b>OpenAI Integration</b> - User-supplied API key with encrypted app-local storage, model selection, Responses API conversation state, web citations, and token usage tracking</li>
+        <li><b>Context &amp; Instructions</b> - Attach screenshots, documents, and Markdown instruction files to the active session without cross-session artifact pollution</li>
+        <li><b>PC Actions</b> - PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, package-manager actions, and offline downloader actions with approval gates and cancellation</li>
+        <li><b>Multi-Agent Workflows</b> - Overseer-led workflow execution with specialized subagents, shared session memory, progress tracking, recovery policy, verification, cleanup, and human handoff</li>
+        <li><b>Technician Workflow Library</b> - Health checks, drive diagnostics, Windows Update repair, network repair, BSOD triage, printer troubleshooting, startup triage, malware removal, cleanup, bloatware/adware removal, offline installers, deployment bundles, clean uninstall, and service reports</li>
+        <li><b>Reports &amp; Artifacts</b> - Manual HTML/Markdown/text reports generated from the actual session transcript, findings, actions, evidence, verification, and remaining recommendations</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Migration &amp; Backup</div>
     <ul>
-        <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling. The backup records which installed applications have a known Chocolatey package, and the restore offers to reinstall them</li>
-        <li><b>Quick Tools</b> &mdash; One-click Screenshot Settings capture and BitLocker Key Backup integrated directly into the panel</li>
+        <li><b>User Profile Backup &amp; Restore</b> - Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling. The backup records which installed applications have a known Chocolatey package, and the restore offers to reinstall them</li>
+        <li><b>Quick Tools</b> - One-click Screenshot Settings capture and BitLocker Key Backup integrated directly into the panel</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Diagnostics &amp; Benchmarking</div>
     <ul>
-        <li><b>Hardware Inventory</b> &mdash; CPU, memory, storage, GPU, and OS details</li>
-        <li><b>SMART Disk Health</b> &mdash; Drive health, temperature, power-on hours, and attribute monitoring via bundled smartmontools</li>
-        <li><b>Benchmarks</b> &mdash; CPU (single/multi-thread), disk (sequential &amp; random I/O), memory (bandwidth &amp; latency)</li>
-        <li><b>Stress Testing</b> &mdash; CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
-        <li><b>System Maintenance</b> &mdash; Optimize Power Settings, Verify System Files, Check Disk Errors, and System Inventory Report</li>
-        <li><b>Report Export</b> &mdash; HTML, JSON, and CSV reports</li>
+        <li><b>Hardware Inventory</b> - CPU, memory, storage, GPU, and OS details</li>
+        <li><b>SMART Disk Health</b> - Drive health, temperature, power-on hours, and attribute monitoring via bundled smartmontools</li>
+        <li><b>Benchmarks</b> - CPU (single/multi-thread), disk (sequential &amp; random I/O), memory (bandwidth &amp; latency)</li>
+        <li><b>Stress Testing</b> - CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
+        <li><b>System Maintenance</b> - Optimize Power Settings, Verify System Files, Check Disk Errors, and System Inventory Report</li>
+        <li><b>Report Export</b> - HTML, JSON, and CSV reports</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Partition Manager</div>
     <ul>
-        <li><b>Disk Workspace</b> &mdash; Lazy storage inventory, proportional disk map, partition table, right-click actions, pending queue, dry run, and before/after Apply review</li>
-        <li><b>Queued Operations</b> &mdash; Create, delete, format, resize, move start, merge, split, clone, image, restore, label, drive-letter, type ID, active flag, hide/unhide, wipe, initialize, delete-all, and boot repair flows</li>
-        <li><b>Commercial-Parity Utilities</b> &mdash; Quick Partition, Extend Partition, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD erase (TRIM + overwrite), Data Recovery, OS migration, and Make Bootable Media</li>
-        <li><b>Destructive Safety</b> &mdash; Off-volume backup, typed confirmations, system/boot/removable/media guards, script preview, elevated execution, restore verification, SHA-256 manifest comparison, and repair scans where mutation requires rebuild</li>
-        <li><b>Testing</b> &mdash; Partition Manager has not yet been tested through the app on real hardware. Back up first.</li>
+        <li><b>Disk Workspace</b> - Lazy storage inventory, proportional disk map, partition table, right-click actions, pending queue, dry run, and before/after Apply review</li>
+        <li><b>Queued Operations</b> - Create, delete, format, resize, move start, merge, split, clone, image, restore, label, drive-letter, type ID, active flag, hide/unhide, wipe, initialize, delete-all, and boot repair flows</li>
+        <li><b>Commercial-Parity Utilities</b> - Quick Partition, Extend Partition, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD erase (TRIM + overwrite), Data Recovery, OS migration, and Make Bootable Media</li>
+        <li><b>Destructive Safety</b> - Off-volume backup, typed confirmations, system/boot/removable/media guards, script preview, elevated execution, restore verification, SHA-256 manifest comparison, and repair scans where mutation requires rebuild</li>
+        <li><b>Testing</b> - Partition Manager has not yet been tested through the app on real hardware. Back up first.</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">File Management</div>
     <ul>
-        <li><b>File Organizer</b> &mdash; Organize files by type with preview mode, customizable categories, and collision handling</li>
-        <li><b>Duplicate Finder</b> &mdash; Content-based hash detection with parallel hashing and configurable minimum-size filtering</li>
-        <li><b>Advanced Search</b> &mdash; Grep-style file content search with regex, binary/hex, image metadata, archive, and file metadata modes</li>
+        <li><b>File Organizer</b> - Organize files by type with preview mode, customizable categories, and collision handling</li>
+        <li><b>Duplicate Finder</b> - Content-based hash detection with parallel hashing and configurable minimum-size filtering</li>
+        <li><b>Advanced Search</b> - Grep-style file content search with regex, binary/hex, image metadata, archive, and file metadata modes</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Application Management</div>
     <ul>
-        <li><b>App Installation</b> &mdash; Search Chocolatey packages, build an install queue from presets or saved lists, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
-        <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, and recycle bin support</li>
-        <li><b>Vulnerability Scanner</b> &mdash; Check installed apps against CISA KEV, or look up one package in CISA KEV, NVD, GitHub Security Advisories, and OSV, with patch guidance and CSV/JSON export</li>
+        <li><b>App Installation</b> - Search Chocolatey packages, build an install queue from presets or saved lists, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
+        <li><b>Advanced Uninstall</b> - Deep application removal with leftover scanning, registry snapshot diffs, and recycle bin support</li>
+        <li><b>Vulnerability Scanner</b> - Check installed apps against CISA KEV, or look up one package in CISA KEV, NVD, GitHub Security Advisories, and OSV, with patch guidance and CSV/JSON export</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Imaging</div>
     <ul>
-        <li><b>Image Flasher</b> &mdash; Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
-        <li><b>Windows ISO Download</b> &mdash; Build Windows ISOs from Microsoft UUP payloads through the UUP Dump API and bundled UUP-to-ISO tooling</li>
-        <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Fedora, Debian, Arch, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
+        <li><b>Image Flasher</b> - Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
+        <li><b>Windows ISO Download</b> - Build Windows ISOs from Microsoft UUP payloads through the UUP Dump API and bundled UUP-to-ISO tooling</li>
+        <li><b>Linux ISO Download</b> - Built-in distro catalog (Ubuntu, Fedora, Debian, Arch, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Network Management</div>
     <ul>
-        <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, network share browser, and HTML or JSON reports</li>
-        <li><b>Network Adapters</b> &mdash; Adapter inspector with configuration backup and restore across machines, plus one-click Reset Network Settings</li>
-        <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
+        <li><b>Network Diagnostics</b> - Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, network share browser, and HTML or JSON reports</li>
+        <li><b>Network Adapters</b> - Adapter inspector with configuration backup and restore across machines, plus one-click Reset Network Settings</li>
+        <li><b>WiFi Manager</b> - QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
 </div>
 
 <div class="section">
     <div class="section-title">Email &amp; Data Forensics</div>
     <ul>
-        <li><b>PST/OST/MBOX Email Tools</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
-        <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with checkbox export to HTML, TXT, EML, PDF, ICS, VCF, and CSV formats</li>
-        <li><b>Contacts Browser</b> &mdash; Searchable address book with sortable columns and export to VCF or CSV</li>
-        <li><b>Calendar Viewer</b> &mdash; Month, week, and day views with event details and export to ICS or CSV</li>
-        <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
-        <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
-        <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
-        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to MBOX with deleted item recovery</li>
+        <li><b>PST/OST/MBOX Email Tools</b> - Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
+        <li><b>Email Search &amp; Export</b> - Full-text search across thousands of items with checkbox export to HTML, TXT, EML, PDF, ICS, VCF, and CSV formats</li>
+        <li><b>Contacts Browser</b> - Searchable address book with sortable columns and export to VCF or CSV</li>
+        <li><b>Calendar Viewer</b> - Month, week, and day views with event details and export to ICS or CSV</li>
+        <li><b>Attachments Browser</b> - Scan all emails for attachments with type filtering, search, and batch extraction</li>
+        <li><b>Email Profile Manager</b> - Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
+        <li><b>Orphaned File Discovery</b> - Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
+        <li><b>OST/PST Converter</b> - Multi-threaded bulk conversion to MBOX with deleted item recovery</li>
     </ul>
 </div>
 
 <div class="footer">
-    Portable ZIP &mdash; no installer required. AI sessions and credentials stay app-local.<br/>
+    Portable ZIP - no installer required. AI sessions and credentials stay app-local.<br/>
     <a href="https://github.com/RandyNorthrup/S.A.K.-Utility">GitHub</a> &middot; AGPL-3.0 license
 </div>
 )SAKABOUT";
@@ -231,55 +231,55 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 <h3>Third-Party Components</h3>
 
 <div class="dep">
-    <b><a href="https://www.qt.io/">Qt Framework 6.12</a></b> &mdash; LGPL v3<br/>
+    <b><a href="https://www.qt.io/">Qt Framework 6.12</a></b> - LGPL v3<br/>
     <span class="desc">GUI framework, threading, networking, resources, and application infrastructure</span>
 </div>
 <div class="dep">
-    <b><a href="https://www.nayuki.io/page/qr-code-generator-library">qrcodegen</a></b> &mdash; MIT (Project Nayuki)<br/>
+    <b><a href="https://www.nayuki.io/page/qr-code-generator-library">qrcodegen</a></b> - MIT (Project Nayuki)<br/>
     <span class="desc">QR code generation (bundled source)</span>
 </div>
 <div class="dep">
-    <b><a href="https://www.smartmontools.org/">smartmontools</a></b> &mdash; GPLv2<br/>
+    <b><a href="https://www.smartmontools.org/">smartmontools</a></b> - GPLv2<br/>
     <span class="desc">SMART disk health analysis (bundled smartctl)</span>
 </div>
 <div class="dep">
-    <b><a href="https://chocolatey.org/">Chocolatey</a></b> &mdash; Apache 2.0<br/>
+    <b><a href="https://chocolatey.org/">Chocolatey</a></b> - Apache 2.0<br/>
     <span class="desc">Windows package manager for application migration</span>
 </div>
 <div class="dep">
-    <b><a href="https://aria2.github.io/">aria2</a></b> &mdash; GPLv2<br/>
+    <b><a href="https://aria2.github.io/">aria2</a></b> - GPLv2<br/>
     <span class="desc">Multi-connection download manager for ISO downloads</span>
 </div>
 <div class="dep">
-    <b><a href="https://github.com/OSTooling/UUPMediaCreator">UUPMediaCreator</a></b> &mdash; MIT (OSTooling)<br/>
+    <b><a href="https://github.com/OSTooling/UUPMediaCreator">UUPMediaCreator</a></b> - MIT (OSTooling)<br/>
     <span class="desc">UUP-to-ISO converter (patched build, AppX provisioning skipped)</span>
 </div>
 <div class="dep">
-    <b><a href="https://wimlib.net/">wimlib / libwim</a></b> &mdash; LGPL v2.1+ (Eric Biggers)<br/>
+    <b><a href="https://wimlib.net/">wimlib / libwim</a></b> - LGPL v2.1+ (Eric Biggers)<br/>
     <span class="desc">WIM image library (bundled with UUPMediaConverter)</span>
 </div>
 <div class="dep">
-    <b><a href="https://iperf.fr/">iPerf3</a></b> &mdash; BSD 3-Clause<br/>
+    <b><a href="https://iperf.fr/">iPerf3</a></b> - BSD 3-Clause<br/>
     <span class="desc">LAN bandwidth testing (bundled iperf3.exe)</span>
 </div>
 <div class="dep">
-    <b><a href="https://icons8.com/">Icons8</a></b> &mdash; Icons8 Free License<br/>
+    <b><a href="https://icons8.com/">Icons8</a></b> - Icons8 Free License<br/>
     <span class="desc">Windows 11 Filled (Fluent) SVG icons with attribution</span>
 </div>
 <div class="dep">
-    <b><a href="https://www.zlib.net/">zlib</a></b> &mdash; zlib License<br/>
+    <b><a href="https://www.zlib.net/">zlib</a></b> - zlib License<br/>
     <span class="desc">gzip compression</span>
 </div>
 <div class="dep">
-    <b><a href="https://sourceware.org/bzip2/">bzip2</a></b> &mdash; BSD-style<br/>
+    <b><a href="https://sourceware.org/bzip2/">bzip2</a></b> - BSD-style<br/>
     <span class="desc">bzip2 compression</span>
 </div>
 <div class="dep">
-    <b><a href="https://tukaani.org/xz/">XZ Utils / liblzma</a></b> &mdash; 0BSD / Public Domain<br/>
+    <b><a href="https://tukaani.org/xz/">XZ Utils / liblzma</a></b> - 0BSD / Public Domain<br/>
     <span class="desc">LZMA compression</span>
 </div>
 <div class="dep">
-    <b>Windows BCrypt API</b> &mdash; OS component<br/>
+    <b>Windows BCrypt API</b> - OS component<br/>
     <span class="desc">AES-256 encryption, PBKDF2, and SHA-256 through Windows cryptography APIs</span>
 </div>
 
@@ -919,6 +919,7 @@ void MainWindow::createFileManagementPanel() {
         logger::instance().flush();
     }
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
+    clearStatusWhenSubTabChanges(m_organizer_panel->tabWidget());
     if (isStartupSmokeMode()) {
         logDebug("MainWindow startup: Advanced Search inner tab attached");
         logger::instance().flush();
@@ -1005,6 +1006,7 @@ void MainWindow::createEmailToolsPanel() {
     email_tabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
     email_layout->addWidget(email_tabs, 1);
     addWrapperLogFooter(email_wrapper, email_layout);
+    clearStatusWhenSubTabChanges(email_tabs);
 
     connect(email_tabs, &QTabWidget::currentChanged, this, [email_hdr](int index) {
         struct TabMeta {
@@ -1075,6 +1077,7 @@ void MainWindow::createAppManagementPanel() {
     m_application_tabs = app_tabs;
     app_mgmt_layout->addWidget(app_tabs, 1);
     addWrapperLogFooter(app_mgmt_wrapper, app_mgmt_layout);
+    clearStatusWhenSubTabChanges(app_tabs);
     // Insert empty tab shells first; adding fully populated panels to a tab
     // widget synchronously polishes their entire descendant tree.
     QWidget* app_install_shell = addEmptyPanelTab(app_tabs, tr("App Installation"));
@@ -1176,6 +1179,7 @@ void MainWindow::createNetworkManagementPanel() {
     net_tabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
     net_tabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
     net_mgmt_layout->addWidget(net_tabs, 1);
+    clearStatusWhenSubTabChanges(net_tabs);
     addWrapperLogFooter(net_mgmt_wrapper, net_mgmt_layout);
 
     connect(net_tabs, &QTabWidget::currentChanged, this, [net_hdr](int index) {
@@ -1213,6 +1217,23 @@ void MainWindow::createNetworkManagementPanel() {
                       "Network Management",
                       kTooltipNetworkManagement,
                       ":/icons/icons/panel_network.svg");
+}
+
+void MainWindow::clearTabStatus() {
+    statusBar()->clearMessage();
+    if (m_status_label != nullptr) {
+        m_status_label->setText(tr("Ready"));
+    }
+}
+
+void MainWindow::clearStatusWhenSubTabChanges(QTabWidget* sub_tabs) {
+    // "Explorer loaded 6 item(s)" stayed on File Organizer and "2 adapters found" on LAN
+    // Transfer (UI re-check S22).
+    connect(sub_tabs, &QTabWidget::currentChanged, this, [this]() {
+        if (!m_shutting_down) {
+            clearTabStatus();
+        }
+    });
 }
 
 void MainWindow::addWrapperLogFooter(QWidget* wrapper, QVBoxLayout* layout) {
@@ -1877,10 +1898,7 @@ void MainWindow::onTabChanged(int index) {
     updateAiStatusBarVisibility();
 #endif
     // A message belongs to the tab that sent it: "Explorer loaded 6 item(s)" stayed on Help.
-    statusBar()->clearMessage();
-    if (m_status_label != nullptr) {
-        m_status_label->setText(tr("Ready"));
-    }
+    clearTabStatus();
     if (m_logWindow == nullptr) {
         return;
     }

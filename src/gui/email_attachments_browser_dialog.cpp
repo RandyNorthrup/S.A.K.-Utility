@@ -173,6 +173,8 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table->setColumnWidth(ColType, email::kTypeColumnWidth);
     m_table->setColumnWidth(ColSourceSubject, email::kAttachmentSourceSubjectColumnWidth);
     m_table->setColumnWidth(ColSourceSender, email::kAttachmentSourceSenderColumnWidth);
+    // The Select column's fixed width cut its header to "Selec" (UI re-check N4).
+    fitHeaderLabels(m_table);
 
     connect(m_table,
             &QTableWidget::itemSelectionChanged,

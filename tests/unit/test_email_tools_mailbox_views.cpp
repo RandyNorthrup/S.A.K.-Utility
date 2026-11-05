@@ -22,6 +22,7 @@
 #include "../support/recurrence_blob.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QDirIterator>
@@ -42,6 +43,9 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QtTest/QtTest>
+
+#include <algorithm>
+#include <cmath>
 
 using namespace sak::pst_fixture;
 
@@ -1265,6 +1269,53 @@ private Q_SLOTS:
         }
         // A day cell is about 120 x 100 px; today's circle is a few hundred pixels.
         QVERIFY2(blue < 2000, qPrintable(QStringLiteral("%1 px of the month are blue").arg(blue)));
+    }
+
+    // UI re-check S12: the status filters were named in the events' border shades, "Free" at
+    // 3.24:1 and "Tentative" at 3.13:1 on the light page. Each reads at 4.5:1 in both themes.
+    void calendarStatusFiltersReadInBothThemes() {
+        const auto luminance = [](const QColor& color) {
+            const auto linear = [](double c) {
+                return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+            };
+            return (0.2126 * linear(color.redF())) + (0.7152 * linear(color.greenF())) +
+                   (0.0722 * linear(color.blueF()));
+        };
+        const auto contrast = [&luminance](const QColor& a, const QColor& b) {
+            const double la = luminance(a);
+            const double lb = luminance(b);
+            return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+        };
+        QStringList faint;
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            EmailInspectorController controller;
+            sak::EmailCalendarDialog dialog(&controller, {});
+            dialog.resize(900, 700);
+            dialog.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+            for (QCheckBox* filter : dialog.findChildren<QCheckBox*>()) {
+                if (!filter->accessibleName().startsWith(QStringLiteral("Show "))) {
+                    continue;
+                }
+                // The colour the style sheet gives the label, against what the dialog paints behind
+                // it. Antialiased strokes of thin text never reach their full colour in a picture.
+                // Behind the label: what the dialog paints just left of the box, in the sidebar's
+                // margin. Its own panel is transparent and grabs black.
+                const QImage image = dialog.grab().toImage();
+                const QColor ground =
+                    image.pixelColor(filter->mapTo(&dialog, QPoint(-2, filter->height() / 2)));
+                const QColor text = filter->palette().color(QPalette::WindowText);
+                const double best = contrast(text, ground);
+                if (best < 4.5) {
+                    faint << QStringLiteral("%1 %2 on %3 %4:1")
+                                 .arg(filter->text(), text.name(), ground.name())
+                                 .arg(best, 0, 'f', 2);
+                }
+            }
+        }
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+        QVERIFY2(faint.isEmpty(), qPrintable(faint.join(QStringLiteral(", "))));
     }
 
     // Dark review DF1, DF2: the month's cells and the week's work hours were white under the dark

@@ -14,6 +14,7 @@
 #include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/view_empty_state.h"
+#include "sak/widget_helpers.h"
 #include "sak/windows_user_scanner.h"
 
 #include <QApplication>
@@ -158,6 +159,9 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_mappingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
+    // The destination and merge-mode combos are cell widgets: in the padded text area they were
+    // 17 px tall and cut their text (UI re-check N2).
+    sak::placeCellWidgetsInWholeCells(m_mappingTable);
     layout->addWidget(m_mappingTable);
     // Designed empty/loading overlay (R5-G20-7). The destination-user scan in
     // initializePage() fills this table, so it carries a loading state.

@@ -301,6 +301,7 @@ void LinuxISODownloadDialog::populateDistroList() {
     m_selectedDistroId.clear();
     m_saveLocationEdit->clear();
     m_saveLocationEdit->setPlaceholderText("Select a distribution first...");
+    m_statusLabel->setText("Select a distribution to download.");
     updateStartButton();
 }
 
@@ -324,8 +325,11 @@ void LinuxISODownloadDialog::onDistroSelected() {
     // file is called here does not matter to the checksum, which goes by the upstream name.
     Q_ASSERT(m_saveLocationEdit);
     const QString file_name = m_downloader->catalog()->resolveFileName(distro);
-    m_saveLocationEdit->setText(
-        getDefaultSavePath(file_name.isEmpty() ? distro.id + QStringLiteral(".iso") : file_name));
+    // Backslashes, as Windows writes a path (UI review S21).
+    m_saveLocationEdit->setText(QDir::toNativeSeparators(
+        getDefaultSavePath(file_name.isEmpty() ? distro.id + QStringLiteral(".iso") : file_name)));
+    // The selection is ready to download; the prompt to select one stayed (UI re-check N11).
+    m_statusLabel->setText(tr("Ready to download %1.").arg(distro.name));
 
     updateStartButton();
 }
@@ -381,7 +385,7 @@ void LinuxISODownloadDialog::onBrowseSaveLocation() {
 
     if (!file_path.isEmpty()) {
         Q_ASSERT(m_saveLocationEdit);
-        m_saveLocationEdit->setText(file_path);
+        m_saveLocationEdit->setText(QDir::toNativeSeparators(file_path));
     }
 }
 

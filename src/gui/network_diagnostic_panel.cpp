@@ -3505,14 +3505,13 @@ void NetworkDiagnosticPanel::onTracerouteComplete(TracerouteResult result) {
     m_traceStopBtn->setEnabled(false);
     m_traceEmptyState->clearLoading();
 
-    QString status;
-    if (result.reachedTarget) {
-        status = QStringLiteral("Reached %1 in %2 hops").arg(result.target).arg(result.hops.size());
-    } else {
-        status = QStringLiteral("Could not reach %1 (%2 hops)")
-                     .arg(result.target)
-                     .arg(result.hops.size());
-    }
+    // "1 hop", not "1 hops" (UI re-check S24).
+    const QString hops = sak::countOf(static_cast<int>(result.hops.size()),
+                                      QStringLiteral("hop"),
+                                      QStringLiteral("hops"));
+    const QString status = result.reachedTarget
+                               ? QStringLiteral("Reached %1 in %2").arg(result.target, hops)
+                               : QStringLiteral("Could not reach %1 (%2)").arg(result.target, hops);
     m_traceStatusLabel->setText(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
 }

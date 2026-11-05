@@ -60,6 +60,7 @@
 #include <QWizard>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -87,6 +88,13 @@ private Q_SLOTS:
     void tableRowsFollowTheDiskAndCarryItsSize();
     void nonNativeFilesystemActionsExposeReadOnlyHfsCheck();
     void partitionOperationsScrollInsideGroup();
+    // UI re-check R2 and R3.
+    void sizePreviewLabelsReadOnTheirFill();
+    void wizardReviewTextIsNotCutOff();
+    void manageBitLockerOffersOnlyTheActionThatApplies();
+    void resizePreviewShowsEveryRow();
+    void wipeAcknowledgementsShareOneIndent();
+    void wizardsTitleEveryPageInTheHeader();
     void diskMapLegendContainsCommercialColorRoles();
     void diskMapLegendColorsMatchRenderedRoles();
     void unallocatedRoleUsesDarkGrayPalette();
@@ -200,6 +208,21 @@ constexpr int kHorizontalMarginCount = 2;
 constexpr int kRenderedSegmentFillLightness = 160;
 constexpr int kRenderedSegmentUsedDarkness = 118;
 constexpr int kModalWatchdogMs = 1500;
+constexpr double kWcagTextContrast = 4.5;
+
+/// WCAG 2 contrast ratio between two colours, 1 to 21.
+double wcagContrast(const QColor& first, const QColor& second) {
+    const auto luminance = [](const QColor& color) {
+        const auto linear = [](double channel) {
+            return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+        };
+        return (0.2126 * linear(color.redF())) + (0.7152 * linear(color.greenF())) +
+               (0.0722 * linear(color.blueF()));
+    };
+    const double a = luminance(first);
+    const double b = luminance(second);
+    return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
+}
 
 class ScopedModalInspection {
 public:
@@ -2659,9 +2682,19 @@ void PartitionManagerPanelTests::applyPreviewUsesTheMapColoursAndReadableLabels(
     data.size_bytes = 300;
     disk.partitions.append(data);
     disk.unallocated_regions.append({sak::DiskNumber{0}, 300, 700});
+    // A new partition is drawn in the full partition colour, the case where white read 3.3:1.
+    sak::PartitionOperation create;
+    create.type = sak::PartitionOperationType::Create;
+    create.target.kind = sak::PartitionTargetKind::Unallocated;
+    create.target.disk_number = disk.disk_number;
+    create.target.offset_bytes = 300;
+    create.payload.insert(QStringLiteral("size_bytes"), QStringLiteral("200"));
     for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
         sak::ui::applyWindows11Theme(*qApp, mode);
-        const QJsonArray segments = sak::partitionApplyPreviewSegmentsForTest(disk, {});
+        QJsonArray segments = sak::partitionApplyPreviewSegmentsForTest(disk, {});
+        for (const auto& changed : sak::partitionApplyPreviewSegmentsForTest(disk, {create})) {
+            segments.append(changed);
+        }
         QVERIFY(!segments.isEmpty());
         for (const auto& value : segments) {
             const QJsonObject segment = value.toObject();
@@ -2670,8 +2703,11 @@ void PartitionManagerPanelTests::applyPreviewUsesTheMapColoursAndReadableLabels(
                      qPrintable(color));
             const QColor fill(segment.value(QStringLiteral("fill")).toString());
             const QColor label(segment.value(QStringLiteral("label_color")).toString());
-            QVERIFY2(qAbs(fill.lightness() - label.lightness()) >= 100,
-                     qPrintable(QStringLiteral("label %1 on %2").arg(label.name(), fill.name())));
+            // WCAG AA for text. A lightness gap alone passed white on the blue fill at 3.3:1.
+            QVERIFY2(wcagContrast(fill, label) >= kWcagTextContrast,
+                     qPrintable(QStringLiteral("label %1 on %2: %3:1")
+                                    .arg(label.name(), fill.name())
+                                    .arg(wcagContrast(fill, label), 0, 'f', 2)));
         }
     }
     sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
@@ -3353,6 +3389,205 @@ void PartitionManagerPanelTests::everyWizardUsesTheAppsWizardStyle() {
                                 .arg(QString::fromLatin1(opening.slot))
                                 .arg(int(style))));
     }
+}
+
+// UI re-check R3. Qt makes a back arrow for the Aero frame with every wizard, and under ModernStyle
+// it still came up over the first letter of the title. A page with no subtitle put its title in
+// the page, at another indent than the backup and restore wizards' header titles.
+void PartitionManagerPanelTests::wizardsTitleEveryPageInTheHeader() {
+    const QList<std::pair<const char*, int>> openings = {{"onCloneDisk", 0},
+                                                         {"onMigrateOs", 0},
+                                                         {"onCopyPartitionWizard", 1},
+                                                         {"onPartitionRecoveryWizard", 0}};
+    const QList<sak::PartitionInventory> inventories = {imageSourceMappingInventory(),
+                                                        migrationInventoryFixture(512 *
+                                                                                  kMigrationGiB),
+                                                        modalTargetBindingInventoryFixture(),
+                                                        applyReviewInventoryFixture()};
+    for (int index = 0; index < openings.size(); ++index) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(inventories.at(index));
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        table->selectRow(openings.at(index).second);
+        QStringList wrong;
+        bool inspected = false;
+        const ScopedModalInspection inspection([&]() {
+            auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(wizard);
+            if (wizard == nullptr) {
+                return;
+            }
+            inspected = true;
+            for (const int id : wizard->pageIds()) {
+                if (wizard->page(id)->subTitle().isEmpty()) {
+                    wrong << QStringLiteral("page \"%1\" has no subtitle")
+                                 .arg(wizard->page(id)->title());
+                }
+            }
+            // The Aero arrow itself is not created offscreen, so only a real window shows it; the
+            // capture in the VM is the check of that half.
+            wizard->reject();
+        });
+        QVERIFY(QMetaObject::invokeMethod(&panel, openings.at(index).first, Qt::DirectConnection));
+        QVERIFY2(inspected, openings.at(index).first);
+        QVERIFY2(wrong.isEmpty(),
+                 qPrintable(QString::fromLatin1(openings.at(index).first) + QStringLiteral(": ") +
+                            wrong.join(QStringLiteral("; "))));
+    }
+}
+
+// UI review F8 and round 8: the migrate review's text ran past the page, cutting "...on the
+// target. Allow" and the "Blocked:" reason under it. Every line of it can be read.
+void PartitionManagerPanelTests::wizardReviewTextIsNotCutOff() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(100 * kMigrationGiB));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    QString problem = QStringLiteral("not inspected");
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        if (wizard == nullptr) {
+            return;
+        }
+        while (wizard->currentPage() != nullptr && !wizard->currentPage()->isFinalPage() &&
+               wizard->nextId() != -1) {
+            wizard->next();
+        }
+        QCoreApplication::processEvents();
+        QLabel* review = nullptr;
+        for (QLabel* label : wizard->currentPage()->findChildren<QLabel*>()) {
+            if (label->accessibleDescription() == QStringLiteral("Wizard review")) {
+                review = label;
+            }
+        }
+        if (review == nullptr) {
+            problem = QStringLiteral("no review text on the last page");
+        } else {
+            const int needed = review->heightForWidth(review->width());
+            problem = review->height() >= needed && review->text().contains(QStringLiteral("Allow"))
+                          ? QString()
+                          : QStringLiteral("review %1 px tall, its text needs %2: %3")
+                                .arg(review->height())
+                                .arg(needed)
+                                .arg(review->text());
+        }
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onMigrateOs", Qt::DirectConnection));
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
+}
+
+// UI review F7: the resize preview's third row, "Max online", ran past the preview's 82 px.
+void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    int height = -1;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QCoreApplication::processEvents();
+        if (auto* preview =
+                dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
+            height = preview->height();
+        }
+        dialog->reject();
+    });
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    QVERIFY(resize != nullptr);
+    pressAction(resize);
+    // Three rows of 24 px, 6 px between them, 8 px above and below.
+    constexpr int kThreeRows = (3 * kOperationSizePreviewRowHeight) + (2 * 6) + (2 * 8);
+    QVERIFY2(height >= kThreeRows, qPrintable(QStringLiteral("preview %1 px").arg(height)));
+}
+
+// UI review F43: the wipe dialogs' acknowledgements started 60 px and 21 px from the edge.
+void PartitionManagerPanelTests::wipeAcknowledgementsShareOneIndent() {
+    const auto confirmIndent = [](int row, const QString& confirm_name) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(applyReviewInventoryFixture());
+        auto* table = panel.findChild<QTableWidget*>();
+        table->selectRow(row);
+        QApplication::processEvents();
+        int indent = -1;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            if (dialog == nullptr) {
+                return;
+            }
+            QCoreApplication::processEvents();
+            if (auto* confirm = findAccessibleWidget<QCheckBox>(dialog, confirm_name)) {
+                indent = confirm->mapTo(dialog, QPoint(0, 0)).x();
+            }
+            dialog->reject();
+        });
+        QMetaObject::invokeMethod(&panel, "onWipeSelected", Qt::DirectConnection);
+        return indent;
+    };
+    const int disk = confirmIndent(0, QStringLiteral("Confirm wipe disk"));
+    const int partition = confirmIndent(1, QStringLiteral("Confirm wipe partition"));
+    QVERIFY2(disk >= 0 && partition >= 0,
+             qPrintable(QStringLiteral("%1 %2").arg(disk).arg(partition)));
+    QCOMPARE(disk, partition);
+}
+
+// UI re-check R2: the darkened success and warning fills left the size preview's dark label at
+// 3.5:1. Over the fill the label takes the colour that reads on it.
+void PartitionManagerPanelTests::sizePreviewLabelsReadOnTheirFill() {
+    sak::PartitionManagerPanel panel;
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition Manager table should exist");
+    addUnallocatedTestSelection(table);
+    double best = 0.0;
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        auto* size = findAccessibleWidget<QSpinBox>(dialog, QStringLiteral("Partition size"));
+        auto* preview =
+            dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"));
+        if (size != nullptr && preview != nullptr) {
+            size->setValue(size->maximum());  // the whole free space, so the label sits on fill
+            QApplication::processEvents();
+            const QImage image = preview->grab().toImage();
+            const QColor fill(QString::fromLatin1(sak::ui::kColorSuccess));
+            QRect filled;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    if (image.pixelColor(x, y) == fill) {
+                        filled |= QRect(x, y, 1, 1);
+                    }
+                }
+            }
+            // The text's own pixels: the most contrasting colour well inside the fill, away from
+            // its edges and the drag handles at either end.
+            constexpr int kAwayFromEdges = 12;
+            const QRect inside = filled.adjusted(kAwayFromEdges, 2, -kAwayFromEdges, -2);
+            for (int y = inside.top(); y <= inside.bottom(); ++y) {
+                for (int x = inside.left(); x <= inside.right(); ++x) {
+                    best = std::max(best, wcagContrast(image.pixelColor(x, y), fill));
+                }
+            }
+            inspected = !inside.isEmpty();
+        }
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCreatePartition", Qt::DirectConnection));
+    QVERIFY(inspected);
+    QVERIFY2(best >= kWcagTextContrast,
+             qPrintable(QStringLiteral("label on the fill at %1:1").arg(best, 0, 'f', 2)));
 }
 
 void PartitionManagerPanelTests::migrationWizardQueuesItsPlanAndTheChoice() {
@@ -4351,6 +4586,72 @@ void PartitionManagerPanelTests::manageBitLockerReadsWhatAStandardScanCannot() {
     pressAction(button);
     QTRY_VERIFY_WITH_TIMEOUT(!protection.isEmpty(), 10'000);
     QCOMPARE(elevated_scans, 1);
+}
+
+// Round 8: a protected volume offered Suspend and Resume together. Only the action that applies
+// is offered: Suspend while protection is on, Resume while it is suspended, Unlock while locked.
+void PartitionManagerPanelTests::manageBitLockerOffersOnlyTheActionThatApplies() {
+    struct Case {
+        const char* name;
+        bool enabled;
+        bool encrypted;
+        bool locked;
+        bool unlock;
+        bool suspend;
+        bool resume;
+        const char* protection;
+    };
+    const QList<Case> cases = {
+        {"protected", true, true, false, false, true, false, "Protection on"},
+        {"suspended", false, true, false, false, false, true, "Protection suspended"},
+        {"locked", true, true, true, true, false, false, "Protection on"},
+    };
+    for (const Case& state : cases) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        auto& volume = *inventory.disks[0].partitions[0].volume;
+        volume.bitlocker_state_known = true;
+        volume.bitlocker_enabled = state.enabled;
+        volume.bitlocker_encrypted = state.encrypted;
+        volume.bitlocker_locked = state.locked;
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Manage BitLocker"));
+        QVERIFY(button != nullptr);
+        QString seen;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            if (dialog == nullptr) {
+                return;
+            }
+            const auto enabled = [dialog](const char* name) {
+                auto* action = findAccessibleWidget<QPushButton>(dialog, QString::fromLatin1(name));
+                return action != nullptr && action->isEnabled();
+            };
+            auto* status =
+                dialog->findChild<QTableWidget*>(QStringLiteral("partitionBitLockerStatusTable"));
+            seen = QStringLiteral("unlock=%1 suspend=%2 resume=%3 protection=%4")
+                       .arg(enabled("Queue BitLocker unlock"))
+                       .arg(enabled("Queue BitLocker suspend"))
+                       .arg(enabled("Queue BitLocker resume"))
+                       .arg(status != nullptr
+                                ? propertyTableValue(status, QStringLiteral("Protection"))
+                                : QString());
+            dialog->reject();
+        });
+        pressAction(button);
+        const QString expected = QStringLiteral("unlock=%1 suspend=%2 resume=%3 protection=%4")
+                                     .arg(state.unlock)
+                                     .arg(state.suspend)
+                                     .arg(state.resume)
+                                     .arg(QString::fromLatin1(state.protection));
+        QVERIFY2(seen == expected,
+                 qPrintable(QStringLiteral("%1: %2, expected %3")
+                                .arg(QString::fromLatin1(state.name), seen, expected)));
+    }
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {

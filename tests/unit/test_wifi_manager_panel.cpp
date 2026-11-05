@@ -6,6 +6,7 @@
 
 #include "sak/wifi_manager_panel.h"
 
+#include <QHeaderView>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QtTest/QtTest>
@@ -16,6 +17,7 @@ class WifiManagerPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void savedNetworksShowNoRowNumbers();
     void normalSsidProducesScript();
     void percentSsidIsDoubled();
     void ampersandSsidIsCaretEscaped();
@@ -166,6 +168,19 @@ void WifiManagerPanelTests::deleteSelectedNeedsASelectedRow() {
     QVERIFY(remove->isEnabled());
     table->clearSelection();
     QVERIFY(!remove->isEnabled());
+}
+
+// UI review F42: only this table showed row numbers, "1", "2", beside its rows.
+void WifiManagerPanelTests::savedNetworksShowNoRowNumbers() {
+    WifiManagerPanel panel;
+    QTableWidget* table = nullptr;
+    for (QTableWidget* candidate : panel.findChildren<QTableWidget*>()) {
+        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+            table = candidate;
+        }
+    }
+    QVERIFY(table != nullptr);
+    QVERIFY(table->verticalHeader()->isHidden());
 }
 
 QTEST_MAIN(WifiManagerPanelTests)

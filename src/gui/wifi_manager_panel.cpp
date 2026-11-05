@@ -449,6 +449,10 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
     m_network_table->setAlternatingRowColors(true);
     m_network_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_network_table->setToolTip("Double-click a row to load it into the form");
+    // No row numbers: no other table here shows them (UI review F42). The password cell is a
+    // widget, and gets its whole cell.
+    m_network_table->verticalHeader()->setVisible(false);
+    sak::placeCellWidgetsInWholeCells(m_network_table);
     layout->addWidget(m_network_table, 1);
 }
 

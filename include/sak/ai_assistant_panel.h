@@ -768,7 +768,6 @@ private:
     // False when the resource did not reach the context (missing, unreadable, empty),
     // so the caller can refuse to announce a half-attached workflow as added.
     [[nodiscard]] bool addWorkflowResourceContext(const QString& resource_path,
-                                                  const QString& label_prefix,
                                                   ContextItem::Type type);
     void refreshTraceStoreForSession();
     void startAiRunTrace(const QString& message,

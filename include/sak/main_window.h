@@ -143,6 +143,10 @@ private:
     void createNetworkManagementPanel();
     /// A wrapper's one Log switch, under its sub-tabs (addLogFooter), wired to the log window.
     void addWrapperLogFooter(QWidget* wrapper, QVBoxLayout* layout);
+    /// A status message belongs to the sub-tab that sent it, as it does to a tab.
+    void clearStatusWhenSubTabChanges(QTabWidget* sub_tabs);
+    /// Clears the status bar's message and says Ready.
+    void clearTabStatus();
     void connectLogToggle(LogToggleSwitch* toggle);
 
     /// @brief Create the About information panel tab

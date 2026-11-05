@@ -13,6 +13,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -45,6 +46,7 @@ private Q_SLOTS:
     void addToBatchTicksTheProgramsRow();
     void ticksSurviveTheSearchText();
     void aProvisionedPackageSaysWhatItIs();
+    void aFinishedRefreshLeavesNoProgressBar();
 };
 
 // The batch is built from the ticked rows. Add to Batch Queue once wrote to a separate queue, which
@@ -173,6 +175,18 @@ void AdvancedUninstallPanelTests::remoteInstallFolderOffersNoMeasurement() {
     panel.addInstallFolderSizeRow(program, &dialog, form);
     QVERIFY(measureButton(&dialog) == nullptr);
     QCOMPARE(form->rowCount(), 0);
+}
+
+// UI re-check N5: after Refresh the status bar kept a 0% bar beside "Ready": each end sent 0 of 1.
+// An end is its maximum, which the status bar shows briefly and hides.
+void AdvancedUninstallPanelTests::aFinishedRefreshLeavesNoProgressBar() {
+    sak::AdvancedUninstallPanel panel;
+    QSignalSpy progress(&panel, &sak::AdvancedUninstallPanel::progressUpdate);
+    panel.onEnumerationFinished({});
+    QVERIFY(!progress.isEmpty());
+    const QList<QVariant> last = progress.last();
+    QVERIFY(last.at(1).toInt() > 0);
+    QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
 }
 
 QTEST_MAIN(AdvancedUninstallPanelTests)

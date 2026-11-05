@@ -1070,19 +1070,19 @@ void EmailCalendarDialog::setupFilterSection(QVBoxLayout* layout) {
     m_filter_free = new QCheckBox(tr("\u2B24 Free"), this);
     m_filter_free->setChecked(true);
     m_filter_free->setAccessibleName(tr("Show free calendar events"));
-    m_filter_free->setStyleSheet(ui::checkboxColorStyle(email::kCalColorFreeBorder));
+    m_filter_free->setStyleSheet(ui::checkboxColorStyle(ui::kColorSuccess));
     m_filter_tentative = new QCheckBox(tr("\u2B24 Tentative"), this);
     m_filter_tentative->setChecked(true);
     m_filter_tentative->setAccessibleName(tr("Show tentative calendar events"));
-    m_filter_tentative->setStyleSheet(ui::checkboxColorStyle(email::kCalColorTentativeBorder));
+    m_filter_tentative->setStyleSheet(ui::checkboxColorStyle(ui::kStatusColorWarning));
     m_filter_busy = new QCheckBox(tr("\u2B24 Busy"), this);
     m_filter_busy->setChecked(true);
     m_filter_busy->setAccessibleName(tr("Show busy calendar events"));
-    m_filter_busy->setStyleSheet(ui::checkboxColorStyle(email::kCalColorBusyBorder));
+    m_filter_busy->setStyleSheet(ui::checkboxColorStyle(ui::kStatusColorRunning));
     m_filter_oof = new QCheckBox(tr("\u2B24 Out of Office"), this);
     m_filter_oof->setChecked(true);
     m_filter_oof->setAccessibleName(tr("Show out of office calendar events"));
-    m_filter_oof->setStyleSheet(ui::checkboxColorStyle(email::kCalColorOofBorder));
+    m_filter_oof->setStyleSheet(ui::checkboxColorStyle(ui::kColorAccentPurple));
 
     for (auto* cb : {m_filter_free, m_filter_tentative, m_filter_busy, m_filter_oof}) {
         layout->addWidget(cb);

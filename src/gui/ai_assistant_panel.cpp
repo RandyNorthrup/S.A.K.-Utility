@@ -4610,6 +4610,9 @@ void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer
 void AiAssistantPanel::setupComposerContextList(QVBoxLayout* layout, QWidget* composer) {
     m_contextList = new QListWidget(composer);
     m_contextList->setObjectName(QStringLiteral("aiContextChips"));
+    // Each chip is an item widget; in the padded text area it sat 6 px low and its row was cut by
+    // the buttons under the list (UI re-check N3).
+    sak::placeCellWidgetsInWholeCells(m_contextList);
     m_contextList->setViewMode(QListView::IconMode);
     m_contextList->setFlow(QListView::LeftToRight);
     m_contextList->setWrapping(true);
@@ -5471,13 +5474,12 @@ void AiAssistantPanel::applyWorkflowTemplate(const ai::WorkflowTemplate& workflo
 
     QStringList missing_resources;
     for (const auto& instruction : workflow.instructions) {
-        if (!addWorkflowResourceContext(
-                instruction, tr("Instruction"), ContextItem::Type::Instruction)) {
+        if (!addWorkflowResourceContext(instruction, ContextItem::Type::Instruction)) {
             missing_resources << instruction;
         }
     }
     for (const auto& skill : workflow.skills) {
-        if (!addWorkflowResourceContext(skill, tr("Skill"), ContextItem::Type::Skill)) {
+        if (!addWorkflowResourceContext(skill, ContextItem::Type::Skill)) {
             missing_resources << skill;
         }
     }
@@ -5522,7 +5524,6 @@ void AiAssistantPanel::addWorkflowContextChip(const ai::WorkflowTemplate& workfl
 // Returns false when the named resource did not make it into the context, so the caller
 // can refuse to announce a half-attached workflow as added.
 bool AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
-                                                  const QString& label_prefix,
                                                   ContextItem::Type type) {
     QString path = resource_path.trimmed();
     if (path.isEmpty()) {
@@ -5556,7 +5557,9 @@ bool AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
     const QString file_name = path.section(QLatin1Char('/'), -1);
     ContextItem item;
     item.type = type;
-    item.display_name = QStringLiteral("%1 - %2").arg(label_prefix, file_name);
+    // The file's own name: the chip already names the kind, and a "Instruction - " prefix here
+    // read "Instruction: Instruction - evidence_policy.md" (UI re-check N3).
+    item.display_name = file_name;
     item.path = path;
     item.mime_type = QStringLiteral("text/markdown");
     item.text = text;

@@ -5,8 +5,10 @@
 #include "sak/email_inspector_controller.h"
 
 #include <QApplication>
+#include <QHeaderView>
 #include <QLabel>
 #include <QSignalSpy>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -14,6 +16,7 @@ class EmailAttachmentsBrowserDialogTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void everyHeaderFitsItsColumn();
     void controllerNoFileFailuresCarryRequestIdentity();
     void parserFolderErrorRestoresRequestIdentity();
     void parserItemErrorRestoresRequestIdentity();
@@ -206,6 +209,20 @@ void EmailAttachmentsBrowserDialogTests::specificAndGenericSaveErrorsCountOnce()
     QVERIFY(!dialog.m_batch_save.isActive());
     QCOMPARE(dialog.m_status_label->text(),
              QStringLiteral("Saved 1 of 2 attachment(s) (1 failed)"));
+}
+
+// UI re-check N4: the Select column's fixed width cut its header to "Selec".
+void EmailAttachmentsBrowserDialogTests::everyHeaderFitsItsColumn() {
+    EmailInspectorController controller;
+    sak::EmailAttachmentsBrowserDialog dialog(&controller, {});
+    QHeaderView* header = dialog.m_table->horizontalHeader();
+    for (int section = 0; section + 1 < header->count(); ++section) {
+        QVERIFY2(header->sectionSize(section) >= header->sectionSizeHint(section),
+                 qPrintable(QStringLiteral("column %1: %2 px, header needs %3")
+                                .arg(section)
+                                .arg(header->sectionSize(section))
+                                .arg(header->sectionSizeHint(section))));
+    }
 }
 
 QTEST_MAIN(EmailAttachmentsBrowserDialogTests)

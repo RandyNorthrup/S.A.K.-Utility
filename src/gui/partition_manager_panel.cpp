@@ -104,6 +104,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -199,7 +200,7 @@ constexpr int kDiskMapRowSpacing = 2;
 constexpr int kDiskMapSegmentSpacing = 2;
 constexpr int kDiskMapRowInnerMargin = 1;
 constexpr int kDiskMapRowRadius = 8;
-constexpr int kPendingQueueMinHeight = 92;
+constexpr int kPendingQueueMinHeight = 64;
 constexpr int kPartitionTableRowHeight = 30;
 constexpr int kPartitionProgressMax = 100;
 constexpr int kDiskMapStretchScale = 1000;
@@ -215,8 +216,8 @@ constexpr int kPartitionSegmentSelectedBorderWidth = 3;
 constexpr int kPartitionSegmentLabelTopPad = 4;
 constexpr int kPartitionLegendSwatchRadius = 2;
 constexpr int kTableDiskSeparatorWidth = 1;
-constexpr int kWorkspaceInitialTableHeight = 360;
-constexpr int kWorkspaceInitialMapHeight = 240;
+constexpr int kWorkspaceInitialTableHeight = 320;
+constexpr int kWorkspaceInitialMapHeight = 280;
 constexpr int kOperationDialogMinWidth = 460;
 constexpr int kApplyReviewDialogMinWidth = 620;
 constexpr int kApplyReviewDialogMinHeight = 420;
@@ -382,9 +383,35 @@ template <typename Value>
     if (volume == nullptr || bitLockerMountPoint(volume).isEmpty()) {
         return false;
     }
-    // A scan without administrator rights cannot say, and Apply reads it before it acts.
-    return (volume->bitlocker_state_known && volume->bitlocker_enabled) ||
+    // A scan without administrator rights cannot say, and Apply reads it before it acts. A volume
+    // whose protection is suspended is still BitLocker's, and Resume is what it needs.
+    return (volume->bitlocker_state_known &&
+            (volume->bitlocker_enabled || volume->bitlocker_encrypted)) ||
            volume->administrator_state_pending;
+}
+
+/// The BitLocker actions that apply to a volume as it was read. Each was enabled whatever the
+/// volume's state, so a protected volume offered Suspend and Resume together.
+struct BitLockerActions {
+    bool unlock{false};
+    bool suspend{false};
+    bool resume{false};
+};
+
+[[nodiscard]] BitLockerActions bitLockerActionsFor(const PartitionVolumeInfo* volume) {
+    if (!bitLockerVolumeCanQueue(volume)) {
+        return {};
+    }
+    if (!volume->bitlocker_state_known) {
+        // Not read: the administrator read was declined or failed. Apply reads it in the helper
+        // before it acts, so this offers what it always did for an unlocked volume.
+        return {.suspend = true, .resume = true};
+    }
+    if (volume->bitlocker_locked) {
+        return {.unlock = true};
+    }
+    return {.suspend = volume->bitlocker_enabled,
+            .resume = !volume->bitlocker_enabled && volume->bitlocker_encrypted};
 }
 
 const QColor kPartitionColorGptPrimary{42, 151, 207};
@@ -1742,13 +1769,57 @@ private:
     QColor m_color;
 };
 
-/// Text that reads on @p fill: dark on a light segment, white on a dark one. The palette's text
-/// colour was white on the pale free-space fill in dark, and vanished.
+/// WCAG 2 relative luminance of @p color.
+double relativeLuminance(const QColor& color) {
+    constexpr double kLinearThreshold = 0.04045;
+    constexpr double kLinearDivisor = 12.92;
+    constexpr double kGammaOffset = 0.055;
+    constexpr double kGammaScale = 1.055;
+    constexpr double kGammaExponent = 2.4;
+    constexpr double kRedWeight = 0.2126;
+    constexpr double kGreenWeight = 0.7152;
+    constexpr double kBlueWeight = 0.0722;
+    const auto linear = [](double channel) {
+        return channel <= kLinearThreshold
+                   ? channel / kLinearDivisor
+                   : std::pow((channel + kGammaOffset) / kGammaScale, kGammaExponent);
+    };
+    return (kRedWeight * linear(color.redF())) + (kGreenWeight * linear(color.greenF())) +
+           (kBlueWeight * linear(color.blueF()));
+}
+
+/// WCAG 2 contrast ratio between two colours, 1 to 21.
+double contrastRatio(const QColor& first, const QColor& second) {
+    constexpr double kFlare = 0.05;
+    const double a = relativeLuminance(first);
+    const double b = relativeLuminance(second);
+    return (std::max(a, b) + kFlare) / (std::min(a, b) + kFlare);
+}
+
+/// Text that reads on @p fill: whichever of the dark text and white contrasts more with it. The
+/// palette's text colour was white on the pale free-space fill in dark, and vanished, and a fixed
+/// lightness cut-off put dark text on the darkened green and orange fills at 3.5:1.
 QColor segmentLabelColor(const QColor& fill) {
-    constexpr int kLightFillThreshold = 150;
-    return fill.lightness() >= kLightFillThreshold
-               ? QColor(QString::fromLatin1(ui::kColorTextPrimary))
-               : QColor(QString::fromLatin1(ui::kColorButtonTextOnTone));
+    const QColor dark(QString::fromLatin1(ui::kColorTextPrimary));
+    const QColor light(QString::fromLatin1(ui::kColorButtonTextOnTone));
+    return contrastRatio(dark, fill) >= contrastRatio(light, fill) ? dark : light;
+}
+
+/// @p fill, darkened only as far as white text on it needs for WCAG AA, when neither the dark
+/// text nor white reaches it as it is. A mid grey, the lightened unallocated shade, fails both.
+QColor readableSegmentFill(const QColor& fill) {
+    constexpr double kTextContrast = 4.5;
+    constexpr int kDarkerStepPercent = 102;
+    constexpr int kMaxDarkerSteps = 64;
+    const QColor dark(QString::fromLatin1(ui::kColorTextPrimary));
+    const QColor light(QString::fromLatin1(ui::kColorButtonTextOnTone));
+    QColor adjusted = fill;
+    for (int step = 0; step < kMaxDarkerSteps && contrastRatio(dark, adjusted) < kTextContrast &&
+                       contrastRatio(light, adjusted) < kTextContrast;
+         ++step) {
+        adjusted = adjusted.darker(kDarkerStepPercent);
+    }
+    return adjusted;
 }
 
 struct PartitionSegmentSpec {
@@ -2175,7 +2246,9 @@ private:
         if (rect.width() <= 0) {
             return;
         }
-        painter->fillRect(rect, segment.color.lighter(kPartitionSegmentFillLightness));
+        const QColor fill =
+            readableSegmentFill(segment.color.lighter(kPartitionSegmentFillLightness));
+        painter->fillRect(rect, fill);
         if (segment.used_percent > 0) {
             QRect used = rect;
             used.setWidth(scaledExtent(
@@ -2184,7 +2257,7 @@ private:
         }
         const QString text =
             painter->fontMetrics().elidedText(segment.label, Qt::ElideRight, rect.width());
-        painter->setPen(segmentLabelColor(segment.color.lighter(kPartitionSegmentFillLightness)));
+        painter->setPen(segmentLabelColor(fill));
         painter->drawText(rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
                           Qt::AlignCenter,
                           text);
@@ -2215,8 +2288,8 @@ struct ApplyDiffSegmentPaint {
 };
 
 [[nodiscard]] ApplyDiffSegmentPaint applyDiffSegmentPaint(const ApplyDiffSegment& segment) {
-    const QColor fill = segment.changed ? segment.color
-                                        : segment.color.lighter(kPartitionSegmentFillLightness);
+    const QColor fill = readableSegmentFill(
+        segment.changed ? segment.color : segment.color.lighter(kPartitionSegmentFillLightness));
     return {.fill = fill, .label = segmentLabelColor(fill)};
 }
 
@@ -2999,6 +3072,12 @@ public:
 
     void setRows(QVector<SizePreviewRow> rows) {
         m_rows = std::move(rows);
+        // Tall enough for every row: the resize preview's third row, "Max online", ran past the
+        // 82 px the widget kept and was cut (UI review F7).
+        const auto count = static_cast<int>(m_rows.size());
+        const int rows_height = (ui::kMarginSmall * 2) + (count * kOperationSizePreviewRowHeight) +
+                                (std::max(0, count - 1) * ui::kSpacingSmall);
+        setMinimumHeight(std::max(kOperationSizePreviewMinHeight, rows_height));
         update();
     }
 
@@ -3105,11 +3184,27 @@ private:
         drawInteractiveHandles(painter, row_index, row, track);
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawRect(track);
+        drawRowText(painter, row, track, filled.intersected(track));
+    }
+
+    /// The row's text, coloured for what is under each part of it: the fill's own label colour
+    /// over the fill, the palette's text colour over the empty track. One colour for both left a
+    /// dark label on the darkened green and orange fills, at 3.5:1.
+    void drawRowText(QPainter* painter,
+                     const SizePreviewRow& row,
+                     const QRect& track,
+                     const QRect& filled) {
+        const QRect text_rect = track.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0);
+        const QString text =
+            painter->fontMetrics().elidedText(row.text, Qt::ElideRight, track.width());
+        painter->save();
+        painter->setClipRegion(QRegion(track).subtracted(QRegion(filled)));
         painter->setPen(palette().color(QPalette::Text));
-        painter->drawText(
-            track.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
-            Qt::AlignCenter,
-            painter->fontMetrics().elidedText(row.text, Qt::ElideRight, track.width()));
+        painter->drawText(text_rect, Qt::AlignCenter, text);
+        painter->setClipRect(filled);
+        painter->setPen(segmentLabelColor(row.fill_color));
+        painter->drawText(text_rect, Qt::AlignCenter, text);
+        painter->restore();
     }
 
     void drawInteractiveHandles(QPainter* painter,
@@ -5107,6 +5202,9 @@ QTableWidget* createQuickPartitionTable(QWidget* parent) {
     table->setSelectionMode(QAbstractItemView::NoSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setAccessibleName(QObject::tr("Quick partition labels and sizes"));
+    // The label and size editors are cell widgets: in the padded text area they were cut through
+    // the middle (UI review F4).
+    placeCellWidgetsInWholeCells(table);
     return table;
 }
 
@@ -6950,7 +7048,11 @@ QString bitLockerProtectionText(const PartitionVolumeInfo* volume) {
                    ? QObject::tr("Unknown")
                    : QObject::tr("Unknown (%1)").arg(volume->bitlocker_state_error.trimmed());
     }
-    return volume->bitlocker_enabled ? QObject::tr("Protection on") : QObject::tr("Protection off");
+    if (volume->bitlocker_enabled) {
+        return QObject::tr("Protection on");
+    }
+    return volume->bitlocker_encrypted ? QObject::tr("Protection suspended")
+                                       : QObject::tr("Protection off");
 }
 
 QString bitLockerLockText(const PartitionVolumeInfo* volume) {
@@ -7076,8 +7178,7 @@ void connectBitLockerUtilityButtons(QDialog* dialog,
 BitLockerDialogAction showBitLockerDialog(QWidget* parent,
                                           const QVector<PropertyRow>& rows,
                                           const QStringList& command_lines,
-                                          bool can_manage,
-                                          bool locked) {
+                                          const BitLockerActions& actions) {
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("partitionBitLockerDialog"));
     dialog.setWindowTitle(QObject::tr("Manage BitLocker"));
@@ -7095,11 +7196,11 @@ BitLockerDialogAction showBitLockerDialog(QWidget* parent,
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     BitLockerDialogAction selected_action = BitLockerDialogAction::None;
-    if (can_manage) {
+    if (actions.unlock || actions.suspend || actions.resume) {
         auto* unlock_button = buttons->addButton(QObject::tr("Queue Unlock"),
                                                  QDialogButtonBox::ActionRole);
         unlock_button->setAccessibleName(QObject::tr("Queue BitLocker unlock"));
-        unlock_button->setEnabled(locked);
+        unlock_button->setEnabled(actions.unlock);
         QObject::connect(unlock_button, &QPushButton::clicked, [&]() {
             selected_action = BitLockerDialogAction::Unlock;
             dialog.accept();
@@ -7108,7 +7209,7 @@ BitLockerDialogAction showBitLockerDialog(QWidget* parent,
         auto* suspend_button = buttons->addButton(QObject::tr("Queue Suspend"),
                                                   QDialogButtonBox::ActionRole);
         suspend_button->setAccessibleName(QObject::tr("Queue BitLocker suspend"));
-        suspend_button->setEnabled(!locked);
+        suspend_button->setEnabled(actions.suspend);
         QObject::connect(suspend_button, &QPushButton::clicked, [&]() {
             selected_action = BitLockerDialogAction::Suspend;
             dialog.accept();
@@ -7117,7 +7218,7 @@ BitLockerDialogAction showBitLockerDialog(QWidget* parent,
         auto* resume_button = buttons->addButton(QObject::tr("Queue Resume"),
                                                  QDialogButtonBox::ActionRole);
         resume_button->setAccessibleName(QObject::tr("Queue BitLocker resume"));
-        resume_button->setEnabled(!locked);
+        resume_button->setEnabled(actions.resume);
         QObject::connect(resume_button, &QPushButton::clicked, [&]() {
             selected_action = BitLockerDialogAction::Resume;
             dialog.accept();
@@ -7950,9 +8051,27 @@ struct RecoveryWizardWidgets {
     QLabel* review{nullptr};
 };
 
+/// The plan a wizard's last page shows, in a scroll area that takes the page's free height. A bare
+/// label was held below the height its wrapped text needs once the plan grew a line, and the end
+/// of the plan, the "Allow" choice or a "Blocked:" reason, was cut off.
+QLabel* addWizardReviewText(QWizardPage* page, QVBoxLayout* layout) {
+    auto* scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* review = new QLabel(scroll);
+    review->setWordWrap(true);
+    review->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    review->setAccessibleDescription(QStringLiteral("Wizard review"));
+    scroll->setWidget(review);
+    layout->addWidget(scroll, 1);
+    return review;
+}
+
 void addSourcePage(QWizard* wizard, const QString& title, const QString& source_text) {
     auto* page = new QWizardPage(wizard);
     page->setTitle(title);
+    page->setSubTitle(QStringLiteral("What the wizard copies from."));
     auto* layout = new QVBoxLayout(page);
     auto* source = new QLabel(source_text, page);
     source->setWordWrap(true);
@@ -8033,6 +8152,7 @@ void addDiskTargetPage(QWizard* wizard,
                        DiskCopyWizardWidgets* widgets) {
     auto* target_page = new QWizardPage(wizard);
     target_page->setTitle(QStringLiteral("Target Disk"));
+    target_page->setSubTitle(QStringLiteral("Choose the disk the copy is written to."));
     auto* target_layout = new QFormLayout(target_page);
     const PartitionDiskInfo* source = findWizardDisk(*config.inventory, config.source_disk);
     const uint64_t source_bytes = sourceDiskSize(*config.inventory, config.source_disk);
@@ -8057,6 +8177,7 @@ void addDiskOptionsPage(QWizard* wizard,
                         DiskCopyWizardWidgets* widgets) {
     auto* options_page = new QWizardPage(wizard);
     options_page->setTitle(QStringLiteral("Options"));
+    options_page->setSubTitle(QStringLiteral("Choose how the copy is made and checked."));
     auto* options_layout = new QFormLayout(options_page);
     auto* copy_note = new QLabel(
         config.os_migration
@@ -8093,13 +8214,11 @@ void addDiskOptionsPage(QWizard* wizard,
 void addDiskReviewPage(QWizard* wizard, DiskCopyWizardWidgets* widgets) {
     auto* review_page = new ConfirmationWizardPage(wizard);
     review_page->setTitle(QStringLiteral("Review"));
+    review_page->setSubTitle(QStringLiteral("Check the plan before it is queued."));
     auto* review_layout = new QVBoxLayout(review_page);
     widgets->layout_preview = new CloneLayoutPreviewWidget(review_page);
     review_layout->addWidget(widgets->layout_preview);
-    widgets->review = new QLabel(review_page);
-    widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
-    review_layout->addWidget(widgets->review);
+    widgets->review = addWizardReviewText(review_page, review_layout);
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target disk will be overwritten."), review_page);
     nameConfirmationBox(widgets->target_wipe, QStringLiteral("Confirm target disk overwrite"));
@@ -8268,6 +8387,7 @@ void addPartitionTargetPage(QWizard* wizard,
                             PartitionCopyWizardWidgets* widgets) {
     auto* target_page = new QWizardPage(wizard);
     target_page->setTitle(QStringLiteral("Target"));
+    target_page->setSubTitle(QStringLiteral("Choose where the partition is copied to."));
     auto* target_layout = new QFormLayout(target_page);
     widgets->target_region = new QComboBox(target_page);
     widgets->target_region->setAccessibleName(QStringLiteral("Target unallocated region"));
@@ -8289,6 +8409,7 @@ void addPartitionTargetPage(QWizard* wizard,
 void addPartitionCopyOptionsPage(QWizard* wizard, PartitionCopyWizardWidgets* widgets) {
     auto* options_page = new QWizardPage(wizard);
     options_page->setTitle(QStringLiteral("Options"));
+    options_page->setSubTitle(QStringLiteral("Choose how the copy is checked."));
     auto* options_layout = new QFormLayout(options_page);
     widgets->verify_mode = new QComboBox(options_page);
     widgets->verify_mode->addItems(
@@ -8301,11 +8422,9 @@ void addPartitionCopyOptionsPage(QWizard* wizard, PartitionCopyWizardWidgets* wi
 void addPartitionCopyReviewPage(QWizard* wizard, PartitionCopyWizardWidgets* widgets) {
     auto* review_page = new ConfirmationWizardPage(wizard);
     review_page->setTitle(QStringLiteral("Review"));
+    review_page->setSubTitle(QStringLiteral("Check the plan before it is queued."));
     auto* review_layout = new QVBoxLayout(review_page);
-    widgets->review = new QLabel(review_page);
-    widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
-    review_layout->addWidget(widgets->review);
+    widgets->review = addWizardReviewText(review_page, review_layout);
     widgets->target_wipe = new QCheckBox(
         QStringLiteral("I understand the selected target path or region will be overwritten."),
         review_page);
@@ -8450,6 +8569,8 @@ std::optional<PartitionWizardResult> runPartitionCopyWizard(QWidget* parent,
 void addRecoveryScanPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     auto* scan_page = new QWizardPage(wizard);
     scan_page->setTitle(QStringLiteral("Scan Mode"));
+    scan_page->setSubTitle(
+        QStringLiteral("Choose how deeply the disk is searched for lost partitions."));
     auto* scan_layout = new QFormLayout(scan_page);
     widgets->scan_mode = new QComboBox(scan_page);
     widgets->scan_mode->addItems({QStringLiteral("Quick"), QStringLiteral("Full")});
@@ -8461,6 +8582,7 @@ void addRecoveryScanPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
 void addRecoveryCandidatePage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     auto* page = new QWizardPage(wizard);
     page->setTitle(QStringLiteral("Candidate Restore"));
+    page->setSubTitle(QStringLiteral("Choose a found partition to write back, if any."));
     auto* layout = new QFormLayout(page);
     widgets->restore_candidate =
         new QCheckBox(QStringLiteral("Queue recovered partition write-back candidate"), page);
@@ -8498,11 +8620,9 @@ void addRecoveryReviewPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     // could be finished with its "I understand" box left unticked.
     auto* review_page = new ConfirmationWizardPage(wizard);
     review_page->setTitle(QStringLiteral("Review"));
+    review_page->setSubTitle(QStringLiteral("Check the plan before it is queued."));
     auto* review_layout = new QVBoxLayout(review_page);
-    widgets->review = new QLabel(review_page);
-    widgets->review->setWordWrap(true);
-    widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
-    review_layout->addWidget(widgets->review);
+    widgets->review = addWizardReviewText(review_page, review_layout);
     widgets->acknowledge = new QCheckBox(
         QStringLiteral(
             "I understand the recovered partition candidate will be written to the selected disk."),
@@ -8771,7 +8891,14 @@ void PartitionManagerPanel::setupUi() {
     body_layout->addWidget(createWorkspace(body), 1);
     root->addWidget(body, 1);
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
-    addLogFooter(root, m_log_toggle);
+    // The legend shares the Log switch's row. On a row of its own under the map, it and the shared
+    // footer together took the map's height, and the last disk's tile was cut.
+    // The footer holds the switch at 0; the gap and the legend follow it, before its stretch.
+    constexpr int kFooterGapIndex = 1;
+    constexpr int kFooterLegendIndex = kFooterGapIndex + 1;
+    QHBoxLayout* footer = addLogFooter(root, m_log_toggle);
+    footer->insertSpacing(kFooterGapIndex, ui::kSpacingLarge);
+    footer->insertWidget(kFooterLegendIndex, createLegend(this));
 }
 
 void PartitionManagerPanel::createRibbon(QVBoxLayout* root) {
@@ -9260,7 +9387,6 @@ QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
     workspace_splitter->setStretchFactor(1, 1);
     workspace_splitter->setSizes({kWorkspaceInitialTableHeight, kWorkspaceInitialMapHeight});
     layout->addWidget(workspace_splitter, 1);
-    layout->addWidget(createLegend(workspace));
     return workspace;
 }
 
@@ -11172,11 +11298,8 @@ void PartitionManagerPanel::manageBitLocker(bool may_read_with_administrator_rig
     }
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
     const QStringList commands = bitLockerCommandLines(volume);
-    const auto action = showBitLockerDialog(this,
-                                            bitLockerRows(disk, partition),
-                                            commands,
-                                            bitLockerVolumeCanQueue(volume),
-                                            volume != nullptr && volume->bitlocker_locked);
+    const auto action = showBitLockerDialog(
+        this, bitLockerRows(disk, partition), commands, bitLockerActionsFor(volume));
     if (action == BitLockerDialogAction::None) {
         Q_EMIT statusMessage(tr("Reviewed BitLocker status"), sak::kTimerStatusDefaultMs);
         return;
@@ -12711,7 +12834,9 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
             QObject::tr("I understand this erases the entire disk and all of its partitions."),
             &dialog);
         nameConfirmationBox(confirm, QObject::tr("Confirm wipe disk"));
-        dialog.formLayout()->addRow(QString(), confirm);
+        // Across the whole row in both wipe dialogs, so the acknowledgement starts at one indent
+        // whether the dialog has a Scope row or not (UI review F43: 21 px against 60 px).
+        dialog.formLayout()->addRow(confirm);
         dialog.setAcceptEnabled(false);
         QObject::connect(confirm, &QCheckBox::toggled, &dialog, [&dialog](bool on) {
             dialog.setAcceptEnabled(on);
@@ -12737,7 +12862,7 @@ static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* pa
                                   &dialog);
     nameConfirmationBox(confirm, QObject::tr("Confirm wipe partition"));
     dialog.formLayout()->addRow(QObject::tr("Scope:"), mode);
-    dialog.formLayout()->addRow(QString(), confirm);
+    dialog.formLayout()->addRow(confirm);
     dialog.setAcceptEnabled(false);
     QObject::connect(confirm, &QCheckBox::toggled, &dialog, [&dialog](bool on) {
         dialog.setAcceptEnabled(on);

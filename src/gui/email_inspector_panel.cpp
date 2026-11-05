@@ -766,6 +766,8 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list->setColumnWidth(ColDate, email::kDateColumnWidth);
     m_item_list->setColumnWidth(ColSize, email::kSizeColumnWidth);
     m_item_list->setColumnWidth(ColType, email::kTypeColumnWidth);
+    // "From / Name" was cut to "From / N" (UI review S15).
+    fitHeaderLabels(m_item_list);
     m_item_list->verticalHeader()->setVisible(false);
 
     connect(

@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/main_window.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 #include "sak/windows11_theme.h"
 
 #include <QAbstractButton>
@@ -21,7 +22,9 @@
 #include <QFrame>
 #include <QGraphicsEffect>
 #include <QGroupBox>
+#include <QHash>
 #include <QImage>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -31,10 +34,13 @@
 #include <QSet>
 #include <QStatusBar>
 #include <QStyleHints>
+#include <QTableWidget>
 #include <QTabWidget>
+#include <QTextBrowser>
 #include <QtTest/QtTest>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -232,6 +238,11 @@ private Q_SLOTS:
     void selectedTabIconsAreWhite();
     void aTabsStatusMessageLeavesWithIt();
     void aiWorkspaceLabelsTakeTheirPanesFill();
+    void partitionManagerKeepsItsDiskMapHeight();
+    void matchNavigationButtonsShowTheirArrows();
+    void promptsAreWideEnoughAndWrapTheirQuestion();
+    void aSubTabsStatusMessageLeavesWithIt();
+    void cellWidgetsFillTheirCells();
 
 private:
     std::unique_ptr<sak::MainWindow> m_window;
@@ -604,6 +615,9 @@ QList<QPair<QString, QString>> widgetTexts(const QWidget* widget) {
         texts.append({kind, group->title()});
     } else if (const auto* edit = qobject_cast<const QLineEdit*>(widget)) {
         texts.append({kind + QStringLiteral(" placeholder"), edit->placeholderText()});
+    } else if (const auto* browser = qobject_cast<const QTextBrowser*>(widget)) {
+        // The About and Help pages: their feature lists carried em dashes (UI re-check S24).
+        texts.append({kind, browser->toPlainText()});
     } else if (const auto* tabs = qobject_cast<const QTabWidget*>(widget)) {
         for (int index = 0; index < tabs->count(); ++index) {
             texts.append({kind, tabs->tabText(index)});
@@ -679,6 +693,101 @@ void AppThemeTests::everyToolTabHasOneLogSwitchInOnePlace() {
     }
     m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
     QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("\n"))));
+}
+
+// UI re-check R1: the shared Log footer took the disk map's height at the window's default size,
+// and the last disk's tile was cut through its name. The legend now shares the Log switch's row,
+// and the map keeps room for three whole disks.
+void AppThemeTests::partitionManagerKeepsItsDiskMapHeight() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr);
+    int partition_tab = -1;
+    for (int index = 0; index < tabs->count(); ++index) {
+        if (tabs->tabText(index) == QStringLiteral("Partition Manager")) {
+            partition_tab = index;
+        }
+    }
+    QVERIFY(partition_tab >= 0);
+    tabs->setCurrentIndex(partition_tab);
+    QCoreApplication::processEvents();
+    QWidget* page = tabs->widget(partition_tab);
+
+    auto* map = page->findChild<QWidget*>(QStringLiteral("partitionDiskMapPane"));
+    QVERIFY(map != nullptr && map->isVisible());
+    // Three disk tiles of 86 px, the 2 px between them and the map's 1 px margins.
+    constexpr int kThreeWholeDisks = (3 * 86) + (2 * 2) + (2 * 1);
+    QVERIFY2(map->height() >= kThreeWholeDisks,
+             qPrintable(QStringLiteral("disk map %1 px tall").arg(map->height())));
+
+    const auto toggles = visibleLogSwitches(*page);
+    QCOMPARE(toggles.size(), 1);
+    const QRect toggle(toggles.first()->mapTo(page, QPoint(0, 0)), toggles.first()->size());
+    auto* swatch = page->findChild<QFrame*>(QStringLiteral("partitionLegendSwatch"));
+    QVERIFY(swatch != nullptr && swatch->isVisible());
+    const QPoint swatch_centre = swatch->mapTo(page, swatch->rect().center());
+    QVERIFY2(swatch_centre.y() >= toggle.top() && swatch_centre.y() <= toggle.bottom(),
+             qPrintable(QStringLiteral("legend at y=%1, Log switch %2-%3")
+                            .arg(swatch_centre.y())
+                            .arg(toggle.top())
+                            .arg(toggle.bottom())));
+}
+
+// UI review F22 and F44: an input prompt was 202 px wide for an API key or a GUID, and the boot
+// repair prompt 853 px wide for one sentence.
+void AppThemeTests::promptsAreWideEnoughAndWrapTheirQuestion() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    QInputDialog prompt;
+    prompt.setLabelText(QStringLiteral(
+        "This looks for the Windows on Disk 2 and rebuilds its boot files on that disk, using "
+        "temporary drive letters. This PC's own boot list is left alone.\n\nBoot mode (GPT disks "
+        "start by UEFI, MBR disks by BIOS):"));
+    prompt.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&prompt));
+    QVERIFY2(prompt.width() >= 420, qPrintable(QString::number(prompt.width())));
+    QVERIFY2(prompt.width() < 700, qPrintable(QString::number(prompt.width())));
+    auto* question = prompt.findChild<QLabel*>();
+    QVERIFY(question != nullptr && question->wordWrap());
+
+    // A short question, such as the API key prompt's: the window was 202 px wide.
+    QInputDialog key_prompt;
+    key_prompt.setLabelText(QStringLiteral("API key:"));
+    key_prompt.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&key_prompt));
+    QVERIFY2(key_prompt.width() >= 420, qPrintable(QString::number(key_prompt.width())));
+}
+
+// UI re-check N1: Advanced Search's previous and next match buttons were blank squares. The
+// secondary style's 8px 20px padding left a 28 px button no room for its arrow.
+void AppThemeTests::matchNavigationButtonsShowTheirArrows() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    QStringList blank;
+    for (const QString& name : {QStringLiteral("Previous match"), QStringLiteral("Next match")}) {
+        QPushButton* found = nullptr;
+        for (QPushButton* button : m_window->findChildren<QPushButton*>()) {
+            if (button->accessibleName() == name) {
+                found = button;
+            }
+        }
+        QVERIFY2(found != nullptr, qPrintable(name));
+        // Enabled, as after a search with matches: a white arrow on the slate secondary fill, which
+        // is never that light. With the default padding no arrow was drawn at all.
+        const bool was_enabled = found->isEnabled();
+        found->setEnabled(true);
+        const QImage image = found->grab().toImage();
+        found->setEnabled(was_enabled);
+        int ink = 0;
+        for (int y = image.height() / 4; y < image.height() * 3 / 4; ++y) {
+            for (int x = image.width() / 4; x < image.width() * 3 / 4; ++x) {
+                ink += image.pixelColor(x, y).lightness() > 200 ? 1 : 0;
+            }
+        }
+        if (ink < 4) {
+            blank << QStringLiteral("%1 (%2 px)").arg(name).arg(ink);
+        }
+    }
+    QVERIFY2(blank.isEmpty(), qPrintable(blank.join(QStringLiteral(", "))));
 }
 
 // UI review S16: App Installation's Online Install and Offline Deploy and the Vulnerability
@@ -811,6 +920,75 @@ void AppThemeTests::aTabsStatusMessageLeavesWithIt() {
     QVERIFY2(!shown.contains(QStringLiteral("Explorer loaded 6 item(s)")),
              qPrintable(shown.join(QStringLiteral(" | "))));
     QVERIFY(shown.contains(QStringLiteral("Ready")));
+}
+
+// UI re-check S22: a sub-tab's message stayed when another sub-tab of the same tab was opened,
+// "Explorer loaded 6 item(s)" on File Organizer among them.
+void AppThemeTests::aSubTabsStatusMessageLeavesWithIt() {
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr);
+    QStringList stayed;
+    QStringList checked;
+    for (int index = 0; index < tabs->count(); ++index) {
+        tabs->setCurrentIndex(index);
+        QCoreApplication::processEvents();
+        for (QTabWidget* sub : tabs->widget(index)->findChildren<QTabWidget*>()) {
+            const QStringList wrappers = {QStringLiteral("Email tools tabs"),
+                                          QStringLiteral("Application management tabs"),
+                                          QStringLiteral("Network management tabs")};
+            bool file_management = false;  // the tab widget that holds Advanced Search
+            for (int sub_index = 0; sub_index < sub->count(); ++sub_index) {
+                file_management |= sub->tabText(sub_index) == QStringLiteral("Advanced Search");
+            }
+            if (sub->count() < 2 ||
+                (!wrappers.contains(sub->accessibleName()) && !file_management)) {
+                continue;
+            }
+            checked << (file_management ? QStringLiteral("File Management")
+                                        : sub->accessibleName());
+            sub->setCurrentIndex(0);
+            QCoreApplication::processEvents();
+            // A message without a timeout goes to the status label, one with a timeout to the bar.
+            const QString lasting = QStringLiteral("Explorer loaded 6 item(s)");
+            m_window->updateStatus(lasting, 0);
+            m_window->updateStatus(QStringLiteral("2 adapters found"), 60'000);
+            const auto shows = [this](const QString& text) {
+                const auto labels = m_window->statusBar()->findChildren<QLabel*>();
+                return std::ranges::any_of(labels, [&text](const QLabel* label) {
+                    return label->text() == text;
+                });
+            };
+            QVERIFY2(shows(lasting), "control: the message is on the status bar before the switch");
+            QVERIFY(!m_window->statusBar()->currentMessage().isEmpty());
+            sub->setCurrentIndex(1);
+            QCoreApplication::processEvents();
+            if (!m_window->statusBar()->currentMessage().isEmpty() || shows(lasting)) {
+                stayed << tabs->tabText(index);
+            }
+        }
+    }
+    // Email Tools, Application Management, Network Management and File Management.
+    checked.removeDuplicates();
+    QVERIFY2(checked.size() == 4, qPrintable(checked.join(QStringLiteral(", "))));
+    QVERIFY2(stayed.isEmpty(), qPrintable(stayed.join(QStringLiteral(", "))));
+}
+
+// UI review F4, re-check N2 and N3: Qt puts a cell widget in the item's text area, which the
+// theme's 6 px item padding shrinks, so an editor lost 12 px of a row sized for it and its text was
+// cut through the middle. A view's cell widgets get their whole cells.
+void AppThemeTests::cellWidgetsFillTheirCells() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    QTableWidget table(1, 1);
+    sak::placeCellWidgetsInWholeCells(&table);
+    auto* editor = new QLineEdit(QStringLiteral("Data1"));
+    table.setCellWidget(0, 0, editor);
+    table.setRowHeight(0, 36);
+    table.resize(320, 140);
+    table.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&table));
+    QCoreApplication::processEvents();
+    const QRect cell = table.visualRect(table.model()->index(0, 0));
+    QCOMPARE(editor->geometry(), cell);
 }
 
 QTEST_MAIN(AppThemeTests)

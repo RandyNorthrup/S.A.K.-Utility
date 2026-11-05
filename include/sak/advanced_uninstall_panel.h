@@ -194,6 +194,8 @@ private:
     // -- Utility --
     void logMessage(const QString& message);
     void setOperationRunning(bool running);
+    /// Tells the status bar the current operation ended, so it hides its progress bar.
+    void endStatusBarProgress();
     [[nodiscard]] ProgramInfo selectedProgram() const;
     /// The checked programs. When @p all_resolved is non-null it is set to false if any CHECKED
     /// row could not be resolved back to a program, so a destructive batch is never run against a

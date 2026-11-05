@@ -948,7 +948,7 @@ void AdvancedSearchPanel::createPreviewPane() {
     m_prev_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_prev_match_button->setToolTip(tr("Previous match"));
     m_prev_match_button->setEnabled(false);
-    m_prev_match_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_prev_match_button->setStyleSheet(sak::ui::kGlyphSecondaryButtonStyle);
     setAccessible(m_prev_match_button, tr("Previous match"));
     header_row->addWidget(m_prev_match_button);
 
@@ -961,7 +961,7 @@ void AdvancedSearchPanel::createPreviewPane() {
     m_next_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_next_match_button->setToolTip(tr("Next match"));
     m_next_match_button->setEnabled(false);
-    m_next_match_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_next_match_button->setStyleSheet(sak::ui::kGlyphSecondaryButtonStyle);
     setAccessible(m_next_match_button, tr("Next match"));
     header_row->addWidget(m_next_match_button);
 
