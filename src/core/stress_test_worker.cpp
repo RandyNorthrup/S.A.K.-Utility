@@ -6,6 +6,7 @@
 
 #include "sak/stress_test_worker.h"
 
+#include "sak/dedicated_threads.h"
 #include "sak/keep_awake.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -18,12 +19,10 @@
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <future>
 #include <limits>
 #include <numeric>
 #include <random>
 #include <thread>
-#include <vector>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -45,6 +44,10 @@ constexpr uint64_t kOddDivisorStep = 2;
 constexpr uint64_t kPrimeCancelCheckMask = 0xFFFF;
 constexpr uint64_t kPrimeCancelCheckRemainder = 1;
 constexpr int kMonitorSleepMs = 500;
+// How often the temperature reader looks for the end of the run while it waits between reads.
+constexpr int kStopPollSliceMs = 100;
+// ThermalMonitor::queryCpuTemperature's answer for "no reading"; a run starts with none.
+constexpr double kNoTemperatureReading = -1.0;
 constexpr int kCacheLineAlignment = 64;
 constexpr int kMatrixDimension = 4;
 constexpr int kMatrixElementCount = kMatrixDimension * kMatrixDimension;
@@ -59,8 +62,8 @@ constexpr uint64_t kGpuHealthCheckMask = 0xFFULL;
 // the monitor-loop bound never overflows. A longer request is rejected, not clamped.
 constexpr int kMaxStressDurationMinutes = 7 * 24 * 60;  // 10080 minutes
 // Upper bound on an explicitly-requested CPU stress thread count. A larger request is CLAMPED (not
-// rejected) so a bogus or hostile cpu_threads value cannot spawn an unbounded number of std::async
-// worker threads (resource exhaustion, or a std::system_error from thread creation); 4096 is far
+// rejected) so a bogus or hostile cpu_threads value cannot spawn an unbounded number of stress
+// threads (resource exhaustion, or a std::system_error from thread creation); 4096 is far
 // above any legitimate oversubscription need on real hardware.
 constexpr int kMaxCpuStressThreads = 4096;
 
@@ -266,7 +269,26 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     // Fail closed BEFORE any work on a config that would do nothing yet pass, or whose
     // duration would overflow the monitor timer. A run that reaches the code below has
     // at least one component and a sane, non-overflowing duration.
-    if (auto status = validateStressConfig(m_config); !status) {
+    if (auto status = checkConfig(); !status) {
+        return status;
+    }
+    return runFor(std::chrono::minutes(m_config.duration_minutes),
+                  &ThermalMonitor::queryCpuTemperature);
+}
+
+#ifdef SAK_CORE_TEST_HOOKS
+std::expected<void, sak::error_code> StressTestWorker::executeForTesting(
+    std::chrono::milliseconds run_length, CpuTemperatureReader read_temperature) {
+    if (auto status = checkConfig(); !status) {
+        return status;
+    }
+    return runFor(run_length, read_temperature);
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
+std::expected<void, sak::error_code> StressTestWorker::checkConfig() const {
+    auto status = validateStressConfig(m_config);
+    if (!status) {
         logError(
             "Stress test: invalid config (cpu:{} mem:{} disk:{} gpu:{} dur:{}min mem%:{:.1f})"
             " -- refusing to run",
@@ -276,9 +298,12 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
             m_config.stress_gpu,
             m_config.duration_minutes,
             m_config.memory_usage_percent);
-        return status;
     }
+    return status;
+}
 
+std::expected<void, sak::error_code> StressTestWorker::runFor(
+    std::chrono::milliseconds run_length, const CpuTemperatureReader& read_temperature) {
     logInfo("Starting stress test -- CPU:{} Mem:{} Disk:{} GPU:{} Duration:{}min",
             m_config.stress_cpu,
             m_config.stress_memory,
@@ -289,10 +314,11 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     m_result = StressTestResult{};
     m_result.start_time = QDateTime::currentDateTime();
     m_error_count.store(0, std::memory_order_relaxed);
+    m_current_temp.store(kNoTemperatureReading, std::memory_order_relaxed);
     m_max_temp.store(0.0, std::memory_order_relaxed);
     m_stop_children.store(false, std::memory_order_relaxed);
 
-    if (auto status = runStressThreadsToCompletion(); !status) {
+    if (auto status = runStressThreadsToCompletion(run_length, read_temperature); !status) {
         return status;
     }
 
@@ -317,37 +343,27 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
-std::expected<void, sak::error_code> StressTestWorker::runStressThreadsToCompletion() {
-    // Launch stress threads. If launching or the monitor loop throws (e.g. std::async
-    // cannot create a thread, or a vector reallocation throws), the already-running
-    // children would otherwise never be told to stop -- and each std::future's destructor
-    // would then block forever waiting on a child that never exits. Signal stop before
-    // those destructors run and fail closed.
-    std::vector<std::future<void>> futures;
+std::expected<void, sak::error_code> StressTestWorker::runStressThreadsToCompletion(
+    std::chrono::milliseconds run_length, const CpuTemperatureReader& read_temperature) {
+    // Every child runs on a thread of its own, never on std::async: MSVC runs std::async jobs on
+    // the process's shared thread pool, the spinning children filled it, and the temperature
+    // read's PowerShell process -- which Qt watches through that pool -- then never returned, so
+    // the run's clock stopped at its first reading until the pool let a thread go.
+    DedicatedThreads threads;
     try {
-        launchStressThreads(futures);
+        launchStressThreads(threads, read_temperature);
 
         // Monitor loop -- runs in the WorkerBase thread
-        const int total_seconds = m_config.duration_minutes * sak::kSecondsPerMinute;
-        monitorStressLoop(total_seconds);
+        monitorStressLoop(run_length);
 
         // Signal child stress threads to stop (without marking WorkerBase cancelled)
         m_stop_children.store(true, std::memory_order_release);
-        for (auto& future : futures) {
-            future.get();
-        }
+        threads.joinAll();
     } catch (...) {
+        // If launching, the monitor loop or a child throws, tell every child to stop before
+        // `threads` joins them on the way out of this frame: a child never told would never
+        // return, and the join would wait for it forever.
         m_stop_children.store(true, std::memory_order_release);
-        for (auto& future : futures) {
-            if (future.valid()) {
-                // SAK-ALLOW-BLOCKING: runs on the WorkerBase thread, not the GUI thread, and
-                // the wait is bounded -- m_stop_children was just set, so each child stress
-                // thread returns at its next loop check. Draining here is mandatory: a future
-                // left unwaited would let a child thread outlive this scope and touch freed
-                // worker state during stack unwinding.
-                future.wait();
-            }
-        }
         logError("Stress test: aborted -- error while launching or running stress threads");
         return std::unexpected(sak::error_code::internal_error);
     }
@@ -376,73 +392,97 @@ bool StressTestWorker::computeStressPassed(const StressTestResult& result) {
     return result.abort_reason.isEmpty() && result.errors_detected == 0 && !component_errors;
 }
 
-void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futures) {
+void StressTestWorker::launchStressThreads(DedicatedThreads& threads,
+                                           const CpuTemperatureReader& read_temperature) {
     if (m_config.stress_cpu) {
         // resolveCpuThreadCount() guarantees >= 1: hardware_concurrency() can
         // report 0, which previously launched zero threads -- a requested CPU
         // stress that silently did nothing yet still reported PASSED.
-        const int threads = resolveCpuThreadCount(m_config.cpu_threads,
-                                                  std::thread::hardware_concurrency());
+        const int cpu_threads = resolveCpuThreadCount(m_config.cpu_threads,
+                                                      std::thread::hardware_concurrency());
 
-        for (int thread_index = 0; thread_index < threads; ++thread_index) {
-            futures.push_back(std::async(std::launch::async, [this]() {
-                runAtStressPriority([this]() { runCpuStress(); });
-            }));
+        for (int thread_index = 0; thread_index < cpu_threads; ++thread_index) {
+            threads.launch([this]() { runAtStressPriority([this]() { runCpuStress(); }); });
         }
-        logInfo("Launched {} CPU stress threads", threads);
+        logInfo("Launched {} CPU stress threads", cpu_threads);
     }
 
     if (m_config.stress_memory) {
-        futures.push_back(std::async(std::launch::async, [this]() {
+        threads.launch([this]() {
             runAtStressPriority([this]() {
                 const int errors = runMemoryStress();
                 m_error_count.fetch_add(errors, std::memory_order_relaxed);
             });
-        }));
+        });
         logInfo("Launched memory stress thread");
     }
 
     if (m_config.stress_disk) {
-        futures.push_back(std::async(std::launch::async, [this]() {
-            runAtStressPriority([this]() { runDiskStress(); });
-        }));
+        threads.launch([this]() { runAtStressPriority([this]() { runDiskStress(); }); });
         logInfo("Launched disk stress thread");
     }
 
     if (m_config.stress_gpu) {
-        futures.push_back(std::async(std::launch::async, [this]() {
-            runAtStressPriority([this]() { runGpuStress(); });
-        }));
+        threads.launch([this]() { runAtStressPriority([this]() { runGpuStress(); }); });
         logInfo("Launched GPU stress thread");
+    }
+
+    // Normal priority: it mostly waits on a short process, and its reading guards the run.
+    threads.launch([this, read_temperature]() { runThermalReader(read_temperature); });
+}
+
+void StressTestWorker::monitorStressLoop(std::chrono::milliseconds run_length) {
+    // Invariant: runFor() is this private helper's only caller, and validateStressConfig already
+    // rejected duration_minutes <= 0 (and anything above kMaxStressDurationMinutes).
+    Q_ASSERT(run_length.count() >= 0);
+    const qint64 run_ms = run_length.count();
+    const int total_seconds = static_cast<int>(run_ms / sak::kMillisecondsPerSecond);
+    m_elapsed_timer.start();
+    int last_status_sec = 0;
+
+    // Nothing in this loop waits on anything but the clock, so the run ends on time and Stop is
+    // seen within one sleep.
+    for (qint64 elapsed_ms = m_elapsed_timer.elapsed(); elapsed_ms < run_ms;
+         elapsed_ms = m_elapsed_timer.elapsed()) {
+        if (checkStop()) {
+            m_result.abort_reason = "Cancelled by user";
+            return;
+        }
+
+        const int elapsed_sec = static_cast<int>(elapsed_ms / sak::kMillisecondsPerSecond);
+        if (elapsed_sec - last_status_sec >= kStatusIntervalSec) {
+            last_status_sec = elapsed_sec;
+            if (handleStatusUpdate(elapsed_sec, total_seconds)) {
+                return;
+            }
+        }
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(std::min<qint64>(kMonitorSleepMs, run_ms - elapsed_ms)));
     }
 }
 
-void StressTestWorker::monitorStressLoop(int total_seconds) {
-    // Invariant: execute() is this private helper's only caller, and validateStressConfig
-    // already rejected duration_minutes <= 0 (and anything above kMaxStressDurationMinutes)
-    // before the multiply that produces total_seconds.
-    Q_ASSERT(total_seconds >= 0);
-    m_elapsed_timer.start();
-    int last_status_sec = 0;
-    bool should_stop = false;
-
-    while (!should_stop &&
-           m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond < total_seconds) {
-        if (checkStop()) {
-            m_result.abort_reason = "Cancelled by user";
-            break;
+void StressTestWorker::runThermalReader(const CpuTemperatureReader& read_temperature) {
+    const auto run_ending = [this]() {
+        return childrenShouldStop();
+    };
+    // Asked inside every read, so a read the end of the run cuts short comes back at once.
+    for (;;) {
+        const double temp = read_temperature(run_ending);
+        if (run_ending()) {
+            return;  // a read cut short by the end of the run is not a reading
         }
+        m_current_temp.store(temp, std::memory_order_relaxed);
+        updateMaxTemperature(temp);
+        sleepUnlessChildrenStop(std::chrono::seconds(kStatusIntervalSec));
+    }
+}
 
-        const int elapsed_sec =
-            static_cast<int>(m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond);
-
-        if (elapsed_sec - last_status_sec >= kStatusIntervalSec) {
-            last_status_sec = elapsed_sec;
-            should_stop = handleStatusUpdate(elapsed_sec, total_seconds);
-        }
-
-        // Sleep to avoid busy-waiting in monitor loop
-        std::this_thread::sleep_for(std::chrono::milliseconds(kMonitorSleepMs));
+void StressTestWorker::sleepUnlessChildrenStop(std::chrono::milliseconds period) const {
+    QElapsedTimer slept;
+    slept.start();
+    while (!childrenShouldStop() && slept.elapsed() < period.count()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStopPollSliceMs));
     }
 }
 
@@ -462,9 +502,9 @@ bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
     // total_seconds is passed straight through from the validated config (see above).
     Q_ASSERT(elapsed_sec >= 0);
     Q_ASSERT(total_seconds >= 0);
-    const double temp = ThermalMonitor::queryCpuTemperature();
-    m_current_temp.store(temp, std::memory_order_relaxed);
-    updateMaxTemperature(temp);
+    // The latest reading runThermalReader made. Reading the sensor here put a process launch on
+    // the run's clock, and a slow one held the end of the run.
+    const double temp = m_current_temp.load(std::memory_order_relaxed);
 
     // Thermal abort check. temp <= 0 (or NaN, for which `temp > 0` is false) means the
     // sensor is unavailable -- common without admin/OEM drivers. We deliberately do NOT

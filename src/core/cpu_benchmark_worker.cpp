@@ -7,6 +7,7 @@
 #include "sak/cpu_benchmark_worker.h"
 
 #include "sak/action_constants.h"
+#include "sak/dedicated_threads.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -17,7 +18,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <future>
 #include <numeric>
 #include <random>
 #include <thread>
@@ -440,22 +440,18 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     per_thread_workload();
     m_mt_single_ref_ms = static_cast<double>(ref_timer.nsecsElapsed()) / kNanosecondsPerMillisecond;
 
-    // Parallel pass: thread_count units of the same workload at once. std::async
-    // (launch::async) futures join in their destructor, so every job is complete before
-    // this frame returns and none can outlive `this`.
+    // Parallel pass: thread_count units of the same workload at once, each on a thread of its
+    // own. std::async ran them on the process's shared thread pool, which they filled for the
+    // whole pass: a child process the app was waiting on did not return until it ended. The
+    // threads join before this frame returns, so none can outlive `this`.
     QElapsedTimer timer;
     timer.start();
 
-    std::vector<std::future<void>> futures;
-    futures.reserve(static_cast<size_t>(thread_count));
-
+    DedicatedThreads threads;
     for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
-        futures.push_back(std::async(std::launch::async, per_thread_workload));
+        threads.launch(per_thread_workload);
     }
-
-    for (auto& future : futures) {
-        future.get();
-    }
+    threads.joinAll();
 
     const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
                               kNanosecondsPerMillisecond;

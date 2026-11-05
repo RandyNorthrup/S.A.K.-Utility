@@ -16,6 +16,8 @@
 #include <QTimer>
 #include <QVector>
 
+#include <functional>
+
 class ThermalMonitorTests;
 
 namespace sak {
@@ -102,9 +104,11 @@ public:
     [[nodiscard]] static QVector<ThermalReading> pollOnce(bool& query_ok);
 
     /// @brief Query CPU thermal zone temperature from WMI
+    /// @param should_cancel Asked while the query runs; true stops it and answers -1.0.
     /// @return Temperature in Celsius, or -1.0 if unavailable
     /// @note Shared utility -- also used by StressTestWorker
-    [[nodiscard]] static double queryCpuTemperature();
+    [[nodiscard]] static double queryCpuTemperature(
+        const std::function<bool()>& should_cancel = {});
 
     /// @brief The sensor statuses in @p statuses not yet in @p already_logged, recorded there.
     /// A missing sensor reports the same status on every poll; the periodic monitor logs each

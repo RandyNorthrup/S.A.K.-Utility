@@ -1010,6 +1010,27 @@ add_test(NAME test_thermal_monitor COMMAND test_thermal_monitor
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_thermal_monitor")
 
+# test_dedicated_threads - CPU-bound jobs stay off Windows' shared thread pool
+add_executable(test_dedicated_threads
+    unit/test_dedicated_threads.cpp
+    support/thread_pool_probe.h
+)
+set_target_properties(test_dedicated_threads PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_dedicated_threads PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_dedicated_threads PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_dedicated_threads COMMAND test_dedicated_threads
+         -o "${TEST_OUTPUT_DIR}/test_dedicated_threads.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_dedicated_threads")
+
 # test_diagnostic_report_generator - HTML, JSON, CSV report output
 add_executable(test_diagnostic_report_generator
     unit/test_diagnostic_report_generator.cpp

@@ -4,12 +4,19 @@
 /// @file test_stress_test_worker.cpp
 /// @brief Unit tests for StressTestWorker construction, config, result defaults
 
+#include "sak/process_runner.h"
 #include "sak/stress_test_worker.h"
 
+#include "../support/thread_pool_probe.h"
+
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <QtTest/QtTest>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <thread>
@@ -27,6 +34,30 @@ class StressExecProbe : public StressTestWorker {
 public:
     std::expected<void, sak::error_code> runExecute() { return execute(); }
 };
+
+// A temperature read that does not answer on its own, as a PowerShell process held up on a
+// starved or paging machine: it returns when the run tells it to give up, or after a minute, so
+// a run that waits for it shows.
+double hangingTemperatureRead(const std::function<bool()>& run_ending) {
+    constexpr qint64 kGiveUpMs = 60'000;
+    QElapsedTimer waited;
+    waited.start();
+    while (!run_ending() && waited.elapsed() < kGiveUpMs) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return -1.0;
+}
+
+// CPU only, so a test run never takes the memory component's share of free RAM. The run length
+// comes from the test; the whole minute here only has to pass validation.
+StressTestConfig cpuOnlyConfig(int cpu_threads) {
+    StressTestConfig config;
+    config.stress_cpu = true;
+    config.cpu_threads = cpu_threads;
+    config.stress_memory = false;
+    config.duration_minutes = 1;
+    return config;
+}
 }  // namespace
 
 class TestStressTestWorker : public QObject {
@@ -64,6 +95,12 @@ private Q_SLOTS:
     void memoryPassStopsWithinOneChunk();
     void memoryPassCountsAMismatch();
     void stressThreadsRunBelowNormalPriority();
+    // Round 1's fix was not enough: a 1-minute run took 266 s to stop, and a Full Suite run never
+    // did. The spinning children filled Windows' shared thread pool, and the temperature read --
+    // a process the run's clock waited for -- could not return until they stopped.
+    void aProcessReturnsWhileTheStressRuns();
+    void aRunEndsOnTimeWhileTheTemperatureReadHangs();
+    void stopEndsARunWithinAFewSeconds();
 };
 
 void TestStressTestWorker::construction_default() {
@@ -227,10 +264,10 @@ void TestStressTestWorker::computeStressPassed_errorsDetected_fails() {
 void TestStressTestWorker::resolveCpuThreadCount_neverZero() {
     // Explicit positive request is honored verbatim.
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(4, 8), 4);
-    // ...but only up to the internal ceiling (kMaxCpuStressThreads == 4096,
-    // src/core/stress_test_worker.cpp:66): a bogus or hostile cpu_threads value is CLAMPED,
-    // not honored, so it cannot spawn an unbounded number of std::async stress threads
-    // (launchStressThreads pushes one future per thread). Pin the exact boundary --
+    // ...but only up to the internal ceiling (kMaxCpuStressThreads == 4096 in
+    // src/core/stress_test_worker.cpp): a bogus or hostile cpu_threads value is CLAMPED,
+    // not honored, so it cannot spawn an unbounded number of stress threads
+    // (launchStressThreads starts one thread per count). Pin the exact boundary --
     // "honored verbatim" alone stays green with the clamp deleted.
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(4096, 8), 4096);
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(4097, 8), 4096);
@@ -425,6 +462,93 @@ void TestStressTestWorker::stressThreadsRunBelowNormalPriority() {
     });
     child.join();
     QCOMPARE(priority, THREAD_PRIORITY_BELOW_NORMAL);
+}
+
+// A process started while the stress runs comes back at once. The run starts one spinning thread
+// more than the machine has logical CPUs, as the default run's CPU and memory components do; held
+// to two cores, that loads two cores, and the thread pool still sees every one of them busy.
+void TestStressTestWorker::aProcessReturnsWhileTheStressRuns() {
+    const sak::test::TwoCoreAffinity two_cores;
+    StressTestWorker worker;
+    worker.setConfig(cpuOnlyConfig(static_cast<int>(std::thread::hardware_concurrency()) + 1));
+
+    // The temperature reader starts after every stress thread, so its first read says they all
+    // run.
+    std::atomic<bool> reader_started{false};
+    const auto note_reader_started = [&reader_started](const std::function<bool()>&) {
+        reader_started.store(true);
+        return -1.0;
+    };
+    std::thread run([&worker, &note_reader_started]() {
+        (void)worker.executeForTesting(std::chrono::seconds(4), note_reader_started);
+    });
+    const auto end_run = qScopeGuard([&worker, &run]() {
+        worker.requestStop();
+        run.join();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(reader_started.load(), 5000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    QElapsedTimer took;
+    took.start();
+    const ProcessResult result =
+        runProcess(system32Path(QStringLiteral("cmd.exe")),
+                   {QStringLiteral("/c"), QStringLiteral("echo"), QStringLiteral("ready")},
+                   10'000);
+    const qint64 took_ms = took.elapsed();
+
+    QVERIFY2(result.succeeded(), qPrintable(result.std_err));
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("ready"));
+    QVERIFY2(took_ms < 2000,
+             qPrintable(QStringLiteral("a process took %1 ms while the stress ran").arg(took_ms)));
+}
+
+// The run's clock never waits for the temperature read: a run of N ends within moments of N
+// however long the read takes.
+void TestStressTestWorker::aRunEndsOnTimeWhileTheTemperatureReadHangs() {
+    const sak::test::TwoCoreAffinity two_cores;
+    StressTestWorker worker;
+    worker.setConfig(cpuOnlyConfig(1));
+
+    constexpr qint64 kRunMs = 6000;  // past the first status update at 5 s
+    QElapsedTimer wall;
+    wall.start();
+    const auto status = worker.executeForTesting(std::chrono::milliseconds(kRunMs),
+                                                 hangingTemperatureRead);
+    const qint64 took_ms = wall.elapsed();
+
+    QVERIFY(status.has_value());
+    QVERIFY2(took_ms >= kRunMs && took_ms < kRunMs + 2000,
+             qPrintable(QStringLiteral("a %1 ms run ended after %2 ms").arg(kRunMs).arg(took_ms)));
+    QCOMPARE(worker.result().duration_seconds, 6);
+    QVERIFY(worker.result().abort_reason.isEmpty());
+    QVERIFY(worker.result().passed);
+}
+
+// Stop ends a run within moments, even while the temperature read hangs.
+void TestStressTestWorker::stopEndsARunWithinAFewSeconds() {
+    const sak::test::TwoCoreAffinity two_cores;
+    StressTestWorker worker;
+    worker.setConfig(cpuOnlyConfig(1));
+
+    constexpr int kStopAfterMs = 1000;
+    std::thread stopper([&worker]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStopAfterMs));
+        worker.requestStop();
+    });
+    QElapsedTimer wall;
+    wall.start();
+    const auto status = worker.executeForTesting(std::chrono::minutes(1), hangingTemperatureRead);
+    const qint64 took_ms = wall.elapsed();
+    stopper.join();
+
+    QVERIFY(status.has_value());
+    QVERIFY2(
+        took_ms < kStopAfterMs + 2000,
+        qPrintable(
+            QStringLiteral("Stop at %1 ms ended the run at %2 ms").arg(kStopAfterMs).arg(took_ms)));
+    QCOMPARE(worker.result().abort_reason, QStringLiteral("Cancelled by user"));
+    QVERIFY(!worker.result().passed);
 }
 
 QTEST_MAIN(TestStressTestWorker)

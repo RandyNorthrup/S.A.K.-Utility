@@ -143,6 +143,7 @@ $coreHooks = @(
     "ForTesting@PartitionExecutor@sak@@",
     "ForTesting@ConfigManager@sak@@",
     "ForTesting@QuickActionController@sak@@",
+    "ForTesting@StressTestWorker@sak@@",
     $escapeHatch
 )
 
@@ -160,7 +161,8 @@ $allFailures += Assert-Scan -Path $CoreLibrary `
         "?execute@PartitionExecutor@sak@@",
         "?resolveRuntimeManifestPath@PartitionFileSystemToolManifest@sak@@",
         "?sync@ConfigManager@sak@@",
-        "?registerAction@QuickActionController@sak@@") `
+        "?registerAction@QuickActionController@sak@@",
+        "?execute@StressTestWorker@sak@@") `
     -MustNotContain $coreHooks
 
 $allFailures += Assert-Scan -Path $AiCoreLibrary `

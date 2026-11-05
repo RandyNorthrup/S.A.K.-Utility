@@ -47,6 +47,9 @@ private Q_SLOTS:
     void clampPollInterval_flooring();
     void missingSensorIsLoggedOnce();
     void missingSensorWarnsOnceAcrossPolls();
+    // The stress test's temperature reader passes the end of the run in, so a slow read stops
+    // when the run does instead of holding it.
+    void aCpuTemperatureReadAsksWhetherToGiveUp();
 
 private:
     // Outlives every test: the logger keeps writing into it once initialized.
@@ -75,6 +78,17 @@ void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
 void ThermalMonitorTests::initialState() {
     ThermalMonitor monitor;
     QVERIFY(!monitor.isRunning());
+}
+
+void ThermalMonitorTests::aCpuTemperatureReadAsksWhetherToGiveUp() {
+    // Already told to give up: the read asks, starts no process, and answers "no reading".
+    int asked = 0;
+    const double temp = ThermalMonitor::queryCpuTemperature([&asked]() {
+        ++asked;
+        return true;
+    });
+    QVERIFY(asked > 0);
+    QCOMPARE(temp, -1.0);
 }
 
 void ThermalMonitorTests::startStop() {

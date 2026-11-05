@@ -357,7 +357,7 @@ void ThermalMonitor::processReadings(const QVector<ThermalReading>& readings) {
 // Standalone CPU Query (used by StressTestWorker)
 // ============================================================================
 
-double ThermalMonitor::queryCpuTemperature() {
+double ThermalMonitor::queryCpuTemperature(const std::function<bool()>& should_cancel) {
     // System32-qualified interpreter only; unresolvable -> no reading (-1.0), never a
     // PATH/CWD-resolved launch.
     const QString powershell = sak::systemPowerShellPath();
@@ -372,7 +372,8 @@ double ThermalMonitor::queryCpuTemperature() {
                                                         "-ClassName MSAcpi_ThermalZoneTemperature "
                                                         "| Select-Object -First 1 "
                                                         "-ExpandProperty CurrentTemperature")},
-                                        sak::kTimeoutProcessShortMs);
+                                        sak::kTimeoutProcessShortMs,
+                                        should_cancel);
 
     if (!result.succeeded()) {
         return -1.0;
