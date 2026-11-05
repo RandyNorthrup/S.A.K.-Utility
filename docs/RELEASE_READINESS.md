@@ -1254,6 +1254,65 @@ The BitLocker read's consent prompt was answered by Windows policy in the VM (`C
 the certification rows; nobody pressed Yes. The live download check fetched the start of each fixed catalog entry
 from the build PC, not a whole image. Internal SATA, NVMe, real SMART and a real Wi-Fi adapter have run on nothing.
 
+### UI review round 2: the stress test, the re-check's regressions, and testpc1 (2026-11-05)
+
+**The stress test.** Round 1's fix was not enough. In the capture VM a 1-minute run took 266 s to stop, a second was
+still going at 300 s, and Full Suite's stress step ran 37 minutes; on testpc1 two runs were still going after 7 to 8
+minutes, and the window stopped answering UI Automation. MSVC runs `std::async` jobs on the process's shared Windows
+thread pool, which lets one busy thread per logical CPU run at once, and the CPU-bound stress jobs filled it. Windows
+delivers incoming COM calls such as UI Automation's through that pool, and Qt reads a child process's output through
+it, so the CPU temperature read that the run's clock made every 5 s never returned. Proved on this PC on two pinned
+cores, without the app and without a stress run: with one spinner per CPU plus one on `std::async`, a pool job had not
+started after 8 s and a QProcess round trip had not returned after 15 s; on threads of their own, 0 ms and 25 ms. Every
+stress job now runs on a thread of its own (`DedicatedThreads`), the temperature is read on its own thread and gives
+up when the run ends, and the clock waits on nothing but itself. The CPU benchmark's parallel pass left the pool too.
+Unit tests measure the wall clock on short runs: a 6 s run ends within 2 s of 6 s while the read hangs, and Stop at
+1 s ends a 1-minute run within 2 s.
+
+**Regressions from round 1.** R1: the disk map's legend shares the Log switch's row and the map keeps room for three
+disks. R2: a size bar's label takes the colour with the higher WCAG contrast on its fill, and a mid grey that neither
+text colour reads on (the lightened unallocated shade, 4.26:1) is darkened only as far as AA needs. R3: Qt's Aero back
+arrow is kept hidden, and every Partition Manager wizard page has a subtitle, so all wizards title pages in one header.
+
+**What testpc1 found.** SMART read FAIL for 16 pending sectors on a drive whose own check passed; FAIL is now only the
+drive's own verdict, counts are WARN, and the Health cell says why. Thermal said a bare N/A; it now says why, reads the
+thermal zone through the counters a standard user may read, no longer loses every reading when a disk refuses a
+standard user, and takes a drive's temperature from the SMART scan when Windows gives none. Timed on testpc1 itself:
+its USB NVMe enclosure (Best Buy NS-PCNVMEHDE) takes 12 to 17 s to answer a reliability-counter request, with
+temperature 0, and its ACPI thermal zone answers WBEM_E_NOT_SUPPORTED. Every poll ran out its 10 s limit, so the
+internal NVMe (36 C) and the Seagate (43 C) read N/A too. Each CIM request now has a 2 s limit; a disk out of time says
+"did not answer in time"; a disk with no reading is not asked again, remembered by its unique ID (or serial), until a
+disk arrives or leaves or a hardware or SMART scan runs; and "not supported" reads as not reported. The script then runs
+in 4.8 to 5.9 s cold on testpc1 and 2.7 to 3.1 s once the enclosure is skipped.
+
+**The disk benchmark on D: BENCH.** It uses no shared pool. It is slow because the thermal poll kept asking the same
+USB enclosure for its counters: on testpc1 a 512 MB write-through to D: took 27.6 s alone, twice, and 376 s while a loop
+asked that disk for its counters. The 3eccb7c5 package's logs show the run created its 1 GB file and finished the
+sequential read, then spent 9 minutes in the sequential write until the capture closed the app.
+
+**Functional leftovers from round 8.** Check Disk Errors counts an unsupported drive with the ones it could not check.
+The restore log prints its summary once, and both profile pages finish their bars. Manage BitLocker offers only the
+action that applies, and a suspended volume, which read "Protection off" and could not be managed, reads "Protection
+suspended" and offers Resume. Advanced Uninstall no longer leaves a 0% bar. The Migrate OS review scrolls instead of
+cutting its "Blocked:" reason. F49 was confirmed fixed by the re-check.
+
+**Not reached this round, with what each needs.** F16 (a fixed-width symbol column per suite step), F21 (popup width
+caps on the AI combos), F23 and F24 (one scrolling File Explorer details column, Details wording), F27 (one Close tone
+across six dialogs), F28, F29 and F31 (a monospace block in the log window for box reports and scripts), F30, F32, F35
+(empty-state text on four tables), F36 (picker start folders), F38 (one byte formatter in the duplicate summary), F40,
+F41, F46; S7, S15 (contacts, Vulnerability, defrag and properties cells), S17 (three forms' label columns), S21 (File
+Explorer Properties, Advanced Search results, File Organizer target), S25; N6 to N9, N12 to N18; DF10, DF11, DF12;
+Screenshot Settings' Wi-Fi page on a PC with no Wi-Fi adapter, and its Installed apps and Gaming pages, which need the
+VM. F18 is unchanged by round 1's decision. Round 1's untested fixes (S17 Static IP and DNS, S21 pickers, S22 finish
+messages, DF7, DF8, DF9, DF14, the flasher warning title, the network icon) still have no test.
+
+**What no test here covers.** The stress fix end to end (a 1-minute default run, Stop, and UI Automation answering
+while every CPU is busy) and the thermal and SMART behaviour on real sensors need testpc1. The thermal script's own
+handling of a CIM time-out, "not supported" and each disk's UniqueId is checked here only as text; it was run on
+testpc1 by hand (timings above), and the real-script test runs only where real hardware is allowed. The hidden Aero
+arrow has no test: Qt creates it only in a real DWM window, never offscreen. The ISO save paths, the Linux ISO ready
+text, the traceroute plural and the context chip's text have no test either.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

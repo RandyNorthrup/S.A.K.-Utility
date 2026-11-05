@@ -51,9 +51,52 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   the drive, and one behind a USB adapter says so. Hardware inventory shows uptime, and says "Unknown" for battery
   health Windows did not report. A temperature or SMART value nobody read says "N/A", not 0 degrees or "--". A port
   scan reports an open port's connect time, which no longer exceeds the timeout.
-- **A stress test stops when its time is up, and Stop works while it runs** - A 1-minute run kept going: one memory
-  pass over gigabytes never looked for the end of the run, and the stress threads crowded out the window. A pass now
-  checks every 8 MiB, and the stress threads run below normal priority, so they still use every spare cycle.
+- **A stress test ends on time, Stop ends it at once, and the window keeps answering** - A 1-minute run took 266 s
+  to stop or never stopped, Full Suite's stress step never finished, and on a real PC the window stopped answering
+  while it ran. The stress jobs ran on Windows' shared thread pool and filled it. Windows also delivers incoming
+  calls such as UI Automation's through that pool, and Qt reads a child process's output through it, so the
+  temperature reading the run's clock waited for every 5 seconds never returned. Each stress job now has a thread of
+  its own, and the temperature is read on its own thread, so nothing the run's clock does waits on a process. The
+  CPU benchmark's parallel pass no longer fills the pool either. A memory pass still checks every 8 MiB, and the
+  stress threads still run below normal priority.
+- **SMART says FAIL only when the drive does** - A drive with 16 pending sectors read FAIL while its own check
+  passed. FAIL now means the drive's own verdict: its SMART self-assessment failed, a value is past the threshold the
+  drive sets, or an NVMe SSD's spare is below its own threshold. Sectors, wear and errors the drive counts read WARN.
+  Point at the Health value to see the reason, which the JSON report also carries.
+- **Thermal Monitor reads the sensors a PC has, and says why it has no reading** - On a lab PC it said a bare N/A
+  for every sensor. One USB NVMe enclosure took 12 to 17 seconds to answer a request for its counters, with no
+  temperature, so every reading ran out of time, even for the two drives that report 36 and 43 C. Each request now
+  has a 2 second limit, and a drive that gives no reading is not asked again until a drive arrives or leaves or a
+  hardware or SMART scan runs. It is remembered by its unique ID, not its disk number, so a drive plugged in under
+  the same number is asked. Asking that enclosure again on every reading also slowed a disk benchmark on it about
+  13 times, past 9 minutes. A sensor without a reading now says "needs administrator rights", "not reported by
+  this PC", "did not answer in time" or "could not be read". A thermal zone Windows calls "not supported" reads as
+  not reported, not as a failure. Without administrator rights it also reads the PC's thermal zone through the
+  counters any account may read. A disk that refused a standard user blanked every reading, CPU and GPU too; it now
+  has its own line. A drive temperature Windows does not report comes from the last SMART scan.
+- **Partition Manager's disk map is whole again** - The Log switch's row took the map's height, cutting the last
+  disk's tile. The legend now shares that row, and the map gets more of the window. Size-bar labels take the colour
+  that reads on their fill, where a dark label sat on the green and orange bars at 3.5:1. The wizards lost a grey
+  back arrow that sat on the first letter of each page title, and every page has a subtitle, as in the backup and
+  restore wizards. The Migrate OS review scrolls instead of cutting off its last lines, such as a "Blocked:" reason.
+  The resize preview shows its "Max online" row, and both wipe dialogs start their acknowledgement at one indent.
+- **Manage BitLocker offers only the action that applies** - A protected volume offered Suspend and Resume together.
+  Suspend is offered while protection is on, Unlock while the volume is locked, and Resume while protection is
+  suspended, which now reads "Protection suspended". A suspended volume could not be managed at all before.
+- **Check Disk Errors counts the drives it names** - The summary said "0 could not be checked" under a FAT32 drive
+  it had just named as not checked. It now counts it, and the result names it, such as "(U: is FAT32)".
+- **Backup and restore show their end** - The restore log printed its summary twice, its file bar stopped part way,
+  and "Current:" never moved; the backup's current-operation bar kept moving after it finished. Both now fill their
+  bars, say Done, and their subtitles say the run finished.
+- **Smaller fixes** - Advanced Search's previous and next match buttons show their arrows. Editors in table cells
+  (Quick Partition's labels and sizes, the restore wizard's user mapping, saved Wi-Fi passwords) and the AI
+  assistant's context chips get their whole cell instead of being cut through the middle, and a chip names a
+  workflow's instruction once. Input prompts are wide enough for an API key or a GUID, and wrap their question.
+  Advanced Uninstall no longer leaves a 0% bar in the status bar. A status message leaves with the sub-tab that sent
+  it. The calendar's status filters read at AA contrast in both themes. Traceroute says "1 hop", and the About page
+  uses one dash style. The saved Wi-Fi networks table has no row numbers, the attachments browser's and the item
+  list's headers fit their columns, the Windows and Linux ISO save paths use backslashes, and the Linux ISO download
+  says it is ready once a distribution is chosen.
 - **Check boxes show a tick, and the theme draws every state readably in light and dark** - A checked box was a
   filled square with no tick, the Windows picture of "partly checked"; it now has a white tick, a partly checked box a
   dash, and a chosen option a white dot. Selected text in a box is readable, disabled boxes look disabled,
