@@ -31,6 +31,7 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <memory>
 
 using sak::AppInstallationPanel;
@@ -805,6 +806,8 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
             &OfflineDeploymentWorker::operationStarted,
             this,
             [this](int total) {
+                m_offline_total = total;
+                m_offline_failures.clear();
                 m_offlineProgressBar->setRange(0, total);
                 m_offlineProgressBar->setValue(0);
                 m_offlineProgressBar->setVisible(true);
@@ -831,6 +834,11 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
                 const QString log_line = success ? QString("[OK] %1: %2").arg(pkg_id, msg)
                                                  : QString("[FAIL] %1: %2").arg(pkg_id, msg);
                 Q_EMIT logOutput(log_line);
+                if (!success) {
+                    m_offline_failures.append(tr("%1 (%2)").arg(
+                        pkg_id,
+                        msg.trimmed().isEmpty() ? tr("no reason was given") : msg.trimmed()));
+                }
             });
 
     connect(m_offline_worker.get(),
@@ -840,40 +848,47 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
 }
 
 void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
-    connect(m_offline_worker.get(),
-            &OfflineDeploymentWorker::operationCompleted,
-            this,
-            [this](const BatchStats& stats) {
-                m_offlineProgressBar->setVisible(false);
-                m_offlineProgressLabel->setVisible(false);
-                m_cancelOfflineButton->setVisible(false);
+    connect(
+        m_offline_worker.get(),
+        &OfflineDeploymentWorker::operationCompleted,
+        this,
+        [this](const BatchStats& stats) {
+            m_offlineProgressBar->setVisible(false);
+            m_offlineProgressLabel->setVisible(false);
+            m_cancelOfflineButton->setVisible(false);
 
-                // Surface skipped/cancelled/pending too: an air-gap run can skip every
-                // requires-network package, which "%1 succeeded, %2 failed" alone would
-                // misreport as a clean completion (e.g. "0 succeeded, 0 failed"). Fail
-                // closed on the wording -- only call it "Complete" when nothing was left
-                // undone.
-                const int unfinished = stats.skipped + stats.cancelled + stats.pending;
-                QString summary =
-                    tr("%1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed);
-                if (stats.skipped > 0) {
-                    summary += tr(", %1 skipped").arg(stats.skipped);
-                }
-                if (stats.cancelled > 0) {
-                    summary += tr(", %1 cancelled").arg(stats.cancelled);
-                }
-                if (stats.pending > 0) {
-                    summary += tr(", %1 not attempted").arg(stats.pending);
-                }
-                const QString headline = unfinished > 0 ? tr("Incomplete: %1") : tr("Complete: %1");
-                m_offlineStatusLabel->setText(headline.arg(summary));
-                m_offlineStatusLabel->setVisible(true);
+            // Surface skipped/cancelled/pending too: an air-gap run can skip every
+            // requires-network package, which "%1 succeeded, %2 failed" alone would
+            // misreport as a clean completion (e.g. "0 succeeded, 0 failed"). Fail
+            // closed on the wording -- only call it "Complete" when nothing was left
+            // undone.
+            const int unfinished = stats.skipped + stats.cancelled + stats.pending + stats.failed;
+            QString summary = tr("%1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed);
+            if (stats.skipped > 0) {
+                summary += tr(", %1 skipped").arg(stats.skipped);
+            }
+            if (stats.cancelled > 0) {
+                summary += tr(", %1 cancelled").arg(stats.cancelled);
+            }
+            if (stats.pending > 0) {
+                summary += tr(", %1 not attempted").arg(stats.pending);
+            }
+            const QString headline = unfinished > 0 ? tr("Incomplete: %1") : tr("Complete: %1");
+            QString status = headline.arg(summary);
+            if (!m_offline_failures.isEmpty()) {
+                status += tr("\nFailed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
+            }
+            m_offlineStatusLabel->setText(status);
+            m_offlineStatusLabel->setVisible(true);
 
-                setOfflineInProgressUi(false);
+            setOfflineInProgressUi(false);
+            // The status-bar bar follows successes, so a run with a failure ended short of
+            // full and stayed on screen at 80%.
+            Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
 
-                Q_EMIT statusMessage(tr("Offline operation: %1").arg(summary),
-                                     sak::kTimerStatusDefaultMs);
-            });
+            Q_EMIT statusMessage(tr("Offline operation: %1").arg(summary),
+                                 sak::kTimerStatusDefaultMs);
+        });
 
     connect(m_offline_worker.get(),
             &OfflineDeploymentWorker::operationError,
@@ -891,6 +906,7 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
                 m_offlineStatusLabel->setText(tr("Failed: %1").arg(error));
                 m_offlineStatusLabel->setVisible(true);
                 setOfflineInProgressUi(false);
+                Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
             });
 
     connect(m_offline_worker.get(),

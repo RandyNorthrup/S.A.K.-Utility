@@ -5,11 +5,14 @@
 /// @brief App Installation is built the same way in every run mode.
 
 #include "sak/app_installation_panel.h"
+#include "sak/offline_deployment_worker.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTimer>
 #include <QtTest/QtTest>
 
@@ -71,6 +74,7 @@ private Q_SLOTS:
     void cleanup();
     void startupWorkRunsInEveryMode_data();
     void startupWorkRunsInEveryMode();
+    void offlineBundleNamesWhatFailedAndEndsTheProgress();
 };
 
 void AppInstallationPanelTests::cleanup() {
@@ -105,6 +109,32 @@ void AppInstallationPanelTests::startupWorkRunsInEveryMode() {
     search->click();
     QTRY_VERIFY_WITH_TIMEOUT(recorder.seen, kDialogTimeoutMs);
     QCOMPARE(recorder.text, QStringLiteral("Please enter a search term."));
+}
+
+// "Complete: 9 succeeded, 1 failed" without saying which package or why, and the status-bar
+// progress left at 80%, because it follows successes and the run had a failure.
+void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress() {
+    sak::AppInstallationPanel panel;
+    QSignalSpy progress(&panel, &sak::AppInstallationPanel::progressUpdated);
+    Q_EMIT panel.m_offline_worker->operationStarted(10);
+    Q_EMIT panel.m_offline_worker->batchProgress(8, 10, QStringLiteral("vlc"));
+    Q_EMIT panel.m_offline_worker->packageProgress(QStringLiteral("adobereader"),
+                                                   false,
+                                                   QStringLiteral("Download failed: HTTP 404"));
+    sak::BatchStats stats;
+    stats.total = 10;
+    stats.completed = 9;
+    stats.failed = 1;
+    Q_EMIT panel.m_offline_worker->operationCompleted(stats);
+
+    const QString status = panel.m_offlineStatusLabel->text();
+    QVERIFY2(status.startsWith(QStringLiteral("Incomplete: 9 succeeded, 1 failed")),
+             qPrintable(status));
+    QVERIFY2(status.contains(QStringLiteral("adobereader (Download failed: HTTP 404)")),
+             qPrintable(status));
+    QVERIFY(!progress.isEmpty());
+    const auto last = progress.last();
+    QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
 }
 
 QTEST_MAIN(AppInstallationPanelTests)

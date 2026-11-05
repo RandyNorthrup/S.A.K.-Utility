@@ -25,6 +25,7 @@
 #include <memory>
 
 class QVBoxLayout;
+class AppInstallationPanelTests;
 
 namespace sak {
 
@@ -64,6 +65,7 @@ class PackageListManager;
  */
 class AppInstallationPanel : public QWidget {
     Q_OBJECT
+    friend class ::AppInstallationPanelTests;
 
 public:
     /**
@@ -275,6 +277,10 @@ private:
     std::shared_ptr<ChocolateyManager> m_choco_manager;
     std::shared_ptr<AppInstallationWorker> m_worker;
     std::unique_ptr<OfflineDeploymentWorker> m_offline_worker;
+    // This run's package count and each failed package with its reason, for the end of run:
+    // the reason was only ever in the log, and the status bar was left at the last success.
+    int m_offline_total{0};
+    QStringList m_offline_failures;
 
     // Async
     QFuture<void> m_searchFuture;
