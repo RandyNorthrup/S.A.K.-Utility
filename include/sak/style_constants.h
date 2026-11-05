@@ -276,11 +276,16 @@ inline constexpr auto kHtmlSpanColorWeight = "<span style='color:%1; font-weight
 inline constexpr auto kHtmlParagraphColorMargin = "<p style='color: %1; margin: %2px 0;'>%3</p>";
 inline constexpr auto kHtmlParagraphColorMarginOpen = "<p style='color: %1; margin: %2px 0;'>%3";
 inline constexpr auto kHtmlPreWrap = "<pre style='white-space: pre-wrap;'>%1</pre>";
-inline constexpr auto kHtmlHorizontalRule = "<hr style='border: %1px solid %2;'>";
+// QTextDocument draws <hr> in its background colour (the text colour without one) and ignores a
+// CSS border, so the colour goes in both.
+inline constexpr auto kHtmlHorizontalRule =
+    "<hr style='border: %1px solid %2; background-color: %2;'>";
 inline constexpr auto kHtmlHorizontalRulePreWrapParagraph =
-    "<hr style='border: %1px solid %2;'><p style='white-space: pre-wrap;'>%3</p>";
+    "<hr style='border: %1px solid %2; background-color: %2;'>"
+    "<p style='white-space: pre-wrap;'>%3</p>";
 inline constexpr auto kHtmlHorizontalRuleColorPreWrapParagraph =
-    "<hr style='border: %1px solid %2;'><p style='color: %3; white-space: pre-wrap;'>%4</p>";
+    "<hr style='border: %1px solid %2; background-color: %2;'>"
+    "<p style='color: %3; white-space: pre-wrap;'>%4</p>";
 inline constexpr auto kHtmlLogMessage =
     "<span style='color: %1;'>%2</span> "
     "<span style='color: %3; font-weight: %4;'>[%5]</span> %6";
@@ -506,6 +511,12 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             padding: 6px 8px;
         }
 
+        /* A header keeps one weight: a table highlighted (bolded) every section while a row was
+           selected, which trees and lists never did. */
+        QHeaderView {
+            qproperty-highlightSections: false;
+        }
+
         QTableView, QListView, QTreeView {
             background: %4;
             border: 1px solid %5;
@@ -614,6 +625,11 @@ inline constexpr auto kWindows11ThemeScrollBarStyles = R"SAK(
             background: %3;
             border-top: 1px solid %4;
         }
+
+        /* The native item separators drew a colour from no token (#d7d7d7), bright on dark. */
+        QStatusBar::item {
+            border: none;
+        }
     )SAK";
 
 inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
@@ -708,6 +724,16 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
         }
     )SAK";
 
+/// Rules the dark sheet's "QWidget { background-color }" would otherwise win over: it comes after
+/// them at the same specificity, so every plain button lost its primary fill (an enabled button
+/// looked less prominent than a disabled one) and progress bars kept the light border.
+inline constexpr auto kWindows11DarkProgressStyles = R"SAK(
+        QProgressBar {
+            border: 1px solid %1;
+            background: %2;
+        }
+    )SAK";
+
 inline constexpr auto kWindows11DarkContainerAndViewStyles = R"SAK(
         QGroupBox {
             border: 1px solid %1;
@@ -757,7 +783,7 @@ inline constexpr auto kEmailRibbonStyle =
     " stop:0 %1, stop:1 %2); border: %3px solid %4; border-radius: %5px; }";
 inline constexpr auto kEmailRibbonButtonStyle =
     "QToolButton { background: transparent; border: %1px solid transparent; "
-    "border-radius: %2px; padding: %3px %4px; font-size: %5px; font-weight: %6; "
+    "border-radius: %2px; padding: %3px %4px; font-size: %5pt; font-weight: %6; "
     "color: %7; }"
     "QToolButton:hover { background: %8; border: %1px solid %9; }"
     "QToolButton:pressed { background: %10; border: %1px solid %11; }"
@@ -1065,15 +1091,26 @@ inline constexpr DarkHtmlAlias kDarkHtmlAliases[] = {
 };
 
 /// Status text colours whose light value (darkened for WCAG AA on the light page) is too dark for
-/// the dark theme's surfaces. kStatusColorSuccess and kStatusColorError share the values listed.
+/// the dark theme's surfaces. kStatusColorSuccess, kStatusColorError and kColorPrimaryDark share
+/// values listed here.
 inline constexpr DarkHtmlAlias kDarkStatusTextAliases[] = {
     {kColorSuccess, kColorDarkStatusSuccess},
     {kStatusColorWarning, kColorDarkStatusWarning},
     {kColorWarning, kColorDarkWarning},
     {kColorError, kColorDarkStatusError},
+    {kStatusColorRunning, kColorDarkStatusRunning},
+    {kColorAccentPurple, kColorDarkAccentPurple},
+    {kColorErrorText, kColorDarkErrorText},
 };
 
+/// The dark theme's own value for a light-only token: a tint or panel fill (kDarkHtmlAliases) or
+/// a status text colour (kDarkStatusTextAliases); any other value is returned as it is.
 inline QString darkStatusTextColor(const QString& color) {
+    for (const auto& alias : kDarkHtmlAliases) {
+        if (color == QString::fromLatin1(alias.lightToken)) {
+            return QString::fromLatin1(alias.darkToken);
+        }
+    }
     for (const auto& alias : kDarkStatusTextAliases) {
         if (color == QString::fromLatin1(alias.lightToken)) {
             return QString::fromLatin1(alias.darkToken);
@@ -1505,14 +1542,15 @@ inline QString notePanelStyleWithFontSize(const char* background,
 }
 
 inline QString warningPanelStyle() {
+    // Through cssColor, so the dark theme gets its own error panel instead of the light pink box.
     return QStringLiteral(
                "color: %1; padding: %2px; background-color: %3; "
                "border: %4px solid %5; border-radius: %6px;")
-        .arg(QString::fromLatin1(kColorErrorText))
+        .arg(cssColor(kColorErrorText))
         .arg(kCssPaddingLargePx)
-        .arg(QString::fromLatin1(kColorBgErrorPanel))
+        .arg(cssColor(kColorBgErrorPanel))
         .arg(kCssBorderWidthDefaultPx)
-        .arg(QString::fromLatin1(kColorError))
+        .arg(cssColor(kColorError))
         .arg(kCssRadiusSmallPx);
 }
 

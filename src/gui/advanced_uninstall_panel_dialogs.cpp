@@ -128,11 +128,11 @@ ScanLevelRadioGroup addScanLevelGroup(QDialog* dialog,
     auto* scan_group = new QGroupBox(QObject::tr("Leftover Scan Level"), dialog);
     auto* scan_layout = new QVBoxLayout(scan_group);
     ScanLevelRadioGroup radios;
-    radios.safe = new QRadioButton(QObject::tr("Safe -- Scan common locations only"), dialog);
+    radios.safe = new QRadioButton(QObject::tr("Safe - Scan common locations only"), dialog);
     radios.moderate =
-        new QRadioButton(QObject::tr("Moderate -- Scan common + registry (recommended)"), dialog);
+        new QRadioButton(QObject::tr("Moderate - Scan common + registry (recommended)"), dialog);
     radios.advanced = new QRadioButton(
-        QObject::tr("Advanced -- Deep scan including services, tasks, firewall rules"), dialog);
+        QObject::tr("Advanced - Deep scan including services, tasks, firewall rules"), dialog);
     selectScanLevelRadio(radios, default_level);
     scan_layout->addWidget(radios.safe);
     scan_layout->addWidget(radios.moderate);
@@ -197,7 +197,7 @@ QDialogButtonBox* addUninstallConfirmationButtons(QDialog* dialog, QVBoxLayout* 
 QLabel* addForcedUninstallWarning(QDialog* dialog, QVBoxLayout* layout) {
     auto* warning_label = new QLabel(QString::fromLatin1(sak::ui::kHtmlBoldColor)
                                          .arg(sak::ui::htmlColor(sak::ui::kColorWarning),
-                                              QObject::tr("(!) Forced Uninstall")),
+                                              QObject::tr("Forced Uninstall")),
                                      dialog);
     layout->addWidget(warning_label);
     return warning_label;
@@ -207,13 +207,14 @@ QLabel* addForcedUninstallDescription(QDialog* dialog,
                                       QVBoxLayout* layout,
                                       const sak::ProgramInfo& program) {
     auto* desc_label =
-        new QLabel(QObject::tr("This will skip the native uninstaller for <b>%1</b> and attempt "
-                               "to remove all traces directly.\n\n"
-                               "Use this when:\n"
-                               "* The native uninstaller is broken or missing\n"
-                               "* The program won't uninstall normally\n"
-                               "* You want to perform a deep clean\n\n"
-                               "A complete leftover scan will be performed after removal.")
+        // Rich text (for the bold name) ignores line breaks, so the bullets ran into one line.
+        new QLabel(QObject::tr("<p>This will skip the native uninstaller for <b>%1</b> and attempt "
+                               "to remove all traces directly.</p>"
+                               "<p>Use this when:</p>"
+                               "<ul><li>The native uninstaller is broken or missing</li>"
+                               "<li>The program won't uninstall normally</li>"
+                               "<li>You want to perform a deep clean</li></ul>"
+                               "<p>A complete leftover scan will be performed after removal.</p>")
                        .arg(program.displayName.toHtmlEscaped()),
                    dialog);
     desc_label->setWordWrap(true);
@@ -231,10 +232,10 @@ ForcedUninstallScanRadios addForcedUninstallScanGroup(QDialog* dialog, QVBoxLayo
     auto* scan_layout = new QVBoxLayout(scan_group);
 
     ForcedUninstallScanRadios radios;
-    radios.moderate = new QRadioButton(QObject::tr("Moderate -- Registry + file system scan"),
+    radios.moderate = new QRadioButton(QObject::tr("Moderate - Registry + file system scan"),
                                        dialog);
     radios.advanced = new QRadioButton(
-        QObject::tr("Advanced -- Deep scan including system objects (recommended)"), dialog);
+        QObject::tr("Advanced - Deep scan including system objects (recommended)"), dialog);
     radios.advanced->setChecked(true);
 
     scan_layout->addWidget(radios.moderate);
@@ -342,7 +343,7 @@ void AdvancedUninstallPanel::populateBatchUninstallQueueList(
             text += " (" + item.program.displayVersion + ")";
         }
         if (item.program.estimatedSizeKB > 0) {
-            text += " \u2014 " + formatSize(item.program.estimatedSizeKB * sak::kBytesPerKB);
+            text += " - " + formatSize(item.program.estimatedSizeKB * sak::kBytesPerKB);
             total_bytes += item.program.estimatedSizeKB * sak::kBytesPerKB;
         }
         queue_list->addItem(text);
@@ -370,13 +371,13 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
         delete w.queue_list->takeItem(row);
 
         w.header_label->setText(
-            tr("<b>Batch Uninstall Queue</b> -- %1 programs").arg(w.queue_list->count()));
+            tr("<b>Batch Uninstall Queue</b> - %1 programs").arg(w.queue_list->count()));
 
         qint64 new_total = 0;
         for (const auto& qi : m_controller->queue()) {
             new_total += qi.program.estimatedSizeKB * sak::kBytesPerKB;
         }
-        w.total_label->setText(tr("Total size: %1").arg(formatSize(new_total)));
+        w.total_label->setText(totalSizeText(new_total));
     });
 
     connect(widgets.clear_btn, &QPushButton::clicked, dialog, [this, dialog]() {
@@ -399,10 +400,9 @@ QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
     }
     layout->addWidget(restore_check);
 
-    auto* note_label =
-        new QLabel(tr("Programs will be uninstalled sequentially. You may cancel "
-                      "the batch at any time -- remaining programs will be skipped."),
-                   dialog);
+    auto* note_label = new QLabel(tr("Programs will be uninstalled sequentially. You may cancel "
+                                     "the batch at any time - remaining programs will be skipped."),
+                                  dialog);
     note_label->setWordWrap(true);
     note_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     layout->addWidget(note_label);
@@ -436,7 +436,7 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
     layout->setSpacing(ui::kSpacingLarge);
 
     auto* header_label =
-        new QLabel(tr("<b>Batch Uninstall Queue</b> -- %1 programs").arg(queue.size()), &dialog);
+        new QLabel(tr("<b>Batch Uninstall Queue</b> - %1 programs").arg(queue.size()), &dialog);
     layout->addWidget(header_label);
 
     // Queue list
@@ -458,7 +458,7 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
 
     action_row->addStretch();
 
-    auto* total_label = new QLabel(tr("Total size: %1").arg(formatSize(total_size)), &dialog);
+    auto* total_label = new QLabel(totalSizeText(total_size), &dialog);
     total_label->setStyleSheet(
         ui::fontWeightAndColorStyle(ui::kFontWeightBold, ui::kColorTextSecondary));
     action_row->addWidget(total_label);
@@ -610,7 +610,7 @@ void AdvancedUninstallPanel::addInstallFolderSizeRow(const ProgramInfo& program,
 
 void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program) {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Program Properties -- %1").arg(program.displayName));
+    dialog.setWindowTitle(tr("Program Properties - %1").arg(program.displayName));
     dialog.setMinimumWidth(kProgramPropertiesMinWidth);
 
     auto* layout = new QVBoxLayout(&dialog);
@@ -717,12 +717,12 @@ void AdvancedUninstallPanel::addSettingsScanLevelGroup(QDialog* dialog,
     auto* group = new QGroupBox(tr("Default Scan Level"), dialog);
     auto* group_layout = new QVBoxLayout(group);
 
-    safe_radio = new QRadioButton(tr("Safe -- Only obvious leftovers in known locations (fast)"),
+    safe_radio = new QRadioButton(tr("Safe - Only obvious leftovers in known locations (fast)"),
                                   dialog);
     moderate_radio = new QRadioButton(
-        tr("Moderate -- Extended scanning with pattern matching (recommended)"), dialog);
+        tr("Moderate - Extended scanning with pattern matching (recommended)"), dialog);
     advanced_radio =
-        new QRadioButton(tr("Advanced -- Deep scan including services, tasks, firewall rules, "
+        new QRadioButton(tr("Advanced - Deep scan including services, tasks, firewall rules, "
                             "startup entries"),
                          dialog);
 

@@ -7,6 +7,7 @@
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_os_migration.h"
 #include "sak/style_constants.h"
+#include "sak/windows11_theme.h"
 
 #include <QAbstractItemDelegate>
 #include <QAccessible>
@@ -152,6 +153,12 @@ private Q_SLOTS:
     void readOnlyScansRunNowWithoutQueueing();
     void scanFileSystemsIsDiskLevelOnly();
     void spaceAnalyzerExposesCommercialViews();
+    // UI review F3-F6: sizes sorted as text, labels left beside hidden fields, a confirmation cut
+    // at the dialog's edge, and quick-partition editors taller than their rows.
+    void spaceAnalyzerSortsSizesByBytes();
+    void applyPreviewUsesTheMapColoursAndReadableLabels();
+    void formatDialogHidesWholeRowsAndShowsTheWholeConfirmation();
+    void quickPartitionRowsFitTheirEditors();
     void changeClusterSizeQueuesVerifiedReformatOperation();
     void allocateFreeSpaceQueuesAdjacentDonorOperation();
     void destructiveBackupIsRevalidatedAfterModal();
@@ -182,6 +189,7 @@ constexpr int kPreviewDragTargetEndMegabytes = 448;
 constexpr int kPreviewDragExpectedSizeMegabytes = 300;
 constexpr int kHorizontalMarginCount = 2;
 constexpr int kRenderedSegmentFillLightness = 160;
+constexpr int kRenderedSegmentUsedDarkness = 118;
 constexpr int kModalWatchdogMs = 1500;
 
 class ScopedModalInspection {
@@ -2048,11 +2056,22 @@ void PartitionManagerPanelTests::diskMapLegendColorsMatchRenderedRoles() {
         const QString role = swatch->property("colorRole").toString();
         const QColor expectedColor(swatch->property("colorValue").toString());
         const QImage image = swatch->grab().toImage();
-        const QColor renderedColor =
-            averageColor(image, QRect(3, 3, image.width() - 6, image.height() - 6));
-        QVERIFY2(colorDistance(renderedColor, expectedColor) < 40,
+        // UI review F13: the swatch shows the shades the map paints for its role -- free space
+        // on the right, used space on the left (all free for Unallocated) -- not the base colour
+        // no segment is drawn in.
+        const QColor freeShade = averageColor(image,
+                                              QRect(image.width() - 6, 4, 3, image.height() - 8));
+        QVERIFY2(colorDistance(freeShade, expectedColor.lighter(kRenderedSegmentFillLightness)) <
+                     30,
                  qPrintable(
-                     QStringLiteral("Legend swatch for %1 is not visibly painted").arg(role)));
+                     QStringLiteral("Legend swatch for %1 lacks the map's free shade").arg(role)));
+        if (role != QStringLiteral("Unallocated")) {
+            const QColor usedShade = averageColor(image, QRect(3, 4, 3, image.height() - 8));
+            QVERIFY2(
+                colorDistance(usedShade, expectedColor.darker(kRenderedSegmentUsedDarkness)) < 30,
+                qPrintable(
+                    QStringLiteral("Legend swatch for %1 lacks the map's used shade").arg(role)));
+        }
         legendColors.insert(role, expectedColor.name());
     }
 
@@ -2122,6 +2141,28 @@ void PartitionManagerPanelTests::unallocatedRoleUsesDarkGrayPalette() {
              unallocatedSwatch->property("colorValue").toString());
 }
 
+namespace {
+
+qint64 totalSaturation(const QImage& image) {
+    qint64 total = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            total += pixel.alpha() > 0 ? pixel.hsvSaturation() : 0;
+        }
+    }
+    return total;
+}
+
+bool disabledIconIsGreyed(const QIcon& icon) {
+    const QSize probe(24, 24);
+    const qint64 normal = totalSaturation(icon.pixmap(probe, QIcon::Normal).toImage());
+    const qint64 disabled = totalSaturation(icon.pixmap(probe, QIcon::Disabled).toImage());
+    return normal == 0 || disabled < normal;
+}
+
+}  // namespace
+
 void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
     // Run under the production tool-button style sheet: its padding is exactly
     // what fixed-width font-metrics sizing used to undercount, eliding wider
@@ -2141,6 +2182,8 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
     const QHash<QString, QString> expectedIcons{
         {QStringLiteral("Apply"), QStringLiteral(":/icons/icons/icons8-pm-apply.svg")},
         {QStringLiteral("Discard"), QStringLiteral(":/icons/icons/icons8-pm-discard.svg")},
+        // UI review F15: Cancel shared Discard's red X.
+        {QStringLiteral("Cancel"), QStringLiteral(":/icons/icons/icons8-close-window.svg")},
         {QStringLiteral("Undo"), QStringLiteral(":/icons/icons/icons8-pm-undo.svg")},
         {QStringLiteral("Redo"), QStringLiteral(":/icons/icons/icons8-pm-redo.svg")},
         {QStringLiteral("Scan Disks"), QStringLiteral(":/icons/icons/icons8-pm-refresh.svg")},
@@ -2161,6 +2204,10 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
         QVERIFY(iconBytes.contains("viewBox"));
         QCOMPARE(button->property("iconModes").toString(),
                  QStringLiteral("Normal,Disabled,Active,Selected"));
+        // UI review F15: the disabled pixmap is the greyed artwork, not the colour file again.
+        QVERIFY2(disabledIconIsGreyed(button->icon()),
+                 qPrintable(QStringLiteral("%1's disabled icon is as colourful as its normal one")
+                                .arg(it.key())));
         const auto disabledIconSize =
             button->icon().actualSize(QSize(30, 30), QIcon::Disabled, QIcon::Off);
         QVERIFY2(disabledIconSize.width() >= 24 && disabledIconSize.height() >= 24,
@@ -2538,6 +2585,38 @@ void PartitionManagerPanelTests::applyPreviewPreservesTrailingFreeSpan() {
              QStringLiteral("500"));
     QCOMPARE(segments.at(2).toObject().value(QStringLiteral("bytes")).toString(),
              QStringLiteral("500"));
+}
+
+// UI review F14, dark review DF5: the before/after bars drew partitions in a neon green no token
+// names and free space in a palette shade that went pale in dark, under labels in the palette's
+// text colour, which vanished on it. They use the disk map's colours, and labels that read.
+void PartitionManagerPanelTests::applyPreviewUsesTheMapColoursAndReadableLabels() {
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{0};
+    disk.size_bytes = 1000;
+    sak::PartitionInfoEx data;
+    data.disk_number = sak::DiskNumber{0};
+    data.partition_number = sak::PartitionNumber{1};
+    data.offset_bytes = 0;
+    data.size_bytes = 300;
+    disk.partitions.append(data);
+    disk.unallocated_regions.append({sak::DiskNumber{0}, 300, 700});
+    for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        const QJsonArray segments = sak::partitionApplyPreviewSegmentsForTest(disk, {});
+        QVERIFY(!segments.isEmpty());
+        for (const auto& value : segments) {
+            const QJsonObject segment = value.toObject();
+            const QString color = segment.value(QStringLiteral("color")).toString();
+            QVERIFY2(color == QStringLiteral("#2a97cf") || color == QStringLiteral("#464e58"),
+                     qPrintable(color));
+            const QColor fill(segment.value(QStringLiteral("fill")).toString());
+            const QColor label(segment.value(QStringLiteral("label_color")).toString());
+            QVERIFY2(qAbs(fill.lightness() - label.lightness()) >= 100,
+                     qPrintable(QStringLiteral("label %1 on %2").arg(label.name(), fill.name())));
+        }
+    }
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
 }
 
 void PartitionManagerPanelTests::applyPreviewRefusesOverflowingFreeSpan() {
@@ -4329,6 +4408,99 @@ void PartitionManagerPanelTests::spaceAnalyzerExposesCommercialViews() {
     QCOMPARE(logRow.value(QStringLiteral("bytes")).toString(), QStringLiteral("32"));
     QCOMPARE(logRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file(s)"));
     QCOMPARE(result.value(QStringLiteral("total_bytes")).toString(), QStringLiteral("96"));
+}
+
+// Largest Files promised largest first and sorted "9.0 KB" above "10.0 MB".
+void PartitionManagerPanelTests::spaceAnalyzerSortsSizesByBytes() {
+    const QStringList order = sak::partitionSpaceAnalyzerTableOrderForTest({
+        {QStringLiteral("small.log"), 9ULL * 1024},
+        {QStringLiteral("big.iso"), 10ULL * 1024 * 1024},
+        {QStringLiteral("medium.zip"), 900ULL * 1024},
+    });
+    QCOMPARE(order,
+             QStringList({QStringLiteral("big.iso"),
+                          QStringLiteral("medium.zip"),
+                          QStringLiteral("small.log")}));
+}
+
+void PartitionManagerPanelTests::formatDialogHidesWholeRowsAndShowsTheWholeConfirmation() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("ext4"));
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Format dialog should open");
+        auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
+        QVERIFY(fileSystem != nullptr);
+        const int apfs = fileSystem->findText(QStringLiteral("APFS"));
+        QVERIFY2(apfs >= 0, "APFS should be offered");
+        fileSystem->setCurrentIndex(apfs);
+        QCoreApplication::processEvents();
+        // Rows that do not apply are hidden with their labels: swap needs Linux swap, and the
+        // password and recovery key need Encrypt ticked.
+        for (const QString& hidden : {QStringLiteral("Swap page size:"),
+                                      QStringLiteral("Volume password:"),
+                                      QStringLiteral("Recovery key:")}) {
+            for (const QLabel* label : dialog->findChildren<QLabel*>()) {
+                if (label->text() == hidden) {
+                    QVERIFY2(!label->isVisible(), qPrintable(hidden + QStringLiteral(" is shown")));
+                }
+            }
+        }
+        auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
+                                                        QStringLiteral("Confirm APFS format"));
+        QVERIFY(confirm != nullptr);
+        QVERIFY(confirm->isVisible());
+        QVERIFY2(confirm->width() >= confirm->sizeHint().width(),
+                 qPrintable(QStringLiteral("confirmation is %1 px of %2")
+                                .arg(confirm->width())
+                                .arg(confirm->sizeHint().width())));
+        QVERIFY(confirm->mapTo(dialog, QPoint(confirm->width(), 0)).x() <= dialog->width());
+        inspected = true;
+    });
+    auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
+    QVERIFY2(format != nullptr, "Format action should exist");
+    pressAction(format);
+    QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::quickPartitionRowsFitTheirEditors() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(0);
+    QApplication::processEvents();
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Quick Partition dialog should open");
+        QTableWidget* rows = nullptr;
+        for (QTableWidget* candidate : dialog->findChildren<QTableWidget*>()) {
+            if (candidate->rowCount() > 0 && candidate->cellWidget(0, 0) != nullptr) {
+                rows = candidate;
+            }
+        }
+        QVERIFY2(rows != nullptr, "Quick Partition should list its partitions");
+        for (int row = 0; row < rows->rowCount(); ++row) {
+            for (int column = 0; column < rows->columnCount(); ++column) {
+                if (QWidget* editor = rows->cellWidget(row, column)) {
+                    QVERIFY2(rows->rowHeight(row) >= editor->sizeHint().height(),
+                             qPrintable(QStringLiteral("row %1 is %2 px, its editor needs %3")
+                                            .arg(row)
+                                            .arg(rows->rowHeight(row))
+                                            .arg(editor->sizeHint().height())));
+                }
+            }
+        }
+        inspected = true;
+    });
+    auto* quickPartition = findToolButtonByName(&panel, QStringLiteral("Quick Partition"));
+    QVERIFY(quickPartition != nullptr);
+    pressAction(quickPartition);
+    QVERIFY(inspected);
 }
 
 void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperation() {

@@ -10,8 +10,10 @@
 #include <QWidget>
 
 class QEvent;
+class QHBoxLayout;
 class QPushButton;
 class QTimer;
+class QVBoxLayout;
 
 namespace sak {
 
@@ -120,5 +122,12 @@ private:
     bool m_checked{false};
     QString m_label;
 };
+
+/// @brief Puts @p toggle at the foot of a tool page, kMarginMedium from the page's left edge, and
+///        returns the row so the page can add its own controls after it.
+/// @details Every tool tab calls this, so the Log switch sits in one place on all of them; a tab
+///          whose page holds sub-tabs puts it under them, not inside one. @p page_layout's own
+///          margins are counted, so the switch lands in the same place whatever they are.
+QHBoxLayout* addLogFooter(QVBoxLayout* page_layout, LogToggleSwitch* toggle);
 
 }  // namespace sak

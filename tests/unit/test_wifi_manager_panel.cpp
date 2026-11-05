@@ -6,6 +6,8 @@
 
 #include "sak/wifi_manager_panel.h"
 
+#include <QPushButton>
+#include <QTableWidget>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -22,6 +24,7 @@ private Q_SLOTS:
     void envVarSsidNotExpandedInConnect();
     void jsonWriteFailsClosedOnShortWrite();
     void installRefusesIncompleteRows();
+    void deleteSelectedNeedsASelectedRow();
 };
 
 // A benign SSID yields a runnable script with the base64 profile and netsh call.
@@ -133,6 +136,36 @@ void WifiManagerPanelTests::installRefusesIncompleteRows() {
     QVERIFY(WifiManagerPanel::wifiProfileInstallRefusal(
                 row(QString(), QStringLiteral("WPA/WPA2/WPA3"))) !=
             WifiManagerPanel::wifiProfileInstallRefusal(row(QStringLiteral("Lab"), QString())));
+}
+
+// UI review F20: the danger button was enabled with an empty table and nothing selected.
+void WifiManagerPanelTests::deleteSelectedNeedsASelectedRow() {
+    WifiManagerPanel panel;
+    QPushButton* remove = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+        if (button->accessibleName() == QStringLiteral("Delete Selected Networks")) {
+            remove = button;
+        }
+    }
+    QVERIFY(remove != nullptr);
+    QVERIFY(!remove->isEnabled());
+    QTableWidget* table = nullptr;
+    for (QTableWidget* candidate : panel.findChildren<QTableWidget*>()) {
+        if (candidate->selectionBehavior() == QAbstractItemView::SelectRows &&
+            candidate->selectionMode() == QAbstractItemView::ExtendedSelection) {
+            table = candidate;
+        }
+    }
+    QVERIFY(table != nullptr);
+    table->insertRow(0);
+    for (int column = 0; column < table->columnCount(); ++column) {
+        table->setItem(0, column, new QTableWidgetItem(QStringLiteral("Cafe")));
+    }
+    QVERIFY(!remove->isEnabled());
+    table->selectRow(0);
+    QVERIFY(remove->isEnabled());
+    table->clearSelection();
+    QVERIFY(!remove->isEnabled());
 }
 
 QTEST_MAIN(WifiManagerPanelTests)

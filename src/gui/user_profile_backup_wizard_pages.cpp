@@ -488,8 +488,8 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     auto* layout = new QVBoxLayout(dialog);
 
     // Header
-    auto* header_label = new QLabel(
-        tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
+    auto* header_label =
+        new QLabel(tr("<b>Files and patterns that are always excluded from backups</b>"), dialog);
     header_label->setWordWrap(true);
     header_label->setStyleSheet(sak::ui::notePanelStyleWithFontSize(sak::ui::kColorBgWarningPanel,
                                                                     sak::ui::kColorTextBody,
@@ -569,7 +569,9 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
     }
 
     m_summaryLabel->setText(
-        tr("[shield] %1 exclusion rules active | %2").arg(exclusion_count).arg(limit_text));
+        (exclusion_count == 1
+             ? tr("1 exclusion rule active | %1").arg(limit_text)
+             : tr("%1 exclusion rules active | %2").arg(exclusion_count).arg(limit_text)));
 }
 
 // ============================================================================
@@ -589,7 +591,8 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     // Destination path
     auto* dest_layout = new QHBoxLayout();
-    dest_layout->addWidget(new QLabel(tr("Backup destination:"), this));
+    m_destinationLabel = new QLabel(tr("Backup destination:"), this);
+    dest_layout->addWidget(m_destinationLabel);
     m_destinationEdit = new QLineEdit(this);
     m_destinationEdit->setAccessibleName(tr("Backup destination"));
     m_destinationEdit->setPlaceholderText(tr("Select backup folder..."));
@@ -613,6 +616,21 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     // verbatim copy. UserProfileBackupWorker has never compressed anything. See R5-G19-1.
 }
 
+void UserProfileBackupSettingsPage::setupUi_compressionLevelRow(QVBoxLayout* layout) {
+    auto* level_layout = new QHBoxLayout();
+    m_compressionLabel = new QLabel(tr("Compression level:"), this);
+    level_layout->addWidget(m_compressionLabel);
+    m_compressionLevelCombo = new QComboBox(this);
+    m_compressionLevelCombo->setAccessibleName(tr("Compression level"));
+    m_compressionLevelCombo->addItem(tr("Fastest"), kCompressionLevelFastest);
+    m_compressionLevelCombo->addItem(tr("Balanced"), sak::kBackupDefaultCompressionLevel);
+    m_compressionLevelCombo->addItem(tr("Smallest"), kCompressionLevelSmallest);
+    m_compressionLevelCombo->setCurrentIndex(1);
+    m_compressionLevelCombo->setEnabled(false);
+    level_layout->addWidget(m_compressionLevelCombo, 1);
+    layout->addLayout(level_layout);
+}
+
 void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     Q_ASSERT(layout);
 
@@ -623,18 +641,7 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     m_compressCheck->setToolTip(
         tr("Stores each file compressed. Smaller backups, slower to write and restore."));
     layout->addWidget(m_compressCheck);
-
-    auto* level_layout = new QHBoxLayout();
-    level_layout->addWidget(new QLabel(tr("Compression level:"), this));
-    m_compressionLevelCombo = new QComboBox(this);
-    m_compressionLevelCombo->setAccessibleName(tr("Compression level"));
-    m_compressionLevelCombo->addItem(tr("Fastest"), kCompressionLevelFastest);
-    m_compressionLevelCombo->addItem(tr("Balanced"), sak::kBackupDefaultCompressionLevel);
-    m_compressionLevelCombo->addItem(tr("Smallest"), kCompressionLevelSmallest);
-    m_compressionLevelCombo->setCurrentIndex(1);
-    m_compressionLevelCombo->setEnabled(false);
-    level_layout->addWidget(m_compressionLevelCombo, 1);
-    layout->addLayout(level_layout);
+    setupUi_compressionLevelRow(layout);
 
     // Encryption. The controls are created BEFORE the toggle handler that enables them:
     // the removed version captured m_passwordEdit in a lambda ten lines before it existed.
@@ -660,7 +667,7 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     // stay readable because the tree is preserved for selective restore; a technician
     // deciding whether this is enough protection needs to know that here, not in a header.
     auto* encrypt_note = new QLabel(
-        tr("(i) File <b>contents</b> are encrypted. File <b>names</b>, folder structure and "
+        tr("File <b>contents</b> are encrypted. File <b>names</b>, folder structure and "
            "file sizes remain visible. There is no password recovery - a lost password means "
            "the backup cannot be restored."),
         this);
@@ -733,7 +740,10 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
 
     // Permission mode
     auto* perm_layout = new QHBoxLayout();
-    perm_layout->addWidget(new QLabel(tr("Permission handling:"), this));
+    m_permissionLabel = new QLabel(tr("Permission handling:"), this);
+    perm_layout->addWidget(m_permissionLabel);
+    // One label column for the page's three settings rows.
+    alignLabelColumn({m_destinationLabel, m_compressionLabel, m_permissionLabel});
     m_permissionModeCombo = new QComboBox(this);
     m_permissionModeCombo->setAccessibleName(tr("Permission handling"));
     m_permissionModeCombo->addItem(tr("Strip All (Recommended)"),
@@ -752,7 +762,7 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
 
     // Permission explanation
     auto* perm_explain_label = new QLabel(
-        tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
+        tr("<b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
            "<b>Preserve:</b> Keeps original permissions (may cause errors). "
            "<b>Assign to Destination:</b> Changes nothing now, for the restore wizard to give "
            "the files to the person you choose there."),
@@ -913,7 +923,7 @@ void UserProfileBackupSettingsPage::updateSummary() {
         perm_mode = tr("Assign Destination");
     }
 
-    m_summaryLabel->setText(tr("[save] Destination: %1 | Permissions: %2 | Verify: %3")
+    m_summaryLabel->setText(tr("Destination: %1 | Permissions: %2 | Verify: %3")
                                 .arg(dest)
                                 .arg(perm_mode)
                                 .arg(m_verifyCheck->isChecked() ? tr("Yes") : tr("No")));
@@ -1438,7 +1448,7 @@ void UserProfileBackupAppDataPage::setupUi() {
 
     auto* instruction_label = new QLabel(
         tr("Click <b>Scan App Data</b> to detect application data on selected users. "
-           "This backs up application settings, profiles, and configurations -- "
+           "This backs up application settings, profiles, and configurations - "
            "not the applications themselves (use the Installed Applications step for that). "
            "Cache folders are left out. Browser bookmarks, history and extensions move with a "
            "profile, but saved passwords and sign-ins are protected by Windows for this account "

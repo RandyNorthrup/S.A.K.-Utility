@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -329,6 +330,8 @@ class NetworkDiagnosticPanelTests : public QObject {
 
 private Q_SLOTS:
     void cleanup();
+    void aListeningConnectionUsesTheTablesTextColour();
+    void everyColumnFitsItsHeaderLabel();
     void adapterScanRunsInEveryMode_data();
     void adapterScanRunsInEveryMode();
     void teardownRightAfterConstructionJoinsTheScan();
@@ -371,6 +374,60 @@ void NetworkDiagnosticPanelTests::adapterScanRunsInEveryMode_data() {
     QTest::newRow("interactive") << QByteArray();
     QTest::newRow("startup smoke") << QByteArray("sakStartupSmokeTest");
     QTest::newRow("accessibility audit") << QByteArray("sakAccessibilityAudit");
+}
+
+// Dark review DF3: a state with no colour of its own (LISTEN) was given an invalid QColor, which
+// paints black: 1.2:1 on the dark table.
+void NetworkDiagnosticPanelTests::aListeningConnectionUsesTheTablesTextColour() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    sak::ConnectionInfo listening;
+    listening.state = QStringLiteral("LISTEN");
+    listening.localAddress = QStringLiteral("0.0.0.0");
+    listening.localPort = 445;
+    QVERIFY(QMetaObject::invokeMethod(&panel,
+                                      "onConnectionsUpdated",
+                                      Qt::DirectConnection,
+                                      Q_ARG(QVector<sak::ConnectionInfo>, {listening})));
+    const QTableWidgetItem* state = nullptr;
+    for (const QTableWidget* table : panel.findChildren<QTableWidget*>()) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            for (int column = 0; column < table->columnCount(); ++column) {
+                const QTableWidgetItem* item = table->item(row, column);
+                if (item != nullptr && item->text() == QStringLiteral("LISTEN")) {
+                    state = item;
+                }
+            }
+        }
+    }
+    QVERIFY(state != nullptr);
+    QVERIFY2(!state->data(Qt::ForegroundRole).isValid(),
+             qPrintable(state->foreground().color().name()));
+}
+
+// UI review S15: fixed column widths cut "Response Time" and "Enabled" to fragments.
+void NetworkDiagnosticPanelTests::everyColumnFitsItsHeaderLabel() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QStringList cut;
+    for (QTableWidget* table : panel.findChildren<QTableWidget*>()) {
+        QHeaderView* header = table->horizontalHeader();
+        for (int section = 0; section < header->count(); ++section) {
+            if (header->isSectionHidden(section) ||
+                header->sectionResizeMode(section) == QHeaderView::Stretch ||
+                (header->stretchLastSection() && section == header->count() - 1)) {
+                continue;
+            }
+            if (header->sectionSize(section) < header->sectionSizeHint(section)) {
+                const auto* item = table->horizontalHeaderItem(section);
+                cut << QStringLiteral("%1: %2 px of %3")
+                           .arg(item != nullptr ? item->text() : QString::number(section))
+                           .arg(header->sectionSize(section))
+                           .arg(header->sectionSizeHint(section));
+            }
+        }
+    }
+    QVERIFY2(cut.isEmpty(), qPrintable(cut.join(QStringLiteral(", "))));
 }
 
 // Smoke and audit runs used to skip the adapter scan users get when the panel is created, so the

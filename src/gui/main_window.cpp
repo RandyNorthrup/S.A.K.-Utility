@@ -299,7 +299,7 @@ constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stre
 constexpr char kTooltipNetworkManagement[] =
     "Network diagnostics, WiFi management, and connectivity tools";
 constexpr char kTooltipEmailTool[] =
-    "Inspect PST, OST, and MBOX email files -- search, export, and manage profiles";
+    "Inspect PST, OST, and MBOX email files - search, export, and manage profiles";
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 constexpr char kTooltipAiAssistant[] =
@@ -342,7 +342,8 @@ void addTabWithTooltip(QTabWidget* tab_widget,
     Q_ASSERT(tab_title);
     Q_ASSERT(tooltip);
 
-    const QIcon icon = (icon_path != nullptr) ? QIcon(QString::fromUtf8(icon_path)) : QIcon();
+    const QIcon icon =
+        (icon_path != nullptr) ? sak::tabIcon(QString::fromUtf8(icon_path), kTabIconSize) : QIcon();
     const int idx = icon.isNull() ? tab_widget->addTab(panel, QString::fromUtf8(tab_title))
                                   : tab_widget->addTab(panel, icon, QString::fromUtf8(tab_title));
     if (!icon.isNull()) {
@@ -606,7 +607,8 @@ void MainWindow::createStatusBar() {
                                           sak::ui::kMarginNone,
                                           sak::ui::kSpacingDefault,
                                           sak::ui::kMarginNone);
-    m_ai_status_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // Left-aligned: squeezed by the status bar, a right-aligned label cut the start of its text.
+    m_ai_status_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_ai_status_label->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(ui::kFontWeightSemibold, sak::ui::kColorTextSecondary));
     m_ai_status_label->setVisible(false);
@@ -1002,6 +1004,7 @@ void MainWindow::createEmailToolsPanel() {
     email_tabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
     email_tabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
     email_layout->addWidget(email_tabs, 1);
+    addWrapperLogFooter(email_wrapper, email_layout);
 
     connect(email_tabs, &QTabWidget::currentChanged, this, [email_hdr](int index) {
         struct TabMeta {
@@ -1013,7 +1016,7 @@ void MainWindow::createEmailToolsPanel() {
             {.icon = ":/icons/icons/panel_email.svg",
              .title = "Email Inspector",
              .subtitle = "Offline email forensics and data extraction "
-                         "\xe2\x80\x94 inspect PST, OST, and MBOX files"},
+                         "- inspect PST, OST, and MBOX files"},
             {.icon = ":/icons/icons/panel_email.svg",
              .title = "OST Converter",
              .subtitle = "Bulk OST/PST file conversion to MBOX"},
@@ -1071,6 +1074,7 @@ void MainWindow::createAppManagementPanel() {
     app_tabs->setAccessibleName(tr("Application management tabs"));
     m_application_tabs = app_tabs;
     app_mgmt_layout->addWidget(app_tabs, 1);
+    addWrapperLogFooter(app_mgmt_wrapper, app_mgmt_layout);
     // Insert empty tab shells first; adding fully populated panels to a tab
     // widget synchronously polishes their entire descendant tree.
     QWidget* app_install_shell = addEmptyPanelTab(app_tabs, tr("App Installation"));
@@ -1162,7 +1166,7 @@ void MainWindow::createNetworkManagementPanel() {
         net_mgmt_wrapper,
         QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
-        tr("Comprehensive network analysis -- connectivity testing, DNS diagnostics, "
+        tr("Comprehensive network analysis - connectivity testing, DNS diagnostics, "
            "port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
         net_mgmt_layout);
 
@@ -1172,8 +1176,7 @@ void MainWindow::createNetworkManagementPanel() {
     net_tabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
     net_tabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
     net_mgmt_layout->addWidget(net_tabs, 1);
-
-    connectNetworkAdapterLogToggle();
+    addWrapperLogFooter(net_mgmt_wrapper, net_mgmt_layout);
 
     connect(net_tabs, &QTabWidget::currentChanged, this, [net_hdr](int index) {
         struct TabMeta {
@@ -1185,7 +1188,7 @@ void MainWindow::createNetworkManagementPanel() {
             {.icon = ":/icons/icons/panel_network.svg",
              .title = "Network Diagnostics & Troubleshooting",
              .subtitle = "Comprehensive network analysis "
-                         "\xe2\x80\x94 connectivity testing, DNS diagnostics, "
+                         "- connectivity testing, DNS diagnostics, "
                          "port scanning, bandwidth, WiFi analysis, "
                          "firewall auditing, and more"},
             {.icon = ":/icons/icons/icons8-network-card.svg",
@@ -1212,19 +1215,20 @@ void MainWindow::createNetworkManagementPanel() {
                       ":/icons/icons/panel_network.svg");
 }
 
-void MainWindow::connectNetworkAdapterLogToggle() {
-    auto* adapter_toggle = m_network_diagnostic_panel->adapterLogToggle();
-    if ((adapter_toggle == nullptr) || (m_logWindow == nullptr)) {
+void MainWindow::addWrapperLogFooter(QWidget* wrapper, QVBoxLayout* layout) {
+    auto* toggle = new LogToggleSwitch(tr("Log"), wrapper);
+    sak::addLogFooter(layout, toggle);
+    connectLogToggle(toggle);
+}
+
+void MainWindow::connectLogToggle(LogToggleSwitch* toggle) {
+    if ((toggle == nullptr) || (m_logWindow == nullptr)) {
         return;
     }
-    connect(adapter_toggle,
-            &LogToggleSwitch::toggled,
-            m_logWindow,
-            &DetachableLogWindow::setLogVisible);
-    connect(m_logWindow,
-            &DetachableLogWindow::visibilityChanged,
-            adapter_toggle,
-            &LogToggleSwitch::setChecked);
+    toggle->setChecked(m_logWindow->isLogVisible());
+    connect(toggle, &LogToggleSwitch::toggled, m_logWindow, &DetachableLogWindow::setLogVisible);
+    connect(
+        m_logWindow, &DetachableLogWindow::visibilityChanged, toggle, &LogToggleSwitch::setChecked);
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* icon_label) {
@@ -1273,8 +1277,9 @@ void MainWindow::createAboutPanel() {
         ui::kFontSizeTitle, ui::kFontWeightBold, ui::kColorTextPrimary));
     title_layout->addWidget(title);
 
-    auto* ver = new QLabel(QString("Version %1 \u2014 %2").arg(get_version(), get_build_date()),
-                           about_panel);
+    auto* ver = new QLabel(
+        QString("Version %1 - %2").arg(get_version(), sak::readableBuildDate(get_build_date())),
+        about_panel);
     ver->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeBody));
     title_layout->addWidget(ver);
@@ -1295,7 +1300,8 @@ void MainWindow::createAboutPanel() {
 
     about_layout->addWidget(about_tabs);
     m_tab_widget->addTab(about_panel,
-                         QIcon(QStringLiteral(":/icons/icons/panel_about.svg")),
+                         sak::tabIcon(QStringLiteral(":/icons/icons/panel_about.svg"),
+                                      kTabIconSize),
                          QStringLiteral("About"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
 }
@@ -1329,7 +1335,7 @@ void MainWindow::createHelpPanel() {
     help_layout->addStretch();
 
     m_tab_widget->addTab(help_panel,
-                         QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
+                         sak::tabIcon(QStringLiteral(":/icons/icons/panel_help.svg"), kTabIconSize),
                          QStringLiteral("Help and Support"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
 }
@@ -1710,14 +1716,9 @@ void MainWindow::connectPanelLog(PanelT* panel) {
         appendLogIfActive(tab_idx, formatted);
     });
 
-    auto* toggle = panel->logToggle();
-    if (toggle) {
-        connect(
-            toggle, &LogToggleSwitch::toggled, m_logWindow, &DetachableLogWindow::setLogVisible);
-        connect(m_logWindow,
-                &DetachableLogWindow::visibilityChanged,
-                toggle,
-                &LogToggleSwitch::setChecked);
+    // A panel shown as a sub-tab has no switch of its own; its wrapper's footer holds it.
+    if constexpr (requires { panel->logToggle(); }) {
+        connectLogToggle(panel->logToggle());
     }
 }
 
@@ -1875,6 +1876,11 @@ void MainWindow::onTabChanged(int index) {
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     updateAiStatusBarVisibility();
 #endif
+    // A message belongs to the tab that sent it: "Explorer loaded 6 item(s)" stayed on Help.
+    statusBar()->clearMessage();
+    if (m_status_label != nullptr) {
+        m_status_label->setText(tr("Ready"));
+    }
     if (m_logWindow == nullptr) {
         return;
     }

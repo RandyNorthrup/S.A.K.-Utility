@@ -67,6 +67,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <QThread>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -115,6 +116,20 @@ class AiAssistantPanelToolDispatchTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review F10: Run Details was a code fence in Courier New under a second "Run Details"
+    // heading, showing "_no phase history_" with its underscores.
+    void runDetailsReadsAsTextWithHeadings() {
+        AiAssistantPanel panel;
+        QTextDocument rendered;
+        rendered.setHtml(panel.runDetailsHtml());
+        const QString text = rendered.toPlainText();
+        QVERIFY(text.contains(QStringLiteral("Phase History")));
+        QVERIFY(text.contains(QStringLiteral("no phase history")));
+        QVERIFY2(!text.contains(QStringLiteral("_no phase history_")), qPrintable(text));
+        QVERIFY2(!text.contains(QStringLiteral("Run Details")), qPrintable(text));
+        QVERIFY2(!panel.runDetailsHtml().contains(QStringLiteral("Courier")),
+                 "the body is set in a code font");
+    }
     void initTestCase() {
         // Keep the panel's stores out of the real user data directory.
         QStandardPaths::setTestModeEnabled(true);

@@ -36,23 +36,6 @@
 
 namespace sak {
 
-namespace {
-
-// Size column: a plain QTableWidgetItem sorts on its DISPLAY string, so "9.0 KB" would sort
-// above "10.0 MB" and the column would lie about which attachment is biggest. Order on the
-// exact byte count carried alongside the text instead.
-class AttachmentSizeItem : public QTableWidgetItem {
-public:
-    AttachmentSizeItem(const QString& text, qint64 size_bytes) : QTableWidgetItem(text) {
-        setData(Qt::UserRole + 1, size_bytes);
-    }
-
-    bool operator<(const QTableWidgetItem& other) const override {
-        return data(Qt::UserRole + 1).toLongLong() < other.data(Qt::UserRole + 1).toLongLong();
-    }
-};
-}  // namespace
-
 // ============================================================================
 // Table column indices
 // ============================================================================
@@ -542,7 +525,8 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
 
         m_table->setItem(row,
                          ColSize,
-                         new AttachmentSizeItem(formatBytes(entry.size_bytes), entry.size_bytes));
+                         new sak::NumericSortTableItem(formatBytes(entry.size_bytes),
+                                                       entry.size_bytes));
 
         m_table->setItem(row,
                          ColType,

@@ -85,7 +85,6 @@ public:
     AppInstallationPanel& operator=(AppInstallationPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -238,7 +237,6 @@ private:
     QLabel* m_progressLabel{nullptr};
 
     // Bottom bar
-    LogToggleSwitch* m_logToggle{nullptr};
     QPushButton* m_saveQueueButton{nullptr};
 
     // Tab widget

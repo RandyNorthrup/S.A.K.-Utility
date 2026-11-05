@@ -1084,6 +1084,58 @@ the script's text, compiles its C#, and runs the copy and read-back code on ordi
 
 **Writer B's B5 and the owner's defect 3 are closed.** Round 6's design decisions above about both no longer apply.
 
+### UI review round 1: one theme, readable in light and dark (2026-11-04)
+
+An independent review of every screen in light and dark (`findings-light.md`, `findings-dark.md`, 2026-11-04)
+found 50 light items (S1-S26 systemic, F1-F50) and 24 dark ones (D1-D8, DF1-DF16). Fixed at the theme level where the
+cause was shared, so both themes take each fix.
+
+**Theme.** Check boxes show a tick (a style sheet cannot load a data: URL), partly checked a dash, a chosen option a
+dot, and item-view boxes match. Selected input text, disabled inputs, placeholders, the focus frame in item views, row
+selection (one opaque shade, no per-cell pieces), spin-box height, plain containers in white dialogs, link buttons in
+the status bar, submenu arrows, border and fill shades, header weight while a row is selected, and File Explorer's
+chrome states. In dark, plain buttons keep the primary fill (the dark QWidget rule came after the button rule) and
+progress bars use the dark border.
+
+**Contrast tokens (WCAG AA 4.5:1 for text, 3:1 for a control outline), darkened or lightened the least, same hue.**
+
+| Token | Before | After | On |
+|---|---|---|---|
+| kColorTextMuted | #64748b, 4.36:1 | #606f85, 4.68:1 | page #f3f5f9 |
+| kColorSuccess, kStatusColorSuccess | #16a34a, 3.02:1 | #117f3a, 4.67:1 | page |
+| kStatusColorWarning | #d97706, 2.92:1 | #a65b05, 4.67:1 | page |
+| kColorWarning | #ea580c, 3.26:1 | #bf480a, 4.64:1 | page |
+| kColorError, kStatusColorError | #dc2626, 4.42:1 | #d62323, 4.67:1 | page |
+| Primary button middle stop (white text) | 3.21:1 | 4.54:1 | white dialog |
+| Selected tab gradient middle (white text) | 3.73:1 | 4.54:1 | white |
+| Check box outline | #94a3b8, 2.56:1 | #7d8fa9, 3.02:1 | page |
+| Dark check box outline | #475569, 1.9:1 | #60738e, 3.02:1 | dark page |
+| Dark success / amber / warning / error / running / violet / error text | light values | #16a54b, #d97706, #f36013, #e66767, #5e8cf0, #a476f3, #e65757, each 4.5:1 or more | every dark surface |
+| palette(dark), File Explorer secondary text | #94a3b8 light, #64748b dark | kColorTextMuted, kColorDarkTextSecondary | base |
+
+Secondary, success, danger and Discord button stops moved the same way where white text was under 4.5:1. The unused
+pause button tone is unchanged.
+
+**Layout.** One Log switch per tool tab, at the left margin under the page (under the sub-tabs on Email Tools,
+Application Management and Network Management), through `addLogFooter`. Image Flasher's step buttons are a fixed
+footer. Sub-tab margins, form label columns, header labels that fit, rows that fit their editors, hidden form rows.
+
+**Copy.** One dash style (" - "), no "[x]", "[shield]", "[save]", "[FOLDER]", "(i)" or "(!)" stand-ins, plurals that
+agree, the About date, the converter's totals, drive names as Windows shows them ("Local Disk (C:)"), picked folders
+with backslashes, install dates as dates.
+
+**Stress test.** A 1-minute run kept going in the capture VM: a memory pass over gigabytes never checked for the end
+of the run, and the stress threads crowded out the window and the run's clock. Passes check every 8 MiB; stress threads
+run below normal priority.
+
+**Not changed, by decision.** The Vulnerability Scanner's findings table is wider than the window and scrolls (F18).
+Help and About have no Log switch: they log nothing. Faint File Management and Email Tools tab artwork (S25), tabs
+half under the scroll arrows, and remaining items listed in the round's report are open.
+
+**What no test here covers.** Pixel tests run offscreen on Qt's Windows 11 style, not on a real display. The proof
+pictures from the MacBook VM are the check of what a person sees. The stress fix is unit-tested at the pass and thread
+level; a full 1-minute run in the VM is the end-to-end check.
+
 ### Round 7: Partition Manager's certification now tests the app (2026-11-04)
 
 **The old rows tested Windows and VirtualBox, not this app.** Evidence from before this round ran Windows' own commands, and much of it assumed a helper task worked during the months it could not (Round 6). Every row now goes through the app's own request building (`src/core/partition_operation_requests.cpp`), its controller and queue, and the real `sak_elevated_helper.exe`, from a client under a standard-user token, and a separate script reads the disk back. Old evidence stays in git and cannot be selected. `docs/PARTITION_MANAGER_CERTIFICATION.md` describes the rows, the levels and the procedure.

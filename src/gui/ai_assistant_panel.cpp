@@ -4004,7 +4004,12 @@ QWidget* AiAssistantPanel::createChatWorkspace() {
     QElapsedTimer phase_timer;
     phase_timer.start();
     auto* content = new QWidget(this);
-    content->setStyleSheet(sak::ui::bareBackgroundStyle(sak::ui::kColorBgWhite));
+    // Scoped to the workspace itself: a selector-less rule cascades, and painted every label in
+    // the chat panes white.
+    content->setObjectName(QStringLiteral("aiChatWorkspace"));
+    content->setAttribute(Qt::WA_StyledBackground, true);
+    content->setStyleSheet(
+        sak::ui::backgroundStyle("QWidget#aiChatWorkspace", sak::ui::kColorBgWhite));
     auto* layout = new QVBoxLayout(content);
     layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
@@ -4706,13 +4711,8 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* action_row, QWidget
 void AiAssistantPanel::createStatusStrip(QVBoxLayout* root_layout) {
     Q_ASSERT(root_layout);
 
-    auto* status_row = new QHBoxLayout();
-    status_row->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    status_row->addWidget(m_logToggle);
-    status_row->addStretch();
-    root_layout->addLayout(status_row);
+    sak::addLogFooter(root_layout, m_logToggle);
 }
 
 void AiAssistantPanel::connectAiClient() {
@@ -7585,7 +7585,7 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const ai::AiToolCa
     }
     const QString admin_suffix = descriptor.requires_admin ? tr(" (requires administrator)")
                                                            : QString();
-    const QString detail_suffix = detail.isEmpty() ? QString() : QStringLiteral(" -- ") + detail;
+    const QString detail_suffix = detail.isEmpty() ? QString() : QStringLiteral(" - ") + detail;
     const QString preview =
         tr("Run app action '%1'%2%3").arg(descriptor.title, admin_suffix, detail_suffix);
     // Mirror the command path's access-mode behavior: a read-only session refuses any
@@ -7779,7 +7779,7 @@ static QStringList confirmBatchWarnings(const QJsonObject& action_args, const QJ
     QStringList warnings;
     if (!action_args.value(QStringLiteral("use_recycle_bin")).toBool(true)) {
         warnings << QObject::tr(
-            "WARNING: PERMANENT deletion -- files/folders are NOT sent to the Recycle Bin and "
+            "WARNING: PERMANENT deletion - files/folders are NOT sent to the Recycle Bin and "
             "cannot be recovered.");
     }
     const int permanent = countInherentlyPermanentItems(items);
@@ -9289,6 +9289,10 @@ AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
     case ContextItem::Type::TextFile:
         break;
     }
+    // The theme's own surfaces and text: raw light tokens drew pale chips in the dark theme.
+    palette.background = sak::ui::htmlColor(palette.background);
+    palette.border = sak::ui::htmlColor(palette.border);
+    palette.text_color = sak::ui::htmlColor(palette.text_color);
     return palette;
 }
 
@@ -12502,13 +12506,64 @@ QString AiAssistantPanel::runDetailsActivityLine(const ai::AiActivityEvent& acti
              activity.kind.isEmpty() ? QStringLiteral("activity") : activity.kind,
              ai::CredentialStore::redactSecrets(activity.summary));
 }
+namespace {
+
+/// "- " before a Run Details list item, and the "_" either side of a placeholder.
+constexpr qsizetype kRunDetailsListMarkerLength = 2;
+constexpr qsizetype kRunDetailsPlaceholderMarks = 2;
+
+/// One Run Details line that is not a list item, as HTML: a section heading, a "_placeholder_" in
+/// italics, or a paragraph. Every line is escaped text.
+QString runDetailsLineHtml(const QString& line, const QStringList& headings) {
+    if (headings.contains(line)) {
+        return QStringLiteral("<h3>%1</h3>").arg(line.toHtmlEscaped());
+    }
+    const bool placeholder = line.size() > kRunDetailsPlaceholderMarks &&
+                             line.startsWith(QLatin1Char('_')) && line.endsWith(QLatin1Char('_'));
+    return placeholder
+               ? QStringLiteral("<p><i>%1</i></p>")
+                     .arg(line.mid(1, line.size() - kRunDetailsPlaceholderMarks).toHtmlEscaped())
+               : QStringLiteral("<p>%1</p>").arg(line.toHtmlEscaped());
+}
+
+}  // namespace
+
 QString AiAssistantPanel::runDetailsHtml() const {
-    QString markdown = QStringLiteral("# Run Details\n\n````text\n%1\n````\n")
-                           .arg(runDetailsText().toHtmlEscaped());
-    markdown.replace(QStringLiteral("````"), QStringLiteral("```"));
+    // Each line as escaped text, the section names as headings and "- " lines as a list. As a code
+    // fence the body was Courier New, repeated the dialog's title, and showed "_no phase history_"
+    // with its underscores.
+    const QStringList headings = {tr("Tool / Provider Health"),
+                                  tr("Phase History"),
+                                  tr("Recent Activity")};
+    QString body;
+    bool in_list = false;
+    const QStringList lines = runDetailsText().split(QLatin1Char('\n'));
+    for (const QString& line : lines) {
+        const bool item = line.startsWith(QStringLiteral("- "));
+        if (in_list && !item) {
+            body += QStringLiteral("</ul>");
+            in_list = false;
+        }
+        if (line.trimmed().isEmpty()) {
+            continue;
+        }
+        if (item) {
+            if (!in_list) {
+                body += QStringLiteral("<ul>");
+                in_list = true;
+            }
+            body += QStringLiteral("<li>%1</li>")
+                        .arg(line.mid(kRunDetailsListMarkerLength).toHtmlEscaped());
+        } else {
+            body += runDetailsLineHtml(line, headings);
+        }
+    }
+    if (in_list) {
+        body += QStringLiteral("</ul>");
+    }
     QTextDocument document;
     document.setDefaultStyleSheet(sak::ui::aiRunDetailsMarkdownStyle());
-    document.setMarkdown(markdown, kMarkdownNoRawHtml);
+    document.setHtml(body);
     return document.toHtml();
 }
 void AiAssistantPanel::showRunDetails() {

@@ -83,6 +83,21 @@ class DiagnosticBenchmarkPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review F16: steps not yet run showed the hourglass that means "running".
+    void pendingSuiteStepsShowTheIdleMark() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        int pending = 0;
+        for (const QLabel* label : panel.findChildren<QLabel*>()) {
+            if (label->text().startsWith(QStringLiteral("  ")) &&
+                label->text().endsWith(QStringLiteral("Hardware Inventory"))) {
+                ++pending;
+                QVERIFY2(label->text().contains(QChar(0x25CB)), qPrintable(label->text()));
+                QVERIFY2(!label->text().contains(QChar(0x23F3)), qPrintable(label->text()));
+            }
+        }
+        QVERIFY(pending > 0);
+    }
     void initTestCase();
     void cleanupTestCase();
     void cleanup();

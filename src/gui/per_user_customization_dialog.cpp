@@ -157,7 +157,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* main_layout
 void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* main_layout) {
     // Warning about AppData -- selection is handled on the wizard's App Data page
     auto* warning_label = new QLabel(
-        "(!) Warning: Full AppData backup is NOT recommended. "
+        "<b>Warning:</b> Full AppData backup is NOT recommended. "
         "It contains machine-specific files that can corrupt profiles. "
         "Application data is selected on the <b>Application Data</b> wizard step.");
     warning_label->setWordWrap(true);
@@ -269,7 +269,8 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     folder_item->setCheckState(0, selection.selected ? Qt::Checked : Qt::Unchecked);
 
     // Column 0 also contains folder name
-    folder_item->setText(0, QString("[FOLDER] %1").arg(selection.display_name));
+    folder_item->setText(0, selection.display_name);
+    folder_item->setIcon(0, themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg")));
     folder_item->setData(0, Qt::UserRole, selection.relative_path);
     folder_item->setData(0, Qt::UserRole + 1, true);  // Mark as folder
 

@@ -303,14 +303,8 @@ void OrganizerPanel::setupUi() {
         updateHeaderForTab(index);
     });
 
-    // Shared status bar with log toggle
-    auto* status_row = new QHBoxLayout();
-    status_row->setContentsMargins(
-        sak::ui::kMarginNone, ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    status_row->addWidget(m_logToggle);
-    status_row->addStretch();
-    root_layout->addLayout(status_row);
+    sak::addLogFooter(root_layout, m_logToggle);
 }
 
 void OrganizerPanel::refreshMountedFileSystemTargets() {
@@ -491,6 +485,7 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
     m_category_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_category_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_category_table->setAlternatingRowColors(true);
+    m_category_table->verticalHeader()->setVisible(false);  // no row numbers, as every other table
     m_category_table->setMinimumHeight(kCategoryTableMinHeight);
     m_category_table->setAccessibleName(QStringLiteral("Category Mappings Table"));
     m_category_table->setToolTip(QStringLiteral("File categories and their associated extensions"));
@@ -930,7 +925,7 @@ void OrganizerPanel::updateDirectorySummary() {
 
     const int subdir_count =
         static_cast<int>(dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
-    m_dir_summary_label->setText(tr("%1 files (%2) \u2022 %3 subdirectories")
+    m_dir_summary_label->setText(tr("%1 files (%2) | %3 subdirectories")
                                      .arg(entries.size())
                                      .arg(size_str)
                                      .arg(subdir_count));
@@ -945,7 +940,7 @@ void OrganizerPanel::onBrowseClicked() {
                                                               QFileDialog::DontResolveSymlinks);
 
     if (!dir.isEmpty()) {
-        m_target_path->setText(dir);
+        m_target_path->setText(QDir::toNativeSeparators(dir));
         logMessage(QString("Target directory selected: %1").arg(dir));
     }
 }
@@ -1398,15 +1393,15 @@ void OrganizerPanel::updateDedupDirectorySummary() {
     const QString size_str = formatDedupBytes(totals.bytes);
     // A truncated walk under-counts, so present files and size as a lower bound
     // rather than a wrong exact figure.
-    m_dedup_summary_label->setText(
-        totals.truncated ? tr("%1 directory(ies) \u2022 at least %2 files (%3+) to scan")
-                               .arg(count)
-                               .arg(totals.files)
-                               .arg(size_str)
-                         : tr("%1 directory(ies) \u2022 %2 files (%3) to scan")
-                               .arg(count)
-                               .arg(totals.files)
-                               .arg(size_str));
+    m_dedup_summary_label->setText(totals.truncated
+                                       ? tr("%1 | at least %2 (%3+) to scan")
+                                             .arg(countOf(count, tr("folder"), tr("folders")),
+                                                  countOf(totals.files, tr("file"), tr("files")),
+                                                  size_str)
+                                       : tr("%1 | %2 (%3) to scan")
+                                             .arg(countOf(count, tr("folder"), tr("folders")),
+                                                  countOf(totals.files, tr("file"), tr("files")),
+                                                  size_str));
 }
 
 void OrganizerPanel::onDedupAddDirectoryClicked() {
@@ -1453,7 +1448,7 @@ void OrganizerPanel::onDedupAddDirectoryClicked() {
                 return;
             }
         }
-        m_dedup_directory_list->addItem(dir);
+        m_dedup_directory_list->addItem(QDir::toNativeSeparators(dir));
         updateDedupDirectorySummary();
         logMessage(QString("Added scan directory: %1").arg(dir));
     }

@@ -51,7 +51,9 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     // Summary headline
     QString headline;
     if (stats.failed == 0 && stats.cancelled == 0) {
-        headline = tr("All %1 packages installed successfully.").arg(stats.success);
+        headline = stats.success == 1
+                       ? tr("The package installed successfully.")
+                       : tr("All %1 packages installed successfully.").arg(stats.success);
     } else {
         headline = tr("%1 succeeded, %2 failed, %3 skipped, %4 cancelled")
                        .arg(stats.success)

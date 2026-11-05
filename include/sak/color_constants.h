@@ -73,6 +73,15 @@ constexpr auto kColorDarkStatusSuccess = "#16a54b";
 constexpr auto kColorDarkStatusWarning = "#d97706";
 constexpr auto kColorDarkWarning = "#f36013";
 constexpr auto kColorDarkStatusError = "#e66767";
+// Running/accent blue (blue-600) and the violet accent were 2.8-3.5:1 on the dark surfaces, and
+// red-700 error text 2.3:1 on the dark error panel; lightened the least that reaches 4.5:1.
+constexpr auto kColorDarkStatusRunning = "#5e8cf0";
+constexpr auto kColorDarkAccentPurple = "#a476f3";
+constexpr auto kColorDarkErrorText = "#e65757";
+// An unchecked box's outline: slate-400 / slate-600 were 2.6:1 and 1.9:1 against their surfaces,
+// under the 3:1 a control's outline needs (WCAG 1.4.11); the least change that reaches it.
+constexpr auto kColorCheckBoxBorder = "#7d8fa9";
+constexpr auto kColorDarkCheckBoxBorder = "#60738e";
 
 // Primary (Blue accent)
 constexpr auto kColorPrimary = "#3b82f6";         ///< blue-500 -- buttons, links
@@ -126,8 +135,10 @@ constexpr auto kColorWifiSearchMatchHighlight = "#ffff96";
 // Action button text and disabled state. The disabled fill and border are translucent slate so
 // one value reads as a muted control on the light page and on the dark one.
 constexpr auto kColorButtonTextOnTone = "#ffffff";
-constexpr auto kColorButtonDisabledBackground = "rgba(148, 163, 184, 0.35)";
-constexpr auto kColorButtonDisabledBorder = "rgba(148, 163, 184, 0.45)";
+// Faint enough that on the dark page a disabled button cannot pass for a secondary one, which at
+// 0.35 it nearly matched.
+constexpr auto kColorButtonDisabledBackground = "rgba(148, 163, 184, 0.18)";
+constexpr auto kColorButtonDisabledBorder = "rgba(148, 163, 184, 0.35)";
 
 // Button gradient stops. White label text sits on the middle stop; each tone's normal and hover
 // stops were darkened together, the least amount and keeping their hue, until that middle stop

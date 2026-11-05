@@ -556,7 +556,7 @@ constexpr auto kMetadataCategories = std::to_array<MetadataCategory>(
      {.name = "Audio Tags", .fields = kAudioFields.data(), .count = std::size(kAudioFields)}});
 
 void populateMetadataTree(QTreeWidget* tree, const QMap<QString, QString>& metadata) {
-    const QString dash = QStringLiteral("\u2014");
+    const QString dash = QStringLiteral("--");  // no value, in plain ASCII
     for (const auto& category : kMetadataCategories) {
         auto* cat_item = new QTreeWidgetItem(tree);
         cat_item->setText(0, QString::fromUtf8(category.name));
@@ -1799,7 +1799,7 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& file_path) {
     if (!QFileInfo::exists(file_path)) {
         return;
     }
-    showMetadataTreeDialog(tr("Metadata \u2014 %1").arg(QFileInfo(file_path).fileName()),
+    showMetadataTreeDialog(tr("Metadata - %1").arg(QFileInfo(file_path).fileName()),
                            collectLocalMetadata(file_path));
 }
 

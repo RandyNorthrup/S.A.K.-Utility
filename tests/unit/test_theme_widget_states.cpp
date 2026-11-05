@@ -13,6 +13,7 @@
 #include "sak/color_constants.h"
 #include "sak/file_explorer_style_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 #include "sak/windows11_theme.h"
 
 #include <QAction>
@@ -28,6 +29,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QPainter>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -37,6 +40,7 @@
 #include <QStyleOptionButton>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTextDocument>
 #include <QTreeWidget>
 #include <QtTest/QtTest>
 #include <QVBoxLayout>
@@ -196,6 +200,24 @@ private Q_SLOTS:
     void darkStatusTextReachesAaOnDarkSurfaces();
     void buttonLabelsReachAaOnTheirGradients();
     void selectedTabLabelReachesAa();
+    void tableHeadersKeepOneWeightWhileARowIsSelected();
+    void pageTitlesAreSectionSized();
+    void richTextRulesUseTheBorderColour();
+    void buildDateReadsAsADate();
+    void countsAgreeWithTheirNoun();
+    void registryDatesReadAsDates();
+    // The dark review (D1-D8).
+    void plainButtonsKeepTheirFillInDark();
+    void progressBarsUseTheThemesBorder_data();
+    void progressBarsUseTheThemesBorder();
+    void disabledButtonsDoNotPassForSecondaryOnes_data();
+    void disabledButtonsDoNotPassForSecondaryOnes();
+    void secondaryTextReachesAaInBothThemes_data();
+    void secondaryTextReachesAaInBothThemes();
+    void uncheckedBoxesHaveAVisibleOutline_data();
+    void uncheckedBoxesHaveAVisibleOutline();
+    void panelsAndGlyphsFollowTheDarkTheme();
+    void anInvalidItemColourLeavesTheViewsOwn();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -753,6 +775,272 @@ void ThemeWidgetStatesTests::selectedTabLabelReachesAa() {
              qPrintable(QStringLiteral("selected tab label on %1 is %2:1")
                             .arg(middle.name())
                             .arg(ratio, 0, 'f', 2)));
+}
+
+// S20: a table bolded every header section while a row was selected; trees and lists did not.
+void ThemeWidgetStatesTests::tableHeadersKeepOneWeightWhileARowIsSelected() {
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* table = new QTableWidget(2, 2, &window);
+    table->setHorizontalHeaderLabels({QStringLiteral("Name"), QStringLiteral("Status")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    layout->addWidget(table);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const QImage before = table->horizontalHeader()->grab().toImage();
+    table->selectRow(0);
+    QCoreApplication::processEvents();
+    QVERIFY(!table->horizontalHeader()->highlightSections());
+    QCOMPARE(table->horizontalHeader()->grab().toImage(), before);
+}
+
+// S26: the theme's "* { font-size: 10pt }" overrode the header title's QFont, so page titles drew
+// at 10pt under 13pt card titles.
+void ThemeWidgetStatesTests::pageTitlesAreSectionSized() {
+    QWidget page;
+    auto* layout = new QVBoxLayout(&page);
+    const auto header = sak::createDynamicPanelHeader(
+        &page, QString(), QStringLiteral("Diagnostics"), QStringLiteral("Hardware"), layout);
+    page.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&page));
+    header.titleLabel->ensurePolished();
+    QCOMPARE(header.titleLabel->font().pointSizeF(), double(sak::ui::kFontSizeSection));
+    QVERIFY(header.titleLabel->font().bold());
+}
+
+// F26: QTextDocument ignores a CSS border on <hr> and drew the rule in the text colour.
+void ThemeWidgetStatesTests::richTextRulesUseTheBorderColour() {
+    QTextDocument document;
+    document.setHtml(QStringLiteral("<p>Above</p>") +
+                     QString::fromLatin1(sak::ui::kHtmlHorizontalRule)
+                         .arg(sak::ui::kCssBorderWidthDefaultPx)
+                         .arg(QString::fromLatin1(sak::ui::kColorBorderDefault)) +
+                     QStringLiteral("<p>Below</p>"));
+    document.setTextWidth(200);
+    QImage image(200, int(document.size().height()) + 4, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    document.drawContents(&painter);
+    painter.end();
+    const QColor border(QString::fromLatin1(sak::ui::kColorBorderDefault));
+    const QColor text(QString::fromLatin1(sak::ui::kColorTextPrimary));
+    int rule_pixels = 0;
+    int dark_rule_pixels = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        int row_ink = 0;
+        int row_dark = 0;
+        for (int x = 20; x < 180; ++x) {
+            const QColor pixel(image.pixel(x, y));
+            row_ink += pixel != QColor(Qt::white) ? 1 : 0;
+            row_dark += pixel.lightness() < 120 ? 1 : 0;
+        }
+        if (row_ink >= 150) {  // a full-width row of ink is the rule, not text
+            rule_pixels += row_ink;
+            dark_rule_pixels += row_dark;
+        }
+    }
+    QVERIFY2(rule_pixels > 0, "no rule was drawn");
+    QVERIFY2(dark_rule_pixels == 0,
+             qPrintable(QStringLiteral("the rule is drawn in the text colour %1, not %2")
+                            .arg(text.name(), border.name())));
+}
+
+// F37: the About line showed the compiler's "Nov  4 2026", double space and all.
+void ThemeWidgetStatesTests::buildDateReadsAsADate() {
+    QCOMPARE(sak::readableBuildDate("Nov  4 2026"), QStringLiteral("November 4, 2026"));
+    QCOMPARE(sak::readableBuildDate("Dec 25 2026"), QStringLiteral("December 25, 2026"));
+}
+
+// S24: "1 hops", "1 Operations Pending", "Found 1 email files".
+void ThemeWidgetStatesTests::countsAgreeWithTheirNoun() {
+    QCOMPARE(sak::countOf(1, QStringLiteral("hop"), QStringLiteral("hops")),
+             QStringLiteral("1 hop"));
+    QCOMPARE(sak::countOf(0, QStringLiteral("hop"), QStringLiteral("hops")),
+             QStringLiteral("0 hops"));
+    QCOMPARE(sak::countOf(3, QStringLiteral("hop"), QStringLiteral("hops")),
+             QStringLiteral("3 hops"));
+}
+
+// Dark review DF10: install dates showed the registry's raw "20261104".
+void ThemeWidgetStatesTests::registryDatesReadAsDates() {
+    QCOMPARE(sak::readableRegistryDate(QStringLiteral("20261104")), QStringLiteral("2026-11-04"));
+    QCOMPARE(sak::readableRegistryDate(QStringLiteral("11/4/2026")), QStringLiteral("11/4/2026"));
+    QCOMPARE(sak::readableRegistryDate(QString()), QString());
+}
+
+// D1: the dark sheet's "QWidget { background-color }" came after the button rule at the same
+// specificity, so a button with no sheet of its own lost its primary fill in dark.
+void ThemeWidgetStatesTests::plainButtonsKeepTheirFillInDark() {
+    sak::ui::applyWindows11Theme(*qApp, AppThemeMode::Dark);
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* button = new QPushButton(QStringLiteral("Refresh Disks"), &window);
+    layout->addWidget(button);
+    const QImage image = shot(window, &window);
+    const QPoint inside = button->mapTo(&window, QPoint(6, button->height() / 2));
+    const QColor fill(image.pixel(inside));
+    QVERIFY2(fill.blue() > 180 && fill.blue() > fill.red() + 80,
+             qPrintable(QStringLiteral("a plain dark button is filled %1").arg(fill.name())));
+}
+
+void ThemeWidgetStatesTests::progressBarsUseTheThemesBorder_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// D3: progress bars kept the light #cbd5e1 frame on the dark page.
+void ThemeWidgetStatesTests::progressBarsUseTheThemesBorder() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* bar = new QProgressBar(&window);
+    bar->setRange(0, 100);
+    bar->setValue(10);
+    bar->setTextVisible(false);
+    bar->setMinimumWidth(200);
+    layout->addWidget(bar);
+    const QImage image = shot(window, &window);
+    const QRect rect = bar->geometry();
+    const QColor edge(image.pixel(rect.right() - 20, rect.top()));
+    const QColor page(image.pixel(1, 1));
+    const bool dark_edge = edge.lightness() < 128;
+    QVERIFY2(dark_edge == (mode == AppThemeMode::Dark),
+             qPrintable(
+                 QStringLiteral("progress border %1 on page %2").arg(edge.name(), page.name())));
+}
+
+void ThemeWidgetStatesTests::disabledButtonsDoNotPassForSecondaryOnes_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// D2: on the dark page a disabled button and a secondary one had nearly the same fill.
+void ThemeWidgetStatesTests::disabledButtonsDoNotPassForSecondaryOnes() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* secondary = new QPushButton(QStringLiteral("Skip Step"), &window);
+    secondary->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    auto* disabled = new QPushButton(QStringLiteral("Run Full Suite"), &window);
+    disabled->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    disabled->setEnabled(false);
+    layout->addWidget(secondary);
+    layout->addWidget(disabled);
+    const QImage image = shot(window, &window);
+    const QColor on(image.pixel(secondary->mapTo(&window, QPoint(6, secondary->height() / 2))));
+    const QColor off(image.pixel(disabled->mapTo(&window, QPoint(6, disabled->height() / 2))));
+    const QColor page(image.pixel(1, 1));
+    // A disabled fill sits close to the page; a secondary fill stands well away from it.
+    QVERIFY2(qAbs(off.lightness() - page.lightness()) * 2 < qAbs(on.lightness() - page.lightness()),
+             qPrintable(QStringLiteral("page %1, secondary %2, disabled %3")
+                            .arg(page.name(), on.name(), off.name())));
+}
+
+void ThemeWidgetStatesTests::secondaryTextReachesAaInBothThemes_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// D5: the palette's Dark role, File Explorer's secondary text, was 2.6:1 in light and 3.1-3.7:1
+// in dark; running blue, violet and error red had no dark values.
+void ThemeWidgetStatesTests::secondaryTextReachesAaInBothThemes() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    const QPalette palette = QApplication::palette();
+    const double on_base = contrast(palette.color(QPalette::Dark), palette.color(QPalette::Base));
+    QVERIFY2(on_base >= kWcagAaNormalText,
+             qPrintable(QStringLiteral("palette(dark) on base is %1:1").arg(on_base, 0, 'f', 2)));
+    if (mode == AppThemeMode::Dark) {
+        for (const char* text : {sak::ui::kStatusColorRunning,
+                                 sak::ui::kColorPrimaryDark,
+                                 sak::ui::kColorAccentPurple}) {
+            for (const char* surface : {sak::ui::kColorDarkBgPage,
+                                        sak::ui::kColorDarkBgInput,
+                                        sak::ui::kColorDarkBgSurface,
+                                        sak::ui::kColorDarkBgPanel}) {
+                const double ratio = contrast(QColor(sak::ui::cssColor(text)), token(surface));
+                QVERIFY2(ratio >= kWcagAaNormalText,
+                         qPrintable(
+                             QStringLiteral("%1 on %2 is %3:1")
+                                 .arg(QString::fromLatin1(text), QString::fromLatin1(surface))
+                                 .arg(ratio, 0, 'f', 2)));
+            }
+        }
+        const double error_panel = contrast(QColor(sak::ui::cssColor(sak::ui::kColorErrorText)),
+                                            QColor(sak::ui::cssColor(sak::ui::kColorBgErrorPanel)));
+        QVERIFY2(error_panel >= kWcagAaNormalText,
+                 qPrintable(QStringLiteral("error text on the error panel is %1:1")
+                                .arg(error_panel, 0, 'f', 2)));
+    }
+}
+
+void ThemeWidgetStatesTests::uncheckedBoxesHaveAVisibleOutline_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// D8: an unchecked box's outline was 2.6:1 in light and 1.9:1 in dark, under the 3:1 a control
+// needs to be seen.
+void ThemeWidgetStatesTests::uncheckedBoxesHaveAVisibleOutline() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    const QString sheet = qApp->styleSheet();
+    const qsizetype start =
+        sheet.lastIndexOf(QStringLiteral("QCheckBox::indicator, QAbstractItemView::indicator {"));
+    QVERIFY(start >= 0);
+    const QString block = sheet.mid(start, sheet.indexOf(QLatin1Char('}'), start) - start);
+    static const QRegularExpression kBorder(
+        QStringLiteral(R"(border:\s*1px solid (#[0-9a-fA-F]{6}))"));
+    const auto match = kBorder.match(block);
+    QVERIFY2(match.hasMatch(), qPrintable(block));
+    const QColor outline(match.captured(1));
+    const QStringList surfaces =
+        mode == AppThemeMode::Dark ? QStringList{QString::fromLatin1(sak::ui::kColorDarkBgPage),
+                                                 QString::fromLatin1(sak::ui::kColorDarkBgPanel),
+                                                 QString::fromLatin1(sak::ui::kColorDarkBgSurface)}
+                                   : QStringList{QString::fromLatin1(sak::ui::kColorBgWhite),
+                                                 QString::fromLatin1(sak::ui::kColorBgSurface),
+                                                 QString::fromLatin1(sak::ui::kColorBgPage)};
+    for (const QString& surface : surfaces) {
+        const double ratio = contrast(outline, QColor(surface));
+        QVERIFY2(ratio >= 3.0,
+                 qPrintable(QStringLiteral("outline %1 on %2 is %3:1")
+                                .arg(outline.name(), surface)
+                                .arg(ratio, 0, 'f', 2)));
+    }
+}
+
+// D4, D6: the per-user warning box hard-coded the light error panel, and the email folder glyphs
+// were black on the dark surfaces.
+void ThemeWidgetStatesTests::panelsAndGlyphsFollowTheDarkTheme() {
+    sak::ui::applyWindows11Theme(*qApp, AppThemeMode::Dark);
+    QVERIFY2(!sak::ui::warningPanelStyle().contains(
+                 QString::fromLatin1(sak::ui::kColorBgErrorPanel)),
+             qPrintable(sak::ui::warningPanelStyle()));
+    const QImage glyph = sak::themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"))
+                             .pixmap(16, 16)
+                             .toImage();
+    int ink = 0;
+    int black = 0;
+    for (int y = 0; y < glyph.height(); ++y) {
+        for (int x = 0; x < glyph.width(); ++x) {
+            const QColor pixel = glyph.pixelColor(x, y);
+            if (pixel.alpha() > 200) {
+                ++ink;
+                black += pixel.lightness() < 60 ? 1 : 0;
+            }
+        }
+    }
+    QVERIFY(ink > 0);
+    QCOMPARE(black, 0);
+}
+
+// DF3, DF4: an invalid QColor given to setForeground() painted the text black.
+void ThemeWidgetStatesTests::anInvalidItemColourLeavesTheViewsOwn() {
+    QTableWidgetItem item(QStringLiteral("LISTEN"));
+    item.setForeground(QColor(Qt::red));
+    sak::setItemForeground(&item, QColor());
+    QVERIFY(!item.data(Qt::ForegroundRole).isValid());
+    sak::setItemForeground(&item, QColor(Qt::green));
+    QCOMPARE(item.foreground().color(), QColor(Qt::green));
 }
 
 QTEST_MAIN(ThemeWidgetStatesTests)

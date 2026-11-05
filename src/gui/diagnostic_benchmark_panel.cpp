@@ -68,7 +68,8 @@ constexpr int kStressThermalDefaultC = 95;
 constexpr int kCpuThermalMaxC = 100;
 constexpr int kGpuThermalMaxC = 100;
 constexpr int kDiskThermalMaxC = 70;
-constexpr ushort kSuitePendingSymbol = 0x23F3;
+// A step that has not started: the idle circle. The hourglass is the colour constants' "running".
+constexpr ushort kSuitePendingSymbol = 0x25CB;
 constexpr int kProgressMaximum = 100;
 
 // Debug-level phase timing, the same in every run mode: it was a smoke-only info line with a
@@ -178,11 +179,7 @@ void DiagnosticBenchmarkPanel::setupUi() {
 
     // -- Log Toggle --
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
-
-    auto* log_toggle_layout = new QHBoxLayout();
-    log_toggle_layout->addWidget(m_logToggle);
-    log_toggle_layout->addStretch();
-    root_layout->addLayout(log_toggle_layout);
+    sak::addLogFooter(root_layout, m_logToggle);
     logDiagnosticStartupPhase(&phase_timer, "log toggle");
 }
 
@@ -410,11 +407,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
     auto* cpu_scores = new QHBoxLayout();
-    m_cpu_single_score_label = new QLabel("Single-Thread: \u2014", this);
+    m_cpu_single_score_label = new QLabel("Single-Thread: --", this);
     m_cpu_single_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     cpu_scores->addWidget(m_cpu_single_score_label);
 
-    m_cpu_multi_score_label = new QLabel("Multi-Thread: \u2014", this);
+    m_cpu_multi_score_label = new QLabel("Multi-Thread: --", this);
     m_cpu_multi_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
@@ -470,17 +467,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     drive_row->addStretch();
     disk_layout->addLayout(drive_row);
 
-    m_disk_seq_label = new QLabel("Sequential: \u2014", this);
+    m_disk_seq_label = new QLabel("Sequential: --", this);
     m_disk_seq_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     disk_layout->addWidget(m_disk_seq_label);
 
-    m_disk_rand_label = new QLabel("Random 4K: \u2014", this);
+    m_disk_rand_label = new QLabel("Random 4K: --", this);
     disk_layout->addWidget(m_disk_rand_label);
 
-    m_disk_latency_label = new QLabel("Latency: \u2014", this);
+    m_disk_latency_label = new QLabel("Latency: --", this);
     disk_layout->addWidget(m_disk_latency_label);
 
-    m_disk_score_label = new QLabel("Score: \u2014", this);
+    m_disk_score_label = new QLabel("Score: --", this);
     m_disk_score_label->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorPrimaryDark));
     disk_layout->addWidget(m_disk_score_label);
@@ -514,14 +511,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
-    m_mem_bandwidth_label = new QLabel("Bandwidth: \u2014", this);
+    m_mem_bandwidth_label = new QLabel("Bandwidth: --", this);
     m_mem_bandwidth_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     mem_layout->addWidget(m_mem_bandwidth_label);
 
-    m_mem_latency_label = new QLabel("Random Latency: \u2014", this);
+    m_mem_latency_label = new QLabel("Random Latency: --", this);
     mem_layout->addWidget(m_mem_latency_label);
 
-    m_mem_score_label = new QLabel("Score: \u2014", this);
+    m_mem_score_label = new QLabel("Score: --", this);
     m_mem_score_label->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorPrimaryDark));
     mem_layout->addWidget(m_mem_score_label);

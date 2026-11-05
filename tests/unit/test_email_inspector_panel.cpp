@@ -6,6 +6,7 @@
 ///        reaches the screen.
 
 #include "sak/email_inspector_panel.h"
+#include "sak/style_constants.h"
 
 #include "../support/pst_fixture.h"
 
@@ -23,6 +24,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QtTest/QtTest>
 
@@ -139,6 +141,10 @@ private Q_SLOTS:
     void anMboxSaysItHoldsOnlyEmail();
     void aCancelledFolderSearchWithFiltersSearchesNothing();
     void clearAndClosingTurnFiltersOff();
+    // UI review F11, F12: ribbon labels sized 9 px instead of 9 pt, and a second "Email Tools"
+    // header under the one Email Tools already shows above its sub-tabs.
+    void ribbonLabelsAreNoteSized();
+    void thePanelHasNoHeaderOfItsOwn();
 
 private:
     void openMailbox();
@@ -372,6 +378,28 @@ void EmailInspectorPanelTests::folderMenuItemOpensTheScopedSearch() {
              qPrintable(answerer.title));
     waitForSearchToFinish();
     QCOMPARE(m_panel->m_item_list->rowCount(), 1);
+}
+
+void EmailInspectorPanelTests::ribbonLabelsAreNoteSized() {
+    auto* ribbon = m_panel->findChild<QWidget*>(QStringLiteral("ribbonBar"));
+    QVERIFY(ribbon != nullptr);
+    const auto buttons = ribbon->findChildren<QToolButton*>();
+    QVERIFY(!buttons.isEmpty());
+    for (QToolButton* button : buttons) {
+        button->ensurePolished();
+        QVERIFY2(qFuzzyCompare(button->font().pointSizeF(), double(sak::ui::kFontSizeNote)),
+                 qPrintable(QStringLiteral("%1: %2 pt, %3 px")
+                                .arg(button->text())
+                                .arg(button->font().pointSizeF())
+                                .arg(button->font().pixelSize())));
+    }
+}
+
+void EmailInspectorPanelTests::thePanelHasNoHeaderOfItsOwn() {
+    for (const QLabel* label : m_panel->findChildren<QLabel*>()) {
+        QVERIFY2(label->text() != QStringLiteral("Email Tools"),
+                 "the inspector draws its own Email Tools header");
+    }
 }
 
 void EmailInspectorPanelTests::filtersStartOffAndOutOfTheWay() {

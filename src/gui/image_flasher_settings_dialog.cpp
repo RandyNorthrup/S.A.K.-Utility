@@ -97,7 +97,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
 
     auto* buf_label_widget = sak::InfoButton::createInfoLabel(
         "Buffer Size (MB):",
-        "Larger buffers improve throughput but use more RAM \u2014 64 MB is a good default for USB "
+        "Larger buffers improve throughput but use more RAM - 64 MB is a good default for USB "
         "3.0 drives",
         performance_group);
     performance_layout->addWidget(buf_label_widget, 0, 0);
@@ -110,7 +110,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
 
     auto* conc_label_widget = sak::InfoButton::createInfoLabel(
         "Max Concurrent Writes:",
-        "Number of USB drives that can be flashed simultaneously \u2014 each uses one thread",
+        "Number of USB drives that can be flashed simultaneously - each uses one thread",
         performance_group);
     performance_layout->addWidget(conc_label_widget, 1, 0);
     m_maxConcurrentWritesSpin = new QSpinBox(performance_group);
@@ -147,7 +147,7 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* main_layou
     auto* lg_row = new QHBoxLayout();
     lg_row->addWidget(m_showLargeDriveWarningCheck);
     lg_row->addWidget(new sak::InfoButton(
-        "Warns when a drive exceeds the threshold below \u2014 large drives are rarely USB sticks",
+        "Warns when a drive exceeds the threshold below - large drives are rarely USB sticks",
         safety_group));
     lg_row->addStretch();
     safety_layout->addLayout(lg_row);
@@ -156,7 +156,7 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* main_layou
     threshold_layout->addSpacing(sak::ui::kMarginXLarge);
     threshold_layout->addWidget(sak::InfoButton::createInfoLabel(
         "Large drive threshold:",
-        "Drives exceeding this size trigger a warning \u2014 helps avoid accidentally flashing "
+        "Drives exceeding this size trigger a warning - helps avoid accidentally flashing "
         "internal HDDs",
         safety_group));
     m_largeDriveThresholdSpin = new QSpinBox(safety_group);

@@ -12,9 +12,11 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTimer>
@@ -84,6 +86,17 @@ class OrganizerPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review F42: the category table was the only one in the app with row numbers.
+    void theCategoryTableHasNoRowNumbers() {
+        sak::OrganizerPanel panel;
+        for (const QTableWidget* candidate : panel.findChildren<QTableWidget*>()) {
+            if (candidate->accessibleName() == QStringLiteral("Category Mappings Table")) {
+                QVERIFY(!candidate->verticalHeader()->isVisibleTo(&panel));
+                return;
+            }
+        }
+        QFAIL("no category table");
+    }
     void previewMovesNothingAndOrganizeMovesEverything();
     void aFileThatWillNotMoveIsListedWithWhatDidMove();
     void thereIsNoPreviewModeLeftToForget();

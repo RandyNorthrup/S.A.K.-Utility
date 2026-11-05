@@ -467,6 +467,8 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
     m_load_table_btn->setAccessibleName(QStringLiteral("Load Networks from File"));
     m_load_table_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_delete_selected_btn->setToolTip("Remove the selected row(s) from the table");
+    // A danger button with nothing to act on: it was enabled on an empty table.
+    m_delete_selected_btn->setEnabled(false);
     m_add_to_windows_btn->setToolTip(
         "Add checked networks to Windows known WiFi profiles via netsh");
     m_add_to_windows_btn->setEnabled(false);
@@ -510,9 +512,6 @@ void WifiManagerPanel::setupActionButtons() {
     bar->addWidget(m_export_script_btn);
     bar->addWidget(m_export_macos_btn);
     bar->addStretch();
-
-    m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    bar->addWidget(m_logToggle);
     bar->addWidget(m_scan_networks_btn);
 
     auto* bar_widget = new QWidget(this);
@@ -1684,7 +1683,7 @@ void WifiManagerPanel::onScanNetworksClicked() {
         const auto [configs, scan_ok] = watcher->result();
         if (!scan_ok) {
             Q_EMIT panel->statusMessage(
-                "Could not read the Windows WiFi profiles -- the scan was incomplete, so this is "
+                "Could not read the Windows WiFi profiles - the scan was incomplete, so this is "
                 "not a report that none exist.",
                 sak::kTimerStatusWarnMs);
             return;
@@ -1756,6 +1755,7 @@ void WifiManagerPanel::onSelectionChanged() {
 
     updateHeaderTriState(total, checked);
     updateSaveAndInstallButtons(total, checked);
+    m_delete_selected_btn->setEnabled(!m_network_table->selectionModel()->selectedRows().isEmpty());
 
     // Update multi-modal button tooltips to indicate source
     if (checked > 0) {

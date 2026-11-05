@@ -75,7 +75,6 @@ public:
     EmailInspectorPanel& operator=(EmailInspectorPanel&&) = delete;
 
     /// Access the log toggle switch for MainWindow connection
-    LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -275,7 +274,6 @@ private:
     std::unique_ptr<EmailInspectorController> m_controller;
 
     // -- Layout ----------------------------------------------------------
-    PanelHeaderWidgets m_header_widgets;
 
     // -- Ribbon Buttons (QToolButton with icon + text below) -------------
     QToolButton* m_scan_files_button{nullptr};
@@ -344,7 +342,6 @@ private:
     QTableWidget* m_search_results_table{nullptr};
 
     // -- Log Toggle ------------------------------------------------------
-    LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- State -----------------------------------------------------------
     bool m_dialog_active{false};

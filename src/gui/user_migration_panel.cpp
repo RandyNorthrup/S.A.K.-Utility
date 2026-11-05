@@ -87,18 +87,8 @@ void UserMigrationPanel::setupUi() {
 
     main_layout->addStretch();
 
-    // Bottom row: Log toggle
-    auto* bottom_layout = new QHBoxLayout();
-    bottom_layout->setContentsMargins(sak::ui::kMarginMedium,
-                                      sak::ui::kMarginTight,
-                                      sak::ui::kMarginMedium,
-                                      sak::ui::kMarginSmall);
-
-
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    bottom_layout->addWidget(m_logToggle);
-    bottom_layout->addStretch();
-    root_layout->addLayout(bottom_layout);
+    sak::addLogFooter(root_layout, m_logToggle);
 }
 
 void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layout) {

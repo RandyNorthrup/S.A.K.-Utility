@@ -40,7 +40,7 @@ private Q_SLOTS:
         widget.onFileConversionComplete(0, result);
         QCOMPARE(rowStatus(widget), QStringLiteral("Failed"));
         QCOMPARE(widget.m_queue_table->item(0, sak::ost::ColProgress)->text(),
-                 QStringLiteral("780 items, 3 failed"));
+                 QStringLiteral("780 messages converted, 3 failed"));
     }
 
     void aRowWithARecordedErrorReadsFailed() {
@@ -63,7 +63,7 @@ private Q_SLOTS:
         widget.onFileConversionComplete(0, result);
         QCOMPARE(rowStatus(widget), QStringLiteral("Complete"));
         QCOMPARE(widget.m_queue_table->item(0, sak::ost::ColProgress)->text(),
-                 QStringLiteral("12 items, 5 not mail"));
+                 QStringLiteral("12 messages converted, 5 items left out (not mail)"));
     }
 
     void aCancelledRunReadsCancelled() {
@@ -111,7 +111,7 @@ private Q_SLOTS:
         sak::OstConversionResult only_other;
         only_other.skipped_calendar = 2;
         QCOMPARE(sak::OstConverterWidget::progressSummary(only_other),
-                 QStringLiteral("0 items, 2 not mail"));
+                 QStringLiteral("0 messages converted, 2 items left out (not mail)"));
     }
 };
 

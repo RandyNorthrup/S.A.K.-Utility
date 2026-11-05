@@ -854,6 +854,18 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
 
 }  // namespace
 
+QString FileManagementFileSystemBridge::mountedVolumeLabel(const QString& name,
+                                                           const QString& root) {
+    // Windows' own form, "Local Disk (C:)": the old label read "C:/ (C:/)" for a volume with no
+    // name, with the root in forward slashes twice.
+    QString drive = QDir::toNativeSeparators(root);
+    if (drive.endsWith(QLatin1Char('\\'))) {
+        drive.chop(1);
+    }
+    const QString shown = name.trimmed().isEmpty() ? QStringLiteral("Local Disk") : name.trimmed();
+    return QStringLiteral("%1 (%2)").arg(shown, drive);
+}
+
 QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
     QVector<FileManagementTarget> targets;
     const QString homePath = QDir::homePath();
@@ -870,13 +882,9 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
             continue;
         }
         FileManagementTarget target = localTarget(volume.rootPath());
-        QString label = volume.displayName();
-        if (label.isEmpty()) {
-            label = volume.rootPath();
-        }
         target.id = QStringLiteral("volume:%1").arg(volume.rootPath());
-        target.label =
-            QStringLiteral("%1 (%2)").arg(label, volume.rootPath().left(kDriveRootPrefixLength));
+        target.label = FileManagementFileSystemBridge::mountedVolumeLabel(
+            volume.name(), volume.rootPath().left(kDriveRootPrefixLength));
         target.file_system = QString::fromUtf8(volume.fileSystemType());
         target.source = QStringLiteral("Mounted volume");
         targets.append(applyCapabilities(target));

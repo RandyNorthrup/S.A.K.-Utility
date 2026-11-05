@@ -15,6 +15,7 @@
 /// and list a technician clicks), because the defect lived in the wiring between
 /// selection state and button state, not in any single function.
 
+#include "sak/color_constants.h"
 #include "sak/drive_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
@@ -96,6 +97,33 @@ class ImageFlasherPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review S5: success read "[x] Flash Completed Successfully!", a failure mark.
+    void aSuccessfulFlashSaysSoWithATick() {
+        sak::ImageFlasherPanel panel;
+        sak::FlashResult result;
+        result.success = true;
+        panel.onFlashCompleted(result);
+        const QString text = panel.m_completionMessageLabel->text();
+        QVERIFY2(text.startsWith(QString::fromUtf8(sak::ui::kStatusPrefixSuccess)),
+                 qPrintable(text));
+        QVERIFY2(!text.contains(QLatin1Char('[')), qPrintable(text));
+    }
+    // UI review F19: Image Details' values started half way across the group, ~590 px from
+    // their labels.
+    void imageDetailsValuesSitNextToTheirLabels() {
+        sak::ImageFlasherPanel panel;
+        panel.resize(1280, 800);
+        panel.m_isoInfoGroup->setVisible(true);
+        panel.m_isoInfoGroup->resize(1200, 300);
+        panel.m_isoInfoGrid->activate();
+        panel.m_isoInfoGrid->setGeometry(QRect(0, 0, 1200, 300));
+        const QRect labels = panel.m_isoInfoGrid->cellRect(0, 0);
+        const QRect values = panel.m_isoInfoGrid->cellRect(0, 1);
+        QVERIFY2(values.left() - labels.left() < 400,
+                 qPrintable(QStringLiteral("labels at %1, values at %2")
+                                .arg(labels.left())
+                                .arg(values.left())));
+    }
     void initTestCase();
     void init();
     void cleanup();

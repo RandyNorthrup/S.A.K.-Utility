@@ -74,10 +74,8 @@ public:
     NetworkDiagnosticPanel& operator=(NetworkDiagnosticPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
 
     /// @brief Access the adapter-tab log toggle for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* adapterLogToggle() const { return m_adapterLogToggle; }
 
     /// @brief Access the adapter section widget for external tab placement
     [[nodiscard]] QWidget* adapterWidget() const { return m_adapterWidget; }
@@ -342,9 +340,7 @@ private:
     // Finished futures are pruned on each new call so this never grows unbounded.
     QList<QFuture<sak::AdapterAdminOutcome>> m_pending_command_futures;
 
-    LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
-    QPushButton* m_generateReportBtn = nullptr;     ///< Owned by layout hierarchy
-    LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
+    QPushButton* m_generateReportBtn = nullptr;  ///< Owned by layout hierarchy
 
     // All widget pointers below are owned by the Qt parent/layout hierarchy.
     // They are destroyed automatically when this panel is destroyed.

@@ -631,7 +631,9 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
 
     setState(sak::FlashState::Flashing);
     Q_EMIT stateChanged(sak::FlashState::Flashing,
-                        QString("Writing to %1 drives...").arg(targetDrives.size()));
+                        targetDrives.size() == 1
+                            ? QStringLiteral("Writing to 1 drive...")
+                            : QString("Writing to %1 drives...").arg(targetDrives.size()));
 
     // Build every worker up front, but start only as many as the concurrent-write
     // ceiling allows; the rest are queued and started as earlier drives finish.
@@ -1643,7 +1645,9 @@ void FlashCoordinator::updateProgress() {
         m_progress.currentOperation =
             m_state == sak::FlashState::Verifying
                 ? QString("Verifying %1 drives...").arg(m_progress.activeDrives)
-                : QString("Writing to %1 drives...").arg(m_progress.activeDrives);
+                : (m_progress.activeDrives == 1
+                       ? QStringLiteral("Writing to 1 drive...")
+                       : QString("Writing to %1 drives...").arg(m_progress.activeDrives));
         snapshot = m_progress;
     }
 

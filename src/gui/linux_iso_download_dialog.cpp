@@ -284,12 +284,12 @@ void LinuxISODownloadDialog::populateDistroList() {
     }
 
     for (const auto& distro : m_currentDistros) {
+        // "Ubuntu 26.04, Resolute Raccoon (LTS)": nesting the label in brackets gave
+        // "26.04 (Resolute Raccoon (LTS))".
         const QString label =
-            QString("%1  --  %2")
-                .arg(distro.name,
-                     distro.versionLabel.isEmpty()
-                         ? distro.version
-                         : QString("%1 (%2)").arg(distro.version, distro.versionLabel));
+            distro.versionLabel.isEmpty()
+                ? QString("%1 %2").arg(distro.name, distro.version)
+                : QString("%1 %2, %3").arg(distro.name, distro.version, distro.versionLabel);
         m_distroListWidget->addItem(label);
     }
 

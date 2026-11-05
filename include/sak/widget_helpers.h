@@ -12,21 +12,141 @@
 #include "style_constants.h"
 
 #include <QAbstractItemView>
+#include <QDate>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
 #include <QLabel>
+#include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QString>
 #include <QTableView>
+#include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
+#include <initializer_list>
+
 namespace sak {
+
+/// @brief A table cell that sorts by the number it carries, not by its text. A plain item sorts
+///        on the displayed string, so "9.0 KB" sorted above "10.0 MB".
+class NumericSortTableItem : public QTableWidgetItem {
+public:
+    static constexpr int kSortRole = Qt::UserRole + 64;
+
+    NumericSortTableItem(const QString& text, qlonglong value) : QTableWidgetItem(text) {
+        setData(kSortRole, value);
+    }
+
+    [[nodiscard]] bool operator<(const QTableWidgetItem& other) const override {
+        return data(kSortRole).toLongLong() < other.data(kSortRole).toLongLong();
+    }
+};
+
+/// @brief Widens every column of @p table that is narrower than its header label to the label's
+///        width: fixed widths cut "Response Time" and "Enabled" to fragments.
+inline void fitHeaderLabels(QTableView* table) {
+    table->ensurePolished();  // the theme's header font, not the default one, sets the width
+    QHeaderView* header = table->horizontalHeader();
+    for (int section = 0; section < header->count(); ++section) {
+        if (header->isSectionHidden(section) ||
+            header->sectionResizeMode(section) == QHeaderView::Stretch) {
+            continue;
+        }
+        const int needed = header->sectionSizeHint(section);
+        if (header->sectionSize(section) < needed) {
+            header->resizeSection(section, needed);
+        }
+    }
+}
+
+/// @brief Gives @p labels one width, the widest one's, so the fields after them in their rows
+///        start at one left edge. For forms built row by row rather than with a QFormLayout.
+inline void alignLabelColumn(std::initializer_list<QLabel*> labels) {
+    int width = 0;
+    for (QLabel* label : labels) {
+        width = std::max(width, label->sizeHint().width());
+    }
+    for (QLabel* label : labels) {
+        label->setMinimumWidth(width);
+    }
+}
+
+/// @brief A one-colour glyph icon (the black icons8 glyphs) in the theme's body text colour: drawn
+///        as shipped they were black on the dark surfaces, 1.2:1.
+inline QIcon themedGlyphIcon(const QString& path) {
+    const QIcon source(path);
+    if (!ui::usingDarkUiTheme()) {
+        return source;
+    }
+    constexpr int kGlyphSizes[] = {16, 20, 24, 32, 48};
+    QIcon tinted;
+    for (const int size : kGlyphSizes) {
+        QPixmap pixmap = source.pixmap(size, size);
+        QPainter painter(&pixmap);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(pixmap.rect(), ui::themedColor(ui::kColorTextBody));
+        painter.end();
+        tinted.addPixmap(pixmap);
+    }
+    return tinted;
+}
+
+/// @brief @p path as a tab icon: as drawn on unselected tabs, and in white when its tab is selected
+///        (QIcon::On), where the coloured artwork lost against the blue gradient.
+inline QIcon tabIcon(const QString& path, int size) {
+    QIcon icon;
+    const QIcon source(path);
+    constexpr int kTabIconScales[] = {1, 2};  // normal and high-DPI pixmaps
+    for (const int scale : kTabIconScales) {
+        const int side = size * scale;
+        QPixmap normal = source.pixmap(side, side);
+        icon.addPixmap(normal, QIcon::Normal, QIcon::Off);
+        QPixmap selected = normal;
+        QPainter painter(&selected);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(selected.rect(), QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
+        painter.end();
+        icon.addPixmap(selected, QIcon::Normal, QIcon::On);
+    }
+    return icon;
+}
+
+/// @brief Sets @p item's text colour, or clears it back to the view's own when @p color is
+///        invalid: an invalid QColor given to setForeground() paints black, 1.2:1 on dark.
+inline void setItemForeground(QTableWidgetItem* item, const QColor& color) {
+    if (color.isValid()) {
+        item->setForeground(color);
+    } else {
+        item->setData(Qt::ForegroundRole, QVariant());
+    }
+}
+
+/// @brief A registry InstallDate ("20261104") as "2026-11-04", which still sorts as text; any
+///        other value as it is.
+inline QString readableRegistryDate(const QString& value) {
+    const QDate date = QDate::fromString(value.trimmed(), QStringLiteral("yyyyMMdd"));
+    return date.isValid() ? date.toString(Qt::ISODate) : value;
+}
+
+/// @brief "1 hop", "2 hops": @p count with the noun that agrees with it.
+inline QString countOf(qint64 count, const QString& singular, const QString& plural) {
+    return QStringLiteral("%1 %2").arg(count).arg(count == 1 ? singular : plural);
+}
+
+/// @brief A compiler __DATE__ ("Nov  4 2026") as "November 4, 2026", or simplified if it does
+///        not parse.
+inline QString readableBuildDate(const char* compiler_date) {
+    const QString raw = QString::fromLatin1(compiler_date).simplified();
+    const QDate date = QDate::fromString(raw, QStringLiteral("MMM d yyyy"));
+    return date.isValid() ? date.toString(QStringLiteral("MMMM d, yyyy")) : raw;
+}
 
 // -- Panel Header Factory ----------------------------------------------------
 
@@ -43,10 +163,9 @@ constexpr int kPanelIconSize = 48;
 
 inline QLabel* createHeaderTitleLabel(QWidget* parent, const QString& title) {
     auto* title_label = new QLabel(title, parent);
-    QFont title_font = title_label->font();
-    title_font.setPointSize(ui::kFontSizeSection);
-    title_font.setBold(true);
-    title_label->setFont(title_font);
+    // Through the style sheet: the theme's "* { font-size: 10pt }" wins over a QFont size, so a
+    // setFont() title drew at 10pt, smaller than the 13pt card titles under it.
+    title_label->setStyleSheet(ui::fontSizeStyle(ui::kFontSizeSection) + ui::kFontWeightBoldStyle);
     return title_label;
 }
 

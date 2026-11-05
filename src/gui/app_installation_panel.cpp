@@ -160,7 +160,7 @@ void AppInstallationPanel::setupUi() {
     m_tabWidget->addTab(online_tab, tr("Online Install"));
     auto* online_layout = new QVBoxLayout(online_tab);
     online_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     online_layout->setSpacing(sak::ui::kSpacingDefault);
 
     setupUi_searchBar(online_layout);
@@ -172,8 +172,6 @@ void AppInstallationPanel::setupUi() {
     online_layout->addLayout(side_by_side, 1);
 
     setupUi_offlineTab(m_tabWidget);
-
-    setupUi_bottomBar(main_layout);
 }
 
 void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* main_layout) {
@@ -337,16 +335,6 @@ void AppInstallationPanel::setupUi_queueProgress(QVBoxLayout* queue_layout) {
     queue_layout->addWidget(m_progressBar);
 }
 
-void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* main_layout) {
-    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
-    auto* bottom_layout = new QHBoxLayout();
-    bottom_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    bottom_layout->addWidget(m_logToggle);
-    bottom_layout->addStretch();
-    main_layout->addLayout(bottom_layout);
-}
-
 void AppInstallationPanel::setupConnections() {
     setupSearchAndQueueConnections();
     setupWorkerConnections();
@@ -478,7 +466,7 @@ void AppInstallationPanel::setupWorkerJobConnections() {
                 Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
                 break;
             case MigrationStatus::Success:
-                Q_EMIT logOutput(QString("[x] %1 installed successfully").arg(job.packageId));
+                Q_EMIT logOutput(QString("%1 installed successfully").arg(job.packageId));
                 break;
             case MigrationStatus::Failed:
                 Q_EMIT logOutput(QString("[ ] %1 failed: %2").arg(job.packageId, job.errorMessage));
@@ -659,7 +647,7 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offline_layout)
     m_directDownloadButton->setEnabled(false);
     m_directDownloadButton->setAccessibleName(QStringLiteral("Direct Download"));
     m_directDownloadButton->setToolTip(
-        tr("Download the raw installer binaries (.exe/.msi) for each package -- for manual "
+        tr("Download the raw installer binaries (.exe/.msi) for each package - for manual "
            "install, not a deployable offline bundle"));
     action_btn_row->addWidget(m_directDownloadButton);
 
@@ -701,7 +689,7 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     tabs->addTab(offline_tab, tr("Offline Deploy"));
     auto* offline_layout = new QVBoxLayout(offline_tab);
     offline_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     offline_layout->setSpacing(sak::ui::kSpacingDefault);
 
     setupOfflinePresetRow(offline_layout);

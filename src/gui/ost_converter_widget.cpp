@@ -20,6 +20,7 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -235,7 +236,7 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
                                                                   tr("Select Output Directory"),
                                                                   m_output_dir_edit->text());
             if (!dir.isEmpty()) {
-                m_output_dir_edit->setText(dir);
+                m_output_dir_edit->setText(QDir::toNativeSeparators(dir));
             }
         },
         Qt::QueuedConnection);
@@ -376,10 +377,10 @@ QWidget* OstConverterWidget::createRecoverySection() {
     m_recover_deleted_check->setAccessibleDescription(tr("Recover deleted email items"));
     layout->addWidget(m_recover_deleted_check);
 
-    m_deep_recovery_check = new QCheckBox(
-        tr("Deep recovery (scan orphaned nodes -- slow, thorough)"), m_recovery_group);
+    m_deep_recovery_check =
+        new QCheckBox(tr("Deep recovery (scan orphaned nodes - slow, thorough)"), m_recovery_group);
     m_deep_recovery_check->setAccessibleName(
-        tr("Deep recovery (scan orphaned nodes -- slow, thorough)"));
+        tr("Deep recovery (scan orphaned nodes - slow, thorough)"));
     m_deep_recovery_check->setAccessibleDescription(tr("Enable deep email recovery"));
     m_deep_recovery_check->setToolTip(
         tr("Walk all NBT nodes to find hard-deleted messages not in any folder"));
@@ -547,7 +548,7 @@ void OstConverterWidget::onFileProgressUpdated(int file_index,
         }
     }
 
-    Q_EMIT statusMessage(tr("Converting: %1 -- %2")
+    Q_EMIT statusMessage(tr("Converting: %1 - %2")
                              .arg(current_folder)
                              .arg(tr("%1 / %2 items").arg(items_done).arg(items_total)),
                          0);
@@ -701,12 +702,15 @@ QString OstConverterWidget::progressSummary(const OstConversionResult& result) {
     if (result.items_converted == 0 && result.items_failed == 0 && result.itemsSkipped() == 0) {
         return tr("No messages in this file");
     }
-    QStringList parts{tr("%1 items").arg(result.items_converted)};
+    // "12 items, 13 not mail" read as 12 items of which 13 were not mail: name what each count is.
+    QStringList parts{
+        countOf(result.items_converted, tr("message converted"), tr("messages converted"))};
     if (result.items_failed > 0) {
         parts.append(tr("%1 failed").arg(result.items_failed));
     }
     if (result.itemsSkipped() > 0) {
-        parts.append(tr("%1 not mail").arg(result.itemsSkipped()));
+        parts.append(tr("%1 left out (not mail)")
+                         .arg(countOf(result.itemsSkipped(), tr("item"), tr("items"))));
     }
     return parts.join(QStringLiteral(", "));
 }

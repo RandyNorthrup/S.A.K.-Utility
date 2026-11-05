@@ -6,6 +6,7 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/diagnostic_controller.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -17,6 +18,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -59,6 +61,27 @@ void DiagnosticBenchmarkPanel::onRescanHardwareClicked() {
     m_controller->runHardwareScan();
 }
 
+namespace {
+
+// Windows reports 0 for what it could not read (a VM's memory slots, a basic display adapter's
+// memory). Shown as "0/0 slots" or "0 bytes", that read as a measurement.
+QString memoryText(const MemorySummary& memory) {
+    if (memory.slots_total == 0) {
+        return sak::formatBytes(memory.total_bytes);
+    }
+    return QString("%1 (%2/%3 slots)")
+        .arg(sak::formatBytes(memory.total_bytes))
+        .arg(memory.slots_used)
+        .arg(memory.slots_total);
+}
+
+QString gpuText(const GpuInfo& gpu) {
+    return gpu.vram_bytes > 0 ? QString("%1 (%2)").arg(gpu.name, sak::formatBytes(gpu.vram_bytes))
+                              : gpu.name;
+}
+
+}  // namespace
+
 void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
     Q_ASSERT(m_controller);
     const auto& report_data = m_controller->reportData();
@@ -70,12 +93,9 @@ void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
                 .arg(inv.cpu.cores)
                 .arg(inv.cpu.threads)
                 .arg(inv.cpu.max_clock_mhz);
-    text += QString("Memory: %1 (%2/%3 slots)\n")
-                .arg(formatBytes(inv.memory.total_bytes))
-                .arg(inv.memory.slots_used)
-                .arg(inv.memory.slots_total);
+    text += QString("Memory: %1\n").arg(memoryText(inv.memory));
     std::ranges::for_each(inv.gpus, [&text](const auto& gpu) {
-        text += QString("GPU: %1 (%2)\n").arg(gpu.name, formatBytes(gpu.vram_bytes));
+        text += QString("GPU: %1\n").arg(gpuText(gpu));
     });
     text +=
         QString("Motherboard: %1 %2\n").arg(inv.motherboard.manufacturer, inv.motherboard.product);
@@ -98,15 +118,12 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
                                 .arg(inventory.cpu.threads)
                                 .arg(inventory.cpu.max_clock_mhz));
 
-    m_hw_memory_label->setText(QString("%1 (%2/%3 slots)")
-                                   .arg(formatBytes(inventory.memory.total_bytes))
-                                   .arg(inventory.memory.slots_used)
-                                   .arg(inventory.memory.slots_total));
+    m_hw_memory_label->setText(memoryText(inventory.memory));
 
     if (!inventory.gpus.isEmpty()) {
         QStringList gpu_lines;
         for (const auto& gpu : inventory.gpus) {
-            gpu_lines.append(QString("%1 (%2)").arg(gpu.name, formatBytes(gpu.vram_bytes)));
+            gpu_lines.append(gpuText(gpu));
         }
         m_hw_gpu_label->setText(gpu_lines.join("; "));
     }
@@ -122,7 +139,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
     m_hw_uptime_label->setText(formatUptime(inventory.uptime_seconds));
 
     if (inventory.battery.present) {
-        m_hw_battery_label->setText(QString("%1 -- %2% health, %3")
+        m_hw_battery_label->setText(QString("%1 - %2% health, %3")
                                         .arg(inventory.battery.name)
                                         .arg(inventory.battery.health_percent, 0, 'f', 1)
                                         .arg(inventory.battery.status));
@@ -298,7 +315,7 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
     Q_ASSERT(m_controller);
     if (m_disk_drive_combo->count() == 0) {
         logMessage("No drives available -- run Hardware Scan first");
-        Q_EMIT statusMessage("No drives -- run Hardware Scan first", sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage("No drives - run Hardware Scan first", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -326,13 +343,13 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     setOperationRunning(false);
     m_benchmark_stop_button->setEnabled(false);
 
-    m_disk_seq_label->setText(QString("Sequential -- Read: %1 MB/s | Write: %2 MB/s")
+    m_disk_seq_label->setText(QString("Sequential - Read: %1 MB/s | Write: %2 MB/s")
                                   .arg(result.seq_read_mbps, 0, 'f', 1)
                                   .arg(result.seq_write_mbps, 0, 'f', 1));
 
     m_disk_rand_label->setText(
-        QString("Random 4K QD1 -- R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
-                "Random 4K QD32 (serialized QD1) -- R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
+        QString("Random 4K QD1 - R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
+                "Random 4K QD32 (serialized QD1) - R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
             .arg(result.rand_4k_read_mbps, 0, 'f', 1)
             .arg(result.rand_4k_read_iops, 0, 'f', 0)
             .arg(result.rand_4k_write_mbps, 0, 'f', 1)
@@ -342,7 +359,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
             .arg(result.rand_4k_qd32_write_mbps, 0, 'f', 1)
             .arg(result.rand_4k_qd32_write_iops, 0, 'f', 0));
 
-    m_disk_latency_label->setText(QString("Latency -- Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
+    m_disk_latency_label->setText(QString("Latency - Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
                                           "Write avg: %3 \u03BCs (P99: %4 \u03BCs)")
                                       .arg(result.avg_read_latency_us, 0, 'f', 1)
                                       .arg(result.p99_read_latency_us, 0, 'f', 1)
@@ -487,8 +504,7 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
     } else {
-        m_stress_status_label->setText(
-            QString("Status: FAILED \u2014 %1").arg(result.abort_reason));
+        m_stress_status_label->setText(QString("Status: FAILED - %1").arg(result.abort_reason));
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
@@ -824,9 +840,10 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
     logMessage(QString("Reports generated in %1").arg(output_dir));
     Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
-    sak::showInformationLogged(this,
-                               "Reports Generated",
-                               QString("Diagnostic reports saved to:\n%1").arg(output_dir));
+    sak::showInformationLogged(
+        this,
+        "Reports Generated",
+        QString("Diagnostic reports saved to:\n%1").arg(QDir::toNativeSeparators(output_dir)));
 }
 
 // ============================================================================

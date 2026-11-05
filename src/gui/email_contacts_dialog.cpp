@@ -10,6 +10,7 @@
 #include "sak/email_inspector_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -62,7 +63,7 @@ EmailContactsDialog::EmailContactsDialog(::EmailInspectorController* controller,
                                          const QVector<uint64_t>& contact_folder_ids,
                                          QWidget* parent)
     : QDialog(parent), m_controller(controller), m_folder_ids(contact_folder_ids) {
-    setWindowTitle(tr("Address Book \u2014 Contacts"));
+    setWindowTitle(tr("Address Book - Contacts"));
     setModal(true);
     resize(kWizardLargeWidth, kWizardLargeHeight);
 
@@ -89,7 +90,7 @@ EmailContactsDialog::~EmailContactsDialog() = default;
 void EmailContactsDialog::setupHeader(QVBoxLayout* layout) {
     auto* heading = new QLabel(tr("Address Book"), this);
     heading->setStyleSheet(ui::fontSizeWeightColorStyle(
-        ui::kFontSizeTitle, ui::kFontWeightSemibold, ui::kColorTextHeading));
+        ui::kFontSizeSection, ui::kFontWeightSemibold, ui::kColorTextHeading));
     layout->addWidget(heading);
 
     auto* search_row = new QHBoxLayout();
@@ -120,6 +121,7 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_contact_table->setColumnWidth(ColName, email::kContactsNameColumnWidth);
     m_contact_table->setColumnWidth(ColEmail, email::kContactsEmailColumnWidth);
     m_contact_table->setColumnWidth(ColCompany, email::kContactsCompanyColumnWidth);
+    fitHeaderLabels(m_contact_table);
     m_contact_table->verticalHeader()->setVisible(false);
     connect(
         m_contact_table, &QTableWidget::cellClicked, this, &EmailContactsDialog::onContactSelected);

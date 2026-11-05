@@ -130,7 +130,7 @@ private:
     /** @brief Build the panel layout and stacked-widget pages */
     void setupUi();
     /** @brief Create and wire up navigation buttons (Back/Next/Flash/Settings) */
-    void setupNavigationButtons(QVBoxLayout* main_layout);
+    void setupNavigationButtons(QVBoxLayout* page_layout);
     void setupBackButton(QHBoxLayout* button_layout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();

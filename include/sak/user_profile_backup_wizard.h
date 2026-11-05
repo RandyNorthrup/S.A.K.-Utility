@@ -410,6 +410,7 @@ private:
     void setupUi();
     void setupUi_destination(QVBoxLayout* layout);
     void setupUi_transforms(QVBoxLayout* layout);
+    void setupUi_compressionLevelRow(QVBoxLayout* layout);
     void setupUi_permissions(QVBoxLayout* layout);
     /// @brief Refuse a mismatched or too-short password; true when the run may proceed.
     bool validateEncryptionPassword();
@@ -425,6 +426,9 @@ private:
     QString m_destinationPath;
 
     QLineEdit* m_destinationEdit{nullptr};
+    QLabel* m_destinationLabel{nullptr};
+    QLabel* m_compressionLabel{nullptr};
+    QLabel* m_permissionLabel{nullptr};
     QPushButton* m_browseButton{nullptr};
     QComboBox* m_permissionModeCombo{nullptr};
     QCheckBox* m_verifyCheck{nullptr};

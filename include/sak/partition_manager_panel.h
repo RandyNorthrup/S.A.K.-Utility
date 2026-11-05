@@ -321,6 +321,9 @@ private:
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
+/// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
+[[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(
+    const QVector<QPair<QString, uint64_t>>& rows);
 // Test seam for the Quick Partition size logic: exposes the pure size-derivation and validity
 // helpers so the fail-closed handling of malformed custom sizes and the overflow-safe total can be
 // unit tested without driving the full modal flow.

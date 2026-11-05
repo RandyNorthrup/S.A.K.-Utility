@@ -23,6 +23,16 @@ class FileManagementFileSystemTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review S21: a volume with no name was listed as "C:/ (C:/)".
+    void mountedVolumesAreLabelledAsWindowsDoes() {
+        using sak::FileManagementFileSystemBridge;
+        QCOMPARE(FileManagementFileSystemBridge::mountedVolumeLabel(QString(),
+                                                                    QStringLiteral("C:/")),
+                 QStringLiteral("Local Disk (C:)"));
+        QCOMPARE(FileManagementFileSystemBridge::mountedVolumeLabel(QStringLiteral("DATA"),
+                                                                    QStringLiteral("D:/")),
+                 QStringLiteral("DATA (D:)"));
+    }
     void localTargetListsAndReadsFiles() {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());

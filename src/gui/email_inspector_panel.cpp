@@ -25,6 +25,7 @@
 #include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QBuffer>
@@ -291,14 +292,7 @@ void EmailInspectorPanel::setupUi() {
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     root_layout->setSpacing(ui::kSpacingSmall);
 
-    // Dynamic panel header
-    m_header_widgets =
-        createDynamicPanelHeader(this,
-                                 QStringLiteral(":/icons/icons/panel_email.svg"),
-                                 tr("Email Tools"),
-                                 tr("Browse and export emails, contacts, calendar "
-                                    "items, tasks, and notes from PST/OST/NST/MBOX files"),
-                                 root_layout);
+    // No header of its own: Email Tools' header above the sub-tabs names this one.
 
     // Ribbon toolbar
     root_layout->addWidget(createRibbon());
@@ -349,7 +343,6 @@ void EmailInspectorPanel::setupUi() {
 void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
     Q_ASSERT(root_layout);
 
-    m_log_toggle = new LogToggleSwitch(tr("Log"), this);
     m_images_toggle_switch = new LogToggleSwitch(tr("Images"), this);
     m_images_toggle_switch->setToolTip(
         tr("Load images and remote content in the preview (off by default for security)"));
@@ -368,7 +361,6 @@ void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
         displayItemDetail(m_current_detail);
     });
     auto* log_toggle_layout = new QHBoxLayout();
-    log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
     m_export_emails_button = new QPushButton(tr("Save Selected Email"), this);
     m_export_emails_button->setEnabled(false);
@@ -2354,27 +2346,27 @@ const sak::PstFolder* EmailInspectorPanel::findIpmSubtree(const QVector<sak::Pst
 QIcon EmailInspectorPanel::folderIcon(const QString& name) {
     const QString lower = name.toLower();
     if (lower == QLatin1String("inbox")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-inbox.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-inbox.svg"));
     }
     if (lower == QLatin1String("sent items")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-sent.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-sent.svg"));
     }
     if (lower == QLatin1String("drafts")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-edit-file.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-edit-file.svg"));
     }
     if (lower == QLatin1String("deleted items")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-trash.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-trash.svg"));
     }
     if (lower == QLatin1String("junk email")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-spam.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-spam.svg"));
     }
     if (lower == QLatin1String("outbox")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-clock.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-clock.svg"));
     }
     if (lower == QLatin1String("archive")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
     }
-    return QIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
+    return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
 }
 
 // static
@@ -2908,7 +2900,7 @@ void EmailInspectorPanel::updateFileInfoBar(const sak::PstFileInfo& info) {
         m_item_empty_state->setEmptyText(tr("This file holds no messages"));
         return;
     }
-    updateStatusBar(QStringLiteral("%1 \u2014 %2 \u2014 %3 items")
+    updateStatusBar(QStringLiteral("%1 - %2 - %3 items")
                         .arg(info.display_name)
                         .arg(formatBytes(info.file_size_bytes))
                         .arg(info.total_items));

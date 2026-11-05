@@ -234,6 +234,9 @@ enum class RawReplaceCaseAction {
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
+    /// "Local Disk (C:)" or "DATA (D:)": a mounted volume's name, or Local Disk when it has none,
+    /// and its root without the trailing separator.
+    [[nodiscard]] static QString mountedVolumeLabel(const QString& name, const QString& root);
     [[nodiscard]] static QVector<FileManagementTarget> targetsFromInventory(
         const PartitionInventory& inventory);
     [[nodiscard]] static FileManagementTarget manualTarget(const QString& root_path,

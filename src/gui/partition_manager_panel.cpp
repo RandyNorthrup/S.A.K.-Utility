@@ -86,7 +86,9 @@
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QStorageInfo>
+#include <QStyle>
 #include <QStyledItemDelegate>
+#include <QStyleOption>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTabWidget>
@@ -386,6 +388,8 @@ template <typename Value>
 }
 
 const QColor kPartitionColorGptPrimary{42, 151, 207};
+// The share of a legend swatch drawn in the used-space shade.
+constexpr double kLegendUsedShare = 0.5;
 const QColor kPartitionColorLogical{35, 196, 211};
 const QColor kPartitionColorSimple{122, 183, 91};
 const QColor kPartitionColorSpanned{198, 140, 48};
@@ -1293,6 +1297,8 @@ const QString kIconApply = QStringLiteral(":/icons/icons/icons8-pm-apply.svg");
 const QString kIconUndo = QStringLiteral(":/icons/icons/icons8-pm-undo.svg");
 const QString kIconRedo = QStringLiteral(":/icons/icons/icons8-pm-redo.svg");
 const QString kIconDiscard = QStringLiteral(":/icons/icons/icons8-pm-discard.svg");
+// Cancel stops the running Apply; Discard empties the queue. They shared Discard's red X.
+const QString kIconCancelRun = QStringLiteral(":/icons/icons/icons8-close-window.svg");
 const QString kIconCopy = QStringLiteral(":/icons/icons/icons8-pm-copy.svg");
 const QString kIconProperties = QStringLiteral(":/icons/icons/icons8-pm-properties.svg");
 const QString kIconDisk = QStringLiteral(":/icons/icons/icons8-pm-disk.svg");
@@ -1315,7 +1321,12 @@ QIcon icons8RibbonIcon(const QString& icon_path) {
     QIcon icon;
     const QSize icon_size(kRibbonIconSize, kRibbonIconSize);
     icon.addFile(icon_path, icon_size, QIcon::Normal);
-    icon.addFile(icon_path, icon_size, QIcon::Disabled);
+    // Disabled is the style's greyed version of the artwork: the full-colour file there made a
+    // disabled Cancel, Discard, Undo or Redo look ready to press.
+    const QPixmap normal = QIcon(icon_path).pixmap(icon_size);
+    QStyleOption option;
+    icon.addPixmap(QApplication::style()->generatedIconPixmap(QIcon::Disabled, normal, &option),
+                   QIcon::Disabled);
     icon.addFile(icon_path, icon_size, QIcon::Active);
     icon.addFile(icon_path, icon_size, QIcon::Selected);
     return icon;
@@ -1699,7 +1710,19 @@ protected:
         path.addRoundedRect(swatch_rect,
                             kPartitionLegendSwatchRadius,
                             kPartitionLegendSwatchRadius);
-        painter.fillPath(path, m_color);
+        // The shades the disk map paints: used space on the left, free space on the right
+        // (unallocated space is all free).
+        painter.fillPath(path, m_color.lighter(kPartitionSegmentFillLightness));
+        if (property("colorRole").toString() != QStringLiteral("Unallocated")) {
+            painter.save();
+            painter.setClipPath(path);
+            painter.fillRect(QRectF(swatch_rect.left(),
+                                    swatch_rect.top(),
+                                    swatch_rect.width() * kLegendUsedShare,
+                                    swatch_rect.height()),
+                             m_color.darker(kPartitionSegmentTrackLightness));
+            painter.restore();
+        }
         painter.setPen(QPen(m_color.darker(kPartitionSegmentBorderDarkness), 1));
         painter.drawPath(path);
     }
@@ -1707,6 +1730,15 @@ protected:
 private:
     QColor m_color;
 };
+
+/// Text that reads on @p fill: dark on a light segment, white on a dark one. The palette's text
+/// colour was white on the pale free-space fill in dark, and vanished.
+QColor segmentLabelColor(const QColor& fill) {
+    constexpr int kLightFillThreshold = 150;
+    return fill.lightness() >= kLightFillThreshold
+               ? QColor(QString::fromLatin1(ui::kColorTextPrimary))
+               : QColor(QString::fromLatin1(ui::kColorButtonTextOnTone));
+}
 
 struct PartitionSegmentSpec {
     QString text;
@@ -2017,7 +2049,7 @@ private:
         for (const auto& region : m_source_disk->unallocated_regions) {
             segments.append({.label = tr("Unallocated"),
                              .bytes = region.size_bytes,
-                             .color = palette().color(QPalette::Midlight),
+                             .color = kPartitionColorUnallocated,
                              .used_percent = 0});
         }
         return segments;
@@ -2061,7 +2093,7 @@ private:
         if (target_bytes > source_bytes) {
             segments.append({.label = tr("Unallocated"),
                              .bytes = target_bytes - source_bytes,
-                             .color = palette().color(QPalette::Midlight),
+                             .color = kPartitionColorUnallocated,
                              .used_percent = 0});
         }
         return segments;
@@ -2071,9 +2103,8 @@ private:
         const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
                                   ? tr("%1:").arg(partition.volume->drive_letter)
                                   : tr("*:");
-        const QColor color = partition.is_efi || partition.is_msr || partition.is_recovery
-                                 ? QColor(QString::fromLatin1(ui::kColorPrimary))
-                                 : QColor(QString::fromLatin1(ui::kColorSuccess));
+        // The disk map's partition colour: the success green lightened to a neon no token names.
+        const QColor color = kPartitionColorGptPrimary;
         return {.label = label,
                 .bytes = partition.size_bytes,
                 .color = color,
@@ -2142,7 +2173,7 @@ private:
         }
         const QString text =
             painter->fontMetrics().elidedText(segment.label, Qt::ElideRight, rect.width());
-        painter->setPen(palette().color(QPalette::Text));
+        painter->setPen(segmentLabelColor(segment.color.lighter(kPartitionSegmentFillLightness)));
         painter->drawText(rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
                           Qt::AlignCenter,
                           text);
@@ -2226,6 +2257,16 @@ public:
                 {QStringLiteral("offset"), QString::number(segment.offset)},
                 {QStringLiteral("bytes"), QString::number(segment.bytes)},
                 {QStringLiteral("unallocated"), segment.unallocated},
+                {QStringLiteral("color"), segment.color.name()},
+                {QStringLiteral("label_color"),
+                 segmentLabelColor(segment.changed
+                                       ? segment.color
+                                       : segment.color.lighter(kPartitionSegmentFillLightness))
+                     .name()},
+                {QStringLiteral("fill"),
+                 (segment.changed ? segment.color
+                                  : segment.color.lighter(kPartitionSegmentFillLightness))
+                     .name()},
             });
         });
         return result;
@@ -2374,16 +2415,12 @@ private:
         return QStringLiteral("*:");
     }
 
-    [[nodiscard]] static QColor segmentPartitionColor(const PartitionInfoEx& partition) {
-        if (partition.is_efi || partition.is_msr || partition.is_recovery) {
-            return QColor(QString::fromLatin1(ui::kColorPrimary));
-        }
-        return QColor(QString::fromLatin1(ui::kColorSuccess));
+    // The disk map's colours, so the review shows the disk as the map does.
+    [[nodiscard]] static QColor segmentPartitionColor(const PartitionInfoEx& /*partition*/) {
+        return kPartitionColorGptPrimary;
     }
 
-    [[nodiscard]] static QColor segmentUnallocatedColor() {
-        return QApplication::palette().color(QPalette::Midlight);
-    }
+    [[nodiscard]] static QColor segmentUnallocatedColor() { return kPartitionColorUnallocated; }
 
     [[nodiscard]] static int segmentUsedPercent(const PartitionInfoEx& partition) {
         if (!partition.volume || partition.volume->total_bytes == 0 ||
@@ -2472,8 +2509,7 @@ private:
         if (size == 0) {
             return;
         }
-        replaceFreeSpan(
-            segments, offset, size, tr("New"), QColor(QString::fromLatin1(ui::kColorSuccess)));
+        replaceFreeSpan(segments, offset, size, tr("New"), kPartitionColorGptPrimary);
     }
 
     void previewRecoveredPartition(const PartitionOperation& operation,
@@ -2895,10 +2931,10 @@ private:
             if (segment_rect.isEmpty()) {
                 continue;
             }
-            painter->fillRect(segment_rect,
-                              segment.changed
-                                  ? segment.color
-                                  : segment.color.lighter(kPartitionSegmentFillLightness));
+            const QColor fill = segment.changed
+                                    ? segment.color
+                                    : segment.color.lighter(kPartitionSegmentFillLightness);
+            painter->fillRect(segment_rect, fill);
             if (segment.used_percent > 0) {
                 QRect used_rect = segment_rect;
                 used_rect.setWidth(scaledExtent(segment_rect.width(),
@@ -2909,7 +2945,7 @@ private:
             const QString text = painter->fontMetrics().elidedText(segment.label,
                                                                    Qt::ElideRight,
                                                                    segment_rect.width());
-            painter->setPen(palette().color(QPalette::Text));
+            painter->setPen(segmentLabelColor(fill));
             painter->drawText(segment_rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
                               Qt::AlignCenter,
                               text);
@@ -4150,7 +4186,8 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     dialog.formLayout()->addRow(QObject::tr("Volume password:"), widgets.apfs_volume_password);
     dialog.formLayout()->addRow(QObject::tr("Recovery key:"), widgets.apfs_recovery_key);
     dialog.formLayout()->addRow(QString(), widgets.full_format);
-    dialog.formLayout()->addRow(QString(), widgets.raw_format_confirm);
+    // The confirmation spans the form: in the field column a long one ran past the dialog's edge.
+    dialog.formLayout()->addRow(widgets.raw_format_confirm);
     return widgets;
 }
 
@@ -4163,20 +4200,28 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
 
     const bool encrypt_checked = apfs_selected && widgets.apfs_encrypt->isChecked();
 
-    widgets.apfs_additional_volumes->setVisible(apfs_selected);
+    // Whole rows: hiding only the field left its label ("Swap page size:") with nothing beside it.
+    QFormLayout* form = dialog.formLayout();
+    form->setRowVisible(widgets.apfs_additional_volumes, apfs_selected);
     widgets.apfs_additional_volumes->setEnabled(apfs_selected);
-    widgets.apfs_encrypt->setVisible(apfs_selected);
+    form->setRowVisible(widgets.apfs_encrypt, apfs_selected);
     widgets.apfs_encrypt->setEnabled(apfs_selected);
-    widgets.apfs_volume_password->setVisible(encrypt_checked);
+    form->setRowVisible(widgets.apfs_volume_password, encrypt_checked);
     widgets.apfs_volume_password->setEnabled(encrypt_checked);
-    widgets.apfs_recovery_key->setVisible(encrypt_checked);
+    form->setRowVisible(widgets.apfs_recovery_key, encrypt_checked);
     widgets.apfs_recovery_key->setEnabled(encrypt_checked);
     widgets.allocation_unit->setEnabled(!raw_selected);
     widgets.full_format->setEnabled(!raw_selected);
-    widgets.swap_page_size->setVisible(swap_selected);
+    form->setRowVisible(widgets.swap_page_size, swap_selected);
     widgets.swap_page_size->setEnabled(swap_selected);
-    widgets.raw_format_confirm->setVisible(raw_selected);
+    form->setRowVisible(widgets.raw_format_confirm, raw_selected);
     widgets.raw_format_confirm->setText(rawFormatConfirmationText(raw_kind));
+    // Its text changes with the file system; the dialog widens to the longest so none is cut.
+    widgets.raw_format_confirm->setMinimumWidth(widgets.raw_format_confirm->sizeHint().width());
+    if (QLayout* layout = dialog.layout(); layout != nullptr) {
+        layout->activate();
+        dialog.resize(dialog.size().expandedTo(dialog.minimumSizeHint()));
+    }
     nameConfirmationBox(widgets.raw_format_confirm, rawFormatConfirmationAccessibleName(raw_kind));
     const bool encrypt_ready = !encrypt_checked || !widgets.apfs_volume_password->text().isEmpty();
     dialog.setAcceptEnabled((!raw_selected || widgets.raw_format_confirm->isChecked()) &&
@@ -4908,6 +4953,10 @@ void rebuildQuickPartitionTable(const QuickPartitionWidgets& widgets,
             std::min<uint64_t>(equal_sizes.value(row) / kMegabyteBytes, usable_mb));
         size->setValue(std::max(kQuickPartitionMinimumSizeMb, default_size_mb));
         widgets.partition_table->setCellWidget(row, kQuickPartitionSizeColumn, size);
+        // The row is as tall as its editors: at the table's default height the label editor
+        // was cut to a sliver and the size boxes ran into the next row.
+        widgets.partition_table->setRowHeight(
+            row, std::max(label->sizeHint().height(), size->sizeHint().height()));
     }
     widgets.partition_table->resizeColumnsToContents();
 }
@@ -7384,7 +7433,9 @@ void setSpaceAnalyzerRow(QTableWidget* table,
                          int row,
                          const SpaceAnalyzerEntry& entry,
                          uint64_t total_bytes) {
-    auto* size_item = new QTableWidgetItem(formatPartitionBytes(entry.bytes));
+    // Size and share sort by the byte count: as text, "9.0 KB" sorted above "10.0 MB".
+    auto* size_item = new NumericSortTableItem(formatPartitionBytes(entry.bytes),
+                                               static_cast<qlonglong>(entry.bytes));
     size_item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(entry.bytes));
     auto* name_item = new QTableWidgetItem(entry.name);
     name_item->setData(kSpaceAnalyzerPathRole, entry.path);
@@ -7393,7 +7444,8 @@ void setSpaceAnalyzerRow(QTableWidget* table,
     table->setItem(row, SpaceAnalyzerColSize, size_item);
     table->setItem(row,
                    SpaceAnalyzerColPercent,
-                   new QTableWidgetItem(percentageText(entry.bytes, total_bytes)));
+                   new NumericSortTableItem(percentageText(entry.bytes, total_bytes),
+                                            static_cast<qlonglong>(entry.bytes)));
     table->setItem(row,
                    SpaceAnalyzerColPath,
                    new QTableWidgetItem(QDir::toNativeSeparators(entry.path)));
@@ -8477,6 +8529,21 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+QStringList partitionSpaceAnalyzerTableOrderForTest(const QVector<QPair<QString, uint64_t>>& rows) {
+    SpaceAnalyzerResult result;
+    for (const auto& [name, bytes] : rows) {
+        result.entries.append({.name = name, .type = QString(), .path = name, .bytes = bytes});
+        result.total_bytes += bytes;
+    }
+    QTableWidget table(0, SpaceAnalyzerColCount);
+    populateSpaceAnalyzerTable(&table, result);
+    QStringList order;
+    for (int row = 0; row < table.rowCount(); ++row) {
+        order.append(table.item(row, SpaceAnalyzerColName)->text());
+    }
+    return order;
+}
+
 QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path) {
     const auto result = analyzeVolumeSpace(root_path, std::make_shared<std::atomic_bool>(false));
     QJsonArray viewNames;
@@ -8642,6 +8709,8 @@ void PartitionManagerPanel::setupUi() {
     body_layout->addWidget(createActionsPane(), 0);
     body_layout->addWidget(createWorkspace(body), 1);
     root->addWidget(body, 1);
+    m_log_toggle = new LogToggleSwitch(tr("Log"), this);
+    addLogFooter(root, m_log_toggle);
 }
 
 void PartitionManagerPanel::createRibbon(QVBoxLayout* root) {
@@ -8656,7 +8725,7 @@ void PartitionManagerPanel::createRibbon(QVBoxLayout* root) {
     m_apply_button =
         createRibbonButton(ribbon, tr("Apply"), kIconApply, tr("Apply pending operations"));
     m_cancel_button =
-        createRibbonButton(ribbon, tr("Cancel"), kIconDiscard, tr("Cancel running operation"));
+        createRibbonButton(ribbon, tr("Cancel"), kIconCancelRun, tr("Cancel running operation"));
     m_discard_button =
         createRibbonButton(ribbon, tr("Discard"), kIconDiscard, tr("Discard pending operations"));
     m_undo_button =
@@ -9176,8 +9245,6 @@ QWidget* PartitionManagerPanel::createLegend(QWidget* parent) {
     addLegendItem(layout, tr("RAID5"), kPartitionColorRaid5);
     addLegendItem(layout, tr("Unallocated"), unallocatedColor());
     layout->addStretch();
-    m_log_toggle = new LogToggleSwitch(tr("Log"), legend);
-    layout->addWidget(m_log_toggle);
     return legend;
 }
 
@@ -9731,7 +9798,8 @@ void PartitionManagerPanel::addUnallocatedRow(const UnallocatedRegion& region) {
 
 void PartitionManagerPanel::rebuildQueue(const QVector<PartitionOperation>& operations) {
     if (m_pending_label != nullptr) {
-        m_pending_label->setText(tr("%1 Operations Pending").arg(operations.size()));
+        m_pending_label->setText(
+            countOf(operations.size(), tr("Operation Pending"), tr("Operations Pending")));
     }
     if (m_queue_list == nullptr) {
         updateActionState();
@@ -11094,8 +11162,15 @@ void PartitionManagerPanel::onInitializeDisk() {
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
     QStringList styles{QStringLiteral("GPT"), QStringLiteral("MBR")};
     bool ok = false;
-    const QString partition_scheme = QInputDialog::getItem(
-        this, tr("Initialize Disk"), tr("Partition style:"), styles, 0, false, &ok);
+    // The prompt names the disk it erases: a disk-wide change asked without saying which disk.
+    const QString partition_scheme =
+        QInputDialog::getItem(this,
+                              tr("Initialize Disk %1").arg(target->disk_number.value()),
+                              tr("Partition style for Disk %1:").arg(target->disk_number.value()),
+                              styles,
+                              0,
+                              false,
+                              &ok);
     if (ok) {
         queueOperation(PartitionOperationType::InitializeDisk,
                        *target,

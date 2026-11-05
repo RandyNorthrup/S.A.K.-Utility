@@ -264,8 +264,9 @@ void ImageFlasherPanel::setupUi() {
 
     main_layout->addWidget(m_stackedWidget);
 
-    // Navigation buttons
-    setupNavigationButtons(main_layout);
+    // Navigation buttons: the page's footer, below the scrolling content, so the step buttons
+    // and Flash! stay in view at any window height.
+    setupNavigationButtons(root_layout);
 
     // Show first page
     m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);
@@ -296,10 +297,11 @@ void ImageFlasherPanel::setupBackButton(QHBoxLayout* button_layout) {
     });
 }
 
-void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
-    Q_ASSERT(main_layout);
+void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* page_layout) {
+    Q_ASSERT(page_layout);
     Q_ASSERT(m_stackedWidget);
-    auto* button_layout = new QHBoxLayout();
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    auto* button_layout = addLogFooter(page_layout, m_logToggle);
 
     m_settingsButton = new QPushButton("Settings", this);
     m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
@@ -314,9 +316,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
             dialog.exec();
         },
         Qt::QueuedConnection);
-    button_layout->addWidget(m_settingsButton);
-
-    button_layout->addStretch();
+    button_layout->insertWidget(1, m_settingsButton);
 
     setupBackButton(button_layout);
 
@@ -345,11 +345,6 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* main_layout) {
             this,
             &ImageFlasherPanel::onFlashClicked,
             Qt::QueuedConnection);
-
-    m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    button_layout->insertWidget(1, m_logToggle);
-
-    main_layout->addLayout(button_layout);
 }
 
 void ImageFlasherPanel::createImageSelectionPage() {
@@ -377,6 +372,8 @@ void ImageFlasherPanel::createImageSelectionPage() {
     m_isoInfoGrid = new QGridLayout(m_isoInfoGroup);
     m_isoInfoGrid->setSpacing(sak::ui::kSpacingSmall);
     m_isoInfoGrid->setColumnMinimumWidth(0, kIsoInfoLabelColumnMinWidth);
+    // The values take the spare width: shared equally, it put them ~590 px from their labels.
+    m_isoInfoGrid->setColumnStretch(1, 1);
 
     auto add_info_row = [this](int row, const QString& label_text, QLabel*& value_out) {
         auto* key = new QLabel(label_text, m_isoInfoGroup);
@@ -522,7 +519,7 @@ void ImageFlasherPanel::addLinuxDownloadCard(QHBoxLayout* card_row) {
                              {.icon_path = QStringLiteral(":/icons/icons/tux_logo.svg"),
                               .title = tr("Linux ISO"),
                               .description = tr("Download a Linux distribution ISO"
-                                                " -- Ubuntu, Fedora, Debian, and more."),
+                                                " - Ubuntu, Fedora, Debian, and more."),
                               .button_text = tr("Download Linux ISO"),
                               .access_name = QStringLiteral("Download Linux ISO"),
                               .tip = QStringLiteral("Download a Linux distribution ISO image")},
@@ -908,10 +905,12 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
     m_settingsButton->setEnabled(true);
 
     if (result.success) {
-        m_completionMessageLabel->setText("[x] Flash Completed Successfully!");
+        m_completionMessageLabel->setText(QString::fromUtf8(sak::ui::kStatusPrefixSuccess) +
+                                          tr("Flash completed successfully"));
         m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorSuccess));
     } else {
-        m_completionMessageLabel->setText("\u2717 Flash Completed with Errors");
+        m_completionMessageLabel->setText(QString::fromUtf8(sak::ui::kStatusPrefixError) +
+                                          tr("Flash completed with errors"));
         m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     }
 
@@ -943,7 +942,7 @@ QString ImageFlasherPanel::buildCompletionDetails(const FlashResult& result) {
         // drive is simply still mounted, and pulling it now can lose the last writes
         // Windows has cached.
         details += QString(
-                       "\nCould NOT be ejected (%1) -- use Safely Remove Hardware before "
+                       "\nCould NOT be ejected (%1) - use Safely Remove Hardware before "
                        "unplugging:\n%2")
                        .arg(result.ejectFailedDrives.size())
                        .arg(result.ejectFailedDrives.join("\n"));
@@ -1301,7 +1300,6 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
     }
 
     return QString(
-               "(!)  DESTRUCTIVE OPERATION  (!)\n\n"
                "Image: %1\n\n"
                "Target Drive(s):\n%2\n"
                "%3\n\n"
@@ -1385,7 +1383,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
     const QString message = buildFlashConfirmationMessage(drive_details, is_windows_iso);
 
     auto reply = sak::showWarningLogged(this,
-                                        "Confirm Flash -- Data Loss Warning",
+                                        "Confirm Flash - Data Loss Warning",
                                         message,
                                         QMessageBox::Yes | QMessageBox::No,
                                         QMessageBox::No);

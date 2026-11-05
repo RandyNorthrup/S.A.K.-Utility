@@ -55,7 +55,6 @@ public:
     WifiManagerPanel& operator=(WifiManagerPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow log window connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
 
     /// @brief Generate a Windows netsh .cmd script that provisions one network
     /// @return Script text, or an empty string if the SSID cannot be embedded
@@ -374,7 +373,6 @@ private:
     QList<int> m_search_matches;
     int m_search_index{-1};
     QString m_save_path;
-    LogToggleSwitch* m_logToggle{nullptr};
 };
 
 }  // namespace sak

@@ -8,6 +8,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **A stress test stops when its time is up, and Stop works while it runs** - A 1-minute run kept going: one memory
+  pass over gigabytes never looked for the end of the run, and the stress threads crowded out the window. A pass now
+  checks every 8 MiB, and the stress threads run below normal priority, so they still use every spare cycle.
+- **Check boxes show a tick, and the theme draws every state readably in light and dark** - A checked box was a
+  filled square with no tick, the Windows picture of "partly checked"; it now has a white tick, a partly checked box a
+  dash, and a chosen option a white dot. Selected text in a box is readable, disabled boxes look disabled,
+  placeholder text and status colours reach WCAG AA contrast, a selected row is one shade in every list and table, and
+  spin boxes are as tall as the combo beside them. In dark, plain buttons keep their blue fill, progress bars and the
+  calendar use dark surfaces, and status, error and accent colours have their own dark shades.
+- **The Log switch is in one place on every tab** - At the bottom left of the tab, under the sub-tabs where a tab has
+  them. Image Flasher's Settings, Back, Next and Flash! stay in view at any window height.
+- **Plain text in the window** - One dash style, no stand-in tags such as "[x]" or "(!)", counts that agree with
+  their noun ("1 hop"), and dates such as "November 4, 2026" in About.
+- **Fixes the review found** - The email calendar no longer fills later days blue or hides its grid in work hours;
+  Space Analyzer sorts sizes by bytes; the format dialog hides whole rows and shows its whole confirmation; Quick
+  Partition rows fit their editors; the disk map legend and the before-and-after bars use the map's colours; the
+  Email Inspector shows one header; Run Details reads as text; Wi-Fi's Delete Selected needs a selected row; Image
+  Details values sit next to their labels; a listening connection's state no longer draws black in dark; File
+  Explorer lists drives as "Local Disk (C:)", folders you pick show with backslashes, and install dates read as dates.
 - **Partition Manager works from an app that is not running as administrator** - Windows lets only an
   administrator ask whether a volume is locked by BitLocker or marked as needing repair, so from a normal app
   every volume read as unknown and every Apply stopped. Scanning disks now never asks for approval, and those

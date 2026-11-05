@@ -706,7 +706,7 @@ void WindowsISODownloadDialog::onBrowseSaveLocation() {
         if (!file_path.endsWith(".iso", Qt::CaseInsensitive)) {
             file_path += ".iso";
         }
-        m_saveLocationEdit->setText(file_path);
+        m_saveLocationEdit->setText(QDir::toNativeSeparators(file_path));
     }
 }
 

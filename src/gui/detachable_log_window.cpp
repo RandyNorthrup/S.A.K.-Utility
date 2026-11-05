@@ -368,6 +368,22 @@ LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     installEventFilter(new ToggleKeyActivator(this));
 }
 
+QHBoxLayout* addLogFooter(QVBoxLayout* page_layout, LogToggleSwitch* toggle) {
+    Q_ASSERT(page_layout != nullptr);
+    Q_ASSERT(toggle != nullptr);
+    const QMargins page = page_layout->contentsMargins();
+    auto* row = new QHBoxLayout();
+    row->setContentsMargins(std::max(ui::kMarginNone, ui::kMarginMedium - page.left()),
+                            ui::kSpacingTight,
+                            std::max(ui::kMarginNone, ui::kMarginMedium - page.right()),
+                            std::max(ui::kMarginNone, ui::kMarginMedium - page.bottom()));
+    row->setSpacing(ui::kSpacingMedium);
+    row->addWidget(toggle);
+    row->addStretch();
+    page_layout->addLayout(row);
+    return row;
+}
+
 QSize LogToggleSwitch::sizeHint() const {
     return minimumSizeHint();
 }

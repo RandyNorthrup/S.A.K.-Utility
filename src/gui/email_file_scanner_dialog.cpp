@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QDesktopServices>
@@ -109,7 +110,9 @@ void populateResultsTable(QTableWidget* table, const QVector<ScannedFile>& resul
     table->setRowCount(static_cast<int>(results.size()));
     for (int row = 0; row < results.size(); ++row) {
         const auto& r = results.at(row);
-        table->setItem(row, FileScanColPath, new QTableWidgetItem(r.path));
+        table->setItem(row,
+                       FileScanColPath,
+                       new QTableWidgetItem(QDir::toNativeSeparators(r.path)));
         table->setItem(row, FileScanColType, new QTableWidgetItem(r.type));
         QString size_str;
         if (r.size_bytes >= kBytesPerGB) {
@@ -305,7 +308,8 @@ void EmailFileScannerDialog::onScanClicked() {
         const bool has_rows = (m_results_table->rowCount() > 0);
         m_open_button->setEnabled(has_rows);
         m_open_folder_button->setEnabled(has_rows);
-        m_status_label->setText(tr("Found %1 email files").arg(m_files_found));
+        m_status_label->setText(
+            tr("Found %1").arg(countOf(m_files_found, tr("email file"), tr("email files"))));
     });
     watcher->setFuture(QtConcurrent::run(scanPathsWorker, commonScanPaths()));
 }

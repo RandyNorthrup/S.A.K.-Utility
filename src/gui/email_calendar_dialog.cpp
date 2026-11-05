@@ -62,6 +62,48 @@
 
 namespace sak {
 
+namespace {
+
+constexpr double kCalendarDarkTintAlpha = 0.28;
+constexpr double kCalendarDarkTodayAlpha = 0.18;
+
+/// @p color at kCalendarDarkTintAlpha over the dark input surface.
+QColor calendarTint(const QColor& color, double alpha = kCalendarDarkTintAlpha) {
+    const QColor base(QString::fromLatin1(ui::kColorDarkBgInput));
+    const auto mix = [alpha](int over, int under) {
+        return qRound((alpha * over) + ((1.0 - alpha) * under));
+    };
+    return {mix(color.red(), base.red()),
+            mix(color.green(), base.green()),
+            mix(color.blue(), base.blue())};
+}
+
+/// A calendar surface for the theme in use. The light values are the calendar's own tokens; in
+/// dark each has a dark surface of the same role (they were drawn white under light text).
+QColor calendarFill(const char* light) {
+    if (!ui::htmlUsingDarkPalette()) {
+        return QColor(QString::fromLatin1(light));
+    }
+    if (qstrcmp(light, email::kCalColorTodayBg) == 0) {
+        return calendarTint(QColor(QString::fromLatin1(ui::kColorPrimary)),
+                            kCalendarDarkTodayAlpha);
+    }
+    if (qstrcmp(light, email::kCalColorOutsideMonthBg) == 0) {
+        return QColor(QString::fromLatin1(ui::kColorDarkBgPage));
+    }
+    if (qstrcmp(light, email::kCalColorWeekendBg) == 0 ||
+        qstrcmp(light, email::kCalColorOffHoursBg) == 0) {
+        return QColor(QString::fromLatin1(ui::kColorDarkBgPanel));
+    }
+    if (qstrcmp(light, email::kCalColorWorkHoursBg) == 0 ||
+        qstrcmp(light, ui::kColorBgWhite) == 0) {
+        return QColor(QString::fromLatin1(ui::kColorDarkBgInput));
+    }
+    return ui::themedColor(light);
+}
+
+}  // namespace
+
 // ============================================================================
 // Day-of-week column headers
 // ============================================================================
@@ -222,13 +264,13 @@ private:
         const bool is_selected = (day == m_selected_date);
         const bool is_weekend = (day.dayOfWeek() == Qt::Saturday || day.dayOfWeek() == Qt::Sunday);
 
-        QColor bg_color(ui::kColorBgWhite);
+        QColor bg_color = calendarFill(ui::kColorBgWhite);
         if (!is_current_month) {
-            bg_color = QColor(email::kCalColorOutsideMonthBg);
+            bg_color = calendarFill(email::kCalColorOutsideMonthBg);
         } else if (is_today) {
-            bg_color = QColor(email::kCalColorTodayBg);
+            bg_color = calendarFill(email::kCalColorTodayBg);
         } else if (is_weekend) {
-            bg_color = QColor(email::kCalColorWeekendBg);
+            bg_color = calendarFill(email::kCalColorWeekendBg);
         }
         painter.fillRect(rect, bg_color);
 
@@ -237,6 +279,9 @@ private:
         } else {
             painter.setPen(ui::themedColor(ui::kColorBorderDefault));
         }
+        // Outline only: today's number circle sets a fill brush, and a drawRect with it still
+        // set filled every later cell solid blue.
+        painter.setBrush(Qt::NoBrush);
         painter.drawRect(rect);
 
         drawDayNumber(painter, rect, day, is_current_month, is_today);
@@ -457,6 +502,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         m_event_rects.clear();
+        // Work hours first: painted after the grid, they covered its hour and column lines.
+        drawWorkHoursBackground(painter,
+                                email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight);
         drawColumnHeaders(painter);
         drawTimeGrid(painter);
         drawAllDayEvents(painter);
@@ -541,9 +589,10 @@ private:
             const QRect header_rect(left, 0, columnWidth(), email::kCalendarDayHeaderHeight);
             const bool is_today = (day == QDate::currentDate());
             if (is_today) {
-                painter.fillRect(header_rect, QColor(email::kCalColorTodayBg));
+                painter.fillRect(header_rect, calendarFill(email::kCalColorTodayBg));
             }
-            painter.setPen(QColor(is_today ? ui::kColorPrimary : ui::kColorTextBody));
+            painter.setPen(is_today ? QColor(ui::kColorPrimary)
+                                    : ui::themedColor(ui::kColorTextBody));
             const QString label = day.toString(QStringLiteral("ddd M/d"));
             painter.drawText(header_rect, Qt::AlignCenter, label);
 
@@ -572,7 +621,6 @@ private:
 
             drawHourRow(painter, display_hour, row_y);
         }
-        drawWorkHoursBackground(painter, top_base);
     }
 
     void drawHourRow(QPainter& painter, int hour, int row_y) {
@@ -609,7 +657,7 @@ private:
         }
     }
 
-    void drawWorkHoursBackground(QPainter& painter, int top_base) {
+    void drawWorkHoursBackground(QPainter& painter, int top_base) const {
         const int work_top = top_base +
                              ((email::kCalendarWorkStartHour - email::kCalendarDayStartHour) *
                               email::kCalendarHourHeight);
@@ -620,7 +668,7 @@ private:
         for (int col = 0; col < columnCount(); ++col) {
             const int left = columnLeft(col);
             const QRect work_rect(left, work_top, columnWidth(), work_bot - work_top);
-            painter.fillRect(work_rect, QColor(email::kCalColorWorkHoursBg));
+            painter.fillRect(work_rect, calendarFill(email::kCalColorWorkHoursBg));
         }
     }
 
@@ -2049,6 +2097,11 @@ bool EmailCalendarDialog::matchesFilter(const CalendarEvent& evt) const {
 // ============================================================================
 
 QColor EmailCalendarDialog::fillColorForStatus(int busy_status, EmailItemType type) {
+    // The dark theme tints its own surface with the status colour: the light pastel fills under
+    // the dark theme's light text were 1.05:1.
+    if (ui::htmlUsingDarkPalette()) {
+        return calendarTint(borderColorForStatus(busy_status, type));
+    }
     if (type == EmailItemType::MeetingRequest) {
         return QColor(email::kCalColorMeetingFill);
     }

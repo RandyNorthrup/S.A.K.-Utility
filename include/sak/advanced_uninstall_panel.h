@@ -58,7 +58,6 @@ public:
     AdvancedUninstallPanel& operator=(AdvancedUninstallPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -187,6 +186,8 @@ private:
     void applyFilter();
     [[nodiscard]] bool matchesFilter(const ProgramInfo& program) const;
     [[nodiscard]] QString formatSize(qint64 bytes) const;
+    /// "Total size: 12.3 MB", or that the programs report none (a bare "Total size:" otherwise).
+    [[nodiscard]] QString totalSizeText(qint64 bytes) const;
 
     // -- Utility --
     void logMessage(const QString& message);
@@ -243,7 +244,6 @@ private:
     bool m_auto_cleanup_failure_reported{false};
 
     // -- Log toggle --
-    LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- Data --
     QVector<ProgramInfo> m_all_programs;        ///< Full unfiltered list

@@ -4,8 +4,10 @@
 /// @file test_email_tools_mailbox_views.cpp
 /// @brief The Email Inspector's views, driven by a real controller over whole generated stores.
 
+#include "sak/color_constants.h"
 #include "sak/email_attachments_browser_dialog.h"
 #include "sak/email_calendar_dialog.h"
+#include "sak/email_constants.h"
 #include "sak/email_contacts_dialog.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_file_scanner_dialog.h"
@@ -14,6 +16,7 @@
 #include "sak/email_inspector_panel.h"
 #include "sak/pst_named_properties.h"
 #include "sak/pst_parser.h"
+#include "sak/windows11_theme.h"
 
 #include "../support/pst_store_builder.h"
 #include "../support/recurrence_blob.h"
@@ -1231,6 +1234,103 @@ private Q_SLOTS:
         QVERIFY(card.open(QIODevice::ReadOnly));
         const QByteArray text = card.readAll();
         QVERIFY2(text.contains("PHOTO;ENCODING=b;TYPE=PNG:" + png.toBase64()), text.constData());
+    }
+
+    // UI review F1: today's number circle left its blue brush set, and every later day cell of
+    // the month was filled with it. Only the circle is blue now.
+    void monthViewFillsOnlyTodaysCircle() {
+        EmailInspectorController controller;
+        sak::EmailCalendarDialog dialog(&controller, {});
+        dialog.resize(900, 700);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        dialog.setViewMode(sak::EmailCalendarDialog::ViewMode::Month);
+        QCoreApplication::processEvents();
+        QWidget* month = nullptr;
+        for (QWidget* child : dialog.findChildren<QWidget*>()) {
+            if (QByteArray(child->metaObject()->className()) == "sak::CalendarMonthView") {
+                month = child;
+            }
+        }
+        QVERIFY(month != nullptr);
+        const QImage image = month->grab().toImage();
+        const QColor primary(QString::fromLatin1(sak::ui::kColorPrimary));
+        int blue = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                if (QColor(image.pixel(x, y)) == primary) {
+                    ++blue;
+                }
+            }
+        }
+        // A day cell is about 120 x 100 px; today's circle is a few hundred pixels.
+        QVERIFY2(blue < 2000, qPrintable(QStringLiteral("%1 px of the month are blue").arg(blue)));
+    }
+
+    // Dark review DF1, DF2: the month's cells and the week's work hours were white under the dark
+    // theme's light text.
+    void calendarSurfacesAreDarkInTheDarkTheme() {
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Dark);
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        EmailInspectorController controller;
+        sak::EmailCalendarDialog dialog(&controller, {});
+        dialog.resize(900, 700);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        for (const auto mode : {sak::EmailCalendarDialog::ViewMode::Month,
+                                sak::EmailCalendarDialog::ViewMode::Week}) {
+            dialog.setViewMode(mode);
+            QCoreApplication::processEvents();
+            for (QWidget* child : dialog.findChildren<QWidget*>()) {
+                const QByteArray name(child->metaObject()->className());
+                if ((name != "sak::CalendarMonthView" && name != "sak::CalendarWeekDayView") ||
+                    !child->isVisible()) {
+                    continue;
+                }
+                const QImage image = child->grab().toImage();
+                int light = 0;
+                for (int y = 0; y < image.height(); y += 3) {
+                    for (int x = 0; x < image.width(); x += 3) {
+                        light += QColor(image.pixel(x, y)).lightness() > 200 ? 1 : 0;
+                    }
+                }
+                const int samples = (image.height() / 3) * (image.width() / 3);
+                QVERIFY2(light * 20 < samples,
+                         qPrintable(QStringLiteral("%1: %2 of %3 samples are light")
+                                        .arg(QString::fromLatin1(name))
+                                        .arg(light)
+                                        .arg(samples)));
+            }
+        }
+    }
+
+    // UI review F2: the work-hours shading was painted after the grid and covered its lines.
+    void weekViewKeepsItsGridThroughWorkHours() {
+        EmailInspectorController controller;
+        sak::EmailCalendarDialog dialog(&controller, {});
+        dialog.resize(900, 700);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        dialog.setViewMode(sak::EmailCalendarDialog::ViewMode::Week);
+        QCoreApplication::processEvents();
+        QWidget* week = nullptr;
+        for (QWidget* child : dialog.findChildren<QWidget*>()) {
+            if (QByteArray(child->metaObject()->className()) == "sak::CalendarWeekDayView" &&
+                child->isVisible()) {
+                week = child;
+            }
+        }
+        QVERIFY(week != nullptr);
+        week->resize(week->width(), qMax(week->height(), 1700));
+        const QImage image = week->grab().toImage();
+        const int top = sak::email::kCalendarDayHeaderHeight + sak::email::kCalendarAllDayRowHeight;
+        const int ten_am =
+            top + ((10 - sak::email::kCalendarDayStartHour) * sak::email::kCalendarHourHeight);
+        const QColor work(QString::fromLatin1(sak::email::kCalColorWorkHoursBg));
+        const int x = sak::email::kCalendarTimeColumnWidth + 20;
+        QVERIFY2(QColor(image.pixel(x, ten_am)) != work,
+                 "the 10 AM hour line is covered by the work-hours shading");
     }
 
     // An event went on the day its invitation arrived, with no end or location. An event with no

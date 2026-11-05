@@ -16,6 +16,8 @@
 #include <memory>
 #include <vector>
 
+class QVBoxLayout;
+
 class QFrame;
 class QHBoxLayout;
 class QKeySequence;
@@ -139,7 +141,9 @@ private:
 
     /// @brief Create the Network Management composite panel tab
     void createNetworkManagementPanel();
-    void connectNetworkAdapterLogToggle();
+    /// A wrapper's one Log switch, under its sub-tabs (addLogFooter), wired to the log window.
+    void addWrapperLogFooter(QWidget* wrapper, QVBoxLayout* layout);
+    void connectLogToggle(LogToggleSwitch* toggle);
 
     /// @brief Create the About information panel tab
     void createAboutPanel();

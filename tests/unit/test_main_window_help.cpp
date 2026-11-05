@@ -10,6 +10,7 @@
 #include <QDesktopServices>
 #include <QLabel>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTabWidget>
 #include <QTextBrowser>
 #include <QtTest/QtTest>
@@ -34,6 +35,7 @@ private Q_SLOTS:
     void aboutTextDescribesTheAppAsItIs_data();
     void aboutTextDescribesTheAppAsItIs();
     void ostConverterHeaderNamesItsOneFormat();
+    void aboutVersionLineReadsAsADate();
 };
 
 // The button opened a GitHub wiki that does not exist, and its name and tooltip said GitHub.
@@ -87,6 +89,21 @@ void MainWindowHelpTests::aboutTextDescribesTheAppAsItIs() {
     }
     QVERIFY(about != nullptr);
     QCOMPARE(about->toPlainText().contains(phrase), present);
+}
+
+// UI review F37: the compiler's raw date ("Nov  4 2026") after an em dash.
+void MainWindowHelpTests::aboutVersionLineReadsAsADate() {
+    sak::MainWindow window;
+    QStringList lines;
+    for (const QLabel* label : window.findChildren<QLabel*>()) {
+        if (label->text().startsWith(QStringLiteral("Version "))) {
+            lines << label->text();
+        }
+    }
+    QCOMPARE(lines.size(), 1);
+    static const QRegularExpression kLine(
+        QStringLiteral(R"(^Version \S+ - [A-Z][a-z]+ \d{1,2}, \d{4}$)"));
+    QVERIFY2(kLine.match(lines.first()).hasMatch(), qPrintable(lines.first()));
 }
 
 void MainWindowHelpTests::ostConverterHeaderNamesItsOneFormat() {

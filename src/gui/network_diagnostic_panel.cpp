@@ -28,10 +28,12 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
+#include <QFormLayout>
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -246,6 +248,10 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QuickActionController& quick_acti
     , m_controller(std::make_unique<NetworkDiagnosticController>(this))
     , m_quick_actions(quick_actions) {
     setupUi();
+    // UI review S15: fixed widths cut header labels ("Response Time", "Enabled") to fragments.
+    for (QTableWidget* table : findChildren<QTableWidget*>()) {
+        fitHeaderLabels(table);
+    }
     connectSignals();
     createResetNetworkAction();
 
@@ -304,15 +310,12 @@ void NetworkDiagnosticPanel::setupUi() {
                   tr("Tab widget for selecting network diagnostic tools"));
     root_layout->addWidget(m_toolTabs, 1);
 
-    // Status bar with log toggle
+    // Generate Report; the Log switch is under the Network Management tabs
     auto* status_row = new QHBoxLayout();
     status_row->setContentsMargins(sak::ui::kMarginNone,
                                    sak::ui::kCssPaddingTinyPx,
                                    sak::ui::kMarginNone,
                                    sak::ui::kMarginNone);
-
-    m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    status_row->addWidget(m_logToggle);
     status_row->addStretch();
 
     m_generateReportBtn = new QPushButton(tr("Generate Report..."), this);
@@ -365,18 +368,6 @@ QWidget* NetworkDiagnosticPanel::createAdapterSection() {
     setupAdapterToolbar(widget, layout);
     setupAdapterTable(widget, layout);
     setupAdapterDetailLabel(widget, layout);
-
-    // Log toggle for adapter tab
-    auto* status_row = new QHBoxLayout();
-    status_row->setContentsMargins(sak::ui::kMarginNone,
-                                   sak::ui::kCssPaddingTinyPx,
-                                   sak::ui::kMarginNone,
-                                   sak::ui::kMarginNone);
-    m_adapterLogToggle = new LogToggleSwitch(tr("Log"), widget);
-    status_row->addWidget(m_adapterLogToggle);
-    status_row->addStretch();
-    layout->addLayout(status_row);
-
     return widget;
 }
 
@@ -412,7 +403,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     m_restoreEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
         tr("Restore adapter settings from a previously saved "
-           "JSON backup file -- works across PCs"));
+           "JSON backup file - works across PCs"));
     setAccessible(m_restoreEthernetBtn,
                   tr("Restore Settings"),
                   tr("Load and apply adapter IP configuration from a backup JSON file"));
@@ -2079,11 +2070,13 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
             &NetworkDiagnosticController::reportGenerated,
             this,
             [this](QString path) {
-                Q_EMIT statusMessage(QStringLiteral("Report saved to %1").arg(path),
-                                     sak::kTimerStatusDefaultMs);
-                sak::showInformationLogged(this,
-                                           tr("Report Generated"),
-                                           QStringLiteral("Report saved to:\n%1").arg(path));
+                Q_EMIT statusMessage(
+                    QStringLiteral("Report saved to %1").arg(QDir::toNativeSeparators(path)),
+                    sak::kTimerStatusDefaultMs);
+                sak::showInformationLogged(
+                    this,
+                    tr("Report Generated"),
+                    QStringLiteral("Report saved to:\n%1").arg(QDir::toNativeSeparators(path)));
             });
     connect(m_controller.get(),
             &NetworkDiagnosticController::ethernetBackupComplete,
@@ -2094,7 +2087,7 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
                                            tr("Adapter settings backed up to:\n%1\n\n"
                                               "This file can be used to restore settings on this "
                                               "or another PC.")
-                                               .arg(path));
+                                               .arg(QDir::toNativeSeparators(path)));
             });
     connect(m_controller.get(),
             &NetworkDiagnosticController::ethernetRestoreComplete,
@@ -2682,7 +2675,7 @@ void NetworkDiagnosticPanel::onAdapterStatus() {
     constexpr int kStatusDialogHeight = 600;
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Adapter Status \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Adapter Status - %1").arg(adapter->name));
     dialog.setMinimumSize(kStatusDialogWidth, kStatusDialogHeight);
     auto* layout = new QVBoxLayout(&dialog);
 
@@ -3020,25 +3013,26 @@ bool NetworkDiagnosticPanel::promptStaticIpInput(const NetworkAdapterInfo& adapt
         "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set Static IP \xe2\x80\x94 %1").arg(adapter.name));
+    dialog.setWindowTitle(tr("Set Static IP - %1").arg(adapter.name));
     dialog.setMinimumWidth(kIpDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
     auto* ip_validator = new QRegularExpressionValidator(QRegularExpression(ip_pattern), &dialog);
+    // One label column: rows laid out one by one started each field at its own label's width.
+    auto* form = new QFormLayout();
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addLayout(form);
 
     auto make_ip_row = [&](const QString& label,
                            const QString& prefill,
                            const QString& placeholder) -> QLineEdit* {
-        auto* row = new QHBoxLayout();
-        row->addWidget(new QLabel(label, &dialog));
         auto* edit = new QLineEdit(&dialog);
         edit->setValidator(ip_validator);
         if (!prefill.isEmpty()) {
             edit->setText(prefill);
         }
         edit->setPlaceholderText(placeholder);
-        row->addWidget(edit, 1);
-        layout->addLayout(row);
+        form->addRow(label, edit);
         return edit;
     };
 
@@ -3148,7 +3142,7 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
         "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set DNS Servers \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Set DNS Servers - %1").arg(adapter->name));
     dialog.setMinimumWidth(kDnsDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
@@ -3159,19 +3153,19 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
     const auto current_secondary = adapter->ipv4DnsServers.size() > 1 ? adapter->ipv4DnsServers[1]
                                                                       : QString();
 
+    auto* form = new QFormLayout();
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addLayout(form);
     auto make_dns_row = [&](const QString& label,
                             const QString& prefill,
                             const QString& placeholder) -> QLineEdit* {
-        auto* row = new QHBoxLayout();
-        row->addWidget(new QLabel(label, &dialog));
         auto* edit = new QLineEdit(&dialog);
         edit->setValidator(ip_validator);
         if (!prefill.isEmpty()) {
             edit->setText(prefill);
         }
         edit->setPlaceholderText(placeholder);
-        row->addWidget(edit, 1);
-        layout->addLayout(row);
+        form->addRow(label, edit);
         return edit;
     };
 
@@ -3424,7 +3418,7 @@ void NetworkDiagnosticPanel::onPingComplete(PingResult result) {
                                   .arg(result.avgRtt, 0, 'f', kDecimalPrecisionOne)
                                   .arg(result.jitter, 0, 'f', kDecimalPrecisionTwo));
 
-    Q_EMIT statusMessage(QStringLiteral("Ping complete -- %1% loss")
+    Q_EMIT statusMessage(QStringLiteral("Ping complete - %1% loss")
                              .arg(result.lossPercent, 0, 'f', kDecimalPrecisionOne),
                          sak::kTimerStatusDefaultMs);
 }
@@ -3590,7 +3584,7 @@ void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
             } else if (h.lossPercent > 0.0) {
                 existing->setForeground(ui::themedColor(ui::kColorWarning));
             } else {
-                existing->setForeground(QColor());
+                setItemForeground(existing, QColor());
             }
         } else {
             auto* loss_item = new QTableWidgetItem(loss_text);
@@ -3629,10 +3623,12 @@ void NetworkDiagnosticPanel::onMtrComplete(MtrResult result) {
     m_mtrEmptyState->clearLoading();
 
     const int hops = static_cast<int>(result.hops.size());
-    const QString status = QStringLiteral("MTR complete -- %1 hops, %2 cycles to %3")
-                               .arg(hops)
-                               .arg(result.totalCycles)
-                               .arg(result.target);
+    const QString status =
+        QStringLiteral("MTR complete - %1, %2 to %3")
+            .arg(
+                sak::countOf(hops, QStringLiteral("hop"), QStringLiteral("hops")),
+                sak::countOf(result.totalCycles, QStringLiteral("cycle"), QStringLiteral("cycles")),
+                result.target);
     m_mtrStatusLabel->setText(status);
     Q_EMIT logOutput(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
@@ -3708,6 +3704,8 @@ void NetworkDiagnosticPanel::onDnsFlushCache() {
 void NetworkDiagnosticPanel::onDnsQueryComplete(DnsQueryResult result) {
     Q_ASSERT(m_dnsQueryBtn);
     Q_ASSERT(m_dnsReverseBtn);
+    // Replaces "Querying DNS for ...", which otherwise stayed up after the answer.
+    Q_EMIT statusMessage(tr("DNS query complete"), sak::kTimerStatusMessageMs);
     m_dnsQueryBtn->setEnabled(true);
     m_dnsReverseBtn->setEnabled(true);
     m_dnsEmptyState->clearLoading();
@@ -3753,7 +3751,7 @@ void NetworkDiagnosticPanel::onDnsComparisonComplete(DnsServerComparison compari
     m_dnsStatusLabel->setText(
         comparison.allAgree
             ? tr("All servers agree")
-            : tr("DNS servers returned different results -- possible DNS hijacking or caching"));
+            : tr("DNS servers returned different results - possible DNS hijacking or caching"));
 }
 
 // -- Port Scanner --
@@ -4091,6 +4089,7 @@ void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
 }
 
 void NetworkDiagnosticPanel::onHttpSpeedComplete(double down, double up, double latency) {
+    Q_EMIT statusMessage(tr("HTTP speed test finished"), sak::kTimerStatusMessageMs);
     setBandwidthRunButtons(true);
     m_httpSpeedStopBtn->setEnabled(false);
 
@@ -4261,7 +4260,7 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
         set_or_create(i, KConnectionColumnRemotePort, QString::number(conn.remotePort));
 
         set_or_create(i, KConnectionColumnState, conn.state);
-        m_connTable->item(i, KConnectionColumnState)->setForeground(state_color(conn.state));
+        setItemForeground(m_connTable->item(i, KConnectionColumnState), state_color(conn.state));
 
         set_or_create(i, KConnectionColumnProcess, conn.processName);
     }
@@ -4290,6 +4289,7 @@ void NetworkDiagnosticPanel::onFirewallAuditComplete(QVector<FirewallRule> rules
                                                      QVector<FirewallConflict> conflicts,
                                                      QVector<FirewallGap> gaps) {
     m_cachedFwRules = rules;
+    Q_EMIT statusMessage(tr("Firewall audit finished"), sak::kTimerStatusMessageMs);
     filterFirewallRules();
     m_fwAuditBtn->setEnabled(true);
     m_fwRuleEmptyState->clearLoading();

@@ -134,7 +134,7 @@ QString themeInputSelectorStyles(bool dark) {
 QString themeIndicatorStyles() {
     return QString::fromLatin1(kWindows11ThemeIndicatorStyles)
         .arg(kUiIconSmall)
-        .arg(QString::fromLatin1(kColorBorderMuted))
+        .arg(QString::fromLatin1(kColorCheckBoxBorder))
         .arg(kCssRadiusSmallPx)
         .arg(QString::fromLatin1(kColorBgSurface))
         .arg(QString::fromLatin1(kColorPrimary))
@@ -218,7 +218,7 @@ QString darkTabAndInputStyles() {
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorDarkBgInputFocus))
-        .arg(QString::fromLatin1(kColorDarkBorderMuted))
+        .arg(QString::fromLatin1(kColorDarkCheckBoxBorder))
         .arg(QString::fromLatin1(kColorPrimaryDark))
         .arg(QString::fromLatin1(kColorButtonTextOnTone))
         .arg(QString::fromLatin1(kColorDarkTextSecondary))
@@ -240,9 +240,19 @@ QString darkContainerAndViewStyles() {
         .arg(QString::fromLatin1(kColorDarkBgSurface));
 }
 
+/// The rules the dark QWidget rule shadows, written again after it (see
+/// kWindows11DarkProgressStyles): plain buttons and progress bars.
+QString darkShadowedRules() {
+    return actionButtonStyle(
+               "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
+           QString::fromLatin1(kWindows11DarkProgressStyles)
+               .arg(QString::fromLatin1(kColorDarkBorderDefault),
+                    QString::fromLatin1(kColorDarkBgInput));
+}
+
 QString darkThemeOverrideStyles() {
     return darkBaseChromeStyles() + darkTabAndInputStyles() + darkContainerAndViewStyles() +
-           themeInputSelectorStyles(true);
+           themeInputSelectorStyles(true) + darkShadowedRules();
 }
 
 struct ThemePaletteSpec {
@@ -270,7 +280,10 @@ inline constexpr ThemePaletteSpec kLightPaletteSpec{.window = kColorBgPage,
                                                     .disabled = kColorTextDisabled,
                                                     .border = kColorBorderDefault,
                                                     .light = kColorBgWhite,
-                                                    .dark = kColorBorderMuted,
+                                                    // Dark is secondary text (File Explorer's
+                                                    // section headers and status row); slate-400
+                                                    // was 2.6:1 on white.
+                                                    .dark = kColorTextMuted,
                                                     .shadow = kColorTextPrimary};
 
 inline constexpr ThemePaletteSpec kDarkPaletteSpec{.window = kColorDarkBgPage,
@@ -284,9 +297,9 @@ inline constexpr ThemePaletteSpec kDarkPaletteSpec{.window = kColorDarkBgPage,
                                                    .border = kColorDarkBorderDefault,
                                                    .light = kColorDarkBgHover,
                                                    // Dark is the muted-text role on both
-                                                   // palettes (light: slate-400); the File
-                                                   // Explorer's secondary text uses it.
-                                                   .dark = kColorDarkTextMuted,
+                                                   // palettes; the File Explorer's secondary
+                                                   // text uses it (slate-500 was 3.1-3.7:1 here).
+                                                   .dark = kColorDarkTextSecondary,
                                                    .shadow = kColorDarkBgInputFocus};
 
 const ThemePaletteSpec& themePaletteSpec(AppThemeMode mode) {

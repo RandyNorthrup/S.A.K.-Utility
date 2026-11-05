@@ -73,15 +73,6 @@ int originalRowIndex(const QTableWidgetItem* item) {
     return ok ? idx : -1;
 }
 
-/// @brief Table item that sorts numerically by Qt::UserRole data
-class NumericSortItem : public QTableWidgetItem {
-public:
-    using QTableWidgetItem::QTableWidgetItem;
-    bool operator<(const QTableWidgetItem& other) const override {
-        return data(Qt::UserRole).toLongLong() < other.data(Qt::UserRole).toLongLong();
-    }
-};
-
 struct ToolbarUi {
     QLineEdit* search_edit = nullptr;
     QComboBox* view_filter_combo = nullptr;
@@ -166,7 +157,7 @@ void addToolbarActions(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, Tool
     controls->forced_uninstall_button = new QPushButton(QObject::tr("Forced"), panel);
     controls->forced_uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
     controls->forced_uninstall_button->setToolTip(
-        QObject::tr("Force uninstall -- skip native uninstaller, scan and remove all traces"));
+        QObject::tr("Force uninstall - skip native uninstaller, scan and remove all traces"));
     controls->forced_uninstall_button->setEnabled(false);
     setAccessible(controls->forced_uninstall_button,
                   QObject::tr("Forced uninstall"),
@@ -728,14 +719,10 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
     status_row->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    // Log toggle on the left
-    m_log_toggle = new LogToggleSwitch(tr("Log"), this);
-    status_row->addWidget(m_log_toggle);
-
-    // Settings button next to log toggle
+    // Settings on the left; the Log switch is under the Application Management tabs
     m_settings_button = new QPushButton(tr("Settings"), this);
     m_settings_button->setToolTip(
-        tr("Configure uninstall preferences -- recycle bin, restore points, "
+        tr("Configure uninstall preferences - recycle bin, restore points, "
            "default scan level, and more"));
     m_settings_button->setAccessibleName(tr("Uninstall settings"));
     m_settings_button->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -804,7 +791,7 @@ void AdvancedUninstallPanel::onBatchUninstallClicked() {
             this,
             tr("Selection Out Of Date"),
             tr("One or more checked programs could not be resolved from the current list. "
-               "Refresh and check them again -- no batch was queued."));
+               "Refresh and check them again - no batch was queued."));
         return;
     }
     if (programs.isEmpty()) {
@@ -1277,7 +1264,7 @@ void AdvancedUninstallPanel::onDeleteSelectedLeftovers() {
             this,
             tr("Selection Out Of Date"),
             tr("One or more checked leftover items could not be resolved from the current scan "
-               "results. Re-scan and check them again -- nothing was deleted."));
+               "results. Re-scan and check them again - nothing was deleted."));
         return;
     }
     if (leftovers.isEmpty()) {
@@ -1474,7 +1461,7 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         }
         if (prog.isOrphaned) {
             name_item->setForeground(ui::themedColor(ui::kColorError));
-            name_item->setToolTip(tr("Orphaned -- program files not found"));
+            name_item->setToolTip(tr("Orphaned - program files not found"));
         }
         m_program_table->setItem(row, kColName, name_item);
 
@@ -1488,16 +1475,17 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         ver_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         m_program_table->setItem(row, kColVersion, ver_item);
 
-        // Size (uses NumericSortItem for correct numeric sorting)
-        auto* size_item =
-            new NumericSortItem(formatSize(prog.estimatedSizeKB * kEstimatedSizeBytesPerKb));
+        // Size sorts by bytes, not by its text
+        auto* size_item = new NumericSortTableItem(
+            formatSize(prog.estimatedSizeKB * kEstimatedSizeBytesPerKb),
+            static_cast<qlonglong>(prog.estimatedSizeKB * kEstimatedSizeBytesPerKb));
         size_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         size_item->setData(Qt::UserRole, prog.estimatedSizeKB * kEstimatedSizeBytesPerKb);
         size_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_program_table->setItem(row, kColSize, size_item);
 
         // Install date
-        auto* date_item = new QTableWidgetItem(prog.installDate);
+        auto* date_item = new QTableWidgetItem(readableRegistryDate(prog.installDate));
         date_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         m_program_table->setItem(row, kColDate, date_item);
     }
@@ -1605,8 +1593,9 @@ void AdvancedUninstallPanel::populateLeftoverRow(int row, const LeftoverItem& it
     path_item->setToolTip(ui::asLiteralRichText(item.path));
     m_leftover_table->setItem(row, kLeftoverColPath, path_item);
 
-    // Size (uses NumericSortItem for correct numeric sorting)
-    auto* size_item = new NumericSortItem(formatSize(item.sizeBytes));
+    // Size sorts by bytes, not by its text
+    auto* size_item = new NumericSortTableItem(formatSize(item.sizeBytes),
+                                               static_cast<qlonglong>(item.sizeBytes));
     size_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
     size_item->setData(Qt::UserRole, item.sizeBytes);
     size_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -1682,6 +1671,11 @@ QString AdvancedUninstallPanel::formatSize(qint64 bytes) const {
         return QString();
     }
     return sak::formatBytes(bytes);
+}
+
+QString AdvancedUninstallPanel::totalSizeText(qint64 bytes) const {
+    return bytes > 0 ? tr("Total size: %1").arg(formatSize(bytes))
+                     : tr("Total size: not reported by these programs");
 }
 
 void AdvancedUninstallPanel::logMessage(const QString& message) {

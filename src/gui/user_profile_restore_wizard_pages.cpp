@@ -755,7 +755,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
     const BackupManifest& manifest = wiz->manifest();
     if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
         m_statusLabel->setText(
-            tr("Backup has no verified integrity checksum -- app-data selection is disabled"));
+            tr("Backup has no verified integrity checksum - app-data selection is disabled"));
         m_summaryLabel->setText(
             tr("Application-data restore requires an integrity-checked backup"));
         return;
@@ -1064,7 +1064,7 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     const BackupManifest& manifest = wiz->manifest();
     if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
         m_statusLabel->setText(
-            tr("Backup has no verified integrity checksum -- WiFi restore is disabled"));
+            tr("Backup has no verified integrity checksum - WiFi restore is disabled"));
         m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
@@ -1284,7 +1284,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     const BackupManifest& manifest = wiz->manifest();
     if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
         m_statusLabel->setText(
-            tr("Backup has no verified integrity checksum -- Ethernet restore is disabled"));
+            tr("Backup has no verified integrity checksum - Ethernet restore is disabled"));
         m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
@@ -1534,7 +1534,7 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
             "[OK] <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
             "from parent folders.");
     } else if (mode == PermissionMode::AssignToDestination) {
-        warning = tr("(i) <b>Info:</b> Files will be owned by the destination user.");
+        warning = tr("<b>Info:</b> Files will be owned by the destination user.");
     }
 
     const QString summary = QString(
@@ -1861,8 +1861,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     const QString apps_file_path = wiz->backupPath() + "/installed_apps.json";
     QFile file(apps_file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(
-            tr("No installed_apps.json found in backup -- skipping app restore"));
+        m_statusLabel->setText(tr("No installed_apps.json found in backup - skipping app restore"));
         m_summaryLabel->setText(tr("No application data available in this backup"));
         return;
     }
@@ -1873,7 +1872,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     if (!doc.isArray()) {
         m_statusLabel->setText(tr("Invalid installed_apps.json format"));
         m_summaryLabel->setText(
-            tr("The backup's application list is corrupted -- no apps are available to restore"));
+            tr("The backup's application list is corrupted - no apps are available to restore"));
         return;
     }
 
@@ -2156,7 +2155,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
         m_statusLabel->setText(
             tr("Installation complete: %1 succeeded, %2 failed").arg(installed).arg(failed));
         m_summaryLabel->setText(
-            tr("App installation finished -- %1 installed, %2 failed. Click Next to "
+            tr("App installation finished - %1 installed, %2 failed. Click Next to "
                "continue.")
                 .arg(installed)
                 .arg(failed));
