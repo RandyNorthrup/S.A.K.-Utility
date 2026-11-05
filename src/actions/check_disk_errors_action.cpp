@@ -173,6 +173,7 @@ void CheckDiskErrorsAction::execute() {
 
     setStatus(ActionStatus::Running);
     m_unchecked_drives.clear();
+    m_unsupported_drives.clear();
     const QDateTime start_time = QDateTime::currentDateTime();
     QVector<QChar> drives;
     QString report;
@@ -209,6 +210,8 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
                        "ReFS only. Run chkdsk %1: (without /f) to check it read-only\n\n")
                        .arg(volume.drive)
                        .arg(volume.file_system);
+        m_unsupported_drives.append(
+            QStringLiteral("%1: is %2").arg(volume.drive).arg(volume.file_system));
     }
 
     if (drives.isEmpty()) {
@@ -441,6 +444,12 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                                                const DiskCheckTotals& totals) {
     const DiskCheckOutcome outcome = evaluateDiskCheckOutcome(totals.drives_scanned,
                                                               totals.total_drives);
+    // A drive on a file system the online scan cannot read is named above as not checked, so it
+    // is counted with the drives that could not be checked: the summary once said "0 could not be
+    // checked" under a FAT32 drive it had just named. It does not fail the run.
+    const auto unsupported = static_cast<int>(m_unsupported_drives.size());
+    const int not_checked = outcome.drives_failed + unsupported;
+    const QStringList not_checked_names = m_unchecked_drives + m_unsupported_drives;
 
     QString final_report = report;
     final_report += QString("-").repeated(kDiskReportWidth) + "\n";
@@ -448,8 +457,8 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                         "Summary: %1 of %2 drive(s) scanned, %3 could not be checked, "
                         "%4 error(s) found, %5 repair(s) recommended\n")
                         .arg(totals.drives_scanned)
-                        .arg(totals.total_drives)
-                        .arg(outcome.drives_failed)
+                        .arg(totals.total_drives + unsupported)
+                        .arg(not_checked)
                         .arg(totals.errors_found)
                         .arg(totals.repairs_recommended);
 
@@ -473,7 +482,7 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
         // Surface the actual per-drive timeout/failure/error detail gathered above rather than
         // a guessed cause; final_report already lists why each drive did not scan.
         result.log = final_report;
-    } else if (outcome.success) {
+    } else if (outcome.success && unsupported == 0) {
         result.message = QString("Scanned %1 drive(s): %2 error(s), %3 repair(s) recommended")
                              .arg(totals.drives_scanned)
                              .arg(totals.errors_found)
@@ -482,9 +491,9 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
     } else {
         result.message = QString("Scanned %1 of %2 drive(s); %3 could not be checked (%4)")
                              .arg(totals.drives_scanned)
-                             .arg(totals.total_drives)
-                             .arg(outcome.drives_failed)
-                             .arg(m_unchecked_drives.join(QStringLiteral(", ")));
+                             .arg(totals.total_drives + unsupported)
+                             .arg(not_checked)
+                             .arg(not_checked_names.join(QStringLiteral(", ")));
         result.log = final_report;
     }
 

@@ -144,6 +144,10 @@ private:
     QVector<QString> m_drives;
     /// Drives this run counted but could not check, named in its message.
     QStringList m_unchecked_drives;
+    /// Drives on a file system the online scan cannot read ("U: is FAT32"). Counted with the
+    /// drives that could not be checked, so the summary's count matches the drives it names, but
+    /// they do not fail the run: they are named with the read-only chkdsk that checks them.
+    QStringList m_unsupported_drives;
 
     // execute() helpers -- split to stay under the 70-line function gate
     bool executeEnumerateVolumes(const QDateTime& start_time,
