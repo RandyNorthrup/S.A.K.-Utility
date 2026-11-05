@@ -2670,7 +2670,7 @@ int localTargetIndexHolding(const QVector<FileManagementTarget>& targets, const 
 
 void FileManagementExplorerPanel::selectTargetHoldingPath(const QString& path) {
     // A path typed or followed outside the selected target's root belongs to another target. The
-    // panel kept the old one, so it said Target "Home (Technician)", Root C:/Users/Technician,
+    // panel kept the old one, so it said Target "Home (Technician)" with the home folder as Root,
     // over C:/SAK-Samples/Docs, and its Safety box spoke for the wrong volume.
     const auto before = currentTarget();
     if (!before.local_file_system || path.isEmpty() ||
