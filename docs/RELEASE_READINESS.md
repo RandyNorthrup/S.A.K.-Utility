@@ -1195,6 +1195,65 @@ One BIOS repair run is set aside: its last proof reached sign-in only after Ente
 - `scanCurrentSystem(false)`, used by the AI actions, stays strict and was not moved to the new preflight.
 - Internal SATA, NVMe and SMART have run on nothing.
 
+### Round 8: what the review capture found when it drove the app (2026-11-05)
+
+The review capture (`observations.json`, 2026-11-04) drove the real app in the MacBook VM `Windows 11` and found
+functional defects behind its pictures. Each was reproduced first in the VM with the review package (03a63bbc), then
+fixed, unit-tested, drilled (the fix broken in the source, the named test red: 58 of 58) and run again in the VM with
+packages built from the fixed commits (81932cc3, fa97c091, aaf96ecf). Four functional items the UI review left (F17,
+F33, F39, F48) joined the round. Proof pictures are in `E:\SAK-Utility-Test-Scratch\round8\proof` on the build PC.
+
+| Item | What was wrong | Cause | In the VM after the fix |
+|---|---|---|---|
+| #40 Backup Wizard | Backup Settings showed Finish, which closed the wizard with nothing backed up | Execute Backup was added only when Settings was left, so Settings was the last page | Four sample profiles backed up to D: ("Backup completed successfully", 0 errors), then restored through the restore wizard ("Restore complete", 17 files, 0 errors) |
+| #40, found | Every backup ended "not everything was copied", 12 errors in the VM | Windows' hidden `Documents\My Music`, `My Pictures` and `My Videos` links counted as errors | Same run: the links named as skipped; any other link still counts (B7-20) |
+| #1 Disk scan | A standard scan with five or more drive letters timed out and listed no disks | `Get-BitLockerVolume` waits about 5 s per volume before refusing a standard user | Six lettered volumes, scan done in about 5 s |
+| #79 Dynamic disk | Listed last, below the fold | Not as reported: it was in every scan. Disks were listed in discovery order | Disk 1 (dynamic) right after Disk 0 |
+| #80 Erase SSD | An SSD read as Unspecified and was refused | Media type joined by model name; every disk is `VBOX HARDDISK` | Media type SSD, "Ready: queue ReTrim plus clear-level wipe" |
+| #77 Manage BitLocker | "Unknown until Apply" in a standard session, so Unlock could not be offered | A standard scan cannot read BitLocker | Opening it read E: with administrator rights: "Protection on", "Unlocked" |
+| #41 Windows USB | "No drive letter appeared" | The build relied on automatic mounting | Reached "Extracting Windows files" |
+| #3 Restore Disk Image | "Target disk size is unknown" on every disk | Disk rows carried no size | Confirmation names the image and "Target: 128.00 GB" (answered No) |
+| #70 Flash | "Failed to delete mount point", stick left without its letter | Disk set offline before its volumes were locked | Raw flash of a fresh FAT32 stick with a letter: "Flash completed successfully" |
+| #39 Flash | Stick left offline, eject error 21, "Speed: 0.0 KB/s" (F48) | Brought online while the writer still held it; no retry; speed baseline 0 | Same run: "Ejected (safe to remove): 1". Speed is unit-tested only |
+| #62 GParted, SystemRescue | "aria2c exited with code 22" | SourceForge refuses a browser user agent; code 22 unnamed | GParted at 76%, 68 MB/s |
+| #75 Download progress | 0%, no size or speed for a whole download | aria2 1.37's sizes end in "B" and were not read | "22.5 MB / 6.07 GB", 3.2 MB/s |
+| #63 Browse ext | "Unable to read ext inode" | Raw volume refused an unaligned seek on a read-only handle | Root of Rig M's ext4 listed |
+| #81 Recovery scan | Findings in the status bar, log empty; the live E: listed as lost | Helper output forwarded as progress; scan did not know live partitions | Findings in the log; "Partition 2 ... is not lost"; two deleted volumes found |
+| #42 Check Disk | FAT32 U: "Scan failed (not supported)" | `Repair-Volume -Scan` reads NTFS and ReFS only | "Drive U: - not checked: it is FAT32 ... Run chkdsk U: (without /f)" |
+| #74 Advanced Uninstall | Ticks lost when the search changed; a provisioned app listed twice unexplained | Table rebuilt without its ticks; provisioned row unlabelled | 7-Zip and VLC ticked under two searches, both in the batch |
+| #60 Offline bundle | Failure only in the log; status bar stuck at 80% | Progress counted successes only | "Incomplete: 9 succeeded, 1 failed / Failed: adobereader (checksum ...)", progress gone |
+| #59 Screenshot Settings | Eight blank pictures | Window pixels copied from a compositor-drawn window | 12 of 15 real, distinct pages. The first fixed run saved every page after the first as System > About (found): fixed by waiting for each page to be drawn. Installed apps, Gaming and WiFi are reported as failed pages: the VM has no Wi-Fi adapter, and the other two never left the page before within three 10 s tries (not investigated further) |
+| #2 Data Recovery | Disabled with nothing selected (also Disk Benchmark, Make Bootable Media) | Needed a target it does not use | Data Recovery Source opened with nothing selected |
+| #52 Migrate OS | First disk preselected even when too small | No plan check | Disk 2, 128 GB, preselected |
+| #56 Disk table | Free space at the start of a disk listed last | Partitions then gaps | Rows in disk order, as the map |
+| #30 File Explorer | Details spoke for Home while showing C:\SAK-Samples | Target kept when a path left it | Local Disk (C:) selected, Root C:/ |
+| #18 Advanced Search | Folder tree opened expanded | Root expanded on load | Starts closed |
+| #76 Advanced Search | Unread files only in the file log | Reasons not passed on | Unit-tested; the harness could not drive the search tree |
+| #47, F39 SMART | "could not be determined for this drive"; Type blank or "ATA"; "N/A" and "--"; raw smartctl text | Fixed string; two markers | "PhysicalDrive0 (VBOX HARDDISK): ...", one "N/A", USB adapter named |
+| #15, DF14 Hardware | Uptime 0 min, battery health 0.0%, "(0/0 slots)" | PowerShell 5.1 writes dates as `/Date(ms)/`; no health reported; the slot text went in 74ca2860 | Uptime 11 min, "health unknown, On AC power" |
+| #37, F48 Port scan | Response 4021 ms with a 3000 ms timeout | Banner wait counted in the response time | 7, 4 and 2 ms with banner grab on |
+| F17 Thermal | "0 degC", bars "0 / 100" for N/A | Unread sensor shown as 0 | "N/A" labels and bars |
+| F33 Recovery wizard | Finish enabled with "I understand" unticked | Acknowledgement on the page before Finish | Review: Finish disabled with the box unticked, enabled once it is ticked |
+
+**Not as reported.** #79, above.
+
+**The capture harness.** Its privacy gate (site repo, `scripts/capture`, not committed) read a version such as
+2.0.35.0 as an IP address and refused the picture. It now accepts a dotted number shown as a version and still refuses
+a public address: `Test-PrivacyRules.ps1`, 17 cases under PowerShell 7 and 5.1, four drills red. Every proof picture
+above passed it.
+
+**Found on the way, still open.** The Migrate OS review page's "Blocked:" reason sits in a label too short for it and
+is clipped. The restore log prints its summary twice and leaves the current-file bar at 94%. Manage BitLocker offers
+Suspend and Resume together for a protected volume. Check Disk's summary says "0 could not be checked" beside a drive
+it names as not checked. The Linux ISO dialog's version line still nests brackets (F49). The nightly workflow that
+runs the live download check is not on the default branch, so it does not run on schedule until `dev` is merged.
+
+**What no test here covers.** The raw volume seek, releasing a flash's handle before bringing the disk back, the
+per-volume BitLocker wait and Settings' drawing are Windows behaviour with no unit seam; the VM runs are their proof.
+The BitLocker read's consent prompt was answered by Windows policy in the VM (`ConsentPromptBehaviorAdmin` 0), as in
+the certification rows; nobody pressed Yes. The live download check fetched the start of each fixed catalog entry
+from the build PC, not a whole image. Internal SATA, NVMe, real SMART and a real Wi-Fi adapter have run on nothing.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

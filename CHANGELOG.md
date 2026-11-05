@@ -8,6 +8,49 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **The Backup Wizard backs up again** - Its Backup Settings page showed Finish, which closed the wizard with nothing
+  backed up. It shows Next, to the page with Start Backup. A backup no longer calls itself incomplete because of the
+  hidden links Windows makes in every profile, such as Documents\My Music: every backup on every PC did. Any other
+  link is still not followed and still counts as left out. The log no longer shows the start and the outcome twice.
+- **Partition Manager scans a PC with many drive letters without administrator rights** - Windows makes a normal app
+  wait about 5 seconds per volume before refusing to say whether it is BitLocker-locked, so a PC with five or more
+  drive letters ran past the scan's time limit and listed no disks. A scan without administrator rights no longer
+  asks, and those details say "Unknown until Apply" as before.
+- **Disks are listed in number order, and each one's media type is its own** - A dynamic disk was listed last, below
+  the others. Disks with the same model name all took the first one's media type, so an SSD could read as
+  "Unspecified" and Erase SSD refused it.
+- **Manage BitLocker shows whether a volume is protected or locked** - Without administrator rights it said "Unknown
+  until Apply" and could not offer Unlock. Opening it now reads the volume with administrator rights, which is one
+  Windows prompt, and then shows its state.
+- **Restore Disk Image works** - It stopped every time with "Target disk size is unknown". The disk table now carries
+  each disk's size.
+- **A Windows install USB gets a drive letter** - When Windows gave the new NTFS volume no letter, the build stopped
+  with "No drive letter appeared". The app now assigns one.
+- **Flashing an image leaves the stick usable** - Taking a stick offline before locking its volumes made the flash
+  fail with "Failed to delete mount point" and left the stick without its letter; the volumes are now locked first.
+  After a flash, the stick could stay offline because the app tried to bring it back while it still had it open; it
+  now lets go first and tries again, and Flash Complete says how to bring a stick back if it is still offline. The
+  write speed no longer reads "0.0 KB/s".
+- **Download Linux ISO downloads GParted and SystemRescue, and shows its progress** - SourceForge refused the download
+  because the app said it was a web browser; it now names itself. Progress stayed at 0% with no size or speed for the
+  whole download, because the app could not read aria2's progress lines.
+- **Partition Manager fixes** - Browsing an ext partition no longer fails with "Unable to read ext inode". The
+  recovery scan's findings go to the log, not the status bar, and it no longer lists a partition that exists as a
+  lost one. Data Recovery, Disk Benchmark and Make Bootable Media no longer need a disk selected first. The Migrate OS
+  wizard no longer picks a target that is too small. A disk's partitions and free space are listed in the order they
+  lie on the disk. The Partition Recovery wizard's write-back cannot finish until its "I understand" box is ticked,
+  like the migrate and copy wizards.
+- **Check Disk Errors names what it did not check** - A FAT32 drive, which Windows cannot scan this way, was reported
+  as a failed scan with no detail. It is now listed as not checked, with the read-only command to check it.
+- **Fixes the review capture found** - Advanced Uninstall keeps your ticks when you change the search, and marks an
+  app that is only provisioned for new accounts. An offline bundle names each package that failed and why, and its
+  progress bar finishes. Screenshot Settings captures the Settings window a person sees, not a blank picture, waits for
+  each page to be drawn, where every page after the first was a picture of the page before, and calls a blank or
+  repeated picture a failure. Advanced Search names each file it could not read, and its folder tree starts
+  closed. File Explorer selects the drive or folder in the sidebar that holds a path you type. A SMART warning names
+  the drive, and one behind a USB adapter says so. Hardware inventory shows uptime, and says "Unknown" for battery
+  health Windows did not report. A temperature or SMART value nobody read says "N/A", not 0 degrees or "--". A port
+  scan reports an open port's connect time, which no longer exceeds the timeout.
 - **A stress test stops when its time is up, and Stop works while it runs** - A 1-minute run kept going: one memory
   pass over gigabytes never looked for the end of the run, and the stress threads crowded out the window. A pass now
   checks every 8 MiB, and the stress threads run below normal priority, so they still use every spare cycle.
