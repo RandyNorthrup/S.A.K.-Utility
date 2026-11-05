@@ -29,23 +29,25 @@ namespace sak {
 
 namespace {
 
-/// @brief Critical SATA SMART attribute IDs and their warning/critical thresholds
+/// @brief A SATA SMART attribute whose raw count is worth a warning from this many.
+/// @note A count alone is a warning, never FAIL: FAIL is the drive's own verdict -- its overall
+///       self-assessment, or an attribute past the threshold the drive itself sets -- as common
+///       tools read it. A drive with 16 pending sectors read FAIL here while it still passed.
 struct SmartThreshold {
     uint8_t id;
-    int64_t warning_raw;   ///< Raw value triggering a warning
-    int64_t critical_raw;  ///< Raw value triggering critical status
+    int64_t warning_raw;  ///< Raw value from which the count is reported as a warning
 };
 
 /// Key SATA attributes monitored for health assessment
 constexpr SmartThreshold kSataThresholds[] = {
-    {.id = 5, .warning_raw = 1, .critical_raw = 50},      // Reallocated_Sector_Ct
-    {.id = 10, .warning_raw = 1, .critical_raw = 10},     // Spin_Retry_Count
-    {.id = 187, .warning_raw = 1, .critical_raw = 10},    // Reported_Uncorrect
-    {.id = 188, .warning_raw = 5, .critical_raw = 50},    // Command_Timeout
-    {.id = 196, .warning_raw = 1, .critical_raw = 50},    // Reallocated_Event_Count
-    {.id = 197, .warning_raw = 1, .critical_raw = 10},    // Current_Pending_Sector
-    {.id = 198, .warning_raw = 1, .critical_raw = 10},    // Offline_Uncorrectable
-    {.id = 199, .warning_raw = 10, .critical_raw = 100},  // UDMA_CRC_Error_Count
+    {.id = 5, .warning_raw = 1},     // Reallocated_Sector_Ct
+    {.id = 10, .warning_raw = 1},    // Spin_Retry_Count
+    {.id = 187, .warning_raw = 1},   // Reported_Uncorrect
+    {.id = 188, .warning_raw = 5},   // Command_Timeout
+    {.id = 196, .warning_raw = 1},   // Reallocated_Event_Count
+    {.id = 197, .warning_raw = 1},   // Current_Pending_Sector
+    {.id = 198, .warning_raw = 1},   // Offline_Uncorrectable
+    {.id = 199, .warning_raw = 10},  // UDMA_CRC_Error_Count
 };
 
 /// @brief NVMe percentage_used threshold values
@@ -474,18 +476,29 @@ void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport
 SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
     const SmartAttribute& attr) const {
     for (const auto& thresh : kSataThresholds) {
-        if (attr.id != thresh.id) {
-            continue;
-        }
-        if (attr.raw_value >= thresh.critical_raw) {
-            return SmartHealthStatus::Critical;
-        }
-        if (attr.raw_value >= thresh.warning_raw) {
+        if (attr.id == thresh.id && attr.raw_value >= thresh.warning_raw) {
             return SmartHealthStatus::Warning;
         }
     }
     return SmartHealthStatus::Healthy;
 }
+
+namespace {
+
+/// A warning's reason: what the drive counts, and that its own check passed when it says so.
+QString countsReason(const SmartReport& report, const QStringList& counted) {
+    const QString counts = counted.join(QStringLiteral(", "));
+    return report.smart_status == QStringLiteral("PASSED")
+               ? QStringLiteral("The drive passes its own check, and reports %1").arg(counts)
+               : QStringLiteral("The drive reports %1").arg(counts);
+}
+
+QString attributeName(const SmartAttribute& attr) {
+    return attr.name.trimmed().isEmpty() ? QStringLiteral("Attribute %1").arg(attr.id)
+                                         : attr.name.trimmed();
+}
+
+}  // namespace
 
 bool SmartDiskAnalyzer::reportHasAssessableData(const SmartReport& report) {
     // Fail-closed signal set: an overall SMART status, at least one SATA
@@ -503,18 +516,32 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
     // green result over a disk we never actually read.
     if (!reportHasAssessableData(report)) {
         report.overall_health = SmartHealthStatus::Unknown;
+        report.health_reason = QStringLiteral("SMART data could not be read");
         return;
     }
 
+    // FAIL is the drive's own verdict: its overall self-assessment, or an attribute past the
+    // threshold the drive itself sets. What the drive counts -- pending or reallocated sectors,
+    // wear, media errors -- is a warning, as common tools read it.
     report.overall_health = SmartHealthStatus::Healthy;
+    report.health_reason = QStringLiteral("The drive reports no problems");
 
     if (report.smart_status == "FAILED") {
         report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason = QStringLiteral("The drive's own SMART self-assessment says FAILED");
         return;
     }
 
-    if (std::ranges::any_of(report.attributes, [](const auto& attr) { return attr.failing; })) {
+    const auto failing = std::ranges::find_if(report.attributes,
+                                              [](const auto& attr) { return attr.failing; });
+    if (failing != report.attributes.end()) {
         report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason = QStringLiteral(
+                                   "%1 is past the drive's own failure threshold "
+                                   "(value %2, threshold %3)")
+                                   .arg(attributeName(*failing))
+                                   .arg(failing->current_value)
+                                   .arg(failing->threshold);
         return;
     }
 
@@ -523,15 +550,15 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
 }
 
 void SmartDiskAnalyzer::assessSataAttributeHealth(SmartReport& report) const {
+    QStringList counted;
     for (const auto& attr : report.attributes) {
-        auto status = checkAttributeAgainstThresholds(attr);
-        if (status == SmartHealthStatus::Critical) {
-            report.overall_health = SmartHealthStatus::Critical;
-            return;
-        }
-        if (status == SmartHealthStatus::Warning) {
+        if (checkAttributeAgainstThresholds(attr) == SmartHealthStatus::Warning) {
             report.overall_health = SmartHealthStatus::Warning;
+            counted << QStringLiteral("%1 %2").arg(attributeName(attr)).arg(attr.raw_value);
         }
+    }
+    if (!counted.isEmpty()) {
+        report.health_reason = countsReason(report, counted);
     }
 }
 
@@ -541,14 +568,25 @@ void SmartDiskAnalyzer::assessNvmeHealth(SmartReport& report) const {
     }
     const auto& nvme = report.nvme_health.value();
 
-    if (nvme.percentage_used >= kNvmeWearCriticalPercent || nvme.media_errors > 0 ||
-        nvme.available_spare < nvme.available_spare_threshold) {
+    if (nvme.available_spare < nvme.available_spare_threshold) {
         report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason =
+            QStringLiteral("Available spare %1% is below the drive's own threshold of %2%")
+                .arg(nvme.available_spare)
+                .arg(nvme.available_spare_threshold);
         return;
     }
 
+    QStringList counted;
     if (nvme.percentage_used >= kNvmeWearWarningPercent) {
+        counted << QStringLiteral("%1% of its rated endurance used").arg(nvme.percentage_used);
+    }
+    if (nvme.media_errors > 0) {
+        counted << QStringLiteral("%1 media errors").arg(nvme.media_errors);
+    }
+    if (!counted.isEmpty()) {
         report.overall_health = SmartHealthStatus::Warning;
+        report.health_reason = countsReason(report, counted);
     }
 }
 
@@ -559,8 +597,7 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report) {
 
         if (report.reallocated_sectors >= kReallocatedSectorsCriticalAdviceThreshold) {
             report.recommendations.append(
-                "CRITICAL: Drive has significant sector damage -- back up data immediately and "
-                "replace drive");
+                "Significant sector damage -- back up data now and plan to replace the drive");
         } else {
             report.recommendations.append(
                 "Monitor reallocated sector count -- back up important data as a precaution");
@@ -593,8 +630,7 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report) {
     if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
         report.warnings.append(QString("NVMe drive endurance at %1% -- nearing end of life")
                                    .arg(nvme.percentage_used));
-        report.recommendations.append(
-            "CRITICAL: Plan drive replacement -- SSD endurance nearly exhausted");
+        report.recommendations.append("Plan drive replacement -- SSD endurance nearly exhausted");
     } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {
         report.warnings.append(QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
         report.recommendations.append("Consider planning drive replacement in the near future");
@@ -651,6 +687,14 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
         report.recommendations.prepend(
             "CRITICAL: Drive is reporting imminent failure -- back up all data immediately and "
             "replace drive");
+    }
+
+    // An attribute past the drive's own threshold is a FAIL too, and says which one.
+    if (report.overall_health == SmartHealthStatus::Critical && report.smart_status != "FAILED") {
+        report.warnings.prepend(report.health_reason);
+        report.recommendations.prepend(
+            "CRITICAL: The drive reports a failing value -- back up all data now and replace the "
+            "drive");
     }
 
     // Fail-closed: an indeterminate report must NOT read as "health is good".

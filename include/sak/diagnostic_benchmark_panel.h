@@ -277,6 +277,11 @@ private:
     QProgressBar* m_thermal_cpu_bar{nullptr};
     QProgressBar* m_thermal_gpu_bar{nullptr};
     QProgressBar* m_thermal_disk_bar{nullptr};
+    /// The last thermal poll's unavailable-sensor lines, so N/A can say why.
+    QStringList m_thermal_statuses;
+    /// The hottest drive temperature the last SMART scan read, or 0: a drive Windows' counters
+    /// do not report may still report it over SMART.
+    double m_smart_hottest_drive_celsius{0.0};
 
     // -- Full Suite Widgets --------------------------------------
     QLabel* m_suite_step_labels[kSuiteStepCount]{nullptr};

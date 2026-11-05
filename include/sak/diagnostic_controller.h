@@ -248,6 +248,9 @@ Q_SIGNALS:
     /// @brief Thermal readings for UI update
     void thermalReadingsUpdated(const QVector<sak::ThermalReading>& readings);
 
+    /// @brief Each thermal poll's unavailable-sensor status lines, before its readings
+    void thermalSensorStatusesUpdated(const QStringList& statuses);
+
     /// @brief Stress test live status
     void stressTestStatus(int elapsed_seconds, double cpu_temp, int errors);
 

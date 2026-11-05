@@ -346,22 +346,44 @@ void SmartDiskAnalyzerTests::healthAssessment_warning() {
         QStringLiteral("Drive health is good -- no action required")));
 }
 
+// testpc1: a Seagate 8 TB with 16 pending sectors read FAIL while the drive's own check passed.
+// FAIL is the drive's own verdict -- its self-assessment, or an attribute past the threshold the
+// drive sets. A count alone, however high, is WARN, with the count named as the reason.
 void SmartDiskAnalyzerTests::healthAssessment_critical() {
     sak::SmartDiskAnalyzer analyzer;
 
-    // Reallocated_Sector_Ct warns from the first bad sector and turns critical at 50.
     QCOMPARE(healthOf(analyzer, sataAttributeJson(5, QStringLiteral("Reallocated_Sector_Ct"), 49)),
              sak::SmartHealthStatus::Warning);
 
     const sak::SmartReport report = analyzer.parseAndAssessForTesting(
         sataAttributeJson(5, QStringLiteral("Reallocated_Sector_Ct"), 50), 0);
-    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Critical);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Warning);
     // Attribute 5 also feeds the unified reallocated-sector metric.
     QCOMPARE(report.reallocated_sectors, static_cast<int64_t>(50));
     QVERIFY(report.warnings.contains(QStringLiteral("Reallocated sectors detected: 50")));
     QVERIFY(report.recommendations.contains(
-        QStringLiteral("CRITICAL: Drive has significant sector damage -- back up data "
-                       "immediately and replace drive")));
+        QStringLiteral("Significant sector damage -- back up data now and plan to replace the "
+                       "drive")));
+    QVERIFY2(report.health_reason.contains(QStringLiteral("Reallocated_Sector_Ct 50")),
+             qPrintable(report.health_reason));
+
+    const sak::SmartReport pending = analyzer.parseAndAssessForTesting(
+        sataAttributeJson(197, QStringLiteral("Current_Pending_Sector"), 16), 0);
+    QCOMPARE(pending.overall_health, sak::SmartHealthStatus::Warning);
+    QVERIFY2(pending.health_reason.contains(QStringLiteral("Current_Pending_Sector 16")),
+             qPrintable(pending.health_reason));
+
+    // The drive's own threshold crossed is FAIL, and says which attribute.
+    const sak::SmartReport past = analyzer.parseAndAssessForTesting(
+        QByteArrayLiteral("{\"device\":{\"type\":\"sat\"},\"smart_status\":{\"passed\":true},"
+                          "\"ata_smart_attributes\":{\"table\":[{\"id\":5,"
+                          "\"name\":\"Reallocated_Sector_Ct\",\"value\":8,\"worst\":8,"
+                          "\"thresh\":10,\"raw\":{\"value\":900}}]}}"),
+        0);
+    QCOMPARE(past.overall_health, sak::SmartHealthStatus::Critical);
+    QVERIFY2(past.health_reason.contains(QStringLiteral("past the drive's own failure threshold")),
+             qPrintable(past.health_reason));
+    QVERIFY(past.warnings.contains(past.health_reason));
 }
 
 // ============================================================================

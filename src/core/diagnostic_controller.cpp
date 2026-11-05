@@ -212,6 +212,10 @@ void DiagnosticController::connectThermalMonitor() {
             &ThermalMonitor::readingsUpdated,
             this,
             &DiagnosticController::thermalReadingsUpdated);
+    connect(m_thermal_monitor.get(),
+            &ThermalMonitor::sensorStatusesUpdated,
+            this,
+            &DiagnosticController::thermalSensorStatusesUpdated);
 }
 
 void DiagnosticController::connectReportGenerator() {
@@ -231,6 +235,8 @@ DiagnosticController::~DiagnosticController() {
 // ============================================================================
 
 void DiagnosticController::runHardwareScan() {
+    // A re-scan is when a drive that was spun down, or was just plugged in, gets asked again.
+    m_thermal_monitor->askEveryDiskAgain();
     // Reassigning a running QFuture orphans it (never joined), which both races scan() on the
     // shared scanner and leaves the orphan running past teardown -> UAF. Ignore redundant starts.
     if (m_hw_scan_future.isRunning()) {
@@ -244,6 +250,7 @@ void DiagnosticController::runHardwareScan() {
 }
 
 void DiagnosticController::runSmartAnalysis() {
+    m_thermal_monitor->askEveryDiskAgain();  // as a hardware scan does
     if (m_smart_analysis_future.isRunning()) {
         logWarning("SMART analysis already running -- ignoring request");
         return;

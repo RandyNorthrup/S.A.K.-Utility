@@ -106,9 +106,9 @@ QString smartGuidanceConsistency(const sak::SmartReport& report) {
     // near-future wear advice may never ride a report assessed Healthy. An NVMe log always
     // satisfies reportHasAssessableData(), so neither branch can be reached with Unknown.
     if (report.recommendations.contains(
-            QStringLiteral("CRITICAL: Plan drive replacement -- SSD endurance nearly exhausted")) &&
-        report.overall_health != sak::SmartHealthStatus::Critical) {
-        return QStringLiteral("critical NVMe wear advice on a report not assessed Critical");
+            QStringLiteral("Plan drive replacement -- SSD endurance nearly exhausted")) &&
+        report.overall_health == sak::SmartHealthStatus::Healthy) {
+        return QStringLiteral("near-exhausted NVMe wear advice on a report assessed Healthy");
     }
     if (report.recommendations.contains(
             QStringLiteral("Consider planning drive replacement in the near future")) &&

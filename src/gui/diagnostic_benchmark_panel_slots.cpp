@@ -11,6 +11,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/thermal_monitor.h"
 #include "sak/view_empty_state.h"
 
 #include <QApplication>
@@ -228,6 +229,8 @@ void DiagnosticBenchmarkPanel::fillSmartRow(int row, const SmartReport& report) 
         health_item->setText("N/A");
         break;
     }
+    // Why, in the drive's own terms: FAIL is its own verdict, WARN what it counts.
+    health_item->setToolTip(report.health_reason);
     m_smart_table->setItem(row, SmartColHealth, health_item);
 
     m_smart_table->setItem(row,
@@ -256,10 +259,15 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
 
     m_smart_table->setRowCount(static_cast<int>(reports.size()));
     QStringList warnings_list;
+    m_smart_hottest_drive_celsius = 0.0;
 
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
         fillSmartRow(row, report);
+        if (report.overall_health != SmartHealthStatus::Unknown) {
+            m_smart_hottest_drive_celsius = std::max(m_smart_hottest_drive_celsius,
+                                                     report.temperature_celsius);
+        }
         for (const auto& warning : report.warnings) {
             warnings_list.append(warning);
         }
@@ -749,6 +757,20 @@ void keepHottest(bool& found, int& hottest, int candidate) {
     }
     found = true;
 }
+
+// A temperature, coloured by the thermal warning thresholds.
+QString temperatureHtml(int temp) {
+    QString color = sak::ui::kStatusColorSuccess;
+    if (temp >= kTemperatureCriticalCelsius) {
+        color = sak::ui::kStatusColorError;
+    } else if (temp >= kTemperatureWarningCelsius) {
+        color = sak::ui::kColorWarning;
+    }
+    return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
+        .arg(sak::ui::htmlColor(color))
+        .arg(sak::ui::kFontWeightSemibold)
+        .arg(QStringLiteral("%1 \u00B0C").arg(temp));
+}
 }  // namespace
 
 void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalReading>& readings) {
@@ -777,41 +799,38 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
         }
     }
 
-    // Color code by thermal warning thresholds.
-    const auto temp_html = [](int temp) {
-        QString color = sak::ui::kStatusColorSuccess;
-        if (temp >= kTemperatureCriticalCelsius) {
-            color = sak::ui::kStatusColorError;
-        } else if (temp >= kTemperatureWarningCelsius) {
-            color = sak::ui::kColorWarning;
-        }
+    // A sensor with no reading says why: a bare N/A told a technician nothing (testpc1).
+    const auto not_available = [this](const QString& sensor) {
         return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-            .arg(sak::ui::htmlColor(color))
+            .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
             .arg(sak::ui::kFontWeightSemibold)
-            .arg(QStringLiteral("%1 \u00B0C").arg(temp));
+            .arg(tr("N/A - %1").arg(ThermalMonitor::unavailableReason(m_thermal_statuses, sensor)));
     };
 
-    // Show "N/A" for sensors that returned no data.
-    const QString not_available = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-                                      .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
-                                      .arg(sak::ui::kFontWeightSemibold)
-                                      .arg(QStringLiteral("N/A"));
-
-    const auto render = [&](QLabel* label, QProgressBar* bar, bool found, int temp) {
-        if (found) {
-            label->setText(temp_html(temp));
-            bar->setValue(temp);
-            bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
-        } else {
-            // An empty bar that says so: "0 / 100 C" read as a reading of zero.
-            label->setText(not_available);
-            bar->setValue(0);
-            bar->setFormat(tr("N/A"));
-        }
-    };
-    render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp);
-    render(m_thermal_gpu_label, m_thermal_gpu_bar, gpu_found, gpu_temp);
-    render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp);
+    const auto render =
+        [&](QLabel* label, QProgressBar* bar, bool found, int temp, const char* id) {
+            if (found) {
+                label->setText(temperatureHtml(temp));
+                bar->setValue(temp);
+                bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
+            } else {
+                // An empty bar that says so: "0 / 100 C" read as a reading of zero.
+                label->setText(not_available(QString::fromLatin1(id)));
+                bar->setValue(0);
+                bar->setFormat(tr("N/A"));
+            }
+        };
+    render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp, "cpu");
+    render(m_thermal_gpu_label, m_thermal_gpu_bar, gpu_found, gpu_temp, "gpu");
+    if (!disk_found && m_smart_hottest_drive_celsius > 0.0) {
+        // Windows' counters do not report this drive, but its SMART data did.
+        const int smart_temp = static_cast<int>(m_smart_hottest_drive_celsius);
+        m_thermal_disk_label->setText(temperatureHtml(smart_temp) + tr(" (from the SMART scan)"));
+        m_thermal_disk_bar->setValue(smart_temp);
+        m_thermal_disk_bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
+        return;
+    }
+    render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp, "disk");
 }
 
 // ============================================================================

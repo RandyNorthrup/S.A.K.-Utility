@@ -198,6 +198,9 @@ struct SmartReport {
     // Overall assessment
     SmartHealthStatus overall_health{SmartHealthStatus::Unknown};
     QString smart_status;  ///< "PASSED" / "FAILED"
+    /// Why overall_health is what it is, in the drive's own terms: its self-assessment, an
+    /// attribute past the drive's own threshold, or the counts it reports.
+    QString health_reason;
 
     // SATA attributes
     QVector<SmartAttribute> attributes;

@@ -6,7 +6,13 @@
 
 #include "sak/diagnostic_controller.h"
 #include "sak/process_runner.h"
+#include "sak/thermal_monitor.h"
 
+#include <QMutex>
+#include <QScopeGuard>
+#include <QSemaphore>
+#include <QtConcurrent>
+#include <QThreadPool>
 #include <QtTest/QtTest>
 
 #include <optional>
@@ -27,6 +33,7 @@ private Q_SLOTS:
     void reportDataAccess();
     void generateReportRefusesEachPreconditionByItsOwnMessage();
     void thermalReadingsAreForwardedToTheController();
+    void aRescanAsksEveryDiskForItsTemperatureAgain();
     // B5-14: stale-completion guard and fail-open aggregate status.
     void suiteAdvanceAllowed_onlyForCurrentStep();
     void statusWithStepFailures_failClosed();
@@ -118,6 +125,61 @@ void DiagnosticControllerTests::thermalReadingsAreForwardedToTheController() {
     const auto readings = spy.first().first().value<QVector<sak::ThermalReading>>();
     QCOMPARE(readings.size(), 1);
     QCOMPARE(readings.first().component, QStringLiteral("Disk 0"));
+}
+
+// The thermal monitor stops asking a disk that gave no reading. A drive that was asleep, or was
+// just plugged in, gets asked again when the technician scans. The scans themselves never start
+// here: each is already "running", so the controller takes the request and ignores it, and the
+// sensor script is a fake.
+void DiagnosticControllerTests::aRescanAsksEveryDiskForItsTemperatureAgain() {
+    const QString skips_enclosure = QStringLiteral("$r=@{};$skip=@('USB-NVME-B');");
+    const QString asks_all = QStringLiteral("$r=@{};$skip=@();");
+    QMutex mutex;
+    QStringList scripts;
+    const sak::ScopedProcessFaultInjector fake_sensors(
+        [&](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+            const QMutexLocker lock(&mutex);
+            const QString script = args.isEmpty() ? QString() : args.constLast();
+            scripts.append(script);
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            result.std_out =
+                QStringLiteral("identity_disk0=NVME-A\nidentity_disk1=USB-NVME-B\ndisk0=36");
+            if (!script.startsWith(skips_enclosure)) {
+                result.std_out += QStringLiteral("\nstatus_disk1=unavailable:no_answer");
+            }
+            return result;
+        });
+    const auto lastScriptStartsWith = [&](const QString& prefix) {
+        const QMutexLocker lock(&mutex);
+        return !scripts.isEmpty() && scripts.constLast().startsWith(prefix);
+    };
+
+    // The stand-in scans hold threads of their own pool until the test ends, so neither a real
+    // scan nor the sensor poll's pool is involved.
+    QThreadPool stand_in_pool;
+    stand_in_pool.setMaxThreadCount(2);
+    QSemaphore scans_may_end;
+    DiagnosticController controller;
+    const auto end_scans = qScopeGuard([&] {
+        controller.stopThermalMonitoring();
+        scans_may_end.release(2);
+    });
+    controller.m_hw_scan_future = QtConcurrent::run(&stand_in_pool,
+                                                    [&scans_may_end] { scans_may_end.acquire(); });
+    controller.m_smart_analysis_future =
+        QtConcurrent::run(&stand_in_pool, [&scans_may_end] { scans_may_end.acquire(); });
+    controller.startThermalMonitoring(kMinThermalPollIntervalMs);
+    QTRY_VERIFY_WITH_TIMEOUT(lastScriptStartsWith(skips_enclosure), 10'000);
+
+    QVERIFY(controller.m_hw_scan_future.isRunning());
+    controller.runHardwareScan();
+    QTRY_VERIFY_WITH_TIMEOUT(lastScriptStartsWith(asks_all), 10'000);
+    QTRY_VERIFY_WITH_TIMEOUT(lastScriptStartsWith(skips_enclosure), 10'000);
+
+    QVERIFY(controller.m_smart_analysis_future.isRunning());
+    controller.runSmartAnalysis();
+    QTRY_VERIFY_WITH_TIMEOUT(lastScriptStartsWith(asks_all), 10'000);
 }
 
 void DiagnosticControllerTests::reportDataAccess() {

@@ -11,6 +11,7 @@
 #include "../support/test_hardware_guard.h"
 
 #include <QFile>
+#include <QMutex>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QTemporaryDir>
@@ -50,6 +51,10 @@ private Q_SLOTS:
     // The stress test's temperature reader passes the end of the run in, so a slow read stops
     // when the run does instead of holding it.
     void aCpuTemperatureReadAsksWhetherToGiveUp();
+    void anUnavailableSensorSaysWhy();
+    void aDiskWithNoReadingIsNotAskedAgain();
+    void aNewDiskInTheSkippedNumberIsAsked();
+    void theScriptNamesEachDisk();
 
 private:
     // Outlives every test: the logger keeps writing into it once initialized.
@@ -64,8 +69,53 @@ void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
     QVERIFY(gpu_section > 0);
     QVERIFY2(!script.left(gpu_section).contains(QStringLiteral("throw")),
              "the CPU section must not abort the script");
+    QVERIFY(script.left(gpu_section).contains(QStringLiteral("$cpuNote='query_failed'")));
+    QVERIFY(script.left(gpu_section).contains(QStringLiteral("status_cpu=unavailable:$cpuNote")));
+    // testpc1 showed N/A with no reason. Denied access is named, the thermal zone is also read
+    // through the counters a standard user may read, and a denied disk names its own id instead
+    // of failing the whole poll.
+    QVERIFY(script.left(gpu_section).contains(QStringLiteral("$cpuNote='needs_admin'")));
     QVERIFY(
-        script.left(gpu_section).contains(QStringLiteral("status_cpu=unavailable:query_failed")));
+        script.contains(QStringLiteral("Win32_PerfFormattedData_Counters_ThermalZoneInformation")));
+    QVERIFY(script.contains(QStringLiteral("$id=$_.DeviceId;")));
+    QVERIFY(script.contains(QStringLiteral("status_disk$id=unavailable:needs_admin")));
+    QVERIFY2(!script.contains(QStringLiteral("status_disk$($_.DeviceId)")),
+             "inside a catch, $_ is the error, not the disk");
+    // testpc1 again: its thermal zone answers "not supported", and one USB NVMe took 12 to 17 s
+    // to answer for its counters, so every poll ran out of time and the two disks that report
+    // read N/A. Not supported is said as such, every request has its own time limit, and a disk
+    // out of time says so instead of failing the poll.
+    QVERIFY(script.left(gpu_section).contains(QStringLiteral("-eq 'NotImplemented'")));
+    QVERIFY2(!script.contains(QStringLiteral("Get-StorageReliabilityCounter")),
+             "that cmdlet takes no time limit");
+    QVERIFY(script.contains(QStringLiteral("-ResultClassName MSFT_StorageReliabilityCounter")));
+    const qsizetype requests = script.count(QStringLiteral("Get-Cim"));
+    QVERIFY(requests >= 3);
+    QCOMPARE(script.count(QStringLiteral("-OperationTimeoutSec 2 ")), requests);
+    QVERIFY(script.contains(QStringLiteral("'HRESULT 0x40004,*'")));
+    QVERIFY(script.contains(QStringLiteral("status_disk$id=unavailable:no_answer")));
+    // A quiet disk is skipped by its identity, and names that identity even when skipped, so the
+    // monitor sees drives arrive and leave.
+    QVERIFY(script.startsWith(QStringLiteral("$r=@{};$skip=@();")));
+    QVERIFY(script.contains(QStringLiteral("$uid=([string]$_.UniqueId).Trim();")));
+    QVERIFY(script.contains(QStringLiteral(
+        "Write-Output \"identity_disk$id=$uid\";if($uid -and $skip -contains $uid){return};")));
+    QVERIFY(
+        ThermalMonitor::buildCombinedThermalScript(
+            {QStringLiteral("USBSTOR\\DISK&VEN_NVME&PROD_NS-PCNVMEHDE"),
+             QStringLiteral("5000C500A1B2C3D4")})
+            .startsWith(QStringLiteral(
+                "$r=@{};$skip=@('USBSTOR\\DISK&VEN_NVME&PROD_NS-PCNVMEHDE','5000C500A1B2C3D4');")));
+    // Nothing that could end the quoted string reaches the script: an apostrophe, PowerShell's
+    // curly quotes, or a line break.
+    for (const QString& unsafe : {QStringLiteral("1');throw '"),
+                                  QString(u"DISK\u2019X"),
+                                  QStringLiteral("DISK\nX"),
+                                  QStringLiteral("  ")}) {
+        QVERIFY2(ThermalMonitor::buildCombinedThermalScript({unsafe}).startsWith(
+                     QStringLiteral("$r=@{};$skip=@();")),
+                 qPrintable(unsafe));
+    }
     QVERIFY2(!script.contains(QStringLiteral("SilentlyContinue")), qPrintable(script));
     QVERIFY2(!script.contains(QStringLiteral("2>$null")), qPrintable(script));
     QVERIFY2(!script.contains(QStringLiteral("catch{}")), qPrintable(script));
@@ -78,6 +128,184 @@ void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
 void ThermalMonitorTests::initialState() {
     ThermalMonitor monitor;
     QVERIFY(!monitor.isRunning());
+}
+
+// testpc1: Thermal said a bare N/A. Each sensor without a reading names why.
+void ThermalMonitorTests::anUnavailableSensorSaysWhy() {
+    const QStringList statuses = {QStringLiteral("status_cpu=unavailable:needs_admin"),
+                                  QStringLiteral("status_gpu=unavailable:command_not_supported"),
+                                  QStringLiteral("status_disk0=unavailable:no_reading"),
+                                  QStringLiteral("status_disk1=unavailable:needs_admin")};
+    QCOMPARE(ThermalMonitor::unavailableReason(statuses, QStringLiteral("cpu")),
+             QStringLiteral("needs administrator rights"));
+    QCOMPARE(ThermalMonitor::unavailableReason(statuses, QStringLiteral("gpu")),
+             QStringLiteral("not reported by this PC"));
+    QCOMPARE(ThermalMonitor::unavailableReason(statuses, QStringLiteral("disk")),
+             QStringLiteral("needs administrator rights"));
+    QCOMPARE(ThermalMonitor::unavailableReason(
+                 {QStringLiteral("status_query=unavailable:query_failed")}, QStringLiteral("cpu")),
+             QStringLiteral("could not be read"));
+    QCOMPARE(ThermalMonitor::unavailableReason({}, QStringLiteral("disk")),
+             QStringLiteral("not reported by this PC"));
+    QCOMPARE(
+        ThermalMonitor::unavailableReason({QStringLiteral("status_disk0=unavailable:no_reading"),
+                                           QStringLiteral("status_disk1=unavailable:no_answer")},
+                                          QStringLiteral("disk")),
+        QStringLiteral("did not answer in time"));
+    // Several disks: the most telling reason is shown, whichever disk comes last.
+    QCOMPARE(
+        ThermalMonitor::unavailableReason({QStringLiteral("status_disk0=unavailable:no_answer"),
+                                           QStringLiteral("status_disk1=unavailable:no_reading")},
+                                          QStringLiteral("disk")),
+        QStringLiteral("did not answer in time"));
+    QCOMPARE(
+        ThermalMonitor::unavailableReason({QStringLiteral("status_disk0=unavailable:needs_admin"),
+                                           QStringLiteral("status_disk1=unavailable:no_answer")},
+                                          QStringLiteral("disk")),
+        QStringLiteral("needs administrator rights"));
+}
+
+namespace {
+// testpc1's three disks as the sensor script names them: the internal NVMe, the USB NVMe
+// enclosure that gives no temperature, and the Seagate.
+const QString kTestpc1Disks = QStringLiteral(
+    "identity_disk0=NVME-SKHYNIX-BC501\nidentity_disk1=USB-NS-PCNVMEHDE\n"
+    "identity_disk2=USB-SEAGATE-EXPANSION\n");
+const QString kSkipEnclosure = QStringLiteral("$r=@{};$skip=@('USB-NS-PCNVMEHDE');");
+const QString kSkipNothing = QStringLiteral("$r=@{};$skip=@();");
+
+ThermalPollResult pollOf(const QMap<QString, QString>& identities, const QStringList& statuses) {
+    ThermalPollResult poll;
+    poll.query_ok = true;
+    poll.disk_identities = identities;
+    poll.sensor_statuses = statuses;
+    return poll;
+}
+}  // namespace
+
+// testpc1: the USB NVMe that took 12 s to say nothing was asked again on every poll, while a disk
+// benchmark ran on it. A disk with no reading is not asked again, and still says why, until a
+// hardware or SMART scan asks every disk again.
+void ThermalMonitorTests::aDiskWithNoReadingIsNotAskedAgain() {
+    QMutex mutex;
+    QStringList scripts;
+    ScopedProcessFaultInjector injector(
+        [&](const QString&, const QStringList& args) -> std::optional<ProcessResult> {
+            QMutexLocker lock(&mutex);
+            scripts.append(args.constLast());
+            ProcessResult result;
+            result.exit_code = 0;
+            // The enclosure says why only when it is asked.
+            const bool asked = !args.constLast().startsWith(kSkipEnclosure);
+            result.std_out = kTestpc1Disks + QStringLiteral("disk0=36\ndisk2=43") +
+                             (asked ? QStringLiteral("\nstatus_disk1=unavailable:no_answer")
+                                    : QString());
+            return result;
+        });
+    const auto scriptCount = [&] {
+        const QMutexLocker lock(&mutex);
+        return scripts.size();
+    };
+    const auto scriptAt = [&](qsizetype index) {
+        const QMutexLocker lock(&mutex);
+        return scripts.at(index);
+    };
+
+    ThermalMonitor monitor;
+    QSignalSpy statuses_spy(&monitor, &ThermalMonitor::sensorStatusesUpdated);
+    QVERIFY(statuses_spy.isValid());
+    monitor.start(kMinThermalPollIntervalMs);
+    QTRY_VERIFY_WITH_TIMEOUT(statuses_spy.count() >= 2, 10'000);
+    monitor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!monitor.m_poll_watcher.isRunning(), 10'000);
+
+    QVERIFY(scriptAt(0).startsWith(kSkipNothing));
+    QVERIFY2(scriptAt(1).startsWith(kSkipEnclosure), qPrintable(scriptAt(1).left(60)));
+    const QStringList expected{QStringLiteral("status_disk1=unavailable:no_answer")};
+    QCOMPARE(statuses_spy.at(0).at(0).toStringList(), expected);
+    QCOMPARE(statuses_spy.at(1).at(0).toStringList(), expected);
+
+    // The panel restarts the monitor each time it is shown; that does not ask the disk again.
+    qsizetype mark = scriptCount();
+    monitor.start(kMinThermalPollIntervalMs);
+    QTRY_VERIFY_WITH_TIMEOUT(scriptCount() > mark, 10'000);
+    monitor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!monitor.m_poll_watcher.isRunning(), 10'000);
+    QVERIFY2(scriptAt(mark).startsWith(kSkipEnclosure), qPrintable(scriptAt(mark).left(60)));
+
+    // A re-scan asks every disk again: a drive that was asleep may answer now.
+    monitor.askEveryDiskAgain();
+    mark = scriptCount();
+    monitor.start(kMinThermalPollIntervalMs);
+    QTRY_VERIFY_WITH_TIMEOUT(scriptCount() > mark, 10'000);
+    monitor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!monitor.m_poll_watcher.isRunning(), 10'000);
+    QVERIFY2(scriptAt(mark).startsWith(kSkipNothing), qPrintable(scriptAt(mark).left(60)));
+}
+
+// Each disk's identity line becomes the poll's identity map and never a reading, even when the
+// identity happens to look like a temperature.
+void ThermalMonitorTests::theScriptNamesEachDisk() {
+    ScopedProcessFaultInjector injector(
+        [](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral(
+                "identity_disk0=NVME-A\nidentity_disk1=45\nidentity_diskX=BAD\n"
+                "identity_disk2=\ndisk0=36");
+            return result;
+        });
+    const ThermalPollResult poll = ThermalMonitor::querySensors();
+    QVERIFY(poll.query_ok);
+    const QMap<QString, QString> expected{{QStringLiteral("0"), QStringLiteral("NVME-A")},
+                                          {QStringLiteral("1"), QStringLiteral("45")},
+                                          {QStringLiteral("2"), QString()}};
+    QCOMPARE(poll.disk_identities, expected);
+    QCOMPARE(poll.readings.size(), 1);
+    QCOMPARE(poll.readings.first().component, QStringLiteral("Disk 0"));
+}
+
+// The coordinator's case: technicians hot-plug drives, so disk 1 can be another drive ten minutes
+// later. The skip follows the drive, not its number, and a drive arriving or leaving asks every
+// disk again.
+void ThermalMonitorTests::aNewDiskInTheSkippedNumberIsAsked() {
+    ThermalMonitor::QuietDisks quiet;
+    const QStringList no_answer{QStringLiteral("status_disk1=unavailable:no_answer")};
+    const QMap<QString, QString> testpc1{{QStringLiteral("0"), QStringLiteral("NVME-A")},
+                                         {QStringLiteral("1"), QStringLiteral("USB-NVME-B")}};
+    QCOMPARE(ThermalMonitor::rememberQuietDisks(pollOf(testpc1, no_answer), &quiet), no_answer);
+    QCOMPARE(quiet.status_by_identity.keys(), QStringList{QStringLiteral("USB-NVME-B")});
+
+    // Same drives, numbered the other way round: the enclosure is still the one skipped, and
+    // the reason it has no reading is given under its number now.
+    const QMap<QString, QString> renumbered{{QStringLiteral("0"), QStringLiteral("USB-NVME-B")},
+                                            {QStringLiteral("1"), QStringLiteral("NVME-A")}};
+    QCOMPARE(ThermalMonitor::rememberQuietDisks(pollOf(renumbered, {}), &quiet),
+             QStringList{QStringLiteral("status_disk0=unavailable:no_answer")});
+    QCOMPARE(quiet.status_by_identity.keys(), QStringList{QStringLiteral("USB-NVME-B")});
+
+    // The enclosure is unplugged and a different drive arrives as disk 1: it is asked, and the
+    // enclosure's reason is not shown for it.
+    const QMap<QString, QString> swapped{{QStringLiteral("0"), QStringLiteral("NVME-A")},
+                                         {QStringLiteral("1"), QStringLiteral("SANDISK-C")}};
+    QCOMPARE(ThermalMonitor::rememberQuietDisks(pollOf(swapped, {}), &quiet), QStringList());
+    QVERIFY(quiet.status_by_identity.isEmpty());
+    QVERIFY(ThermalMonitor::buildCombinedThermalScript(quiet.status_by_identity.keys())
+                .startsWith(kSkipNothing));
+
+    // The enclosure comes back as disk 2 and does not answer: it is skipped again from then on.
+    QMap<QString, QString> back = swapped;
+    back.insert(QStringLiteral("2"), QStringLiteral("USB-NVME-B"));
+    const QStringList late{QStringLiteral("status_disk2=unavailable:no_answer")};
+    QCOMPARE(ThermalMonitor::rememberQuietDisks(pollOf(back, late), &quiet), late);
+    QCOMPARE(quiet.status_by_identity.keys(), QStringList{QStringLiteral("USB-NVME-B")});
+
+    // A drive whose identity Windows does not give is asked on every poll.
+    ThermalMonitor::QuietDisks anonymous;
+    const QMap<QString, QString> no_identity{{QStringLiteral("0"), QString()}};
+    (void)ThermalMonitor::rememberQuietDisks(
+        pollOf(no_identity, {QStringLiteral("status_disk0=unavailable:no_reading")}), &anonymous);
+    QVERIFY(anonymous.status_by_identity.isEmpty());
 }
 
 void ThermalMonitorTests::aCpuTemperatureReadAsksWhetherToGiveUp() {

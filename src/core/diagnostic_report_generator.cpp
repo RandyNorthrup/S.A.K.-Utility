@@ -272,6 +272,7 @@ QJsonArray DiagnosticReportGenerator::serializeSmartSection() const {
         s["serial"] = report.serial_number;
         s["interface_type"] = report.interface_type;
         s["status"] = healthStatusText(report.overall_health);
+        s["status_reason"] = report.health_reason;
         s["temp_c"] = report.temperature_celsius;
         s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
         if (report.nvme_health.has_value()) {

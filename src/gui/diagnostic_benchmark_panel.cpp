@@ -932,6 +932,10 @@ void DiagnosticBenchmarkPanel::connectHardwareSignals() {
             this,
             &DiagnosticBenchmarkPanel::onSmartAnalysisComplete);
     connect(m_controller.get(),
+            &DiagnosticController::thermalSensorStatusesUpdated,
+            this,
+            [this](const QStringList& statuses) { m_thermal_statuses = statuses; });
+    connect(m_controller.get(),
             &DiagnosticController::thermalReadingsUpdated,
             this,
             &DiagnosticBenchmarkPanel::onThermalReadingsUpdated);
