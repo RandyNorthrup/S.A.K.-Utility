@@ -21994,6 +21994,12 @@ void PartitionManagerCoreTests::standardScanSkipsWhatOnlyAnAdministratorMayRead(
         QVERIFY2(at > 0, qPrintable(read));
         const qsizetype guarded = standard.lastIndexOf(guard, at);
         QVERIFY2(guarded > 0, qPrintable(read));
+        // BitLocker and the dirty bit share one guard's text, so the nearest volume check before
+        // each read must be that guard, not merely one somewhere above it.
+        const QString volume_check = QStringLiteral("if ($volume -and $volume.DriveLetter");
+        if (guard.startsWith(volume_check)) {
+            QVERIFY2(standard.lastIndexOf(volume_check, at) == guarded, qPrintable(read));
+        }
         // No other block opens between the guard and the read.
         QVERIFY2(!standard.mid(guarded + guard.size(), at - guarded - guard.size())
                       .contains(QStringLiteral("$partition = $_")),
