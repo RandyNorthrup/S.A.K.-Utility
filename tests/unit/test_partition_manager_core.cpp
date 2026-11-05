@@ -22017,6 +22017,7 @@ void PartitionManagerCoreTests::physicalDiskIsMatchedByNumberOrAUniqueSerial() {
             "FriendlyName = 'VBOX HARDDISK' } }\n"
             "$pd = @((P '0' 'S0' 'Unspecified'), (P '1' 'S1' 'SSD'), (P '3' 'S3' 'HDD'))\n"
             "'number=' + (Get-SakPhysicalDiskFor -Disk (D 1 'S1') -PhysicalDisks $pd).MediaType\n"
+            "'numberonly=' + (Get-SakPhysicalDiskFor -Disk (D 3 '') -PhysicalDisks $pd).MediaType\n"
             "'serial=' + (Get-SakPhysicalDiskFor -Disk (D 7 ' S3 ') -PhysicalDisks $pd).MediaType\n"
             "'nameonly=' + [bool](Get-SakPhysicalDiskFor -Disk (D 9 '') -PhysicalDisks $pd)\n"
             "$twins = @((P '5' 'X' 'SSD'), (P '6' 'X' 'HDD'))\n"
@@ -22028,6 +22029,7 @@ void PartitionManagerCoreTests::physicalDiskIsMatchedByNumberOrAUniqueSerial() {
                                                  Qt::SkipEmptyParts);
     QCOMPARE(lines,
              QStringList({QStringLiteral("number=SSD"),
+                          QStringLiteral("numberonly=HDD"),
                           QStringLiteral("serial=HDD"),
                           QStringLiteral("nameonly=False"),
                           QStringLiteral("sharedserial=False")}));
