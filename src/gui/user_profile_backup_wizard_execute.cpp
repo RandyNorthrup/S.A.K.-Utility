@@ -480,6 +480,11 @@ void UserProfileBackupExecutePage::onBackupComplete(bool success, const QString&
     m_completed = true;
     m_statusLabel->setText(success ? tr("Backup completed successfully!")
                                    : message.section(QLatin1Char('\n'), 0, 0));
+    setSubTitle(success ? tr("The backup finished.") : tr("The backup did not finish."));
+    // Nothing is running now: the current-operation bar was left in its busy animation.
+    m_currentProgress->setRange(0, kPercentMax);
+    m_currentProgress->setValue(success ? kPercentMax : 0);
+    m_currentProgress->setFormat(success ? tr("Done") : tr("Stopped"));
     if (success) {
         m_overallProgress->setRange(0, kPercentMax);
         m_overallProgress->setValue(kPercentMax);

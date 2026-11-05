@@ -167,6 +167,7 @@ private Q_SLOTS:
     void executePageShowsWhatWentWrong();
     void wholeRestoreWizardRunsOnARealBackup();
     void backupWizardWalksToItsLastPage();
+    void aFinishedBackupStopsItsBars();
     void backupWizardReadsAsPlainText();
 
 private:
@@ -971,6 +972,14 @@ void UserProfileAppRestoreFlowTests::wholeRestoreWizardRunsOnARealBackup() {
     execute->onStartRestore();
     QTRY_VERIFY_WITH_TIMEOUT(execute->isComplete(), 30'000);
     QVERIFY2(execute->m_restoreSuccess, qPrintable(execute->m_logText->toPlainText()));
+    // The finished page says so everywhere: the summary once, both bars full, "Current:" and the
+    // subtitle moved on. The log printed the summary twice and the file bar stopped at 94%.
+    const QString log = execute->m_logText->toPlainText();
+    QCOMPARE(log.count(QStringLiteral("Files restored:")), 1);
+    QCOMPARE(execute->m_currentProgressBar->value(), execute->m_currentProgressBar->maximum());
+    QVERIFY(execute->m_currentProgressBar->maximum() > 0);
+    QCOMPARE(execute->m_currentOperationLabel->text(), QStringLiteral("Current: done"));
+    QCOMPARE(execute->subTitle(), QStringLiteral("The restore finished."));
 
     const QDir landed(system_drive.filePath(QStringLiteral("Users/sakwizardwalkuser")));
     QVERIFY(QFile::exists(landed.filePath(QStringLiteral("Documents/report.txt"))));
@@ -1004,6 +1013,18 @@ void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
     // The screened destination reached the page that runs the backup.
     QVERIFY2(execute->m_destinationPath.endsWith(QStringLiteral("backup")),
              qPrintable(execute->m_destinationPath));
+}
+
+// UI re-check N10: after the backup finished, its subtitle still read "Backup in progress..." and
+// the current-operation bar kept its busy animation.
+void UserProfileAppRestoreFlowTests::aFinishedBackupStopsItsBars() {
+    sak::BackupManifest manifest;
+    sak::UserProfileBackupExecutePage page(manifest, {}, QString());
+    page.m_currentProgress->setRange(0, 0);  // as it is while the worker runs
+    page.onBackupComplete(true, QStringLiteral("Backup finished"));
+    QVERIFY(page.m_currentProgress->maximum() > 0);
+    QCOMPARE(page.m_currentProgress->value(), page.m_currentProgress->maximum());
+    QCOMPARE(page.subTitle(), QStringLiteral("The backup finished."));
 }
 
 // UI review S5, S17, DF13: "[shield]", "[save]" and "(i)" stood in for icons, the users table's

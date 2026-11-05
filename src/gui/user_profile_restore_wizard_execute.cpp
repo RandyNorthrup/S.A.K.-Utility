@@ -207,40 +207,30 @@ void UserProfileRestoreExecutePage::onStartRestore() {
 }
 
 void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileRestoreWorker* worker) {
+    // The page's own slots, once each. Lambdas here did the same jobs a second way and left the
+    // slots unused: the summary was logged twice, "Current:" never moved off "-", and the file bar
+    // stopped wherever its last update left it.
     connect(worker,
             &UserProfileRestoreWorker::overallProgress,
             this,
             &UserProfileRestoreExecutePage::onOverallProgress);
-    connect(worker, &UserProfileRestoreWorker::fileProgress, this, [this](int current, int total) {
-        m_currentProgressBar->setMaximum(total);
-        m_currentProgressBar->setValue(current);
-    });
+    connect(worker,
+            &UserProfileRestoreWorker::fileProgress,
+            this,
+            &UserProfileRestoreExecutePage::onFileProgress);
     connect(worker,
             &UserProfileRestoreWorker::statusUpdate,
             this,
-            [this](const QString& username, const QString& operation) {
-                m_statusLabel->setText(tr("Restoring %1: %2").arg(username, operation));
-            });
+            &UserProfileRestoreExecutePage::onStatusUpdate);
     connect(worker,
             &UserProfileRestoreWorker::logMessage,
             this,
-            [this](const QString& message, bool is_warning) {
-                const QString prefix = is_warning ? "[WARNING]" : "[INFO]";
-                m_logText->append(QString("%1 %2").arg(prefix, message));
-            });
+            &UserProfileRestoreExecutePage::onLogMessage);
     connect(worker,
             &UserProfileRestoreWorker::restoreComplete,
             this,
             [this, worker](bool success, const QString& message) {
-                m_statusLabel->setText(success ? tr("Restore complete!") : tr("Restore failed"));
-                m_logText->append(success ? tr("[INFO] Restore completed successfully")
-                                          : tr("[ERROR] Restore failed"));
-                m_logText->append(QString("[INFO] %1").arg(message));
-                m_restoreComplete = true;
-                m_restoreSuccess = success;
-                m_cancelButton->setEnabled(false);
-                m_viewLogButton->setEnabled(true);
-                Q_EMIT completeChanged();
+                onRestoreComplete(success, message);
                 m_worker = nullptr;  // Worker is finished; drop the dangling pointer.
                 worker->deleteLater();
             });
@@ -269,6 +259,7 @@ void UserProfileRestoreExecutePage::onOverallProgress(int completed_users,
 void UserProfileRestoreExecutePage::onFileProgress(int current, int total) {
     if (total > 0) {
         const int percent = (current * kPercentMax) / total;
+        m_currentProgressBar->setRange(0, kPercentMax);
         m_currentProgressBar->setValue(percent);
         m_currentProgressBar->setFormat(
             QString("%1% - %2 / %3 files").arg(percent).arg(current).arg(total));
@@ -277,6 +268,7 @@ void UserProfileRestoreExecutePage::onFileProgress(int current, int total) {
 
 void UserProfileRestoreExecutePage::onStatusUpdate(const QString& username,
                                                    const QString& operation) {
+    m_statusLabel->setText(tr("Restoring %1: %2").arg(username, operation));
     m_currentOperationLabel->setText(tr("Current: %1 - %2").arg(username, operation));
 }
 
@@ -288,24 +280,38 @@ void UserProfileRestoreExecutePage::onLogMessage(const QString& message, bool is
     m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
 }
 
-void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QString& message) {
+void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QString& /*summary*/) {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_logText);
     m_restoreComplete = true;
     m_restoreSuccess = success;
 
+    // Nothing is running now, so no bar may still be moving or stopped part way. The worker has
+    // logged its own summary; this adds only the verdict.
+    m_currentProgressBar->setRange(0, kPercentMax);
     if (success) {
+        setSubTitle(tr("The restore finished."));
         m_statusLabel->setText(tr("Restore completed successfully!"));
         m_overallProgressBar->setRange(0, kPercentMax);
         m_overallProgressBar->setValue(kPercentMax);
         m_overallProgressBar->setFormat(
             tr("Restore complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
         m_overallProgressBar->setAccessibleDescription(m_overallProgressBar->format());
+        m_currentProgressBar->setValue(kPercentMax);
+        m_currentProgressBar->setFormat(tr("Done"));
+        m_currentOperationLabel->setText(tr("Current: done"));
+        m_logText->append(tr("[INFO] Restore completed successfully"));
     } else {
+        setSubTitle(tr("The restore did not finish."));
         m_statusLabel->setText(tr("Restore failed"));
+        m_overallProgressBar->setRange(0, kPercentMax);
+        m_overallProgressBar->setFormat(tr("Stopped"));
+        m_currentProgressBar->setValue(0);
+        m_currentProgressBar->setFormat(tr("Stopped"));
+        m_currentOperationLabel->setText(tr("Current: stopped"));
+        m_logText->append(tr("[ERROR] Restore failed"));
     }
 
-    m_logText->append(QString("\n=== RESTORE COMPLETE ===\n%1").arg(message));
     m_cancelButton->setEnabled(false);
     m_viewLogButton->setEnabled(true);
 
