@@ -1042,6 +1042,9 @@ QString DiagnosticBenchmarkPanel::formatBytes(uint64_t bytes) {
 }
 
 QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds) {
+    if (seconds == 0) {
+        return QString("Unknown");  // the boot time could not be read
+    }
     const uint64_t days = seconds / 86'400;
     const uint64_t hours = (seconds % 86'400) / 3600;
     const uint64_t minutes = (seconds % 3600) / 60;

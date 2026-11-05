@@ -650,7 +650,14 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     // Say plainly that health is unknown so a data-less scan is never mistaken
     // for a clean bill.
     if (report.overall_health == SmartHealthStatus::Unknown) {
-        report.warnings.append("SMART health could not be determined for this drive");
+        // Named, because the panel lists every drive's warnings together: five drives gave five
+        // identical lines and no way to tell which drive each one was about.
+        const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
+        const QString name = report.model.trimmed().isEmpty() || report.model == drive
+                                 ? drive
+                                 : QStringLiteral("%1 (%2)").arg(drive, report.model.trimmed());
+        report.warnings.append(
+            QStringLiteral("%1: SMART health could not be determined").arg(name));
         report.recommendations.append(
             "SMART data was unavailable or unreadable -- verify the drive connection and "
             "re-run with administrator privileges");

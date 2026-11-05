@@ -2390,7 +2390,9 @@ QJsonObject serializeHardwareInventory(const HardwareInventory& inventory) {
                      {QStringLiteral("bios_version"), inventory.motherboard.bios_version}}},
         {QStringLiteral("battery"),
          QJsonObject{{QStringLiteral("present"), inventory.battery.present},
-                     {QStringLiteral("health_percent"), inventory.battery.health_percent},
+                     {QStringLiteral("health_percent"),
+                      inventory.battery.health_known ? QJsonValue(inventory.battery.health_percent)
+                                                     : QJsonValue()},
                      {QStringLiteral("status"), inventory.battery.status}}},
         {QStringLiteral("os_name"), inventory.os_name},
         {QStringLiteral("os_version"), inventory.os_version},

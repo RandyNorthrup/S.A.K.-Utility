@@ -835,7 +835,7 @@ void DiagnosticController::aggregateResults() {
         m_report_data.overall_status, !m_suite_failures.isEmpty() || !no_result.isEmpty());
 
     constexpr double kBatteryWarningThreshold = 50.0;
-    if (m_report_data.inventory.battery.present &&
+    if (m_report_data.inventory.battery.present && m_report_data.inventory.battery.health_known &&
         m_report_data.inventory.battery.health_percent < kBatteryWarningThreshold) {
         m_report_data.warnings.append(
             QString("Battery health is degraded: %1%")

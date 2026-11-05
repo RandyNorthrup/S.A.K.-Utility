@@ -139,9 +139,13 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
     m_hw_uptime_label->setText(formatUptime(inventory.uptime_seconds));
 
     if (inventory.battery.present) {
-        m_hw_battery_label->setText(QString("%1 - %2% health, %3")
-                                        .arg(inventory.battery.name)
-                                        .arg(inventory.battery.health_percent, 0, 'f', 1)
+        // A battery that reports no capacities has no health to show, not 0%.
+        const QString health =
+            inventory.battery.health_known
+                ? QString("%1% health").arg(inventory.battery.health_percent, 0, 'f', 1)
+                : QString("health unknown");
+        m_hw_battery_label->setText(QString("%1 - %2, %3")
+                                        .arg(inventory.battery.name, health)
                                         .arg(inventory.battery.status));
     } else {
         m_hw_battery_label->setText("Not present (desktop)");

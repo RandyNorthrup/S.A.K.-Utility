@@ -414,10 +414,18 @@ void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
     QVERIFY(report.recommendations.contains(
         QStringLiteral("SMART data was unavailable or unreadable -- verify the drive connection "
                        "and re-run with administrator privileges")));
-    // Must carry the exact indeterminate-health warning (pins the specific message, not just that
-    // some warning mentions "could not be determined").
-    QVERIFY(report.warnings.contains(
-        QStringLiteral("SMART health could not be determined for this drive")));
+    // Must carry the exact indeterminate-health warning, naming the drive (pins the specific
+    // message, not just that some warning mentions "could not be determined"): the panel lists
+    // every drive's warnings together, and five unnamed ones could not be told apart.
+    QVERIFY2(report.warnings.contains(
+                 QStringLiteral("PhysicalDrive0: SMART health could not be determined")),
+             qPrintable(report.warnings.join(QLatin1Char('|'))));
+    sak::SmartDiskAnalyzer second;
+    const sak::SmartReport named =
+        second.parseAndAssessForTesting(R"({"model_name": "VBOX HARDDISK"})", 3);
+    QVERIFY2(named.warnings.contains(QStringLiteral(
+                 "PhysicalDrive3 (VBOX HARDDISK): SMART health could not be determined")),
+             qPrintable(named.warnings.join(QLatin1Char('|'))));
 }
 
 void SmartDiskAnalyzerTests::assess_validSataPassed_isHealthy() {

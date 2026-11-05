@@ -9,6 +9,7 @@
 #include "sak/diagnostic_types.h"
 #include "sak/layout_constants.h"
 
+#include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
 #include <QObject>
@@ -91,6 +92,12 @@ public:
     /// @return One QVariantMap per JSON object; non-object array entries skipped.
     /// @note Pure + static for unit testing.
     [[nodiscard]] static QVector<QVariantMap> jsonDocToVariantMaps(const QJsonDocument& doc);
+
+    /// @brief Seconds since @p boot_time, as Win32_OperatingSystem.LastBootUpTime arrives: CIM
+    ///        ("yyyyMMddHHmmss.ffffff+UUU"), or Windows PowerShell's JSON form "/Date(ms)/".
+    ///        0 (unknown) when it is neither. Pure + static for unit testing.
+    [[nodiscard]] static uint64_t uptimeSecondsSinceBoot(const QString& boot_time,
+                                                         const QDateTime& now);
 
 Q_SIGNALS:
     void scanStarted();

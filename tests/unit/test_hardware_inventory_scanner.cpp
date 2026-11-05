@@ -9,6 +9,7 @@
 
 #include <QJsonDocument>
 #include <QSignalSpy>
+#include <QTimeZone>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -27,6 +28,7 @@ private Q_SLOTS:
     void gpuInfo_defaults();
     void motherboardInfo_defaults();
     void batteryInfo_defaults();
+    void uptimeReadsTheBootTimeInEitherForm();
     void cancel_doesNotCrash();
     void scanCpu_returnsRealCpuInfo();
     void volumeDiskMap_parsesArray();
@@ -157,6 +159,23 @@ void TestHardwareInventoryScanner::batteryInfo_defaults() {
     QCOMPARE(info.design_capacity, 0u);
     QCOMPARE(info.full_charge_capacity, 0u);
     QCOMPARE(info.health_percent, 0.0);
+    QVERIFY(!info.health_known);
+}
+
+// Windows PowerShell's ConvertTo-Json writes LastBootUpTime as "/Date(ms)/", which the CIM-only
+// parse read as nothing, so every PC showed "Uptime: 0 min".
+void TestHardwareInventoryScanner::uptimeReadsTheBootTimeInEitherForm() {
+    const QDateTime boot = QDateTime::fromMSecsSinceEpoch(1'793'000'000'000, QTimeZone::UTC);
+    const QDateTime now = boot.addSecs(3 * 3600 + 120);
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(
+                 QStringLiteral("/Date(1793000000000)/"), now),
+             static_cast<uint64_t>(3 * 3600 + 120));
+    const QDateTime local_boot = QDateTime(QDate(2026, 11, 5), QTime(8, 30, 0));
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(
+                 QStringLiteral("20261105083000.500000+480"), local_boot.addSecs(60)),
+             static_cast<uint64_t>(60));
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(QStringLiteral("soon"), now), 0U);
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(QString(), now), 0U);
 }
 
 void TestHardwareInventoryScanner::cancel_doesNotCrash() {

@@ -14,7 +14,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTimeZone>
 
 #include <Windows.h>
 
@@ -102,24 +104,6 @@ const QVariantMap* findWmiGpuByName(const QVector<QVariantMap>& wmiGpus, const Q
     return nullptr;
 }
 
-/// @brief Uptime in seconds parsed from a CIM_DATETIME LastBootUpTime string.
-///
-/// Uses the queried boot time ("yyyyMMddHHmmss.ffffff+UUU") so the value reflects
-/// wall-clock uptime including sleep/hibernate, unlike GetTickCount64. Returns 0
-/// (unknown) when the string is missing or unparseable -- no fabricated uptime.
-uint64_t uptimeSecondsFromCimDateTime(const QString& cimDateTime) {
-    constexpr int kCimDateTimeSecondsWidth = 14;  // yyyyMMddHHmmss
-    if (cimDateTime.size() < kCimDateTimeSecondsWidth) {
-        return 0;
-    }
-    const QDateTime boot = QDateTime::fromString(cimDateTime.left(kCimDateTimeSecondsWidth),
-                                                 QStringLiteral("yyyyMMddHHmmss"));
-    if (!boot.isValid()) {
-        return 0;
-    }
-    const qint64 secs = boot.secsTo(QDateTime::currentDateTime());
-    return secs > 0 ? static_cast<uint64_t>(secs) : 0;
-}
 
 // Insert one {Letter, DiskIndex} mapping, dropping entries that cannot be
 // resolved to a real disk. DiskIndex is null when the partition had no matching
@@ -327,6 +311,29 @@ void HardwareInventoryScanner::cancel() {
 // ============================================================================
 // WMI Helper
 // ============================================================================
+
+uint64_t HardwareInventoryScanner::uptimeSecondsSinceBoot(const QString& boot_time,
+                                                          const QDateTime& now) {
+    // The boot time, not GetTickCount64, so uptime includes sleep and hibernation. Windows
+    // PowerShell's ConvertTo-Json writes a date as "/Date(ms)/", which the CIM-only parse turned
+    // into 0, and every PC showed "0 min".
+    static const QRegularExpression json_date(QStringLiteral(R"(^/Date\((-?\d+)\)/$)"));
+    QDateTime boot;
+    if (const auto match = json_date.match(boot_time); match.hasMatch()) {
+        boot = QDateTime::fromMSecsSinceEpoch(match.captured(1).toLongLong(), QTimeZone::UTC);
+    } else {
+        constexpr int kCimDateTimeSecondsWidth = 14;  // yyyyMMddHHmmss
+        if (boot_time.size() >= kCimDateTimeSecondsWidth) {
+            boot = QDateTime::fromString(boot_time.left(kCimDateTimeSecondsWidth),
+                                         QStringLiteral("yyyyMMddHHmmss"));
+        }
+    }
+    if (!boot.isValid()) {
+        return 0;
+    }
+    const qint64 secs = boot.secsTo(now);
+    return secs > 0 ? static_cast<uint64_t>(secs) : 0;
+}
 
 QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class,
                                                         const QStringList& properties,
@@ -873,16 +880,20 @@ bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
                                  ? 0
                                  : power_status.BatteryLifeTime / sak::kSecondsPerMinute;
 
-    switch (power_status.ACLineStatus) {
-    case 0:
-        info.status = "Discharging";
-        break;
-    case 1:
-        info.status = "Charging";
-        break;
-    default:
+    // Charging is the battery's own flag. ACLineStatus says only that a charger is connected,
+    // and a full battery on a charger is not charging.
+    constexpr BYTE kChargingFlag = 8;
+    constexpr BYTE kUnknownBatteryStatus = 255;
+    if (power_status.BatteryFlag == kUnknownBatteryStatus) {
         info.status = "Unknown";
-        break;
+    } else if ((power_status.BatteryFlag & kChargingFlag) != 0) {
+        info.status = "Charging";
+    } else if (power_status.ACLineStatus == 1) {
+        info.status = "On AC power";
+    } else if (power_status.ACLineStatus == 0) {
+        info.status = "Discharging";
+    } else {
+        info.status = "Unknown";
     }
 
     return true;
@@ -912,6 +923,7 @@ BatteryInfo HardwareInventoryScanner::queryBattery() {
             info.health_percent = (static_cast<double>(info.full_charge_capacity) /
                                    static_cast<double>(info.design_capacity)) *
                                   sak::kPercentMaxF;
+            info.health_known = true;
         }
     }
 
@@ -948,8 +960,8 @@ void HardwareInventoryScanner::queryOsInfo() {
     // Uptime from the queried LastBootUpTime (CIM_DATETIME) so it reflects
     // wall-clock uptime including sleep/hibernate, unlike GetTickCount64. Fails
     // closed to 0 (unknown) when the boot time is missing/unparseable.
-    m_inventory.uptime_seconds =
-        uptimeSecondsFromCimDateTime(os.value("LastBootUpTime").toString().trimmed());
+    m_inventory.uptime_seconds = uptimeSecondsSinceBoot(
+        os.value("LastBootUpTime").toString().trimmed(), QDateTime::currentDateTime());
 
     logInfo("OS: {} (Build {})",
             m_inventory.os_name.toStdString(),

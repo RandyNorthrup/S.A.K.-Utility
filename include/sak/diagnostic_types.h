@@ -123,6 +123,7 @@ struct BatteryInfo {
     uint32_t full_charge_capacity{0};  ///< mWh (current max)
     uint32_t current_charge{0};        ///< mWh (right now)
     double health_percent{0.0};        ///< fullCharge / designCapacity * 100
+    bool health_known{false};          ///< false when either capacity was not reported
     QString status;                    ///< "Charging" / "Discharging" / "Full"
     uint32_t cycle_count{0};           ///< Charge cycles (if available)
     uint32_t estimated_minutes{0};     ///< Remaining runtime
