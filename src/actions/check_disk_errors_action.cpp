@@ -75,7 +75,8 @@ QVector<CheckDiskErrorsAction::MountedVolume> CheckDiskErrorsAction::mountedVolu
         volumes.append({.root = root,
                         .valid = storage.isValid(),
                         .read_only = storage.isReadOnly(),
-                        .drive_type = GetDriveTypeW(wide_root.c_str())});
+                        .drive_type = GetDriveTypeW(wide_root.c_str()),
+                        .file_system = QString::fromUtf8(storage.fileSystemType())});
     }
     return volumes;
 }
@@ -99,6 +100,10 @@ CheckDiskErrorsAction::ScanTargets CheckDiskErrorsAction::selectScanTargets(
         if (!volume.valid || volume.read_only || !driveTypeIsScannable(volume.drive_type)) {
             continue;
         }
+        if (!fileSystemIsScannable(volume.file_system)) {
+            noteUnsupportedVolume(&targets, drive, volume.file_system);
+            continue;
+        }
         // De-duplicate so one drive is never scanned (or counted) twice.
         if (!targets.drives.contains(drive)) {
             targets.drives.append(drive);
@@ -111,6 +116,22 @@ ProcessResult CheckDiskErrorsAction::runScanProcess(const QString& script,
                                                     int timeout_ms,
                                                     const std::function<bool()>& should_cancel) {
     return runPowerShell(script, timeout_ms, true, true, should_cancel);
+}
+
+void CheckDiskErrorsAction::noteUnsupportedVolume(ScanTargets* targets,
+                                                  QChar drive,
+                                                  const QString& file_system) {
+    const bool listed = std::ranges::any_of(
+        targets->unsupported, [drive](const UnsupportedVolume& u) { return u.drive == drive; });
+    if (!listed) {
+        targets->unsupported.append({.drive = drive, .file_system = file_system});
+    }
+}
+
+bool CheckDiskErrorsAction::fileSystemIsScannable(const QString& file_system) {
+    const QString name = file_system.trimmed();
+    return name.isEmpty() || name.compare(QStringLiteral("NTFS"), Qt::CaseInsensitive) == 0 ||
+           name.compare(QStringLiteral("ReFS"), Qt::CaseInsensitive) == 0;
 }
 
 bool CheckDiskErrorsAction::driveTypeIsScannable(unsigned int drive_type) {
@@ -151,6 +172,7 @@ void CheckDiskErrorsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    m_unchecked_drives.clear();
     const QDateTime start_time = QDateTime::currentDateTime();
     QVector<QChar> drives;
     QString report;
@@ -180,6 +202,13 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
     QString skipped;
     for (const QChar network_drive : targets.network_drives) {
         skipped += QString("Drive %1: - skipped, it is a network drive\n\n").arg(network_drive);
+    }
+    for (const UnsupportedVolume& volume : targets.unsupported) {
+        skipped += QString(
+                       "Drive %1: - not checked: it is %2, and the online scan reads NTFS and "
+                       "ReFS only. Run chkdsk %1: (without /f) to check it read-only\n\n")
+                       .arg(volume.drive)
+                       .arg(volume.file_system);
     }
 
     if (drives.isEmpty()) {
@@ -224,7 +253,7 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
         .arg(drive);
 }
 
-void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
+bool CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
                                                  QString& report,
                                                  int& drives_scanned,
                                                  int& errors_found,
@@ -232,6 +261,7 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
     const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     bool parsing = false;
+    bool entered = false;
     ParsedDriveState state;
 
     for (const QString& line : lines) {
@@ -245,6 +275,7 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
 
         if (trimmed == "===SCAN_END===") {
             parsing = false;
+            entered = true;
             appendDriveScanEntry(state, report, drives_scanned, errors_found, repairs_recommended);
             continue;
         }
@@ -268,6 +299,7 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
 
         processScanKeyValue(parts[0].trimmed(), parts[1].trimmed(), state);
     }
+    return entered;
 }
 
 void CheckDiskErrorsAction::processScanKeyValue(const QString& key,
@@ -300,6 +332,7 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
             detail += QStringLiteral(" (") + state.error + QLatin1Char(')');
         }
         report += QString("Drive %1: - %2\n\n").arg(state.drive_letter).arg(detail);
+        m_unchecked_drives.append(state.drive_letter + QLatin1Char(':'));
         return;
     }
 
@@ -345,6 +378,7 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
         if (remaining_ms == 0) {
             report +=
                 QString("Drive %1: - not scanned, the run reached its time limit\n\n").arg(drive);
+            m_unchecked_drives.append(QString(drive) + QLatin1Char(':'));
             continue;
         }
         const int granted_ms =
@@ -356,6 +390,7 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
         }
         if (proc.timed_out) {
             report += QString("Drive %1: - TIMEOUT (scan took too long)\n\n").arg(drive);
+            m_unchecked_drives.append(QString(drive) + QLatin1Char(':'));
             continue;
         }
         if (!proc.std_err.trimmed().isEmpty()) {
@@ -369,14 +404,28 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
             report += QString("Drive %1: - scan process did not complete cleanly (%2)\n\n")
                           .arg(drive)
                           .arg(describeProcessFailure(proc));
+            m_unchecked_drives.append(QString(drive) + QLatin1Char(':'));
             continue;
         }
 
-        parseDriveScanResult(
-            proc.std_out, report, drives_scanned, errors_found, repairs_recommended);
+        if (!parseDriveScanResult(
+                proc.std_out, report, drives_scanned, errors_found, repairs_recommended)) {
+            reportDriveWithNoResult(drive, proc.std_err, report);
+        }
     }
 
     Q_EMIT executionProgress("Disk error check complete", progress::kComplete);
+}
+
+void CheckDiskErrorsAction::reportDriveWithNoResult(QChar drive,
+                                                    const QString& std_err,
+                                                    QString& report) {
+    // Counted, so it is named: a run once said "1 could not be checked" and named none.
+    const QString said = std_err.trimmed();
+    report += QString("Drive %1: - the scan gave no result%2\n\n")
+                  .arg(drive)
+                  .arg(said.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(said));
+    m_unchecked_drives.append(QString(drive) + QLatin1Char(':'));
 }
 
 CheckDiskErrorsAction::DiskCheckOutcome CheckDiskErrorsAction::evaluateDiskCheckOutcome(
@@ -431,10 +480,11 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                              .arg(totals.repairs_recommended);
         result.log = final_report;
     } else {
-        result.message = QString("Scanned %1 of %2 drive(s); %3 could not be checked")
+        result.message = QString("Scanned %1 of %2 drive(s); %3 could not be checked (%4)")
                              .arg(totals.drives_scanned)
                              .arg(totals.total_drives)
-                             .arg(outcome.drives_failed);
+                             .arg(outcome.drives_failed)
+                             .arg(m_unchecked_drives.join(QStringLiteral(", ")));
         result.log = final_report;
     }
 

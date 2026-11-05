@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <functional>
@@ -54,12 +55,20 @@ public:
         bool valid{false};
         bool read_only{false};
         unsigned int drive_type{0};  ///< GetDriveTypeW's answer.
+        QString file_system;         ///< "NTFS", "FAT32"...; empty when Windows did not say.
+    };
+
+    /// @brief A drive left out because the online scan cannot read its file system.
+    struct UnsupportedVolume {
+        QChar drive;
+        QString file_system;
     };
 
     /// @brief The drives a run scans, and the network drives it says it left out.
     struct ScanTargets {
         QVector<QChar> drives;
         QVector<QChar> network_drives;
+        QVector<UnsupportedVolume> unsupported;
     };
 
     /// @brief Sort mounted volumes into what this check scans and what it reports skipping. Pure.
@@ -100,6 +109,11 @@ public:
     ///        Pure; unit-testable.
     [[nodiscard]] static bool driveTypeIsScannable(unsigned int drive_type);
 
+    /// @brief Whether Repair-Volume -Scan can read this file system: NTFS and ReFS. FAT, FAT32
+    ///        and exFAT refuse with "The specified file system is not supported". An unknown
+    ///        (empty) name is tried, and a failure is then reported for that drive. Pure.
+    [[nodiscard]] static bool fileSystemIsScannable(const QString& file_system);
+
 protected:
     /// @brief The volumes Windows reports mounted right now.
     [[nodiscard]] virtual QVector<MountedVolume> mountedVolumes() const;
@@ -128,6 +142,8 @@ private:
     };
 
     QVector<QString> m_drives;
+    /// Drives this run counted but could not check, named in its message.
+    QStringList m_unchecked_drives;
 
     // execute() helpers -- split to stay under the 70-line function gate
     bool executeEnumerateVolumes(const QDateTime& start_time,
@@ -141,7 +157,12 @@ private:
     void executeBuildReport(const QDateTime& start_time,
                             const QString& report,
                             const DiskCheckTotals& totals);
-    void parseDriveScanResult(const QString& output,
+    static void noteUnsupportedVolume(ScanTargets* targets,
+                                      QChar drive,
+                                      const QString& file_system);
+    void reportDriveWithNoResult(QChar drive, const QString& std_err, QString& report);
+    /// @return false when the output held no complete drive entry at all.
+    bool parseDriveScanResult(const QString& output,
                               QString& report,
                               int& drives_scanned,
                               int& errors_found,

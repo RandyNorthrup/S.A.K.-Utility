@@ -31,6 +31,8 @@ private Q_SLOTS:
     void driveTypeIsScannable_onlyLocalVolumes();
     void runIsBoundByItsOwnTimeLimit();
     void selectScanTargets_setsNetworkDrivesApart();
+    void aFat32StickIsNamedAsNotCheckedNotFailed();
+    void aDriveWithNoResultIsNamed();
     void executeSaysItSkippedANetworkDrive();
     void executeStopsItsScanWhenCancelled();
     void aScanProcessThatWasCancelledEndsTheRun();
@@ -98,6 +100,57 @@ void CheckDiskErrorsActionTests::selectScanTargets_setsNetworkDrivesApart() {
                                                     volume("F:/", kFixed)});
     QCOMPARE(targets.drives, (QVector<QChar>{QLatin1Char('C'), QLatin1Char('F')}));
     QCOMPARE(targets.network_drives, (QVector<QChar>{QLatin1Char('Z'), QLatin1Char('Y')}));
+}
+
+// U:, a FAT32 stick, failed "The specified file system is not supported" and took the whole run to
+// "Execution failed". The online scan reads NTFS and ReFS only, so it is set apart with the reason.
+void CheckDiskErrorsActionTests::aFat32StickIsNamedAsNotCheckedNotFailed() {
+    ScriptedCheckDisk action;
+    auto stick = volume("U:/", kFixed);
+    stick.file_system = QStringLiteral("FAT32");
+    auto system = volume("C:/", kFixed);
+    system.file_system = QStringLiteral("NTFS");
+    action.volumes = {system, stick};
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QCOMPARE(action.scripts_run.size(), 1);
+    QVERIFY2(result.success, qPrintable(result.message));
+    QVERIFY2(result.log.contains(QStringLiteral("Drive U: - not checked: it is FAT32")),
+             qPrintable(result.log));
+    QVERIFY2(result.log.contains(QStringLiteral("chkdsk U:")), qPrintable(result.log));
+    QVERIFY(Action::fileSystemIsScannable(QStringLiteral("NTFS")));
+    QVERIFY(Action::fileSystemIsScannable(QStringLiteral("ReFS")));
+    QVERIFY(Action::fileSystemIsScannable(QString()));
+    QVERIFY(!Action::fileSystemIsScannable(QStringLiteral("exFAT")));
+}
+
+// One run said "Scanned 4 of 5 drive(s); 1 could not be checked" and its Details named no drive.
+void CheckDiskErrorsActionTests::aDriveWithNoResultIsNamed() {
+    class SilentScan final : public ScriptedCheckDisk {
+    protected:
+        sak::ProcessResult runScanProcess(const QString& script,
+                                          int,
+                                          const std::function<bool()>&) override {
+            scripts_run << script;
+            sak::ProcessResult proc;
+            proc.exit_code = 0;
+            proc.std_err = QStringLiteral("Repair-Volume printed nothing");
+            return proc;
+        }
+    };
+    SilentScan action;
+    action.volumes = {volume("D:/", kFixed)};
+    action.execute();
+    const auto& result = action.lastExecutionResult();
+    QVERIFY(!result.success);
+    QVERIFY2(result.log.contains(QStringLiteral(
+                 "Drive D: - the scan gave no result (Repair-Volume printed nothing)")),
+             qPrintable(result.log));
+    QVERIFY2(result.message.contains(QStringLiteral("(D:)")) ||
+                 result.message.contains(QStringLiteral("Could not scan any drives")),
+             qPrintable(result.message));
 }
 
 void CheckDiskErrorsActionTests::executeSaysItSkippedANetworkDrive() {
