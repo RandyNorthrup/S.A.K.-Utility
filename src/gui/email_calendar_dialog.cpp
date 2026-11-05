@@ -773,8 +773,8 @@ private:
         const int left = columnLeft(col);
         constexpr int kTimeDotRadius = 4;
 
-        painter.setPen(QPen(QColor(ui::kColorError), kCurrentTimeLineWidthPx));
-        painter.setBrush(QColor(ui::kColorError));
+        painter.setPen(QPen(ui::themedColor(ui::kColorError), kCurrentTimeLineWidthPx));
+        painter.setBrush(ui::themedColor(ui::kColorError));
         painter.drawEllipse(QPoint(left, line_y), kTimeDotRadius, kTimeDotRadius);
         painter.drawLine(left + kTimeDotRadius, line_y, left + columnWidth(), line_y);
         painter.setBrush(Qt::NoBrush);

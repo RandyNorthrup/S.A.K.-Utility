@@ -449,7 +449,6 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
     m_network_table->setAlternatingRowColors(true);
     m_network_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_network_table->setToolTip("Double-click a row to load it into the form");
-    m_network_table->setStyleSheet(sak::ui::wifiIndicatorStyle());
     layout->addWidget(m_network_table, 1);
 }
 

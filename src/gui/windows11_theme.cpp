@@ -41,6 +41,22 @@ constexpr double kPrimaryGradientBottomAlpha = 0.88;
 constexpr double kPrimaryGradientChunkAlpha = 0.90;
 constexpr double kScrollHandleAlpha = 0.60;
 constexpr double kScrollHandleHoverAlpha = 0.70;
+constexpr double kDisabledInputBorderAlpha = 0.60;
+
+/// @p color at @p alpha over @p backdrop, as one opaque colour. A table paints its selection
+/// colour and then the selected item's colour on top, so a translucent selection came out darker
+/// in tables than in trees and lists; an opaque one paints the same however often it is drawn.
+QString blendedOver(const char* color, double alpha, const char* backdrop) {
+    const QColor top(QString::fromLatin1(color));
+    const QColor under(QString::fromLatin1(backdrop));
+    const auto mix = [alpha](int over, int base) {
+        return qRound((alpha * over) + ((1.0 - alpha) * base));
+    };
+    return QColor(mix(top.red(), under.red()),
+                  mix(top.green(), under.green()),
+                  mix(top.blue(), under.blue()))
+        .name(QColor::HexRgb);
+}
 
 QString themeBaseAndChromeStyles() {
     return QString::fromLatin1(kWindows11ThemeBaseAndChromeStyles)
@@ -61,12 +77,12 @@ QString themeBaseAndChromeStyles() {
 
 QString themeTabAndButtonStyles() {
     return QString::fromLatin1(kWindows11ThemeTabAndButtonStyles)
-               .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderMediumAlpha),
+               .arg(QString::fromLatin1(kColorBorderDefault),
                     colorWithAlpha(kColorBgWhite, kChromeTabPaneAlpha),
                     colorWithAlpha(kColorBorderDefault, kChromeTabAlpha),
                     QString::fromLatin1(kColorTextHeading),
-                    colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha),
-                    colorWithAlpha(kColorPrimaryDark, kPrimaryGradientBottomAlpha),
+                    colorWithAlpha(kColorSelectedTabTop, kPrimaryGradientTopAlpha),
+                    colorWithAlpha(kColorSelectedTabBottom, kPrimaryGradientBottomAlpha),
                     QString::fromLatin1(kColorButtonTextOnTone)) +
            actionButtonStyle(
                "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
@@ -79,7 +95,12 @@ QString themeInputStyles() {
              QString::fromLatin1(kColorBorderDefault),
              colorWithAlpha(kColorPrimary, kGridLineAlpha),
              QString::fromLatin1(kColorPrimary),
-             QString::fromLatin1(kColorBgWhite));
+             QString::fromLatin1(kColorBgWhite),
+             QString::fromLatin1(kColorTextPrimary),
+             QString::fromLatin1(kColorTextMuted),
+             QString::fromLatin1(kColorTextDisabled),
+             QString::fromLatin1(kColorBgSurface))
+        .arg(colorWithAlpha(kColorBorderDefault, kDisabledInputBorderAlpha));
 }
 
 QString themeInputSelectorStyles(bool dark) {
@@ -118,7 +139,10 @@ QString themeIndicatorStyles() {
         .arg(QString::fromLatin1(kColorBgSurface))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorPrimaryDark))
-        .arg(kCssRadiusLargePx);
+        .arg(kCssRadiusLargePx)
+        .arg(kIconCheckBoxTickOnTone)
+        .arg(kIconCheckBoxDashOnTone)
+        .arg(QString::fromLatin1(kColorButtonTextOnTone));
 }
 
 QString themeProgressStyles() {
@@ -138,23 +162,25 @@ QString themeInputAndIndicatorStyles() {
 }
 
 QString themeContainerAndTableStyles() {
+    const QString selection = blendedOver(kColorPrimary, kSelectionStrongAlpha, kColorBgWhite);
     return QString::fromLatin1(kWindows11ThemeContainerAndTableStyles)
-        .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderStrongAlpha))
+        .arg(QString::fromLatin1(kColorBorderDefault))
         .arg(QString::fromLatin1(kColorTextBody))
         .arg(colorWithAlpha(kColorBorderDefault, kChromeHeaderAlpha))
         .arg(colorWithAlpha(kColorBgWhite, kChromeViewAlpha))
         .arg(QString::fromLatin1(kColorBorderDefault))
         .arg(colorWithAlpha(kColorBorderMuted, kGridLineAlpha))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionMediumAlpha))
+        .arg(selection)
         .arg(QString::fromLatin1(kColorTextPrimary))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionStrongAlpha))
+        .arg(selection)
         .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha))
         .arg(kUiGroupBoxBorderRadius)
         .arg(kUiGroupBoxTitleMarginTop)
         .arg(kUiGroupBoxContentPaddingTop)
         .arg(kUiGroupBoxContentPaddingHorizontal)
         .arg(kUiGroupBoxContentPaddingBottom)
-        .arg(kUiGroupBoxTitlePaddingHorizontal);
+        .arg(kUiGroupBoxTitlePaddingHorizontal)
+        .arg(QString::fromLatin1(kColorBgSurface));
 }
 
 QString themeSliderStyles() {
@@ -192,7 +218,13 @@ QString darkTabAndInputStyles() {
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorDarkBgInputFocus))
-        .arg(QString::fromLatin1(kColorDarkBorderMuted));
+        .arg(QString::fromLatin1(kColorDarkBorderMuted))
+        .arg(QString::fromLatin1(kColorPrimaryDark))
+        .arg(QString::fromLatin1(kColorButtonTextOnTone))
+        .arg(QString::fromLatin1(kColorDarkTextSecondary))
+        .arg(QString::fromLatin1(kColorDarkTextMuted))
+        .arg(QString::fromLatin1(kColorDarkBgPage))
+        .arg(colorWithAlpha(kColorDarkBorderDefault, kDisabledInputBorderAlpha));
 }
 
 QString darkContainerAndViewStyles() {
@@ -204,7 +236,8 @@ QString darkContainerAndViewStyles() {
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
         .arg(QString::fromLatin1(kColorDarkBgHover))
         .arg(QString::fromLatin1(kColorDarkBorderMuted))
-        .arg(QString::fromLatin1(kColorPrimary));
+        .arg(QString::fromLatin1(kColorPrimary))
+        .arg(QString::fromLatin1(kColorDarkBgSurface));
 }
 
 QString darkThemeOverrideStyles() {

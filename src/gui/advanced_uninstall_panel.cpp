@@ -1469,11 +1469,11 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         name_item->setData(kOriginalIndexRole, row);  // Store original index for sort-safe lookup
         // Color code bloatware and orphaned
         if (prog.isBloatware) {
-            name_item->setForeground(QColor(ui::kColorWarning));
+            name_item->setForeground(ui::themedColor(ui::kColorWarning));
             name_item->setToolTip(tr("Potential bloatware"));
         }
         if (prog.isOrphaned) {
-            name_item->setForeground(QColor(ui::kColorError));
+            name_item->setForeground(ui::themedColor(ui::kColorError));
             name_item->setToolTip(tr("Orphaned -- program files not found"));
         }
         m_program_table->setItem(row, kColName, name_item);
@@ -1572,15 +1572,15 @@ void AdvancedUninstallPanel::populateLeftoverRow(int row, const LeftoverItem& it
     switch (item.risk) {
     case LeftoverItem::RiskLevel::Safe:
         risk_text = tr("Safe");
-        risk_color = QColor(ui::kColorSuccess);
+        risk_color = ui::themedColor(ui::kColorSuccess);
         break;
     case LeftoverItem::RiskLevel::Review:
         risk_text = tr("Review");
-        risk_color = QColor(ui::kColorWarning);
+        risk_color = ui::themedColor(ui::kColorWarning);
         break;
     case LeftoverItem::RiskLevel::Risky:
         risk_text = tr("Risky");
-        risk_color = QColor(ui::kColorError);
+        risk_color = ui::themedColor(ui::kColorError);
         break;
     }
     auto* risk_item = new QTableWidgetItem(risk_text);

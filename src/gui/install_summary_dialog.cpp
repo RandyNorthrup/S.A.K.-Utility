@@ -135,7 +135,7 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
             break;
         }
         auto* status_item = new QTableWidgetItem(status_text);
-        status_item->setForeground(QColor(status_color));
+        status_item->setForeground(QColor(ui::htmlColor(status_color)));
         m_job_table->setItem(row, ColStatus, status_item);
 
         // Duration

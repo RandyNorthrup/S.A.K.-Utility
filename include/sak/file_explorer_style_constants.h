@@ -23,10 +23,13 @@ namespace sak::ui {
 
 namespace style_detail {
 
+// The explorer's tints are the app's accent (kColorPrimary) at these strengths. A selected file,
+// a selected place in the sidebar and a selected row anywhere else in the app are one shade: the
+// accent at 0.22, as the theme's item views paint it.
 constexpr double kExplorerHoverAlpha = 0.10;
 constexpr double kExplorerPressedAlpha = 0.16;
 constexpr double kExplorerCheckedAlpha = 0.14;
-constexpr double kExplorerSelectionAlpha = 0.16;
+constexpr double kExplorerSelectionAlpha = 0.22;
 constexpr double kExplorerSelectionHoverAlpha = 0.07;
 constexpr int kExplorerControlRadiusPx = 6;
 constexpr int kExplorerTabRadiusPx = 7;
@@ -36,23 +39,30 @@ inline QString chromeButtonStyles() {
         "#fileExplorerOmnibar QPushButton, #fileExplorerCommandBar QPushButton, "
         "#fileExplorerCommandBar QToolButton, #fileExplorerTabRow QPushButton, "
         "#fileExplorerSidebarFooter QPushButton");
+    // Each state goes on every selector of the list. Written once after the whole list, a state
+    // bound to the last selector only and the other four took all four rules at once: every
+    // button looked checked, and New and View drew in the disabled colour.
     return QStringLiteral(
                "%1 { background: transparent; border: 1px solid transparent; "
                "border-radius: %2px; padding: 5px 9px; color: palette(window-text); "
                "font-weight: 400; }"
-               "%1:hover { background: %3; }"
-               "%1:pressed { background: %4; }"
-               "%1:checked { background: %5; }"
-               "%1:disabled { color: %6; }"
+               "%3 { background: %4; }"
+               "%5 { background: %6; }"
+               "%7 { background: %8; }"
+               "%9 { background: transparent; color: %10; }"
                "#fileExplorerCommandBar QToolButton::menu-indicator { "
                "subcontrol-position: right center; subcontrol-origin: padding; "
                "left: -2px; }")
         .arg(scope)
         .arg(kExplorerControlRadiusPx)
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha),
-             colorWithAlpha(kColorAccentWindows, kExplorerPressedAlpha),
-             colorWithAlpha(kColorAccentWindows, kExplorerCheckedAlpha),
-             cssColor(kColorTextDisabled));
+        .arg(selectorsInState(scope, ":hover"),
+             colorWithAlpha(kColorPrimary, kExplorerHoverAlpha),
+             selectorsInState(scope, ":pressed"),
+             colorWithAlpha(kColorPrimary, kExplorerPressedAlpha),
+             selectorsInState(scope, ":checked"),
+             colorWithAlpha(kColorPrimary, kExplorerCheckedAlpha),
+             selectorsInState(scope, ":disabled"))
+        .arg(cssColor(kColorTextDisabled));
 }
 
 inline QString addressInputStyles() {
@@ -73,9 +83,9 @@ inline QString addressInputStyles() {
                "#fileExplorerBreadcrumbOverflow::menu-indicator { image: none; }"
                "#fileExplorerBreadcrumbChevron { padding: 0 1px; }")
         .arg(kExplorerControlRadiusPx)
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerSelectionAlpha),
-             QString::fromLatin1(kColorAccentWindows),
-             colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kExplorerSelectionAlpha),
+             QString::fromLatin1(kColorPrimary),
+             colorWithAlpha(kColorPrimary, kExplorerHoverAlpha));
 }
 
 inline QString tabStripStyles() {
@@ -114,8 +124,8 @@ inline QString tabStripStyles() {
                "#fileExplorerInfoPane QPlainTextEdit { border: none; "
                "background: palette(base); }")
         .arg(kExplorerTabRadiusPx)
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha),
-             QString::fromLatin1(kColorAccentWindows));
+        .arg(colorWithAlpha(kColorPrimary, kExplorerHoverAlpha),
+             QString::fromLatin1(kColorPrimary));
 }
 
 inline QString sidebarStyles() {
@@ -130,15 +140,17 @@ inline QString sidebarStyles() {
                "QListWidget#fileExplorerTargetList::item:disabled { "
                "color: palette(dark); }")
         .arg(kExplorerControlRadiusPx)
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha),
-             colorWithAlpha(kColorAccentWindows, kExplorerCheckedAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kExplorerHoverAlpha),
+             colorWithAlpha(kColorPrimary, kExplorerSelectionAlpha));
 }
 
 inline QString itemViewStyles() {
     return QStringLiteral(
+               // The selected item's tint is the only selection paint: the theme's own
+               // selection colour under it made the file list's selection darker than the rest.
                "#fileExplorerRoot QTableView, #fileExplorerRoot QListView { "
                "background: palette(base); alternate-background-color: palette(base); "
-               "border: none; }"
+               "border: none; selection-background-color: transparent; }"
                "#fileExplorerRoot QTableView { gridline-color: transparent; }"
                "#fileExplorerRoot QTableView::item, #fileExplorerRoot QListView::item { "
                "padding: 3px 6px; border: none; }"
@@ -150,8 +162,8 @@ inline QString itemViewStyles() {
                "#fileExplorerRoot QHeaderView::section { background: transparent; "
                "border: none; border-bottom: 1px solid palette(mid); padding: 6px 8px; "
                "color: palette(text); font-weight: 400; }")
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerSelectionHoverAlpha),
-             colorWithAlpha(kColorAccentWindows, kExplorerSelectionAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kExplorerSelectionHoverAlpha),
+             colorWithAlpha(kColorPrimary, kExplorerSelectionAlpha));
 }
 
 inline QString statusAndSplitterStyles() {
@@ -180,7 +192,7 @@ inline QString fileExplorerShellStyleSheetText() {
 /// The accent-bordered frame drawn around the active pane in dual-pane mode.
 inline QString activePaneBorderStyleSheet() {
     return QStringLiteral("FileExplorerPane { border: 1px solid %1; }")
-        .arg(QString::fromLatin1(kColorAccentWindows));
+        .arg(QString::fromLatin1(kColorPrimary));
 }
 
 }  // namespace sak::ui

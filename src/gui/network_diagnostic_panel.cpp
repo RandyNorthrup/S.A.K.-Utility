@@ -2159,8 +2159,8 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
 
         auto* status_item = new QTableWidgetItem(a.isConnected ? tr("Connected")
                                                                : tr("Disconnected"));
-        status_item->setForeground(a.isConnected ? QColor(ui::kColorSuccess)
-                                                 : QColor(ui::kColorError));
+        status_item->setForeground(a.isConnected ? ui::themedColor(ui::kColorSuccess)
+                                                 : ui::themedColor(ui::kColorError));
         m_adapterTable->setItem(row, KAdapterColumnStatus, status_item);
 
         const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
@@ -3388,7 +3388,8 @@ void NetworkDiagnosticPanel::onPingReply(PingReply reply) {
     m_pingTable->setItem(row, KPingColumnAddress, new QTableWidgetItem(reply.replyFrom));
 
     auto* status_item = new QTableWidgetItem(reply.success ? tr("Reply") : tr("Timeout"));
-    status_item->setForeground(reply.success ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
+    status_item->setForeground(reply.success ? ui::themedColor(ui::kColorSuccess)
+                                             : ui::themedColor(ui::kColorError));
     m_pingTable->setItem(row, KPingColumnStatus, status_item);
 
     m_pingTable->setItem(
@@ -3470,7 +3471,7 @@ void NetworkDiagnosticPanel::onTracerouteHop(TracerouteHop hop) {
 
     if (hop.timedOut) {
         auto* timeout_item = new QTableWidgetItem(tr("* * * Request timed out"));
-        timeout_item->setForeground(QColor(ui::kColorWarning));
+        timeout_item->setForeground(ui::themedColor(ui::kColorWarning));
         m_traceTable->setItem(row, KTraceColumnAddress, timeout_item);
         for (int i = KTraceColumnHostname; i < KTraceColumnCount; ++i) {
             m_traceTable->setItem(row, i, new QTableWidgetItem(QStringLiteral("*")));
@@ -3585,18 +3586,18 @@ void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
         if (auto* existing = m_mtrTable->item(i, KMtrColumnLoss)) {
             existing->setText(loss_text);
             if (h.lossPercent > kMtrLossWarningPercentF) {
-                existing->setForeground(QColor(ui::kColorError));
+                existing->setForeground(ui::themedColor(ui::kColorError));
             } else if (h.lossPercent > 0.0) {
-                existing->setForeground(QColor(ui::kColorWarning));
+                existing->setForeground(ui::themedColor(ui::kColorWarning));
             } else {
                 existing->setForeground(QColor());
             }
         } else {
             auto* loss_item = new QTableWidgetItem(loss_text);
             if (h.lossPercent > kMtrLossWarningPercentF) {
-                loss_item->setForeground(QColor(ui::kColorError));
+                loss_item->setForeground(ui::themedColor(ui::kColorError));
             } else if (h.lossPercent > 0.0) {
-                loss_item->setForeground(QColor(ui::kColorWarning));
+                loss_item->setForeground(ui::themedColor(ui::kColorWarning));
             }
             m_mtrTable->setItem(i, KMtrColumnLoss, loss_item);
         }
@@ -3725,7 +3726,7 @@ void NetworkDiagnosticPanel::onDnsQueryComplete(DnsQueryResult result) {
     auto* answer_item = new QTableWidgetItem(result.answers.join(QStringLiteral(", ")));
     if (!result.success) {
         answer_item->setText(result.errorMessage);
-        answer_item->setForeground(QColor(ui::kColorError));
+        answer_item->setForeground(ui::themedColor(ui::kColorError));
     }
     m_dnsTable->setItem(row, KDnsColumnAnswers, answer_item);
 
@@ -3951,7 +3952,7 @@ void NetworkDiagnosticPanel::onPortScanned(PortScanResult result) {
     m_portTable->setItem(row, KPortColumnPort, new QTableWidgetItem(QString::number(result.port)));
 
     auto* state_item = new QTableWidgetItem(tr("Open"));
-    state_item->setForeground(QColor(ui::kColorSuccess));
+    state_item->setForeground(ui::themedColor(ui::kColorSuccess));
     m_portTable->setItem(row, KPortColumnState, state_item);
 
     m_portTable->setItem(row, KPortColumnService, new QTableWidgetItem(result.serviceName));
@@ -4168,11 +4169,11 @@ void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> network
 
         auto* signal_item = new QTableWidgetItem(QStringLiteral("%1 dBm").arg(net.rssiDbm));
         if (net.rssiDbm >= kWifiStrongSignalDbm) {
-            signal_item->setForeground(QColor(ui::kColorSuccess));
+            signal_item->setForeground(ui::themedColor(ui::kColorSuccess));
         } else if (net.rssiDbm >= kWifiUsableSignalDbm) {
-            signal_item->setForeground(QColor(ui::kColorWarning));
+            signal_item->setForeground(ui::themedColor(ui::kColorWarning));
         } else {
-            signal_item->setForeground(QColor(ui::kColorError));
+            signal_item->setForeground(ui::themedColor(ui::kColorError));
         }
         m_wifiTable->setItem(row, KWifiColumnSignal, signal_item);
 
@@ -4235,10 +4236,10 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
 
     auto state_color = [](const QString& state) -> QColor {
         if (state == QStringLiteral("ESTABLISHED")) {
-            return QColor(ui::kColorSuccess);
+            return ui::themedColor(ui::kColorSuccess);
         }
         if (state == QStringLiteral("CLOSE_WAIT") || state == QStringLiteral("TIME_WAIT")) {
-            return QColor(ui::kColorWarning);
+            return ui::themedColor(ui::kColorWarning);
         }
         return {};
     };
@@ -4425,8 +4426,8 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
         auto* action_item = new QTableWidgetItem(
             (r.action == FirewallRule::Action::Allow) ? tr("Allow") : tr("Block"));
         action_item->setForeground((r.action == FirewallRule::Action::Allow)
-                                       ? QColor(ui::kColorSuccess)
-                                       : QColor(ui::kColorError));
+                                       ? ui::themedColor(ui::kColorSuccess)
+                                       : ui::themedColor(ui::kColorError));
         m_fwRuleTable->setItem(i, KFirewallColumnAction, action_item);
 
         m_fwRuleTable->setItem(i,
@@ -4486,11 +4487,13 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
         m_shareTable->setItem(i, KShareColumnType, new QTableWidgetItem(type_str));
 
         auto* read_item = new QTableWidgetItem(s.canRead ? tr("Yes") : tr("No"));
-        read_item->setForeground(s.canRead ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
+        read_item->setForeground(s.canRead ? ui::themedColor(ui::kColorSuccess)
+                                           : ui::themedColor(ui::kColorError));
         m_shareTable->setItem(i, KShareColumnRead, read_item);
 
         auto* write_item = new QTableWidgetItem(s.canWrite ? tr("Yes") : tr("No"));
-        write_item->setForeground(s.canWrite ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
+        write_item->setForeground(s.canWrite ? ui::themedColor(ui::kColorSuccess)
+                                             : ui::themedColor(ui::kColorError));
         m_shareTable->setItem(i, KShareColumnWrite, write_item);
 
         m_shareTable->setItem(i, KShareColumnRemark, new QTableWidgetItem(s.remark));

@@ -1665,6 +1665,33 @@ set_tests_properties(test_app_theme PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_app_theme")
 
+# test_theme_widget_states - what the theme draws for checked, selected, disabled, focused and
+# placeholder states, containers, borders and link buttons, read back by pixel offscreen; and the
+# colour tokens' WCAG AA contrast in both themes
+add_executable(test_theme_widget_states
+    unit/test_theme_widget_states.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_theme_widget_states PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_theme_widget_states PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_theme_widget_states PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_theme_widget_states COMMAND test_theme_widget_states
+         -o "${TEST_OUTPUT_DIR}/test_theme_widget_states.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_theme_widget_states PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_theme_widget_states")
+
 # test_single_instance_guard - one instance per data folder (any spelling of it), a second launch
 # asks the running one forward, and an elevated relaunch waits for its launcher to exit
 add_executable(test_single_instance_guard

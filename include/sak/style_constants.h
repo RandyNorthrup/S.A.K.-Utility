@@ -90,7 +90,9 @@ constexpr int kUiGroupBoxContentPaddingTop = kMarginMedium;
 constexpr int kUiGroupBoxContentPaddingHorizontal = kSpacingDefault;
 constexpr int kUiGroupBoxContentPaddingBottom = kSpacingDefault;
 constexpr int kUiGroupBoxTitlePaddingHorizontal = kMarginSmall;
-constexpr int kUiSpinBoxMinHeight = 32;
+/// Vertical padding of a spin box or date edit: one pixel less than a combo's or line edit's 6,
+/// because the text box inside a spin box carries its own margin. With it the two are one height.
+constexpr int kUiSpinBoxPaddingVerticalPx = 5;
 constexpr int kUiSpinBoxStepperWidth = kUiSelectorButtonWidth;
 constexpr int kUiSpinBoxStepperMargin = kUiSelectorButtonMargin;
 inline const QString kIconSelectorChevronDown =
@@ -122,6 +124,12 @@ inline const QString kIconSelectorCalendar =
 inline const QString kIconSelectorCalendarDark =
     QStringLiteral(":/icons/icons/icons8-selector-calendar-dark.svg");
 inline const QString kIconSelectorCheck = QStringLiteral(":/icons/icons/icons8-selector-check.svg");
+/// The white tick and dash on a checked or partly checked box. A style sheet cannot load a data:
+/// URL, so the inline SVG that was there drew a filled square with no tick.
+inline const QString kIconCheckBoxTickOnTone =
+    QStringLiteral(":/icons/icons/checkbox-tick-on-tone.svg");
+inline const QString kIconCheckBoxDashOnTone =
+    QStringLiteral(":/icons/icons/checkbox-dash-on-tone.svg");
 inline const QString kIconPasswordEyeOpen = QStringLiteral(":/icons/icons/eye_open.svg");
 inline const QString kIconPasswordEyeClosed = QStringLiteral(":/icons/icons/eye_closed.svg");
 inline const QString kIconPasswordEyeOpenOnTone =
@@ -291,7 +299,15 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
 
         /* Leaf widgets & generic frames inherit parent bg
            -- prevents gray-on-white and white-on-gray patches */
-        QLabel, QFrame, QCheckBox, QRadioButton {
+        QLabel, QFrame, QCheckBox, QRadioButton, QSlider {
+            background: transparent;
+        }
+
+        /* A plain container (a label with its (?) button, a row of buttons, a cell widget) takes
+           the surface it sits on. ".QWidget" is QWidget itself, not a subclass, so inputs keep
+           their own fill; without this the page grey showed through in white dialogs, group
+           boxes, the status bar and table cells. */
+        QDialog .QWidget, QGroupBox .QWidget, QStatusBar .QWidget, QAbstractItemView .QWidget {
             background: transparent;
         }
 
@@ -340,8 +356,9 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
             padding: 6px;
         }
 
+        /* The wide right padding keeps a submenu's arrow clear of the longest label. */
         QMenu::item {
-            padding: 6px 16px;
+            padding: 6px 30px 6px 16px;
             border-radius: 6px;
         }
 
@@ -382,6 +399,8 @@ inline constexpr auto kWindows11ThemeInputStyles = R"SAK(
             border-radius: 10px;
             padding: 6px 10px;
             selection-background-color: %3;
+            selection-color: %6;
+            placeholder-text-color: %7;
         }
 
         QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
@@ -390,27 +409,47 @@ inline constexpr auto kWindows11ThemeInputStyles = R"SAK(
             background-color: %5;
         }
 
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled,
+            QDateTimeEdit:disabled, QTimeEdit:disabled {
+            color: %8;
+            background-color: %9;
+            border: 1px solid %10;
+        }
+
+        QCheckBox:disabled, QRadioButton:disabled, QLabel:disabled, QGroupBox::title:disabled {
+            color: %8;
+        }
+
         QCheckBox, QRadioButton {
             spacing: 8px;
         }
     )SAK";
 
 inline constexpr auto kWindows11ThemeIndicatorStyles = R"SAK(
-        QCheckBox::indicator, QRadioButton::indicator {
+        QCheckBox::indicator, QRadioButton::indicator, QAbstractItemView::indicator {
             width: %1px;
             height: %1px;
         }
 
-        QCheckBox::indicator {
+        /* One check box everywhere: a QCheckBox and a check box in a list, table or tree. */
+        QCheckBox::indicator, QAbstractItemView::indicator {
             border: 1px solid %2;
             border-radius: %3px;
             background: %4;
         }
 
-        QCheckBox::indicator:checked {
+        QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {
             background: %5;
             border: 1px solid %6;
-            image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z' fill='white'/></svg>");
+            image: url(%8);
+        }
+
+        /* Partly checked keeps the filled box and shows a dash, as Windows does. */
+        QCheckBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+            background: %5;
+            border: 1px solid %6;
+            image: url(%9);
         }
 
         QRadioButton::indicator {
@@ -419,8 +458,10 @@ inline constexpr auto kWindows11ThemeIndicatorStyles = R"SAK(
             background: %4;
         }
 
+        /* A white dot in the filled circle, so a chosen option is not a plain filled disc. */
         QRadioButton::indicator:checked {
-            background: %5;
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                stop:0 %10, stop:0.34 %10, stop:0.44 %5, stop:1 %5);
             border: 1px solid %6;
         }
     )SAK";
@@ -449,6 +490,7 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             border-radius: %11px;
             margin-top: %12px;
             padding: %13px %14px %15px %14px;
+            background-color: %17;
         }
 
         QGroupBox::title {
@@ -472,11 +514,18 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             selection-background-color: %7;
             selection-color: %8;
             padding: 4px;
+            outline: 0;
         }
 
         QAbstractItemView::item {
             padding: 6px;
             border-radius: 6px;
+        }
+
+        /* A selected row is one band: square cells in tables and trees, and one opaque shade for
+           the row, the item and a tree's branch area. */
+        QTableView::item, QTreeView::item {
+            border-radius: 0px;
         }
 
         QAbstractItemView::item:selected {
@@ -573,7 +622,7 @@ inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
             background-color: %2;
         }
 
-        QLabel, QFrame, QCheckBox, QRadioButton {
+        QLabel, QFrame, QCheckBox, QRadioButton, QSlider {
             background: transparent;
         }
 
@@ -625,7 +674,9 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
             background-color: %5;
             color: %6;
             border: 1px solid %2;
-            selection-background-color: %7;
+            selection-background-color: %10;
+            selection-color: %11;
+            placeholder-text-color: %12;
         }
 
         QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
@@ -634,7 +685,19 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
             border: 1px solid %7;
         }
 
-        QCheckBox::indicator {
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled,
+            QDateTimeEdit:disabled, QTimeEdit:disabled {
+            color: %13;
+            background-color: %14;
+            border: 1px solid %15;
+        }
+
+        QCheckBox:disabled, QRadioButton:disabled, QLabel:disabled, QGroupBox::title:disabled {
+            color: %13;
+        }
+
+        QCheckBox::indicator, QAbstractItemView::indicator {
             border: 1px solid %9;
             background: %5;
         }
@@ -648,6 +711,7 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
 inline constexpr auto kWindows11DarkContainerAndViewStyles = R"SAK(
         QGroupBox {
             border: 1px solid %1;
+            background-color: %9;
         }
 
         QGroupBox::title {
@@ -1000,13 +1064,31 @@ inline constexpr DarkHtmlAlias kDarkHtmlAliases[] = {
     {kColorBgErrorPanel, kColorDarkBgErrorPanel},
 };
 
+/// Status text colours whose light value (darkened for WCAG AA on the light page) is too dark for
+/// the dark theme's surfaces. kStatusColorSuccess and kStatusColorError share the values listed.
+inline constexpr DarkHtmlAlias kDarkStatusTextAliases[] = {
+    {kColorSuccess, kColorDarkStatusSuccess},
+    {kStatusColorWarning, kColorDarkStatusWarning},
+    {kColorWarning, kColorDarkWarning},
+    {kColorError, kColorDarkStatusError},
+};
+
+inline QString darkStatusTextColor(const QString& color) {
+    for (const auto& alias : kDarkStatusTextAliases) {
+        if (color == QString::fromLatin1(alias.lightToken)) {
+            return QString::fromLatin1(alias.darkToken);
+        }
+    }
+    return color;
+}
+
 inline QString cssColor(const QString& color) {
     for (const auto& alias : kCssColorAliases) {
         if (color == QString::fromLatin1(alias.token)) {
             return QString::fromLatin1(alias.css);
         }
     }
-    return color;
+    return usingDarkUiTheme() ? darkStatusTextColor(color) : color;
 }
 
 inline QString cssColor(const char* color) {
@@ -1033,11 +1115,13 @@ inline QString selectorDropDownStyle(const char* selector,
         .arg(hover_background);
 }
 
-inline QString selectorIconStyle(const char* selector, const QString& icon_path) {
+inline QString selectorIconStyle(const char* selector,
+                                 const QString& icon_path,
+                                 int size_px = kUiIconCompact) {
     return QStringLiteral("%1 { image: url(\"%2\"); width: %3px; height: %3px; }")
         .arg(QString::fromLatin1(selector))
         .arg(icon_path)
-        .arg(kUiIconCompact);
+        .arg(size_px);
 }
 
 inline QString comboBoxSelectorStyle(const QString& border,
@@ -1059,9 +1143,11 @@ inline QString spinBoxSelectorStyle(const QString& border,
     const QString radius = QString::number(kCssRadiusMediumPx);
     const QString up_button = QString::fromLatin1(kSelectorSpinUpButton);
     const QString down_button = QString::fromLatin1(kSelectorSpinDownButton);
-    return QStringLiteral("%1 { min-height: %2px; padding-right: %3px; }")
+    // No min-height: a QSS min-height sizes the content box and padding and border come on top,
+    // so the 32 px asked for made spin boxes and date edits 46-50 px beside 32 px combos.
+    return QStringLiteral("%1 { padding-top: %2px; padding-bottom: %2px; padding-right: %3px; }")
                .arg(QString::fromLatin1(kSelectorSpinEditor))
-               .arg(kUiSpinBoxMinHeight)
+               .arg(kUiSpinBoxPaddingVerticalPx)
                .arg(width) +
            QStringLiteral(
                "%1 { subcontrol-origin: border; subcontrol-position: top right; width: %2px; "
@@ -1077,8 +1163,8 @@ inline QString spinBoxSelectorStyle(const QString& border,
                .arg(down_button, width, margin, border_width, border, radius, background) +
            QStringLiteral("%1:hover, %2:hover { background: %3; }")
                .arg(up_button, down_button, hover_background) +
-           selectorIconStyle(kSelectorSpinUpArrow, up_icon_path) +
-           selectorIconStyle(kSelectorSpinDownArrow, down_icon_path);
+           selectorIconStyle(kSelectorSpinUpArrow, up_icon_path, kUiIconTiny) +
+           selectorIconStyle(kSelectorSpinDownArrow, down_icon_path, kUiIconTiny);
 }
 
 inline QString datePickerSelectorStyle(const QString& border,
@@ -1148,6 +1234,7 @@ inline QString htmlColor(const QString& color) {
                 return QString::fromLatin1(alias.darkToken);
             }
         }
+        return darkStatusTextColor(color);
     }
     return color;
 }
@@ -1574,11 +1661,14 @@ inline QString vulnerabilityLookupPanelStyle() {
                             kColorBorderDefault);
 }
 
+/// A status-bar button that reads as a link. Each state names its own transparent background: the
+/// theme's button rule otherwise painted the primary gradient under dark text.
 inline QString compactLinkButtonStyle() {
     return QStringLiteral(
-               "QPushButton { border: none; padding: %1px %2px; color: %3; "
-               "font-size: %4pt; }"
-               "QPushButton:hover { text-decoration: underline; }")
+               "QPushButton { background: transparent; border: none; padding: %1px %2px; "
+               "color: %3; font-size: %4pt; }"
+               "QPushButton:hover { background: transparent; text-decoration: underline; }"
+               "QPushButton:pressed { background: transparent; }")
         .arg(kCssPaddingTinyPx)
         .arg(kCssPaddingMediumPx)
         .arg(cssColor(kColorTextPrimary))
@@ -1603,23 +1693,6 @@ inline QString partitionActionTextLinkStyle() {
         .arg(cssColor(kColorPrimaryDark))
         .arg(colorWithAlpha(kColorPrimary, kPartitionActionTextLinkPressedAlpha))
         .arg(cssColor(kColorTextMuted));
-}
-
-inline QString wifiIndicatorStyle() {
-    return QStringLiteral(
-               "QTableWidget::indicator { width: %1px; height: %1px; "
-               "border: %2px solid %3; border-radius: %4px; background: %5; }"
-               "QTableWidget::indicator:checked { background: %6; "
-               "border: %2px solid %7; }"
-               "QTableWidget::indicator:unchecked { background: %5; "
-               "border: %2px solid %3; }")
-        .arg(kUiIconSmall)
-        .arg(kCssBorderWidthDefaultPx)
-        .arg(cssColor(kColorBorderMuted))
-        .arg(kCssRadiusSmallPx)
-        .arg(cssColor(kColorBgSurface))
-        .arg(QString::fromLatin1(kColorPrimary))
-        .arg(QString::fromLatin1(kColorPrimaryDark));
 }
 
 inline QString elevationBannerStyle() {

@@ -198,15 +198,15 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
         switch (report.overall_health) {
         case SmartHealthStatus::Healthy:
             health_item->setText("PASS");
-            health_item->setForeground(QColor(sak::ui::kStatusColorSuccess));
+            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorSuccess));
             break;
         case SmartHealthStatus::Warning:
             health_item->setText("WARN");
-            health_item->setForeground(QColor(sak::ui::kStatusColorWarning));
+            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorWarning));
             break;
         case SmartHealthStatus::Critical:
             health_item->setText("FAIL");
-            health_item->setForeground(QColor(sak::ui::kStatusColorError));
+            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorError));
             break;
         default:
             health_item->setText("N/A");
@@ -760,7 +760,7 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
             color = sak::ui::kColorWarning;
         }
         return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-            .arg(color)
+            .arg(sak::ui::htmlColor(color))
             .arg(sak::ui::kFontWeightSemibold)
             .arg(QStringLiteral("%1 \u00B0C").arg(temp));
     };
