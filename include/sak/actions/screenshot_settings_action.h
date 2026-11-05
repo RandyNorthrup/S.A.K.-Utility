@@ -61,6 +61,8 @@ private:
     [[nodiscard]] static bool pageIsDrawn(const QImage& now,
                                           const QImage& moment_before,
                                           const QImage& previous_page);
+    /// @brief True when @p now shows a page, settled or not, other than @p previous_page.
+    [[nodiscard]] static bool pageHasChanged(const QImage& now, const QImage& previous_page);
     /// @brief The picture @p window renders of itself, taken on the GUI thread
     ///        (BlockingQueuedConnection) so a worker thread can capture safely; null (fails
     ///        closed) if there is no QCoreApplication or the invocation cannot be marshalled.

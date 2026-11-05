@@ -428,6 +428,11 @@ void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceSettingsHasDrawnIt() {
     QVERIFY(!Action::pageIsDrawn(display, spinner, about));  // still changing
     QVERIFY(!Action::pageIsDrawn(display, QImage(), about));  // nothing to compare with yet
     QVERIFY(!Action::pageIsDrawn(blank, blank, about));
+    // A page that never settles (a list filling in, an animation) is kept once the wait runs out,
+    // if it is a new page at all.
+    QVERIFY(Action::pageHasChanged(spinner, about));
+    QVERIFY(!Action::pageHasChanged(about, about));
+    QVERIFY(!Action::pageHasChanged(blank, about));
 
     // Settings is brought to the front first: a window behind another one stops drawing.
     QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
@@ -435,6 +440,7 @@ void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceSettingsHasDrawnIt() {
     QVERIFY(file.open(QIODevice::ReadOnly));
     const QString source = QString::fromUtf8(file.readAll());
     QVERIFY(source.contains(QStringLiteral("SetForegroundWindow(hwnd);")));
+    QVERIFY(source.contains(QStringLiteral("            return changed;")));
     QVERIFY(
         source.contains(QStringLiteral("const QImage page = waitForDrawnPage(settings_window);")));
 }

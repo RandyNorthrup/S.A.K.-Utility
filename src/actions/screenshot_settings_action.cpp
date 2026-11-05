@@ -107,7 +107,11 @@ bool ScreenshotSettingsAction::pageIsDrawn(const QImage& now,
     // last one: every page after the first was saved as a picture of System > About. Drawn means
     // not one colour, the same as a moment ago (no loading spinner or slide-in mid-way), and not
     // the page before it.
-    return !pictureIsBlank(now) && now == moment_before && now != previous_page;
+    return pageHasChanged(now, previous_page) && now == moment_before;
+}
+
+bool ScreenshotSettingsAction::pageHasChanged(const QImage& now, const QImage& previous_page) {
+    return !pictureIsBlank(now) && now != previous_page;
 }
 
 QImage ScreenshotSettingsAction::renderOnGui(WId window) {
@@ -143,13 +147,20 @@ QImage ScreenshotSettingsAction::waitForDrawnPage(WId window) {
     SetForegroundWindow(hwnd);
     QDeadlineTimer deadline(kSettingsPageDrawWaitMs);
     QImage moment_before;
+    QImage changed;  // the latest picture of a new page, settled or not
     while (!isCancelled()) {
         QImage now = renderOnGui(window);
         if (pageIsDrawn(now, moment_before, m_previous_page)) {
             return now;
         }
+        if (pageHasChanged(now, m_previous_page)) {
+            changed = now;
+        }
         if (deadline.hasExpired()) {
-            return {};
+            // A page that keeps moving (Installed apps filling in its list, an animation) never
+            // settles, and in the capture VM two such pages failed. It has still been drawn: only
+            // a window that never left the last page, or stayed blank, fails.
+            return changed;
         }
         moment_before = std::move(now);
         QThread::msleep(kSettingsPageSettleMs);
