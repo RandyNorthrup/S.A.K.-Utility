@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 /**
  * @brief Orchestrator for downloading Linux ISO images
@@ -190,6 +191,15 @@ private:
     bool prepareAria2cDownload(const QString& url, const QString& fileName, QString* aria2Path);
     void resetAria2cProcess();
     static QString aria2cExitCodeMessage(int exit_code);
+
+    /// One aria2c progress readout: "[#c492f1 2146304B/6518974464B(0%) CN:1 DL:1062157B ...]".
+    struct Aria2cReadout {
+        qint64 downloaded_bytes{0};
+        qint64 total_bytes{0};  ///< 0 while aria2c does not know the size yet
+        qint64 bytes_per_second{0};
+    };
+    /// Parse one line of aria2c 1.37 console output; nullopt when it is not a readout.
+    [[nodiscard]] static std::optional<Aria2cReadout> parseAria2cReadout(const QString& line);
     QStringList buildAria2cArguments(const QString& url,
                                      const QString& outDir,
                                      const QString& outFile) const;

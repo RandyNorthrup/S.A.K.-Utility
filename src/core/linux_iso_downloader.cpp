@@ -34,11 +34,14 @@
 #include <algorithm>
 
 namespace {
-constexpr qsizetype kAria2cBinaryUnitSuffixLength = 3;
 constexpr int kAria2cDownloadedCaptureGroup = 1;
 constexpr int kAria2cTotalCaptureGroup = 2;
-constexpr int kAria2cPercentCaptureGroup = 3;
-constexpr int kAria2cSpeedCaptureGroup = 4;
+constexpr int kAria2cSpeedCaptureGroup = 3;
+constexpr int kPercentMax = 100;
+// The one user agent this downloader sends, for the ISO and its checksum alike. SourceForge's
+// front end answers a browser's user agent, and aria2's own, with 403 to a program, which aria2c
+// reports as exit code 22: GParted Live and SystemRescue could not be downloaded at all.
+constexpr const char* kDownloadUserAgent = "SAK-Utility/1.0";
 constexpr int kChecksumRecordMinimumParts = 2;
 // Capture-group indices of the BSD-style checksum record regex
 // "^([A-Za-z0-9-]+)\\s*\\(([^)]+)\\)\\s*=\\s*(\\S+)$": group 1 is the algorithm,
@@ -74,20 +77,6 @@ QString checksumFetchErrorMessage(QNetworkReply* reply, const sak::NetworkTransf
     return QStringLiteral("Checksum fetch failed: ") + result.error_message;
 }
 
-/// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
-double parseAria2cSpeedMBps(const QString& dlSpeedStr) {
-    if (dlSpeedStr.endsWith("MiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble();
-    }
-    if (dlSpeedStr.endsWith("KiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() / sak::kBytesPerKBf;
-    }
-    if (dlSpeedStr.endsWith("GiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() * sak::kBytesPerKBf;
-    }
-    // Numeric aria2c value is raw bytes/sec.
-    return dlSpeedStr.toDouble() / sak::kBytesPerMBf;
-}
 }  // anonymous namespace
 
 // ============================================================================
@@ -230,7 +219,7 @@ void LinuxISODownloader::startRollingFilenameDiscovery() {
     QNetworkReply* reply = sak::startNetworkMetadataGet(
         *nam,
         {.url = QUrl(m_checksumUrl),
-         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArray(kDownloadUserAgent)}},
          .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
          .max_response_bytes = kMaxChecksumBytes});
     m_pendingMetadataReplies.append(reply);
@@ -467,11 +456,8 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
     }
 
     // -- Common settings --
-    args  // -- User-Agent (critical: many CDNs/SourceForge block
-          //    aria2c's default UA string) --
-        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-           "AppleWebKit/537.36 (KHTML, like Gecko) "
-           "Chrome/131.0.0.0 Safari/537.36"
+    args  // -- User-Agent: the app's own, as for the checksum (see kDownloadUserAgent) --
+        << QStringLiteral("--user-agent=%1").arg(QString::fromLatin1(kDownloadUserAgent))
         // -- Resumability --
         << "--continue=true"
         << "--auto-file-renaming=false"
@@ -500,16 +486,39 @@ static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
     {.code = 1, .message = "aria2c reported a generic failure (exit code 1)"},
     {.code = 2, .message = "Connection timed out"},
     {.code = 3, .message = "Resource not found (404)"},
-    {.code = 4, .message = "Max retries reached \xe2\x80\x94 check your internet connection"},
+    {.code = 4, .message = "The server kept answering that the file is not there (404)"},
     {.code = 5, .message = "Download speed too slow"},
     {.code = 6, .message = "Network error"},
     {.code = 7, .message = "Download incomplete \xe2\x80\x94 some files could not be finished"},
     {.code = 9, .message = "Disk space insufficient"},
     {.code = 13, .message = "File already exists and could not be overwritten"},
-    {.code = 24, .message = "DNS resolution failed"},
+    {.code = 19, .message = "The download server's name could not be resolved (DNS)"},
+    {.code = 22, .message = "The download server refused the request (HTTP error)"},
+    {.code = 23, .message = "The download server redirected too many times"},
+    {.code = 24, .message = "The download server asked for a sign-in (HTTP authorization)"},
+    {.code = 29, .message = "The download server is busy or down for maintenance; try again later"},
+    {.code = 32, .message = "aria2c's own checksum check of the download failed"},
 };
 
 }  // namespace
+
+std::optional<LinuxISODownloader::Aria2cReadout> LinuxISODownloader::parseAria2cReadout(
+    const QString& line) {
+    // aria2c 1.37 writes sizes and speed in bytes with a B after them, and a percent only once it
+    // knows the total: "[#c492f1 2146304B/6518974464B(0%) CN:1 DL:1062157B ETA:1h42m15s]", or
+    // "[#c492f1 0B/0B CN:1 DL:0B]" before. The old pattern wanted digits right before the slash
+    // and never matched one, so the bar sat at 0% with no size or speed for the whole download.
+    static const QRegularExpression readout(
+        QStringLiteral(R"(\[#[0-9A-Fa-f]+\s+(\d+)B/(\d+)B(?:\(\d+%\))?.*?\bDL:(\d+)B)"));
+    const auto match = readout.match(line);
+    if (!match.hasMatch()) {
+        return std::nullopt;
+    }
+    return Aria2cReadout{.downloaded_bytes =
+                             match.captured(kAria2cDownloadedCaptureGroup).toLongLong(),
+                         .total_bytes = match.captured(kAria2cTotalCaptureGroup).toLongLong(),
+                         .bytes_per_second = match.captured(kAria2cSpeedCaptureGroup).toLongLong()};
+}
 
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
     const auto* it =
@@ -610,23 +619,24 @@ void LinuxISODownloader::onProgressPollTimer() {
     for (const QString& rawLine : lines) {
         const QString line = rawLine.trimmed();
 
-        // aria2c progress lines look like:
-        // [#abcdef 1234567/9876543(12%) CN:16 DL:45.2MiB]
-        // or in human-readable=false mode:
-        // [#abcdef 1234567/9876543(12%) CN:16 DL:47394816]
-        static const QRegularExpression progressRegex(
-            R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
-
-        auto match = progressRegex.match(line);
-        if (match.hasMatch()) {
-            const qint64 downloaded = match.captured(kAria2cDownloadedCaptureGroup).toLongLong();
-            const qint64 total = match.captured(kAria2cTotalCaptureGroup).toLongLong();
-            const int percent = match.captured(kAria2cPercentCaptureGroup).toInt();
-            const double speedMBps = parseAria2cSpeedMBps(match.captured(kAria2cSpeedCaptureGroup));
-
-            const QString detail = QString("%1 / %2").arg(formatSize(downloaded),
-                                                          formatSize(total));
-
+        if (const auto readout = parseAria2cReadout(line)) {
+            const double speedMBps = static_cast<double>(readout->bytes_per_second) /
+                                     sak::kBytesPerMBf;
+            if (readout->total_bytes <= 0) {
+                // Connected, size not known yet: say so, with the catalog's approximate size.
+                const QString detail = m_totalSize > 0
+                                           ? QString("%1 of about %2")
+                                                 .arg(formatSize(readout->downloaded_bytes),
+                                                      formatSize(m_totalSize))
+                                           : formatSize(readout->downloaded_bytes);
+                Q_EMIT progressUpdated(0, detail);
+                Q_EMIT speedUpdated(speedMBps);
+                continue;
+            }
+            const int percent =
+                static_cast<int>((readout->downloaded_bytes * kPercentMax) / readout->total_bytes);
+            const QString detail = QString("%1 / %2").arg(formatSize(readout->downloaded_bytes),
+                                                          formatSize(readout->total_bytes));
             Q_EMIT progressUpdated(percent, detail);
             Q_EMIT speedUpdated(speedMBps);
             continue;
@@ -872,7 +882,7 @@ void LinuxISODownloader::verifyChecksum() {
     QNetworkReply* reply = sak::startNetworkMetadataGet(
         *nam,
         {.url = QUrl(m_checksumUrl),
-         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArray(kDownloadUserAgent)}},
          .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
          .max_response_bytes = kMaxChecksumBytes});
     m_pendingMetadataReplies.append(reply);

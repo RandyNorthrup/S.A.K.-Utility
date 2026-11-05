@@ -40,6 +40,10 @@ private Q_SLOTS:
     void cleanupTestCase();
     void init();
 
+    // Round 8: what the bundled aria2c 1.37 really prints, and what SourceForge lets through.
+    void aria2cReadoutIsReadAsItArrives();
+    void aria2cAsksAsTheAppNotAsABrowser();
+
     // ========================================================================
     // Catalog Tests
     // ========================================================================
@@ -126,7 +130,7 @@ private Q_SLOTS:
     // Network Tests (explicit opt-in; failures after opt-in are authoritative)
     // ========================================================================
     void testGitHubVersionCheck_Network();
-    void testDirectUrlReachable_Ubuntu();
+    void testEveryCatalogDownloadAnswers_Network();
     void testSourceForgeUrlStructure_AllDistros();
 
 private:
@@ -155,7 +159,7 @@ void LinuxISODownloaderTests::cleanupTestCase() {
 void LinuxISODownloaderTests::init() {
     static const QSet<QString> live_network_tests = {
         QStringLiteral("testGitHubVersionCheck_Network"),
-        QStringLiteral("testDirectUrlReachable_Ubuntu")};
+        QStringLiteral("testEveryCatalogDownloadAnswers_Network")};
     if (live_network_tests.contains(QString::fromLatin1(QTest::currentTestFunction())) &&
         qEnvironmentVariable("SAK_RUN_LIVE_LINUX_ISO_TESTS").trimmed() != QLatin1String("1")) {
         QSKIP("Set SAK_RUN_LIVE_LINUX_ISO_TESTS=1 to run live Linux ISO network tests");
@@ -946,35 +950,61 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network() {
     QVERIFY2(url.startsWith("https://"), qPrintable("Download URL should be HTTPS: " + url));
 }
 
-void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
+// Every download in the catalog whose address is written in it, asked for the way aria2c asks: the
+// same user agent, following redirects, for its first byte. A dead address, or a server that
+// refuses the app (SourceForge answered a browser's user agent with 403, which aria2c reports as
+// exit code 22), fails here instead of a second into a technician's download. Rolling and GitHub
+// entries are resolved against the server's own list when they are downloaded, so they cannot go
+// stale the same way, and are named as not checked.
+void LinuxISODownloaderTests::testEveryCatalogDownloadAnswers_Network() {
     Q_ASSERT(m_catalog);
-    // Quick HEAD request to verify Ubuntu URL is reachable
-    auto d = m_catalog->distroById("ubuntu-server");
-    QString url = m_catalog->resolveDownloadUrl(d);
+    LinuxISODownloader downloader;
+    QString agent;
+    for (const QString& arg :
+         downloader.buildAria2cArguments(QStringLiteral("https://example.invalid/x.iso"),
+                                         QDir::tempPath(),
+                                         QStringLiteral("x.iso"))) {
+        if (arg.startsWith(QStringLiteral("--user-agent="))) {
+            agent = arg.mid(QStringLiteral("--user-agent=").size());
+        }
+    }
+    QVERIFY(!agent.isEmpty());
 
     QNetworkAccessManager nam;
-    QUrl requestUrl(url);
-    QNetworkRequest request(requestUrl);
-    request.setRawHeader("User-Agent", "SAK-Utility-Test/1.0");
-
-    auto* reply = nam.head(request);
-    QSignalSpy finishedSpy(reply, &QNetworkReply::finished);
-
-    // qWaitFor re-checks the spy instead of waiting for a further emission, so a reply that
-    // finished before the wait begins is not misread as a timeout.
-    bool ok = QTest::qWaitFor([&finishedSpy]() { return finishedSpy.count() > 0; }, 15'000);
-    if (!ok) {
-        reply->abort();
+    QStringList failures;
+    QStringList not_checked;
+    int checked = 0;
+    for (const auto& d : m_catalog->allDistros()) {
+        if (d.sourceType == LinuxDistroCatalog::SourceType::GitHubRelease ||
+            !d.rollingFilenamePattern.isEmpty()) {
+            not_checked.append(d.id);
+            continue;
+        }
+        const QString url = m_catalog->resolveDownloadUrl(d);
+        QNetworkRequest request{QUrl(url)};
+        request.setRawHeader("User-Agent", agent.toUtf8());
+        request.setRawHeader("Range", "bytes=0-0");
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                             QNetworkRequest::NoLessSafeRedirectPolicy);
+        auto* reply = nam.get(request);
+        QSignalSpy finished(reply, &QNetworkReply::finished);
+        if (!QTest::qWaitFor([&finished]() { return finished.count() > 0; }, 30'000)) {
+            reply->abort();
+            failures.append(QStringLiteral("%1: no answer in 30 s from %2").arg(d.id, url));
+            reply->deleteLater();
+            continue;
+        }
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status != 200 && status != 206) {
+            failures.append(QStringLiteral("%1: HTTP %2 from %3").arg(d.id).arg(status).arg(url));
+        }
         reply->deleteLater();
-        QFAIL("Ubuntu URL reachability request timed out after 15 seconds");
+        ++checked;
     }
-
-    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    reply->deleteLater();
-
-    // Accept 200 (OK) or 302/301 (redirect) as valid
-    QVERIFY2(statusCode == 200 || statusCode == 301 || statusCode == 302,
-             qPrintable(QString("Unexpected HTTP status %1 for %2").arg(statusCode).arg(url)));
+    qInfo() << "checked" << checked << "catalog downloads; resolved at download time:"
+            << not_checked.join(QStringLiteral(", "));
+    QVERIFY2(checked >= 5, "too few fixed catalog downloads to say anything");
+    QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1Char('\n'))));
 }
 
 void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
@@ -1010,6 +1040,50 @@ void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
     }
     // systemrescue, clonezilla, gparted-live.
     QCOMPARE(sourceForgeChecked, 2);
+}
+
+// Lines captured from the bundled aria2c in the review VM. The old pattern expected digits right
+// before the slash, matched none of them, and the bar sat at 0% with no size or speed.
+void LinuxISODownloaderTests::aria2cReadoutIsReadAsItArrives() {
+    const auto running = LinuxISODownloader::parseAria2cReadout(
+        QStringLiteral("[#c492f1 2146304B/6518974464B(0%) CN:1 DL:1062157B ETA:1h42m15s]"));
+    QVERIFY(running.has_value());
+    QCOMPARE(running->downloaded_bytes, Q_INT64_C(2'146'304));
+    QCOMPARE(running->total_bytes, Q_INT64_C(6'518'974'464));
+    QCOMPARE(running->bytes_per_second, Q_INT64_C(1'062'157));
+
+    // Before aria2c knows the size, and as it arrives after the carriage return it rewrites.
+    const auto connecting = LinuxISODownloader::parseAria2cReadout(
+        QStringLiteral("\r                    \r[#c492f1 0B/0B CN:1 DL:0B]"));
+    QVERIFY(connecting.has_value());
+    QCOMPARE(connecting->total_bytes, Q_INT64_C(0));
+
+    for (const QString& other :
+         {QStringLiteral(" *** Download Progress Summary as of Thu Nov  5 00:55:34 2026 *** "),
+          QStringLiteral("FILE: C:/SAKCapture/capture1/aria/t.iso"),
+          QStringLiteral("11/05 00:55:33 [NOTICE] Downloading 1 item(s)")}) {
+        QVERIFY2(!LinuxISODownloader::parseAria2cReadout(other).has_value(), qPrintable(other));
+    }
+}
+
+// SourceForge answered the browser user agent the app sent, and aria2's own, with 403, which aria2c
+// reports as exit code 22: GParted Live failed a second in with "aria2c exited with code 22".
+void LinuxISODownloaderTests::aria2cAsksAsTheAppNotAsABrowser() {
+    LinuxISODownloader downloader;
+    const QStringList args = downloader.buildAria2cArguments(
+        QStringLiteral("https://sourceforge.net/projects/gparted/files/gparted-live-stable/1.8.1-3/"
+                       "gparted-live-1.8.1-3-amd64.iso/download"),
+        QDir::tempPath(),
+        QStringLiteral("gparted-live-1.8.1-3-amd64.iso"));
+    QVERIFY2(args.contains(QStringLiteral("--user-agent=SAK-Utility/1.0")),
+             qPrintable(args.join(QLatin1Char(' '))));
+    QVERIFY(!args.join(QLatin1Char(' ')).contains(QStringLiteral("Mozilla")));
+
+    const QString refused = LinuxISODownloader::aria2cExitCodeMessage(22);
+    QVERIFY2(!refused.contains(QStringLiteral("exited with code")), qPrintable(refused));
+    QVERIFY2(refused.contains(QStringLiteral("refused")), qPrintable(refused));
+    QVERIFY(LinuxISODownloader::aria2cExitCodeMessage(19).contains(QStringLiteral("DNS")));
+    QVERIFY(!LinuxISODownloader::aria2cExitCodeMessage(24).contains(QStringLiteral("DNS")));
 }
 
 QTEST_GUILESS_MAIN(LinuxISODownloaderTests)

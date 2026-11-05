@@ -200,6 +200,16 @@ foreach(test_name ${UNIT_TESTS})
     endif()
 endforeach()
 
+# Every Linux catalog download whose address the catalog holds, asked for live the way aria2c asks
+# (its user agent, redirects followed, the first byte). Network, so T4 only: the T2 run of the
+# binary skips this function, and this entry opts it in.
+add_test(NAME test_linux_iso_catalog_live
+         COMMAND test_linux_iso_downloader testEveryCatalogDownloadAnswers_Network
+                 -o "${TEST_OUTPUT_DIR}/test_linux_iso_catalog_live.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_linux_iso_catalog_live PROPERTIES
+    ENVIRONMENT "SAK_RUN_LIVE_LINUX_ISO_TESTS=1")
+
 # ============================================================================
 # Unit Tests - Diagnostic & Benchmarking Panel
 # ============================================================================
@@ -7253,7 +7263,7 @@ set(_sak_labels_tooling_extended
     test_process_capture_stdin test_process_capture_stdin_windows_powershell
     test_process_capture_environment test_process_capture_environment_windows_powershell
     test_false_green_command_propagation test_false_green_command_propagation_windows_powershell
-    test_stage_portable_release test_release_archive_recovery)
+    test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live)
 set(_sak_labels_mutation test_mutation_runner)
 set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
 set(_sak_labels_tidy test_clang_tidy_naming_gate)
