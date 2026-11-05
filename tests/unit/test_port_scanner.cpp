@@ -6,6 +6,9 @@
 
 #include "sak/port_scanner.h"
 
+#include <QHostAddress>
+#include <QSignalSpy>
+#include <QTcpServer>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -35,11 +38,31 @@ private Q_SLOTS:
 
     // -- ScanConfig defaults --------------------------------------
     void scanConfig_defaults();
+    void openPortResponseIsTheConnectTime();
 };
 
 // ===================================================================
 // Construction
 // ===================================================================
+
+// A loopback port that accepts and never speaks: the banner wait ran its two seconds twice, and
+// that wait was reported as the port's response time, above the timeout on the same screen.
+void TestPortScanner::openPortResponseIsTheConnectTime() {
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    sak::PortScanner scanner;
+    QSignalSpy scanned(&scanner, &sak::PortScanner::portScanned);
+    sak::PortScanner::ScanConfig config;
+    config.target = QStringLiteral("127.0.0.1");
+    config.ports = {server.serverPort()};
+    config.timeoutMs = 3000;
+    config.grabBanners = true;
+    scanner.scan(config);
+    QCOMPARE(scanned.size(), 1);
+    const auto result = scanned.first().first().value<sak::PortScanResult>();
+    QCOMPARE(result.state, sak::PortScanResult::State::Open);
+    QVERIFY2(result.responseTimeMs < 1000.0, qPrintable(QString::number(result.responseTimeMs)));
+}
 
 void TestPortScanner::construction_default() {
     PortScanner scanner;

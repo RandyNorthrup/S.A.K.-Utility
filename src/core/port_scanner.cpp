@@ -93,7 +93,11 @@ void finishTcpProbe(const TcpProbeContextPtr& probe) {
         return;
     }
     probe->finished = true;
-    probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
+    // An open port's response time is set when it connects. Taking it again here added the banner
+    // wait, up to twice two seconds, and showed 4017 ms against a 3000 ms timeout.
+    if (!probe->result.connected) {
+        probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
+    }
     probe->socket->disconnectFromHost();
     probe->socket->deleteLater();
     probe->owner->deleteLater();
