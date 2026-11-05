@@ -18,7 +18,71 @@ private Q_SLOTS:
     void getVolumesOnDrive_negativeDriveFailsClosed();  // R5-G10-9
     void ejectDrive_rejectsNegativeDriveNumber();
     void lockVolume_failedLockRegistersNothing();       // P11-18 sibling: P11-13
+    void unmount_locksEveryVolumeBeforeTheDiskGoesOffline();
+    void unmount_failedLockLeavesTheDiskOnline();
 };
+
+namespace {
+
+struct RecordedUnmount {
+    QStringList calls;
+    QStringList volumes{QStringLiteral("A"), QStringLiteral("B")};
+    QString refuse_lock;
+};
+
+DriveUnmounter::UnmountSteps recordingSteps(RecordedUnmount& record) {
+    return {.list_volumes =
+                [&record](bool* ok) {
+                    *ok = true;
+                    record.calls.append(QStringLiteral("list"));
+                    return record.volumes;
+                },
+            .lock_and_dismount =
+                [&record](const QString& volume) {
+                    record.calls.append(QStringLiteral("lock ") + volume);
+                    return volume != record.refuse_lock;
+                },
+            .set_offline =
+                [&record]() {
+                    record.calls.append(QStringLiteral("offline"));
+                    return true;
+                },
+            .release_locks = [&record]() { record.calls.append(QStringLiteral("release")); }};
+}
+
+}  // namespace
+
+// Offline first removed the volumes, so the lock that followed found nothing to open: the first
+// flash to a freshly formatted stick failed with "CreateFile failed: error 2", twice running.
+void TestDriveUnmounter::unmount_locksEveryVolumeBeforeTheDiskGoesOffline() {
+    RecordedUnmount record;
+    QCOMPARE(DriveUnmounter::runUnmountSteps(recordingSteps(record)),
+             DriveUnmounter::UnmountOutcome::Prepared);
+    QCOMPARE(record.calls,
+             QStringList({QStringLiteral("list"),
+                          QStringLiteral("lock A"),
+                          QStringLiteral("lock B"),
+                          QStringLiteral("offline")}));
+
+    // A disk with no volumes still goes offline, so nothing mounts what is written mid-flash.
+    RecordedUnmount empty;
+    empty.volumes.clear();
+    QCOMPARE(DriveUnmounter::runUnmountSteps(recordingSteps(empty)),
+             DriveUnmounter::UnmountOutcome::Prepared);
+    QCOMPARE(empty.calls, QStringList({QStringLiteral("list"), QStringLiteral("offline")}));
+}
+
+void TestDriveUnmounter::unmount_failedLockLeavesTheDiskOnline() {
+    RecordedUnmount record;
+    record.refuse_lock = QStringLiteral("B");
+    QCOMPARE(DriveUnmounter::runUnmountSteps(recordingSteps(record)),
+             DriveUnmounter::UnmountOutcome::LockFailed);
+    QCOMPARE(record.calls,
+             QStringList({QStringLiteral("list"),
+                          QStringLiteral("lock A"),
+                          QStringLiteral("lock B"),
+                          QStringLiteral("release")}));
+}
 
 void TestDriveUnmounter::construction_default() {
     DriveUnmounter unmounter;

@@ -19,6 +19,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <exception>
 #include <limits>
@@ -1251,6 +1252,9 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
         m_nextWorkerIndex = 0;
     }
     releaseImageSource();
+    // The writers close their device handles as they wind down. Until then the disk was busy,
+    // and bringing it back online and ejecting it both failed with "error 21".
+    retireWorkers(finished);
 
     sak::FlashResult finalResult = result;
     finalResult.reonlineFailedDrives = reonlineOfflinedDrives();
@@ -1273,12 +1277,16 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
 
     Q_EMIT stateChanged(state, statusMessage);
     Q_EMIT flashCompleted(finalResult);
-    retireWorkers(finished);
 }
 
 void FlashCoordinator::ejectCompletedDrives(sak::FlashResult& result) {
     DriveUnmounter unmounter;
     for (const QString& devicePath : result.successfulDrives) {
+        // An offline disk has nothing mounted to eject, and the completion page says how to
+        // bring it back. Ejecting it would also keep it offline the next time it is plugged in.
+        if (result.reonlineFailedDrives.contains(devicePath)) {
+            continue;
+        }
         const int driveNumber = parsePhysicalDriveNumber(devicePath);
         if (driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
             result.ejectFailedDrives.append(devicePath);
@@ -1315,14 +1323,41 @@ QStringList FlashCoordinator::reonlineDrives(const QStringList& drivePaths) {
             stillOffline.append(devicePath);
             continue;
         }
-        if (!unmounter.allowAutoMount(driveNumber)) {
+        const QString error = bringOnlineWithRetries(
+            driveNumber,
+            [&unmounter](int number) {
+                return unmounter.allowAutoMount(number) ? QString() : unmounter.lastError();
+            },
+            [](int ms) { QThread::msleep(static_cast<unsigned long>(ms)); });
+        if (!error.isEmpty()) {
             sak::logError(QString("Failed to bring drive %1 back online: %2")
-                              .arg(devicePath, unmounter.lastError())
+                              .arg(devicePath, error)
                               .toStdString());
             stillOffline.append(devicePath);
         }
     }
     return stillOffline;
+}
+
+QString FlashCoordinator::bringOnlineWithRetries(int driveNumber,
+                                                 const std::function<QString(int)>& attempt,
+                                                 const std::function<void(int)>& pause) {
+    // About four seconds in all: long enough for Windows to finish with a disk it has just
+    // seen rewritten, short enough not to hold the finished page.
+    static constexpr std::array<int, 5> kPausesMs{250, 500, 1000, 1000, 1000};
+    QString error = attempt(driveNumber);
+    for (const int ms : kPausesMs) {
+        if (error.isEmpty()) {
+            break;
+        }
+        sak::logInfo(QString("Drive %1 not back online yet (%2); trying again")
+                         .arg(driveNumber)
+                         .arg(error)
+                         .toStdString());
+        pause(ms);
+        error = attempt(driveNumber);
+    }
+    return error;
 }
 
 QStringList FlashCoordinator::reonlineOfflinedDrives() {

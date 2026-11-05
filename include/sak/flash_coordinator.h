@@ -19,6 +19,7 @@
 #include <QStringList>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -300,6 +301,14 @@ public:
     /// honour the same eject-on-completion setting, and they share this so the two
     /// paths cannot drift into reporting removal differently.
     static void ejectCompletedDrives(sak::FlashResult& result);
+
+    /// @brief Bring @p driveNumber back online with @p attempt, retrying while Windows still
+    ///        reports the device busy or not ready just after a write. @p attempt returns an
+    ///        empty string on success, else the reason; @p pause sleeps between tries.
+    /// @return empty on success, else the last reason. Pure apart from @p pause; testable.
+    [[nodiscard]] static QString bringOnlineWithRetries(int driveNumber,
+                                                        const std::function<QString(int)>& attempt,
+                                                        const std::function<void(int)>& pause);
 
 Q_SIGNALS:
     /**

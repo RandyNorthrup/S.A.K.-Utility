@@ -169,6 +169,27 @@ private:
     /// @brief Close and forget every handle held in m_lockedVolumes.
     void closeLockedVolumeHandles();
 
+public:
+    /// How unmountDrive prepares a disk, as steps, so the order is testable without a disk.
+    struct UnmountSteps {
+        std::function<QStringList(bool* enumeration_ok)> list_volumes;
+        std::function<bool(const QString& volume_path)> lock_and_dismount;
+        std::function<bool()> set_offline;
+        std::function<void()> release_locks;
+    };
+    enum class UnmountOutcome {
+        Prepared,
+        EnumerationFailed,
+        LockFailed,
+        OfflineFailed
+    };
+    /// Lock and dismount every volume, holding the locks, and only then set the persistent
+    /// offline attribute. Offline first removed the volumes, so every lock that followed found
+    /// nothing to open ("CreateFile failed: error 2") and the flash stopped before it began.
+    /// A failure releases the locks; the disk is never left offline by a failed preparation.
+    [[nodiscard]] static UnmountOutcome runUnmountSteps(const UnmountSteps& steps);
+
+private:
     /**
      * @brief Close all handles to a drive
      * @param driveNumber Physical drive number

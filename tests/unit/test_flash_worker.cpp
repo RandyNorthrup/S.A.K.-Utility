@@ -610,6 +610,8 @@ void FlashWorkerTests::writeLoopWritesAnImageThatStaysInItsSize() {
     worker.closeFileForTesting();
 
     QCOMPARE(QFileInfo(target).size(), 3 * kMiB);
+    // The page showed "Speed: 0.0 KB/s" for a write that had just moved megabytes.
+    QVERIFY2(worker.speedMBps() > 0.01, qPrintable(QString::number(worker.speedMBps())));
 }
 
 // A size can come from an earlier pass over a compressed image, so a source that has grown since

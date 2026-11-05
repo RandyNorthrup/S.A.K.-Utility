@@ -804,9 +804,11 @@ bool FlashWorker::writeImage() {
     m_bytesWritten = 0;
     m_contentBytesWritten = 0;
 
+    // Speed is measured from the start of this write. A baseline of 0 meant the first reading
+    // divided the first buffer by the milliseconds since 1970, and read "0.0 KB/s".
     QElapsedTimer speed_timer;
     speed_timer.start();
-    m_lastSpeedUpdate = 0;
+    m_lastSpeedUpdate = QDateTime::currentMSecsSinceEpoch();
     m_lastSpeedBytes = 0;
 
     while (!m_imageSource->atEnd() && !stopRequested()) {
@@ -849,6 +851,7 @@ bool FlashWorker::writeImage() {
         updateProgress(written_total);
         updateSpeed(written_total);
     }
+    recordAverageSpeed(speed_timer.nsecsElapsed());
 
     return finalizeWrite();
 }
@@ -1319,6 +1322,17 @@ void FlashWorker::updateProgress(qint64 bytes_written) {
     }
 
     Q_EMIT progressUpdated(percentage, bytes_written);
+}
+
+void FlashWorker::recordAverageSpeed(qint64 elapsed_ns) {
+    // A write shorter than one speed interval never took a reading. The average over the whole
+    // write is the honest one to leave on the page.
+    constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
+    const qint64 written = m_bytesWritten.load(std::memory_order_relaxed);
+    if (elapsed_ns > 0 && written > 0) {
+        m_speedMBps = (static_cast<double>(written) / static_cast<double>(elapsed_ns)) *
+                      kNanosecondsPerSecond / sak::kBytesPerMBf;
+    }
 }
 
 void FlashWorker::updateSpeed(qint64 bytes_written) {

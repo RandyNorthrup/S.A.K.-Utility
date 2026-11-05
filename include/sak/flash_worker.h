@@ -357,6 +357,7 @@ private:
     QMutex m_mutex;
     qint64 m_lastProgressUpdate;
     qint64 m_lastSpeedUpdate;
+    void recordAverageSpeed(qint64 elapsed_ns);
     qint64 m_lastSpeedBytes;
     qint64 m_lastVerifyUpdate;
 };

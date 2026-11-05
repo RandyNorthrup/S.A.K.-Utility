@@ -98,6 +98,20 @@ class ImageFlasherPanelTests : public QObject {
 
 private Q_SLOTS:
     // UI review S5: success read "[x] Flash Completed Successfully!", a failure mark.
+    // The page said only that the stick "could NOT be ejected"; it was still offline and showed
+    // up with no drive letter afterwards.
+    void aStickLeftOfflineIsNamedWithTheWayBack() {
+        sak::ImageFlasherPanel panel;
+        sak::FlashResult result;
+        result.success = true;
+        result.successfulDrives = {QStringLiteral("\\\\.\\PhysicalDrive5")};
+        result.reonlineFailedDrives = result.successfulDrives;
+        panel.onFlashCompleted(result);
+        const QString text = panel.m_completionDetailsLabel->text();
+        QVERIFY2(text.contains(QStringLiteral("Still offline (1)")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("online disk")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("PhysicalDrive5")), qPrintable(text));
+    }
     void aSuccessfulFlashSaysSoWithATick() {
         sak::ImageFlasherPanel panel;
         sak::FlashResult result;

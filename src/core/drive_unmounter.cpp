@@ -149,65 +149,75 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     sak::logInfo(QString("Unmounting drive %1").arg(driveNumber).toStdString());
     Q_EMIT statusMessage(QString("Preparing drive %1...").arg(driveNumber));
 
-    // Step 1: Get all volumes on this drive. Fail closed if enumeration itself
-    // failed: an empty list from a failed enumeration must not be treated as
-    // "no volumes, safe to proceed" -- that would raw-write a still-mounted disk.
-    bool enumerationOk = true;
-    const QStringList volumes = getVolumesOnDrive(driveNumber, &enumerationOk);
-    if (!enumerationOk) {
+    // Fail closed if enumeration itself failed: an empty list from a failed enumeration must
+    // not be treated as "no volumes, safe to proceed" -- that would raw-write a mounted disk.
+    QString offlineError;
+    const UnmountSteps steps{.list_volumes =
+                                 [this, driveNumber](bool* enumeration_ok) {
+                                     return getVolumesOnDrive(driveNumber, enumeration_ok);
+                                 },
+                             .lock_and_dismount =
+                                 [this](const QString& volumePath) {
+                                     Q_EMIT statusMessage(
+                                         QString("Unmounting volume %1...").arg(volumePath));
+                                     return lockAndDismountVolume(volumePath);
+                                 },
+                             .set_offline =
+                                 [this, driveNumber, &offlineError]() {
+                                     const bool set = preventAutoMount(driveNumber);
+                                     offlineError = m_lastError;
+                                     return set;
+                                 },
+                             .release_locks = [this]() { closeLockedVolumeHandles(); }};
+    switch (runUnmountSteps(steps)) {
+    case UnmountOutcome::EnumerationFailed:
         m_lastError = QString("Failed to enumerate volumes on drive %1").arg(driveNumber);
         Q_EMIT statusMessage("Failed to enumerate volumes; aborting");
         sak::logError(m_lastError.toStdString());
         return false;
-    }
-    // Step 2: Set the persistent offline attribute BEFORE releasing any volume
-    // locks -- and even when the disk currently has no volumes -- so Windows cannot
-    // auto-mount the partitions we write mid-flash. Fail closed if it can't be set.
-    if (!preventAutoMount(driveNumber)) {
+    case UnmountOutcome::LockFailed:
+        // m_lastError names the volume and the lock's own error. Nothing was taken offline.
+        Q_EMIT statusMessage("Drive preparation failed; the drive was left online");
+        sak::logWarning(QString("Drive unmount failed: %1").arg(m_lastError).toStdString());
+        return false;
+    case UnmountOutcome::OfflineFailed:
         m_lastError = QString("Failed to prevent auto-mount on drive %1: %2")
                           .arg(driveNumber)
-                          .arg(m_lastError);
+                          .arg(offlineError);
         Q_EMIT statusMessage("Failed to prevent auto-mount; aborting");
         sak::logError(m_lastError.toStdString());
         return false;
+    case UnmountOutcome::Prepared:
+        break;
     }
+    // Advisory Restart Manager pass (non-fatal -- offline attribute + locks are authoritative).
+    advisoryCloseHandles(driveNumber);
+    Q_EMIT statusMessage("Drive prepared successfully");
+    sak::logInfo(QString("Drive %1 prepared: volumes locked and dismounted, offline attribute set")
+                     .arg(driveNumber)
+                     .toStdString());
+    return true;
+}
 
-    if (volumes.isEmpty()) {
-        sak::logInfo(QString("No volumes on drive %1; offline attribute set")
-                         .arg(driveNumber)
-                         .toStdString());
-        return true;
+DriveUnmounter::UnmountOutcome DriveUnmounter::runUnmountSteps(const UnmountSteps& steps) {
+    bool enumeration_ok = true;
+    const QStringList volumes = steps.list_volumes(&enumeration_ok);
+    if (!enumeration_ok) {
+        return UnmountOutcome::EnumerationFailed;
     }
-
-    // Step 3: Lock and dismount each volume
-    bool allSucceeded = true;
-    for (const QString& volumePath : volumes) {
-        Q_EMIT statusMessage(QString("Unmounting volume %1...").arg(volumePath));
-        if (!lockAndDismountVolume(volumePath)) {
-            allSucceeded = false;
+    for (const QString& volume : volumes) {
+        if (!steps.lock_and_dismount(volume)) {
+            steps.release_locks();
+            return UnmountOutcome::LockFailed;
         }
     }
-
-    // Step 4: advisory Restart Manager pass (non-fatal -- offline attribute + locks
-    // are authoritative).
-    advisoryCloseHandles(driveNumber);
-
-    if (allSucceeded) {
-        Q_EMIT statusMessage("Drive prepared successfully");
-        sak::logInfo(QString("Drive unmount completed successfully").toStdString());
-        return true;
+    // Offline while the locks are held -- and even with no volumes -- so Windows cannot
+    // auto-mount the partitions written mid-flash.
+    if (!steps.set_offline()) {
+        steps.release_locks();
+        return UnmountOutcome::OfflineFailed;
     }
-
-    // Partial failure: roll back the persistent offline state so the drive is not
-    // left offline with mount points removed and no protection in place.
-    if (!allowAutoMount(driveNumber)) {
-        sak::logWarning(QString("Rollback: failed to bring drive %1 back online")
-                            .arg(driveNumber)
-                            .toStdString());
-    }
-    Q_EMIT statusMessage("Drive preparation failed; drive restored online");
-    sak::logWarning(QString("Drive unmount failed; rolled back offline state").toStdString());
-    return false;
+    return UnmountOutcome::Prepared;
 }
 
 void DriveUnmounter::advisoryCloseHandles(int driveNumber) {
@@ -225,13 +235,8 @@ void DriveUnmounter::advisoryCloseHandles(int driveNumber) {
 }
 
 bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
-    // Delete mount points first
-    if (!deleteMountPoints(volumePath)) {
-        sak::logWarning(
-            QString("Failed to delete mount points for %1").arg(volumePath).toStdString());
-    }
-
-    // Lock the volume with retry
+    // Lock the volume with retry. The mount points go only once it is locked: removed first, a
+    // lock that then failed left the drive without its letter.
     HANDLE volumeHandle = INVALID_HANDLE_VALUE;
     const bool locked = retryWithBackoff([&]() {
         volumeHandle = lockVolume(volumePath);
@@ -242,6 +247,11 @@ bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
         m_lastError = QString("Failed to lock volume %1: %2").arg(volumePath).arg(m_lastError);
         sak::logError(m_lastError.toStdString());
         return false;
+    }
+
+    if (!deleteMountPoints(volumePath)) {
+        sak::logWarning(
+            QString("Failed to delete mount points for %1").arg(volumePath).toStdString());
     }
 
     // Dismount the volume with retry

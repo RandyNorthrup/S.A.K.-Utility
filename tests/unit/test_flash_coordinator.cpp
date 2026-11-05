@@ -63,6 +63,8 @@ private Q_SLOTS:
     void testCorruptCompressedImageStopsBeforeAnyDiskIsTouched();
     void testCancelDuringMeasurementEndsTheRun();
     void testDestroyingDuringMeasurementWaitsForIt();
+    void testBringingADriveBackOnlineWaitsForWindows();
+    void testAStillOfflineDriveIsNotEjected();
 
 private:
     std::unique_ptr<FlashCoordinator> m_coord;
@@ -731,6 +733,52 @@ void TestFlashCoordinator::testCancelWhenIdle() {
     QCOMPARE(stateSpy.count(), 0);
     QCOMPARE(completedSpy.count(), 0);
     QCOMPARE(errorSpy.count(), 0);
+}
+
+// Straight after the write Windows answered "error 21" (not ready), the one try failed, and the
+// stick stayed offline. It is asked again for a few seconds before the run gives up.
+void TestFlashCoordinator::testBringingADriveBackOnlineWaitsForWindows() {
+    int attempts = 0;
+    QList<int> pauses;
+    const QString error = FlashCoordinator::bringOnlineWithRetries(
+        5,
+        [&attempts](int drive) {
+            ++attempts;
+            return drive == 5 && attempts < 3 ? QStringLiteral("Failed to open drive: error 21")
+                                              : QString();
+        },
+        [&pauses](int ms) { pauses.append(ms); });
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(attempts, 3);
+    QCOMPARE(pauses.size(), 2);
+
+    // One that never comes back says why, after a bounded number of tries.
+    attempts = 0;
+    pauses.clear();
+    const QString stuck = FlashCoordinator::bringOnlineWithRetries(
+        5,
+        [&attempts](int) {
+            ++attempts;
+            return QStringLiteral("Failed to open drive: error 21");
+        },
+        [&pauses](int ms) { pauses.append(ms); });
+    QCOMPARE(stuck, QStringLiteral("Failed to open drive: error 21"));
+    QCOMPARE(attempts, pauses.size() + 1);
+    int total_ms = 0;
+    for (const int ms : pauses) {
+        total_ms += ms;
+    }
+    QVERIFY2(total_ms >= 2000 && total_ms <= 10'000, qPrintable(QString::number(total_ms)));
+}
+
+// Ejecting a drive still marked offline keeps it offline the next time it is plugged in.
+void TestFlashCoordinator::testAStillOfflineDriveIsNotEjected() {
+    sak::FlashResult result;
+    result.successfulDrives = {QStringLiteral("\\\\.\\PhysicalDrive1023")};
+    result.reonlineFailedDrives = result.successfulDrives;
+    FlashCoordinator::ejectCompletedDrives(result);
+    QVERIFY(result.ejectedDrives.isEmpty());
+    QVERIFY(result.ejectFailedDrives.isEmpty());
 }
 
 QTEST_MAIN(TestFlashCoordinator)

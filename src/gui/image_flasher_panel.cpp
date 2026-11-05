@@ -947,6 +947,15 @@ QString ImageFlasherPanel::buildCompletionDetails(const FlashResult& result) {
                        .arg(result.ejectFailedDrives.size())
                        .arg(result.ejectFailedDrives.join("\n"));
     }
+    if (!result.reonlineFailedDrives.isEmpty()) {
+        // The write is done, but Windows still holds the drive offline and will show it with no
+        // drive letter, here and on the next PC, until someone brings it back.
+        details += QString(
+                       "\nStill offline (%1) - in Disk Management right-click the disk and "
+                       "choose Online, or run diskpart: select disk N, online disk:\n%2")
+                       .arg(result.reonlineFailedDrives.size())
+                       .arg(result.reonlineFailedDrives.join("\n"));
+    }
     return details;
 }
 
