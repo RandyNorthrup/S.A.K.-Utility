@@ -152,6 +152,13 @@ void SmartDiskAnalyzerTests::failureReasonQuotesAnythingElse() {
     QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(captured),
              QStringLiteral("smartctl said: /dev/sdd: Unable to detect device type"));
     QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(QByteArray("not json")), QString());
+    // UI review F39: a USB adapter smartctl cannot see through was shown as smartctl's raw line.
+    const QByteArray usb =
+        R"({"smartctl":{"messages":[{"string":"/dev/pd5: Unknown USB bridge [0x80ee:0x0030 )"
+        R"((0x100)]","severity":"error"}],"exit_status":1}})";
+    QVERIFY2(sak::SmartDiskAnalyzer::smartctlFailureReason(usb).startsWith(
+                 QStringLiteral("SMART cannot be read through this drive's USB adapter")),
+             qPrintable(sak::SmartDiskAnalyzer::smartctlFailureReason(usb)));
 }
 
 // Parse Output Tests -- parseSmartctlOutput is private, so these drive it through

@@ -119,6 +119,7 @@ private Q_SLOTS:
     void onErrorOccurred(const QString& message);
 
 private:
+    void fillSmartRow(int row, const sak::SmartReport& report);
     static constexpr int kSuiteStepCount = 7;
     enum SmartTableColumn {
         SmartColDrive = 0,

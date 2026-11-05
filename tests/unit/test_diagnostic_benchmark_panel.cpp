@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -83,6 +84,55 @@ class DiagnosticBenchmarkPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // UI review F17: before any sensor answered, and for one that never does, Thermal read
+    // "0 C" with a bar of "0 / 100 C", where the other views said N/A.
+    void thermalSaysNotAvailableUntilASensorAnswers() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        QProgressBar* cpu = nullptr;
+        for (auto* bar : panel.findChildren<QProgressBar*>()) {
+            if (bar->accessibleName() == QStringLiteral("CPU Temperature")) {
+                cpu = bar;
+            }
+        }
+        QVERIFY(cpu != nullptr);
+        QCOMPARE(cpu->text(), QStringLiteral("N/A"));
+        using Readings = QVector<sak::ThermalReading>;
+        sak::ThermalReading reading;
+        reading.component = QStringLiteral("CPU Package");
+        reading.temperature_celsius = 55.0;
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onThermalReadingsUpdated",
+                                          Qt::DirectConnection,
+                                          Q_ARG(Readings, Readings{reading})));
+        QCOMPARE(cpu->text(), QStringLiteral("55 / 100 \u00B0C"));
+        QVERIFY(QMetaObject::invokeMethod(
+            &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
+        QCOMPARE(cpu->text(), QStringLiteral("N/A"));
+    }
+    // UI review F39: Type was blank in one view, and "N/A" and "--" both meant "not known".
+    void smartTableUsesOneMarkerForNotKnown() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        sak::SmartReport unread;
+        unread.model = QStringLiteral("VBOX HARDDISK");
+        unread.overall_health = sak::SmartHealthStatus::Unknown;
+        using Reports = QVector<sak::SmartReport>;
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onSmartAnalysisComplete",
+                                          Qt::DirectConnection,
+                                          Q_ARG(Reports, Reports{unread})));
+        QTableWidget* table = nullptr;
+        for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+            if (candidate->columnCount() >= 6 && candidate->rowCount() == 1) {
+                table = candidate;
+            }
+        }
+        QVERIFY(table != nullptr);
+        for (int column = 1; column < table->columnCount(); ++column) {
+            QCOMPARE(table->item(0, column)->text(), QStringLiteral("N/A"));
+        }
+    }
     // UI review F16: steps not yet run showed the hourglass that means "running".
     void pendingSuiteStepsShowTheIdleMark() {
         sak::QuickActionController quick_actions;
@@ -400,8 +450,8 @@ void DiagnosticBenchmarkPanelTests::anUnreadableDriveShowsNoFakeNumbers() {
     QVERIFY(checked);
     QCOMPARE(table->rowCount(), 1);
     QCOMPARE(table->item(0, 2)->text(), QStringLiteral("N/A"));
-    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("--"));
-    QCOMPARE(table->item(0, 4)->text(), QStringLiteral("--"));
+    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("N/A"));
+    QCOMPARE(table->item(0, 4)->text(), QStringLiteral("N/A"));
 }
 
 QTEST_MAIN(DiagnosticBenchmarkPanelTests)

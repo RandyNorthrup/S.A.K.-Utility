@@ -682,7 +682,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
             name_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
             row->addWidget(name_label);
 
-            label = new QLabel("0\u00B0C", this);
+            // N/A until a sensor answers: "0 C" read as a measurement.
+            label = new QLabel(tr("N/A"), this);
             label->setFixedWidth(kDiagnosticValueColumnWidth);
             row->addWidget(label);
 
@@ -690,7 +691,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
             bar->setRange(0, max_temp);
             bar->setValue(0);
             bar->setTextVisible(true);
-            bar->setFormat("%v / %m \u00B0C");
+            bar->setFormat(tr("N/A"));
             bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
             bar->setAccessibleDescription(
                 QStringLiteral("Current temperature reading in degrees "

@@ -195,6 +195,59 @@ void DiagnosticBenchmarkPanel::onRescanSmartClicked() {
     m_controller->runSmartAnalysis();
 }
 
+void DiagnosticBenchmarkPanel::fillSmartRow(int row, const SmartReport& report) {
+    // A drive that could not be read has no temperature or hours to show: zeros would read as
+    // measurements.
+    const bool read = report.overall_health != SmartHealthStatus::Unknown;
+
+    m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
+    // One marker for "not known" across the table: N/A, as Health and Thermal use.
+    const QString missing = tr("N/A");
+    m_smart_table->setItem(row,
+                           SmartColType,
+                           new QTableWidgetItem(report.interface_type.trimmed().isEmpty()
+                                                    ? missing
+                                                    : report.interface_type));
+
+    // Health with icon
+    auto* health_item = new QTableWidgetItem();
+    switch (report.overall_health) {
+    case SmartHealthStatus::Healthy:
+        health_item->setText("PASS");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorSuccess));
+        break;
+    case SmartHealthStatus::Warning:
+        health_item->setText("WARN");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorWarning));
+        break;
+    case SmartHealthStatus::Critical:
+        health_item->setText("FAIL");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorError));
+        break;
+    default:
+        health_item->setText("N/A");
+        break;
+    }
+    m_smart_table->setItem(row, SmartColHealth, health_item);
+
+    m_smart_table->setItem(row,
+                           SmartColTemperature,
+                           new QTableWidgetItem(
+                               read ? QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)
+                                    : missing));
+
+    m_smart_table->setItem(row,
+                           SmartColPowerOnHours,
+                           new QTableWidgetItem(read ? QString::number(report.power_on_hours)
+                                                     : missing));
+
+    // Wear level: an NVMe drive reports it; others do not.
+    const QString wear = report.nvme_health.has_value()
+                             ? QString("%1%").arg(report.nvme_health->percentage_used)
+                             : missing;
+    m_smart_table->setItem(row, SmartColWear, new QTableWidgetItem(wear));
+}
+
 void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport>& reports) {
     Q_ASSERT(m_smart_table);
     Q_ASSERT(m_smart_warnings_label);
@@ -206,54 +259,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
 
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
-
-        // A drive that could not be read has no temperature or hours to show: zeros would read as
-        // measurements.
-        const bool read = report.overall_health != SmartHealthStatus::Unknown;
-
-        m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
-        m_smart_table->setItem(row, SmartColType, new QTableWidgetItem(report.interface_type));
-
-        // Health with icon
-        auto* health_item = new QTableWidgetItem();
-        switch (report.overall_health) {
-        case SmartHealthStatus::Healthy:
-            health_item->setText("PASS");
-            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorSuccess));
-            break;
-        case SmartHealthStatus::Warning:
-            health_item->setText("WARN");
-            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorWarning));
-            break;
-        case SmartHealthStatus::Critical:
-            health_item->setText("FAIL");
-            health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorError));
-            break;
-        default:
-            health_item->setText("N/A");
-            break;
-        }
-        m_smart_table->setItem(row, SmartColHealth, health_item);
-
-        m_smart_table->setItem(
-            row,
-            SmartColTemperature,
-            new QTableWidgetItem(read
-                                     ? QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)
-                                     : QStringLiteral("--")));
-
-        m_smart_table->setItem(row,
-                               SmartColPowerOnHours,
-                               new QTableWidgetItem(read ? QString::number(report.power_on_hours)
-                                                         : QStringLiteral("--")));
-
-        // Wear level: NVMe percentage or "--" for SATA
-        const QString wear = report.nvme_health.has_value()
-                                 ? QString("%1%").arg(report.nvme_health->percentage_used)
-                                 : "--";
-        m_smart_table->setItem(row, SmartColWear, new QTableWidgetItem(wear));
-
-        // Collect warnings
+        fillSmartRow(row, report);
         for (const auto& warning : report.warnings) {
             warnings_list.append(warning);
         }
@@ -795,9 +801,12 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
         if (found) {
             label->setText(temp_html(temp));
             bar->setValue(temp);
+            bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
         } else {
+            // An empty bar that says so: "0 / 100 C" read as a reading of zero.
             label->setText(not_available);
             bar->setValue(0);
+            bar->setFormat(tr("N/A"));
         }
     };
     render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp);

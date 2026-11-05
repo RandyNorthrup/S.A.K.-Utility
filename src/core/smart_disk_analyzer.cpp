@@ -233,6 +233,13 @@ QString SmartDiskAnalyzer::smartctlFailureReason(const QByteArray& json) {
                 "Windows refused access. Run S.A.K. Utility as administrator to read this drive.");
         }
     }
+    if (said.contains(QStringLiteral("Unknown USB bridge"), Qt::CaseInsensitive)) {
+        // A USB enclosure or adapter that does not pass SMART commands through to the drive.
+        return QStringLiteral(
+                   "SMART cannot be read through this drive's USB adapter "
+                   "(smartctl: %1)")
+            .arg(said);
+    }
     return said.isEmpty() ? QString() : QStringLiteral("smartctl said: %1").arg(said);
 }
 
