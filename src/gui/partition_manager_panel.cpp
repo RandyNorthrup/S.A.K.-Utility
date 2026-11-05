@@ -7883,14 +7883,24 @@ public:
     // What the wizard must also have before Finish can do anything, such as a target to write to.
     void setRequiredChoice(const QComboBox* choice) { m_required_choice = choice; }
 
+    // The confirmation is asked for only while @p choice is ticked: a run that writes nothing,
+    // such as a recovery scan alone, needs none.
+    void setConfirmationOnlyWhen(QCheckBox* choice) {
+        m_only_when = choice;
+        connect(m_only_when, &QCheckBox::toggled, this, &QWizardPage::completeChanged);
+    }
+
     [[nodiscard]] bool isComplete() const override {
         const bool has_choice = m_required_choice == nullptr ||
                                 !m_required_choice->currentData().toString().isEmpty();
-        return QWizardPage::isComplete() && m_box != nullptr && m_box->isChecked() && has_choice;
+        const bool writes = m_only_when == nullptr || m_only_when->isChecked();
+        const bool confirmed = m_box != nullptr && m_box->isChecked();
+        return QWizardPage::isComplete() && (!writes || confirmed) && has_choice;
     }
 
 private:
     QCheckBox* m_box{nullptr};
+    QCheckBox* m_only_when{nullptr};
     const QComboBox* m_required_choice{nullptr};
 };
 
@@ -8462,17 +8472,10 @@ void addRecoveryCandidatePage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     widgets->size_bytes->setAccessibleName(QStringLiteral("Recovered partition size in bytes"));
     widgets->type_id = new QLineEdit(page);
     widgets->type_id->setAccessibleName(QStringLiteral("Recovered partition type ID"));
-    widgets->acknowledge = new QCheckBox(
-        QStringLiteral(
-            "I understand the recovered partition candidate will be written to the selected disk."),
-        page);
-    nameConfirmationBox(widgets->acknowledge,
-                        QStringLiteral("Acknowledge recovered partition write-back"));
     layout->addRow(QString(), widgets->restore_candidate);
     layout->addRow(QStringLiteral("Offset bytes:"), widgets->offset_bytes);
     layout->addRow(QStringLiteral("Size bytes:"), widgets->size_bytes);
     layout->addRow(QStringLiteral("Type ID:"), widgets->type_id);
-    layout->addRow(QString(), widgets->acknowledge);
     wizard->addPage(page);
 }
 
@@ -8491,13 +8494,30 @@ void updateRecoveryWizardReview(const RecoveryWizardWidgets& widgets) {
 }
 
 void addRecoveryReviewPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
-    auto* review_page = new QWizardPage(wizard);
+    // Beside Finish, as in the migrate and copy wizards. On the page before it, the write-back
+    // could be finished with its "I understand" box left unticked.
+    auto* review_page = new ConfirmationWizardPage(wizard);
     review_page->setTitle(QStringLiteral("Review"));
     auto* review_layout = new QVBoxLayout(review_page);
     widgets->review = new QLabel(review_page);
     widgets->review->setWordWrap(true);
     widgets->review->setAccessibleDescription(QStringLiteral("Wizard review"));
     review_layout->addWidget(widgets->review);
+    widgets->acknowledge = new QCheckBox(
+        QStringLiteral(
+            "I understand the recovered partition candidate will be written to the selected disk."),
+        review_page);
+    nameConfirmationBox(widgets->acknowledge,
+                        QStringLiteral("Acknowledge recovered partition write-back"));
+    review_layout->addWidget(widgets->acknowledge);
+    review_page->setConfirmationBox(widgets->acknowledge);
+    // A scan alone writes nothing, so it needs no acknowledgement, and the box is not shown.
+    review_page->setConfirmationOnlyWhen(widgets->restore_candidate);
+    widgets->acknowledge->setVisible(widgets->restore_candidate->isChecked());
+    QObject::connect(widgets->restore_candidate,
+                     &QCheckBox::toggled,
+                     widgets->acknowledge,
+                     &QWidget::setVisible);
     wizard->addPage(review_page);
 }
 

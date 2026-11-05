@@ -134,6 +134,10 @@ private Q_SLOTS:
     void migrationWizardSaysSnapshotAndOffersTheChoice();
     void migrationWizardQueuesItsPlanAndTheChoice();
     void migrationWizardShowsWhyATargetIsRefused();
+    void migrateWizardFinishWaitsForTheAcknowledgement();
+    void copyDiskWizardFinishWaitsForTheAcknowledgement();
+    void copyPartitionWizardFinishWaitsForTheAcknowledgement();
+    void recoveryWizardWriteBackWaitsForTheAcknowledgement();
     void bootRepairOnAnAttachedDiskRepairsThatDisk();
     void bootRepairOnTheRunningDiskRepairsTheRunningWindows();
     void createImageOverAnExistingFileCarriesTheDialogsAnswer();
@@ -3456,6 +3460,101 @@ void PartitionManagerPanelTests::actionsReturnBeforeTheirDialogsOpen() {
     const PressOutcome from_apply = watchPressForDialog([&]() { accessiblePress(apply); });
     QVERIFY2(from_apply.dialog_opened, "Apply opened no dialog");
     QVERIFY2(!from_apply.opened_inside_press, "Apply's dialog ran inside its press");
+}
+
+namespace {
+
+// Walks a disk wizard to its last page and checks Finish there waits for the named box.
+void checkFinishWaitsFor(sak::PartitionManagerPanel* panel,
+                         const char* opener,
+                         const QString& box_name,
+                         bool* inspected) {
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        while (wizard->currentPage()->nextId() != -1) {
+            wizard->next();
+        }
+        auto* review = wizard->currentPage();
+        auto* box = findAccessibleWidget<QCheckBox>(wizard, box_name);
+        QVERIFY2(box != nullptr, qPrintable(box_name));
+        QCOMPARE(box->parentWidget(), static_cast<QWidget*>(review));
+        QVERIFY2(!review->isComplete(), "Finish is on before the box is ticked");
+        box->setChecked(true);
+        QVERIFY2(review->isComplete(), "Finish stays off with the box ticked");
+        *inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(panel, opener, Qt::DirectConnection));
+}
+
+}  // namespace
+
+void PartitionManagerPanelTests::migrateWizardFinishWaitsForTheAcknowledgement() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+    panel.findChild<QTableWidget*>()->selectRow(0);
+    bool inspected = false;
+    checkFinishWaitsFor(
+        &panel, "onMigrateOs", QStringLiteral("Confirm target disk overwrite"), &inspected);
+    QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::copyDiskWizardFinishWaitsForTheAcknowledgement() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+    panel.findChild<QTableWidget*>()->selectRow(0);
+    bool inspected = false;
+    checkFinishWaitsFor(
+        &panel, "onCloneDisk", QStringLiteral("Confirm target disk overwrite"), &inspected);
+    QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::copyPartitionWizardFinishWaitsForTheAcknowledgement() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.findChild<QTableWidget*>()->selectRow(1);
+    bool inspected = false;
+    checkFinishWaitsFor(&panel,
+                        "onCopyPartitionWizard",
+                        QStringLiteral("Confirm partition clone target overwrite"),
+                        &inspected);
+    QVERIFY(inspected);
+}
+
+// Partition Recovery's Finish was on with its write-back ticked and "I understand..." not: the
+// box sat on the page before, out of the gate the other three wizards have.
+void PartitionManagerPanelTests::recoveryWizardWriteBackWaitsForTheAcknowledgement() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.findChild<QTableWidget*>()->selectRow(0);
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        auto* write_back = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Queue recovered partition write-back candidate"));
+        auto* box = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Acknowledge recovered partition write-back"));
+        QVERIFY(write_back != nullptr && box != nullptr);
+        while (wizard->currentPage()->nextId() != -1) {
+            wizard->next();
+        }
+        auto* review = wizard->currentPage();
+        QCOMPARE(box->parentWidget(), static_cast<QWidget*>(review));
+        // The scan alone writes nothing and needs no acknowledgement.
+        QVERIFY(review->isComplete());
+        write_back->setChecked(true);
+        QVERIFY2(!review->isComplete(), "Finish is on for a write-back nobody acknowledged");
+        box->setChecked(true);
+        QVERIFY(review->isComplete());
+        inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onPartitionRecoveryWizard", Qt::DirectConnection));
+    QVERIFY(inspected);
 }
 
 void PartitionManagerPanelTests::migrationWizardShowsWhyATargetIsRefused() {
