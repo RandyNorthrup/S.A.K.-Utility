@@ -1817,6 +1817,7 @@ private Q_SLOTS:
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
     void scriptBuilder_copyPartitionHoldsItsSourceAndReadsItAll();
     void lockedVolumeDoesNotStopApply();
+    void inventoryReadsWhetherAVolumeIsEncrypted();
     void scriptBuilder_backupReadsItsShadowCopyThroughALink();
     void scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVolume();
     void scriptBuilder_restoredPartitionKeepsItsStart();
@@ -19011,6 +19012,28 @@ void PartitionManagerCoreTests::scriptBuilder_copyPartitionHoldsItsSourceAndRead
         PartitionOperationType::ClonePartition, target, raw));
     QVERIFY2(fromDisk.valid(), qPrintable(fromDisk.blockers.join(QStringLiteral("; "))));
     QVERIFY(!fromDisk.script.contains(QStringLiteral("$sakCopyLock")));
+}
+
+// A volume whose protection is suspended reads "protection off" and is still encrypted; Resume is
+// what applies to it, so the scan says it is encrypted.
+void PartitionManagerCoreTests::inventoryReadsWhetherAVolumeIsEncrypted() {
+    QVERIFY(StorageInventoryWorker::inventoryPowerShellScript().contains(
+        QStringLiteral("BitLockerEncrypted = ")));
+    QJsonObject disk = standardUserInventoryDisk();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject partition = partitions.first().toObject();
+    QJsonObject volume = partition.value(QStringLiteral("Volume")).toObject();
+    for (const bool encrypted : {true, false}) {
+        volume[QStringLiteral("BitLockerStateKnown")] = true;
+        volume[QStringLiteral("BitLockerEnabled")] = false;
+        volume[QStringLiteral("BitLockerEncrypted")] = encrypted;
+        partition[QStringLiteral("Volume")] = volume;
+        partitions[0] = partition;
+        disk[QStringLiteral("Partitions")] = partitions;
+        const auto inventory =
+            StorageInventoryWorker::parseInventoryJson(QJsonDocument(QJsonArray{disk}).toJson());
+        QCOMPARE(inventory.disks.first().partitions.first().volume->bitlocker_encrypted, encrypted);
+    }
 }
 
 // fsutil cannot read a locked volume. That must not read as this scan being unreliable.

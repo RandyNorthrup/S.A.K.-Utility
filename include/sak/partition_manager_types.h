@@ -184,8 +184,11 @@ struct PartitionVolumeInfo {
     QString health_status;
     uint64_t total_bytes{0};
     uint64_t free_bytes{0};
-    bool bitlocker_enabled{false};
+    bool bitlocker_enabled{false};  ///< BitLocker protection is on
     bool bitlocker_locked{false};
+    /// The volume holds BitLocker encryption, whether or not its protection is on: a volume whose
+    /// protection is suspended is encrypted with protection off, and Resume is what applies to it.
+    bool bitlocker_encrypted{false};
     bool dirty_bit_known{false};
     bool dirty_bit_set{false};
     QString dirty_bit_error;

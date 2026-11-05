@@ -105,6 +105,7 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.free_bytes = jsonUInt64(object, QStringLiteral("SizeRemaining"));
     volume.bitlocker_enabled = jsonBool(object, QStringLiteral("BitLockerEnabled"));
     volume.bitlocker_locked = jsonBool(object, QStringLiteral("BitLockerLocked"));
+    volume.bitlocker_encrypted = jsonBool(object, QStringLiteral("BitLockerEncrypted"));
     volume.bitlocker_state_known = jsonBool(object, QStringLiteral("BitLockerStateKnown"));
     volume.bitlocker_state_error =
         object.value(QStringLiteral("BitLockerStateError")).toString().trimmed();
@@ -1133,6 +1134,7 @@ static QString inventoryPowerShellPartitionResultScript() {
             BitLockerStateError = "$bitLockerError"
             BitLockerEnabled = if ($bitlocker) { "$($bitlocker.ProtectionStatus)" -eq 'On' } else { $false }
             BitLockerLocked = if ($bitlocker) { "$($bitlocker.LockStatus)" -eq 'Locked' } else { $false }
+            BitLockerEncrypted = if ($bitlocker) { ("$($bitlocker.LockStatus)" -eq 'Locked') -or (("$($bitlocker.VolumeStatus)" -ne '') -and ("$($bitlocker.VolumeStatus)" -ne 'FullyDecrypted')) } else { $false }
             DirtyBitKnown = [bool]$dirtyKnown
             DirtyBitSet = [bool]$dirty
             DirtyBitError = "$dirtyError"
