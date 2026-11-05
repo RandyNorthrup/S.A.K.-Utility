@@ -2195,6 +2195,20 @@ struct ApplyDiffSegment {
     bool changed{false};
 };
 
+/// The colours one before/after segment is painted in: a changed segment in its full colour, an
+/// unchanged one lighter, and a label that reads on that fill. Painting and the test hook both ask
+/// here, so what the test checks is what is drawn.
+struct ApplyDiffSegmentPaint {
+    QColor fill;
+    QColor label;
+};
+
+[[nodiscard]] ApplyDiffSegmentPaint applyDiffSegmentPaint(const ApplyDiffSegment& segment) {
+    const QColor fill = segment.changed ? segment.color
+                                        : segment.color.lighter(kPartitionSegmentFillLightness);
+    return {.fill = fill, .label = segmentLabelColor(fill)};
+}
+
 [[nodiscard]] auto findApplyPartitionSegment(QVector<ApplyDiffSegment>* segments,
                                              int partition_number) {
     return std::ranges::find_if(*segments, [partition_number](const auto& segment) {
@@ -2258,15 +2272,8 @@ public:
                 {QStringLiteral("bytes"), QString::number(segment.bytes)},
                 {QStringLiteral("unallocated"), segment.unallocated},
                 {QStringLiteral("color"), segment.color.name()},
-                {QStringLiteral("label_color"),
-                 segmentLabelColor(segment.changed
-                                       ? segment.color
-                                       : segment.color.lighter(kPartitionSegmentFillLightness))
-                     .name()},
-                {QStringLiteral("fill"),
-                 (segment.changed ? segment.color
-                                  : segment.color.lighter(kPartitionSegmentFillLightness))
-                     .name()},
+                {QStringLiteral("label_color"), applyDiffSegmentPaint(segment).label.name()},
+                {QStringLiteral("fill"), applyDiffSegmentPaint(segment).fill.name()},
             });
         });
         return result;
@@ -2931,10 +2938,8 @@ private:
             if (segment_rect.isEmpty()) {
                 continue;
             }
-            const QColor fill = segment.changed
-                                    ? segment.color
-                                    : segment.color.lighter(kPartitionSegmentFillLightness);
-            painter->fillRect(segment_rect, fill);
+            const ApplyDiffSegmentPaint paint = applyDiffSegmentPaint(segment);
+            painter->fillRect(segment_rect, paint.fill);
             if (segment.used_percent > 0) {
                 QRect used_rect = segment_rect;
                 used_rect.setWidth(scaledExtent(segment_rect.width(),
@@ -2945,7 +2950,7 @@ private:
             const QString text = painter->fontMetrics().elidedText(segment.label,
                                                                    Qt::ElideRight,
                                                                    segment_rect.width());
-            painter->setPen(segmentLabelColor(fill));
+            painter->setPen(paint.label);
             painter->drawText(segment_rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
                               Qt::AlignCenter,
                               text);
@@ -4216,8 +4221,7 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     widgets.swap_page_size->setEnabled(swap_selected);
     form->setRowVisible(widgets.raw_format_confirm, raw_selected);
     widgets.raw_format_confirm->setText(rawFormatConfirmationText(raw_kind));
-    // Its text changes with the file system; the dialog widens to the longest so none is cut.
-    widgets.raw_format_confirm->setMinimumWidth(widgets.raw_format_confirm->sizeHint().width());
+    // Its text changes with the file system; the dialog widens to the new text so none is cut.
     if (QLayout* layout = dialog.layout(); layout != nullptr) {
         layout->activate();
         dialog.resize(dialog.size().expandedTo(dialog.minimumSizeHint()));

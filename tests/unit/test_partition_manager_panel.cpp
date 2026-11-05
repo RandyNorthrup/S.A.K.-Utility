@@ -123,6 +123,7 @@ private Q_SLOTS:
     void customRawCloneTargetsMustExist() const;
     void apfsUnknownModeIsRefused() const;
     void everyWizardUsesTheAppsWizardStyle();
+    void initializeDiskNamesTheDisk();
     void diskCopyWizardHasNoUnprobedCustomTarget();
     void aSelectedRowQueuesWhatTheStepClientBuilds();
     void diskCopyWizardOffersOnlyWhatTheCopyDoes();
@@ -2155,11 +2156,14 @@ qint64 totalSaturation(const QImage& image) {
     return total;
 }
 
-bool disabledIconIsGreyed(const QIcon& icon) {
-    const QSize probe(24, 24);
+/// At the size the ribbon draws: an icon serves a pixmap added for a mode only at that pixmap's own
+/// size, and renders the rest itself.
+bool disabledIconIsGreyed(const QIcon& icon, const QSize& probe) {
     const qint64 normal = totalSaturation(icon.pixmap(probe, QIcon::Normal).toImage());
     const qint64 disabled = totalSaturation(icon.pixmap(probe, QIcon::Disabled).toImage());
-    return normal == 0 || disabled < normal;
+    // The style's greyed pixmap has next to no colour left; a scaled copy of the colour artwork
+    // keeps nearly all of it.
+    return normal == 0 || disabled * 4 < normal;
 }
 
 }  // namespace
@@ -2206,7 +2210,7 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
         QCOMPARE(button->property("iconModes").toString(),
                  QStringLiteral("Normal,Disabled,Active,Selected"));
         // UI review F15: the disabled pixmap is the greyed artwork, not the colour file again.
-        QVERIFY2(disabledIconIsGreyed(button->icon()),
+        QVERIFY2(disabledIconIsGreyed(button->icon(), button->iconSize()),
                  qPrintable(QStringLiteral("%1's disabled icon is as colourful as its normal one")
                                 .arg(it.key())));
         const auto disabledIconSize =
@@ -2946,6 +2950,28 @@ void PartitionManagerPanelTests::apfsUnknownModeIsRefused() const {
     QVERIFY(!header.mid(slots, private_section - slots)
                  .contains(QStringLiteral("onChangeApfsVolumeLabel")));
     QVERIFY(header.mid(private_section).contains(QStringLiteral("onChangeApfsVolumeLabel")));
+}
+
+// UI review F45: Initialize Disk asked for a partition style without naming the disk it erases.
+void PartitionManagerPanelTests::initializeDiskNamesTheDisk() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    QString title;
+    QString label;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "the Initialize Disk prompt should open");
+        title = dialog->windowTitle();
+        label = dialog->labelText();
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onInitializeDisk", Qt::DirectConnection));
+    QVERIFY2(title.contains(QStringLiteral("Disk 0")) && label.contains(QStringLiteral("Disk 0")),
+             qPrintable(title + QStringLiteral(" | ") + label));
 }
 
 void PartitionManagerPanelTests::diskCopyWizardHasNoUnprobedCustomTarget() {

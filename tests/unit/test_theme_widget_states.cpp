@@ -36,6 +36,7 @@
 #include <QRegularExpression>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStatusBar>
 #include <QStyleFactory>
 #include <QStyleOptionButton>
 #include <QTableWidget>
@@ -218,6 +219,8 @@ private Q_SLOTS:
     void uncheckedBoxesHaveAVisibleOutline();
     void panelsAndGlyphsFollowTheDarkTheme();
     void anInvalidItemColourLeavesTheViewsOwn();
+    void statusBarItemsHaveNoSeparators_data();
+    void statusBarItemsHaveNoSeparators();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -1041,6 +1044,52 @@ void ThemeWidgetStatesTests::anInvalidItemColourLeavesTheViewsOwn() {
     QVERIFY(!item.data(Qt::ForegroundRole).isValid());
     sak::setItemForeground(&item, QColor(Qt::green));
     QCOMPARE(item.foreground().color(), QColor(Qt::green));
+}
+
+void ThemeWidgetStatesTests::statusBarItemsHaveNoSeparators_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// D7: the status bar framed each permanent item with a native separator in a colour from no token
+// (#d7d7d7), bright on the dark bar.
+void ThemeWidgetStatesTests::statusBarItemsHaveNoSeparators() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* bar = new QStatusBar(&window);
+    bar->setSizeGripEnabled(false);
+    bar->setMinimumWidth(400);
+    auto* theme = new QLabel(QStringLiteral("Theme: System"), bar);
+    auto* ready = new QLabel(QStringLiteral("Ready"), bar);
+    bar->addPermanentWidget(theme);
+    bar->addPermanentWidget(ready);
+    layout->addWidget(bar);
+    const QImage image = shot(window, bar);
+    QVERIFY(!image.isNull());
+    const QColor ground(image.pixel(4, image.height() / 2));
+    QStringList marks;
+    for (const QLabel* label : {theme, ready}) {
+        // Where QStatusBar draws an item's frame: its geometry widened by 2 px and 1 px.
+        const QRect frame = label->geometry().adjusted(-2, -1, 2, 1);
+        for (const int x : {frame.left(), frame.right()}) {
+            const QPoint at(x, frame.center().y());
+            if (!image.rect().contains(at)) {
+                continue;
+            }
+            const QColor pixel(image.pixel(at));
+            const int distance = std::abs(pixel.red() - ground.red()) +
+                                 std::abs(pixel.green() - ground.green()) +
+                                 std::abs(pixel.blue() - ground.blue());
+            if (distance > 24) {
+                marks << QStringLiteral("%1 at x %2 on %3")
+                             .arg(pixel.name())
+                             .arg(x)
+                             .arg(ground.name());
+            }
+        }
+    }
+    QVERIFY2(marks.isEmpty(), qPrintable(marks.join(QStringLiteral(", "))));
 }
 
 QTEST_MAIN(ThemeWidgetStatesTests)

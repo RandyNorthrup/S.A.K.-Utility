@@ -24,11 +24,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -165,6 +167,7 @@ private Q_SLOTS:
     void executePageShowsWhatWentWrong();
     void wholeRestoreWizardRunsOnARealBackup();
     void backupWizardWalksToItsLastPage();
+    void backupWizardReadsAsPlainText();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -979,6 +982,55 @@ void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
     settings->m_destinationEdit->setText(destination.filePath(QStringLiteral("backup")));
     wizard.next();
     QCOMPARE(wizard.currentId(), static_cast<int>(sak::UserProfileBackupWizard::Page_Execute));
+}
+
+// UI review S5, S17, DF13: "[shield]", "[save]" and "(i)" stood in for icons, the users table's
+// Select column was headed "?", and each settings row sized its own label, so the fields after them
+// started at 139, 141 and 149 px.
+void UserProfileAppRestoreFlowTests::backupWizardReadsAsPlainText() {
+    sak::UserProfileBackupWizard wizard;
+    wizard.restart();
+    const QStringList marks = {QStringLiteral("[shield]"),
+                               QStringLiteral("[save]"),
+                               QStringLiteral("[FOLDER]"),
+                               QStringLiteral("(i)"),
+                               QStringLiteral("(!)"),
+                               QStringLiteral("[OK]"),
+                               QStringLiteral("[x]")};
+    QStringList found;
+    const auto scan = [&]() {
+        for (const QLabel* label : wizard.findChildren<QLabel*>()) {
+            for (const QString& mark : marks) {
+                if (label->text().contains(mark)) {
+                    found << label->text();
+                }
+            }
+        }
+        for (const QTableWidget* table : wizard.findChildren<QTableWidget*>()) {
+            for (int column = 0; column < table->columnCount(); ++column) {
+                const QTableWidgetItem* header = table->horizontalHeaderItem(column);
+                if (header != nullptr && header->text().trimmed() == QStringLiteral("?")) {
+                    found << QStringLiteral("a column headed \"?\"");
+                }
+            }
+        }
+    };
+    scan();
+    while (wizard.currentId() != sak::UserProfileBackupWizard::Page_BackupSettings) {
+        const int before = wizard.currentId();
+        wizard.next();
+        QVERIFY2(wizard.currentId() != before, qPrintable(wizard.currentPage()->title()));
+        scan();
+    }
+    found.removeDuplicates();
+    QVERIFY2(found.isEmpty(), qPrintable(found.join(QStringLiteral("\n"))));
+
+    auto* settings = qobject_cast<sak::UserProfileBackupSettingsPage*>(wizard.currentPage());
+    QVERIFY(settings != nullptr);
+    const int width = settings->m_destinationLabel->minimumWidth();
+    QVERIFY(width >= settings->m_destinationLabel->sizeHint().width());
+    QCOMPARE(settings->m_compressionLabel->minimumWidth(), width);
+    QCOMPARE(settings->m_permissionLabel->minimumWidth(), width);
 }
 
 QTEST_MAIN(UserProfileAppRestoreFlowTests)
