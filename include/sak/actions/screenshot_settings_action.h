@@ -11,6 +11,7 @@
 #include <qwindowdefs.h>              // WId
 
 class ScreenshotSettingsActionTests;  // unit-test friend (global namespace)
+class QImage;
 
 namespace sak {
 
@@ -56,6 +57,9 @@ private:
     ///        MUST run on the GUI thread (QScreen::grabWindow has GUI-thread affinity). Returns
     ///        false on no primary screen, a null grab, or a failed save.
     static bool grabAndSaveOnGui(WId window, const QString& filepath);
+    /// @brief True when a picture is one colour throughout, which is what copying a window drawn
+    ///        by the compositor gives. Such a picture is a failed capture, never a saved one.
+    [[nodiscard]] static bool pictureIsBlank(const QImage& image);
     /// @brief Marshal grabAndSaveOnGui onto the GUI thread (BlockingQueuedConnection) so a worker
     ///        thread can capture safely; fails closed (returns false) if there is no
     ///        QCoreApplication or the invocation cannot be marshalled.

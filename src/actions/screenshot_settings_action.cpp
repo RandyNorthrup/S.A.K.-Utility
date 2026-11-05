@@ -17,11 +17,14 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QProcess>
 #include <QSaveFile>
 #include <QScreen>
 #include <QTextStream>
 #include <QThread>
+
+#include <algorithm>
 
 #include <Windows.h>
 
@@ -46,13 +49,57 @@ ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_locatio
     setOutputFolder(output_location);
 }
 
-bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
-    QScreen* screen = QGuiApplication::primaryScreen();
-    if (screen == nullptr) {
-        return false;
+namespace {
+
+// Settings is drawn by the compositor, so copying its window's pixels (QScreen::grabWindow) gave
+// a single colour. PrintWindow with PW_RENDERFULLCONTENT asks the window for what it shows.
+QImage renderWindowContent(HWND hwnd) {
+    RECT rect{};
+    if (hwnd == nullptr || GetWindowRect(hwnd, &rect) == 0) {
+        return {};
     }
-    const QPixmap shot = screen->grabWindow(window);  // 0 = the whole primary screen
-    if (shot.isNull()) {
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    if (width <= 0 || height <= 0) {
+        return {};
+    }
+    HDC screen = GetDC(nullptr);
+    HDC memory = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ previous = SelectObject(memory, bitmap);
+    constexpr UINT kRenderFullContent = 0x00'00'00'02;  // PW_RENDERFULLCONTENT
+    const bool rendered = PrintWindow(hwnd, memory, kRenderFullContent) != 0;
+    SelectObject(memory, previous);
+    QImage image = rendered ? QImage::fromHBITMAP(bitmap) : QImage();
+    DeleteObject(bitmap);
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+    return image;
+}
+
+}  // namespace
+
+bool ScreenshotSettingsAction::pictureIsBlank(const QImage& image) {
+    if (image.isNull()) {
+        return true;
+    }
+    // Every pixel: a Settings page is mostly one background with thin text, and a sampled grid
+    // can step over all of it.
+    const QImage pixels = image.convertToFormat(QImage::Format_RGB32);
+    const QRgb first = pixels.pixel(0, 0);
+    for (int y = 0; y < pixels.height(); ++y) {
+        const auto* line = reinterpret_cast<const QRgb*>(pixels.constScanLine(y));
+        if (std::any_of(line, line + pixels.width(), [first](QRgb p) { return p != first; })) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
+    const QImage shot = renderWindowContent(reinterpret_cast<HWND>(window));
+    // A blank picture saved as a screenshot is evidence of nothing; count it as a failed try.
+    if (pictureIsBlank(shot)) {
         return false;
     }
     return shot.save(filepath, "PNG");
@@ -216,41 +263,61 @@ QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
             {"gaming", "Gaming_Settings"}};
 }
 
+namespace {
+
+// Whether @p hwnd belongs to a process whose executable is exactly SystemSettings.exe.
+bool windowIsSettingsProcess(HWND hwnd) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) {
+        return false;
+    }
+    wchar_t exe_path[MAX_PATH] = {};
+    DWORD path_size = MAX_PATH;
+    bool found = false;
+    if (QueryFullProcessImageNameW(proc, 0, exe_path, &path_size)) {
+        // Require an EXACT executable-name match, not a substring anywhere in the path: a decoy
+        // exe under a folder named SystemSettings (or SystemSettingsX.exe) is not Settings.
+        const QString exe_name = QFileInfo(QString::fromWCharArray(exe_path)).fileName();
+        found = exe_name.compare(QStringLiteral("SystemSettings.exe"), Qt::CaseInsensitive) == 0;
+    }
+    CloseHandle(proc);
+    return found;
+}
+
+}  // namespace
+
 WId ScreenshotSettingsAction::findSettingsWindow() {
-    // Detect Settings by its visible top-level window, not by launching a process listing per page.
-    HWND settings_hwnd = nullptr;
+    // Settings is a Store app: the window a person sees is ApplicationFrameHost's frame, with the
+    // SystemSettings.exe window inside it. The visible frame holding that window is the one to
+    // capture and to close. SystemSettings.exe's own top-level window was captured before, and
+    // gave a blank 1024x768 picture for every page.
+    HWND frame_hwnd = nullptr;
     EnumWindows(
         [](HWND hwnd, LPARAM lparam) -> BOOL {
-            if (!IsWindowVisible(hwnd)) {
+            if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
                 return TRUE;
             }
-            DWORD pid = 0;
-            GetWindowThreadProcessId(hwnd, &pid);
-            HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-            if (!proc) {
-                return TRUE;
-            }
-            wchar_t exe_path[MAX_PATH] = {};
-            DWORD path_size = MAX_PATH;
-            bool found = false;
-            if (QueryFullProcessImageNameW(proc, 0, exe_path, &path_size)) {
-                // Require an EXACT executable-name match, not a substring anywhere in the
-                // path: "SystemSettings" occurs in any folder named that, so a decoy exe
-                // under such a path (or named SystemSettingsX.exe) would otherwise be
-                // trusted as the real Settings window and captured as evidence.
-                const QString exe_name = QFileInfo(QString::fromWCharArray(exe_path)).fileName();
-                found = exe_name.compare(QStringLiteral("SystemSettings.exe"),
-                                         Qt::CaseInsensitive) == 0;
-            }
-            CloseHandle(proc);
-            if (found) {
+            bool hosts_settings = false;
+            EnumChildWindows(
+                hwnd,
+                [](HWND child, LPARAM found) -> BOOL {
+                    if (windowIsSettingsProcess(child)) {
+                        *reinterpret_cast<bool*>(found) = true;
+                        return FALSE;
+                    }
+                    return TRUE;
+                },
+                reinterpret_cast<LPARAM>(&hosts_settings));
+            if (hosts_settings) {
                 *reinterpret_cast<HWND*>(lparam) = hwnd;
                 return FALSE;
             }
             return TRUE;
         },
-        reinterpret_cast<LPARAM>(&settings_hwnd));
-    return reinterpret_cast<WId>(settings_hwnd);
+        reinterpret_cast<LPARAM>(&frame_hwnd));
+    return reinterpret_cast<WId>(frame_hwnd);
 }
 
 quintptr ScreenshotSettingsAction::windowToClose(quintptr window_before_launch,

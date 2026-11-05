@@ -12,6 +12,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -31,6 +32,7 @@ class ScreenshotSettingsActionTests : public QObject {
 private Q_SLOTS:
     void windowToClose_neverTheUsersOwnSettingsWindow();
     void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
+    void aBlankPictureIsAFailedCapture();
     void reportPathLine_onlyAdvertisesWrittenReport();
     void createCaptureFolder_reportsAFolderItCannotCreate();
     void buildScreenshotReportText_containsPagesAndSections();
@@ -409,6 +411,33 @@ void ScreenshotSettingsActionTests::windowToClose_neverTheUsersOwnSettingsWindow
 
 // Detection is EnumWindows over visible top-level windows, waits are for state (window present
 // and answering), and nothing is force-killed: no taskkill, no tasklist per page, no fixed sleeps.
+// Eight pages saved as eight 1024x768 pictures of one colour: copying the pixels of a window the
+// compositor draws gives that. A blank is now a failed try, and the capture asks the frame window
+// a person sees to render itself.
+void ScreenshotSettingsActionTests::aBlankPictureIsAFailedCapture() {
+    QImage blank(1024, 768, QImage::Format_RGB32);
+    blank.fill(QColor(32, 32, 32));
+    QVERIFY(ScreenshotSettingsAction::pictureIsBlank(blank));
+    QVERIFY(ScreenshotSettingsAction::pictureIsBlank(QImage()));
+    QImage page = blank;
+    for (int x = 100; x < 400; ++x) {
+        page.setPixel(x, 200, qRgb(240, 240, 240));
+        page.setPixel(x, 201, qRgb(240, 240, 240));
+    }
+    for (int y = 0; y < 768; ++y) {
+        page.setPixel(512, y, qRgb(0, 120, 215));
+    }
+    QVERIFY(!ScreenshotSettingsAction::pictureIsBlank(page));
+
+    QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
+                   .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString source = QString::fromUtf8(file.readAll());
+    QVERIFY(source.contains(QStringLiteral("PrintWindow(hwnd, memory, kRenderFullContent)")));
+    QVERIFY(!source.contains(QStringLiteral("grabWindow(")));
+    QVERIFY(source.contains(QStringLiteral("EnumChildWindows(")));
+}
+
 void ScreenshotSettingsActionTests::settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills() {
     QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
                    .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
