@@ -4,6 +4,7 @@
 /// @file test_file_management_explorer_panel.cpp
 /// @brief GUI tests for the File Management Explorer shell.
 
+#include "sak/advanced_search_panel.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_details_pane.h"
@@ -64,6 +65,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QtTest/QtTest>
 #include <QUrl>
 
@@ -2037,6 +2039,51 @@ private Q_SLOTS:
         QVERIFY(settings.value(QStringLiteral("ShowFlattenOptions"), false).toBool());
         QVERIFY(settings.value(QStringLiteral("DoubleClickToGoUp"), true).toBool());
         settings.endGroup();
+    }
+
+    void aPathInAnotherTargetSelectsThatTarget() {
+        const QVector<sak::FileManagementTarget> mounted{
+            localTarget(deterministicLocalRoot().path(), QStringLiteral("Primary test target")),
+            localTarget(deterministicSecondLocalRoot().path(),
+                        QStringLiteral("Secondary test target"))};
+        QVERIFY(QDir(deterministicSecondLocalRoot().path()).mkpath(QStringLiteral("inside")));
+        DeterministicExplorerPanel panel(mounted);
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(targetList && pathEdit);
+        QVERIFY(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0);
+        QVERIFY(
+            !targetList->currentItem()->text().contains(QStringLiteral("Secondary test target")));
+
+        // Typed into the address bar: a folder under the other target's root.
+        pathEdit->setText(
+            QDir(deterministicSecondLocalRoot().path()).filePath(QStringLiteral("inside")));
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(targetList->currentItem() != nullptr &&
+                                     targetList->currentItem()->text().contains(
+                                         QStringLiteral("Secondary test target")),
+                                 5000);
+        QVERIFY(comparablePath(pathEdit->text()).endsWith(QStringLiteral("/inside")));
+    }
+
+    // Advanced Search's tree opened expanded at Home, with the drives out of sight below it.
+    void advancedSearchTreeStartsCollapsed() {
+        sak::AdvancedSearchPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        QTreeWidget* tree = nullptr;
+        for (auto* candidate : panel.findChildren<QTreeWidget*>()) {
+            if (candidate->accessibleName() == QStringLiteral("File explorer tree")) {
+                tree = candidate;
+            }
+        }
+        QVERIFY(tree != nullptr);
+        QTRY_VERIFY(tree->topLevelItemCount() > 0);
+        QVERIFY(!tree->topLevelItem(0)->isExpanded());
     }
 
     void sidebarAcceptsTagDropAndFavoriteReorder() {

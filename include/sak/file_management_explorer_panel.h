@@ -247,6 +247,8 @@ private:
     [[nodiscard]] QString targetPathForName(const QString& name) const;
     [[nodiscard]] bool validateCurrentTargetIdentity(QString* blocker) const;
     void loadDirectory(const QString& path, bool add_history = true);
+    /// Make the local target whose root holds @p path current, when the current one does not.
+    void selectTargetHoldingPath(const QString& path);
     void deliverListingResult(const FileManagementListResult& result,
                               quint64 listing_revision,
                               int load_pane);

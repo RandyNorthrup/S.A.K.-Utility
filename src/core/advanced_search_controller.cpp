@@ -75,6 +75,7 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
     cleanupWorker();
 
     m_total_matches = 0;
+    m_incomplete_reasons.clear();
     m_total_files = 0;
 
     // Apply preferences to config
@@ -203,16 +204,24 @@ void AdvancedSearchController::onWorkerFinished() {
     // contradict the panel's own log, and it would also overwrite the worker's own
     // INCOMPLETE progress message, which lands first.
     const bool complete = m_worker && !m_worker->scanIncomplete();
+    m_incomplete_reasons.clear();
+    if (!complete) {
+        m_incomplete_reasons = m_worker ? m_worker->incompleteReasons() : QStringList{};
+        if (m_incomplete_reasons.isEmpty()) {
+            m_incomplete_reasons.append(QStringLiteral("the search ended without saying what"));
+        }
+    }
     Q_EMIT searchFinished(m_total_matches, m_total_files, complete);
     if (!complete) {
         if (m_worker) {
             logWarning("AdvancedSearchController: search incomplete -- {}",
                        m_worker->incompleteReasons().join(QStringLiteral("; ")).toStdString());
         }
-        Q_EMIT statusMessage(tr("Search INCOMPLETE: %1 matches in %2 files; some files could not "
-                                "be searched, results may be missing matches")
+        Q_EMIT statusMessage(tr("Search INCOMPLETE: %1 matches in %2 files; %3 could not be "
+                                "searched, listed in the log, so results may be missing matches")
                                  .arg(m_total_matches)
-                                 .arg(m_total_files),
+                                 .arg(m_total_files)
+                                 .arg(m_incomplete_reasons.size()),
                              kSearchStatusMessageMs);
         setState(State::Idle);
         return;

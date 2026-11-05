@@ -60,6 +60,12 @@ private Q_SLOTS:
     void searchFinished_carriesCompleteness();
 
 private:
+    static void verifyIncompleteSearchNamesTheFile(const AdvancedSearchController& incomplete,
+                                                   const AdvancedSearchController& complete);
+
+private Q_SLOTS:
+
+private:
     QTemporaryDir m_temp_dir;
 };
 
@@ -470,6 +476,17 @@ void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
     QVERIFY(emitted);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(finished[0][2].toBool(), false);
+    verifyIncompleteSearchNamesTheFile(ctrl, clean_ctrl);
+}
+
+// ...and names the file it could not search: the message alone said only "some files".
+void AdvancedSearchControllerTests::verifyIncompleteSearchNamesTheFile(
+    const AdvancedSearchController& incomplete, const AdvancedSearchController& complete) {
+    const QStringList reasons = incomplete.incompleteReasons();
+    QVERIFY2(!reasons.isEmpty(), "an incomplete search must say what it could not search");
+    QVERIFY2(reasons.join(QLatin1Char('|')).contains(QStringLiteral("locked.txt")),
+             qPrintable(reasons.join(QLatin1Char('|'))));
+    QVERIFY(complete.incompleteReasons().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchControllerTests)

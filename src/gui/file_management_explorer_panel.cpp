@@ -2640,8 +2640,54 @@ void FileManagementExplorerPanel::deliverListingResult(const FileManagementListR
     populateTable(result);
 }
 
+namespace {
+
+// The local target whose root holds @p path, the deepest one when roots nest (Home inside C:), or
+// -1.
+int localTargetIndexHolding(const QVector<FileManagementTarget>& targets, const QString& path) {
+    const QString wanted = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    int best = -1;
+    qsizetype best_length = -1;
+    for (int index = 0; index < targets.size(); ++index) {
+        const auto& target = targets.at(index);
+        if (!target.local_file_system || !target.can_browse || target.root_path.isEmpty()) {
+            continue;
+        }
+        QString root = QDir::cleanPath(QDir::fromNativeSeparators(target.root_path));
+        const bool inside =
+            wanted.compare(root, Qt::CaseInsensitive) == 0 ||
+            wanted.startsWith(root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/'),
+                              Qt::CaseInsensitive);
+        if (inside && root.size() > best_length) {
+            best = index;
+            best_length = root.size();
+        }
+    }
+    return best;
+}
+
+}  // namespace
+
+void FileManagementExplorerPanel::selectTargetHoldingPath(const QString& path) {
+    // A path typed or followed outside the selected target's root belongs to another target. The
+    // panel kept the old one, so it said Target "Home (Technician)", Root C:/Users/Technician,
+    // over C:/SAK-Samples/Docs, and its Safety box spoke for the wrong volume.
+    const auto before = currentTarget();
+    if (!before.local_file_system || path.isEmpty() ||
+        localTargetIndexHolding({before}, path) >= 0) {
+        return;
+    }
+    const int holder = localTargetIndexHolding(m_targets, path);
+    if (holder >= 0 && holder != m_current_target_index) {
+        m_current_target_index = holder;
+        // Selecting the now-current target only marks its row; it does not reload.
+        selectTargetById(FileExplorerTargetId::fromTarget(m_targets.at(holder)).value);
+    }
+}
+
 void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool add_history) {
     clearFolderFilterOnNavigation();
+    selectTargetHoldingPath(path.trimmed());
     const auto target = currentTarget();
     if (target.root_path.isEmpty()) {
         resetListingForUnavailableTarget(tr("No File Explorer target selected."), false);

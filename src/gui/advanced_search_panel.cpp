@@ -1169,7 +1169,8 @@ void AdvancedSearchPanel::populateFileExplorerRoot() {
                        style()->standardIcon(target.local_file_system ? QStyle::SP_DriveHDIcon
                                                                       : QStyle::SP_DirIcon));
     addPlaceholderChild(root_item);
-    m_file_explorer->expandItem(root_item);
+    // Collapsed: opened, a Home target filled the tree with its twenty folders and put the
+    // drives out of sight. The target list above it chooses the drive; this opens on a click.
 }
 
 void AdvancedSearchPanel::showEvent(QShowEvent* event) {
@@ -1425,10 +1426,14 @@ void AdvancedSearchPanel::onSearchFinished(int total_matches, int total_files, b
         // The log pane is the durable record of the run. Writing "Search complete"
         // here for a run that skipped files would contradict the status bar and
         // let the user read a partial result as an authoritative "not found".
-        logMessage(tr("Search INCOMPLETE: %1 matches in %2 files; some files could not be "
-                      "searched, results may be missing matches")
+        logMessage(tr("Search INCOMPLETE: %1 matches in %2 files; these could not be searched, "
+                      "so results may be missing matches:")
                        .arg(total_matches)
                        .arg(total_files));
+        // Which ones, so a technician can look at them: the message alone named none.
+        for (const QString& reason : m_controller->incompleteReasons()) {
+            logMessage(QStringLiteral("  ") + reason);
+        }
         return;
     }
     logMessage(tr("Search complete: %1 matches in %2 files").arg(total_matches).arg(total_files));

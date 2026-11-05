@@ -87,6 +87,10 @@ public:
     /// @brief Access the regex pattern library
     [[nodiscard]] RegexPatternLibrary* patternLibrary() const;
 
+    /// What the last finished search could not search, one line each, as the worker recorded it
+    /// (it keeps the first 32). Empty after a complete search.
+    [[nodiscard]] QStringList incompleteReasons() const { return m_incomplete_reasons; }
+
 Q_SIGNALS:
     /// @brief Emitted when controller state changes
     void stateChanged(sak::AdvancedSearchController::State newState);
@@ -134,6 +138,7 @@ private Q_SLOTS:
     void onFileSearched(const QString& filePath, int matchCount);
 
 private:
+    QStringList m_incomplete_reasons;
     /// @brief Transition to a new state
     void setState(State newState);
 
