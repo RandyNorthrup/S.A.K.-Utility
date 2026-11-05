@@ -78,6 +78,7 @@ private Q_SLOTS:
     void diskpartOutputIsError_detectsFailureMarkers();
     void diskpartOutputIsError_ignoresSuccessChatter();
     void diskpartOutputIsError_detectsSelectionAndArgumentFailures();
+    void formatGivesTheVolumeALetterWhenWindowsDidNot();
 
     // ---- critical-file recognition for extraction integrity (R5-G14-3) ----
     void isCriticalWindowsFile_matchesBackslashPathsFrom7z();
@@ -452,6 +453,28 @@ void WindowsUSBCreatorTests::diskpartOutputIsError_detectsSelectionAndArgumentFa
     QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
         QStringLiteral("Volume 3 is the selected volume.\nDiskPart successfully assigned the "
                        "drive letter or mount point.")));
+}
+
+// Step 1 waited a minute for a drive letter Windows never gave: it assigns one only while automount
+// is on, and in the VM it gave none to a freshly formatted USB disk it treats as fixed.
+void WindowsUSBCreatorTests::formatGivesTheVolumeALetterWhenWindowsDidNot() {
+    QCOMPARE(WindowsUSBCreator::assignDriveLetterScript(QStringLiteral("5")),
+             QStringLiteral("select disk 5\nselect partition 1\nassign\nexit\n"));
+
+    // The format step hands the volume a letter before the wait that needs one, not after.
+    QFile source(QStringLiteral(SAK_REPO_ROOT "/src/core/windows_usb_creator.cpp"));
+    QVERIFY(source.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString text = QString::fromUtf8(source.readAll());
+    const qsizetype format_start =
+        text.indexOf(QStringLiteral("bool WindowsUSBCreator::formatPartitionNTFS("));
+    const qsizetype format_end =
+        text.indexOf(QStringLiteral("QString WindowsUSBCreator::assignDriveLetterScript("));
+    QVERIFY(format_start >= 0 && format_end > format_start);
+    const QString body = text.mid(format_start, format_end - format_start);
+    const qsizetype formatted = body.indexOf(QStringLiteral("runDiskpartScript(formatScript"));
+    const qsizetype assigned =
+        body.indexOf(QStringLiteral("assignDriveLetterIfMissing(diskNumber)"));
+    QVERIFY2(formatted >= 0 && assigned > formatted, "assign after format, inside the format step");
 }
 
 // ===========================================================================

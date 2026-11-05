@@ -38,6 +38,8 @@ constexpr int kExtractionVerifiedProgress = 60;
 // either wastes seconds on fast hardware or gives up too early on slow hardware.
 constexpr int kVolumeAppearTimeoutMs = 60'000;
 constexpr int kVolumeAppearPollMs = sak::kTimerPollingFastMs;
+// How long the letter Windows gives a new volume by itself is waited for before one is assigned.
+constexpr int kAutomaticLetterGraceMs = 5000;
 
 // Require the target disk to be at least this multiple of the ISO size BEFORE any
 // destructive clean, matching the post-format workspace check so an undersized
@@ -791,7 +793,47 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     sak::logInfo(QString("Format output:\n%1").arg(formatOutput).toStdString());
     // diskpart's format is synchronous: it has finished when the process exits. The caller
     // then waits (bounded) for the drive letter, which is what actually takes time to appear.
+    assignDriveLetterIfMissing(diskNumber);
     return true;
+}
+
+QString WindowsUSBCreator::assignDriveLetterScript(const QString& diskNumber) {
+    return QString(
+               "select disk %1\n"
+               "select partition 1\n"
+               "assign\n"
+               "exit\n")
+        .arg(diskNumber);
+}
+
+void WindowsUSBCreator::assignDriveLetterIfMissing(const QString& diskNumber) {
+    QString automatic;
+    const auto outcome = waitForVolume(
+        [this, &automatic]() {
+            automatic = getDriveLetterFromDiskNumber();
+            return !automatic.isEmpty();
+        },
+        [this]() { return m_cancelled.load(); },
+        kAutomaticLetterGraceMs,
+        kVolumeAppearPollMs);
+    if (outcome != VolumeWaitOutcome::TimedOut) {
+        return;
+    }
+    // Reverify first: this is the third diskpart run against the disk number.
+    if (!reverifyTargetDiskIdentity(diskNumber)) {
+        return;
+    }
+    Q_EMIT statusChanged("Windows gave the new volume no drive letter; assigning one...");
+    const QString script = assignDriveLetterScript(diskNumber);
+    sak::logInfo(QString("Running assign script:\n%1").arg(script).toStdString());
+    QString output;
+    if (!runDiskpartScript(script, sak::kTimeoutProcessLongMs, output)) {
+        sak::logWarning(QString("Assigning a drive letter to disk %1 failed: %2")
+                            .arg(diskNumber, lastError())
+                            .toStdString());
+        return;
+    }
+    sak::logInfo(QString("Assign output:\n%1").arg(output).toStdString());
 }
 
 bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {

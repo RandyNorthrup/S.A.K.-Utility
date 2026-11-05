@@ -69,6 +69,10 @@ public:
     ///        so a clean exit code alone is not proof of success. Pure/testable.
     [[nodiscard]] static bool diskpartOutputIsError(const QString& output);
 
+    /// @brief The diskpart script that gives partition 1 of @p diskNumber the next free drive
+    ///        letter. Pure/testable.
+    [[nodiscard]] static QString assignDriveLetterScript(const QString& diskNumber);
+
     /// @brief Defense in depth: only a real regular file (not a symlink/reparse
     ///        point) that canonically resides under @p appDir may be executed as a
     ///        bundled tool. Fails closed. Pure/testable.
@@ -221,6 +225,12 @@ private:
     /// @brief Wait (bounded) for the formatted volume's drive letter. Empty on timeout or
     /// cancel, with m_lastError naming the disk and the bound.
     QString waitForFormattedDriveLetter(const QString& diskNumber);
+
+    /// @brief Give the formatted volume a drive letter if Windows has not, after a short wait.
+    ///        Windows assigns one by itself only while automount is on, and in testing it did
+    ///        not for a USB disk it treats as fixed. Never fails the run itself: the bounded
+    ///        wait for the letter that follows decides.
+    void assignDriveLetterIfMissing(const QString& diskNumber);
 
     /**
      * @brief Format drive as NTFS using diskpart
