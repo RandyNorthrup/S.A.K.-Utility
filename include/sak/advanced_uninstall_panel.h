@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSet>
 #include <QTableWidget>
 #include <QWidget>
 
@@ -103,6 +104,7 @@ private Q_SLOTS:
 
     // Leftover table
     void onLeftoverSelectionChanged();
+    void onProgramTickChanged(QTableWidgetItem* item);
     void onSelectAll();
     void onSelectAllSafe();
     void onDeselectAll();
@@ -246,8 +248,13 @@ private:
     // -- Log toggle --
 
     // -- Data --
-    QVector<ProgramInfo> m_all_programs;        ///< Full unfiltered list
-    QVector<ProgramInfo> m_filtered_programs;   ///< Currently displayed programs
+    QVector<ProgramInfo> m_all_programs;       ///< Full unfiltered list
+    QVector<ProgramInfo> m_filtered_programs;  ///< Currently displayed programs
+    /// Ticked programs by programKey(), whether the search shows them or not. The table was the
+    /// only record, so a new search text, which rebuilds it, unticked everything.
+    QSet<QString> m_ticked_programs;
+    [[nodiscard]] static QString programKey(const ProgramInfo& program);
+    [[nodiscard]] static QTableWidgetItem* programNameItem(const ProgramInfo& prog, int row);
     QVector<LeftoverItem> m_current_leftovers;  ///< Current leftover scan results
     QString m_search_filter;
     ViewFilter m_view_filter = ViewFilter::All;

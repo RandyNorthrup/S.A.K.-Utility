@@ -43,18 +43,74 @@ private Q_SLOTS:
     void installFolderIsMeasuredOnDemandAndCached();
     void remoteInstallFolderOffersNoMeasurement();
     void addToBatchTicksTheProgramsRow();
+    void ticksSurviveTheSearchText();
+    void aProvisionedPackageSaysWhatItIs();
 };
 
 // The batch is built from the ticked rows. Add to Batch Queue once wrote to a separate queue, which
 // pressing Batch emptied, so it did nothing at all.
+// Tick 7-Zip under the search "7-Zip", search "VLC" and tick VLC: Batch listed only VLC, and with
+// the search cleared it listed nothing. A new search text rebuilt the table and its ticks.
+void AdvancedUninstallPanelTests::ticksSurviveTheSearchText() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo zip;
+    zip.displayName = QStringLiteral("7-Zip 26.05 (x64)");
+    zip.registryKeyPath = QStringLiteral("HKLM/Uninstall/7-Zip");
+    sak::ProgramInfo vlc;
+    vlc.displayName = QStringLiteral("VLC media player");
+    vlc.registryKeyPath = QStringLiteral("HKLM/Uninstall/VLC");
+    panel.onEnumerationFinished({zip, vlc});
+    const auto tick_only_row = [&panel]() {
+        QCOMPARE(panel.m_program_table->rowCount(), 1);
+        panel.m_program_table->item(0, 0)->setCheckState(Qt::Checked);
+    };
+    panel.onSearchTextChanged(QStringLiteral("7-Zip"));
+    tick_only_row();
+    panel.onSearchTextChanged(QStringLiteral("VLC"));
+    tick_only_row();
+    QCOMPARE(panel.selectedPrograms().size(), 2);
+    panel.onSearchTextChanged(QString());
+    QCOMPARE(panel.m_program_table->rowCount(), 2);
+    bool all_resolved = false;
+    QCOMPARE(panel.selectedPrograms(&all_resolved).size(), 2);
+    QVERIFY(all_resolved);
+    for (int row = 0; row < 2; ++row) {
+        QCOMPARE(panel.m_program_table->item(row, 0)->checkState(), Qt::Checked);
+    }
+    // Untick one and it leaves the batch, whatever the search shows.
+    panel.m_program_table->item(0, 0)->setCheckState(Qt::Unchecked);
+    QCOMPARE(panel.selectedPrograms().size(), 1);
+}
+
+// Clipchamp.Clipchamp appeared twice, once with a publisher and once without: the installed
+// package and the copy Windows provisions for new accounts.
+void AdvancedUninstallPanelTests::aProvisionedPackageSaysWhatItIs() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo installed;
+    installed.displayName = QStringLiteral("Clipchamp.Clipchamp");
+    installed.source = sak::ProgramInfo::Source::UWP;
+    sak::ProgramInfo provisioned = installed;
+    provisioned.source = sak::ProgramInfo::Source::Provisioned;
+    panel.onEnumerationFinished({installed, provisioned});
+    QStringList names;
+    for (int row = 0; row < panel.m_program_table->rowCount(); ++row) {
+        names.append(panel.m_program_table->item(row, 2)->text());
+    }
+    QVERIFY2(names.contains(QStringLiteral("Clipchamp.Clipchamp")),
+             qPrintable(names.join(QLatin1Char('|'))));
+    QVERIFY2(names.contains(QStringLiteral("Clipchamp.Clipchamp (provisioned for new accounts)")),
+             qPrintable(names.join(QLatin1Char('|'))));
+}
+
 void AdvancedUninstallPanelTests::addToBatchTicksTheProgramsRow() {
     sak::AdvancedUninstallPanel panel;
     sak::ProgramInfo first;
     first.displayName = QStringLiteral("First App");
     sak::ProgramInfo second;
     second.displayName = QStringLiteral("Second App");
-    panel.populateProgramTable({first, second});
+    panel.m_all_programs = {first, second};
     panel.m_filtered_programs = {first, second};
+    panel.populateProgramTable({first, second});
     QCOMPARE(panel.selectedPrograms().size(), 0);
 
     panel.m_program_table->setCurrentCell(1, 0);

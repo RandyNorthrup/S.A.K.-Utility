@@ -45,6 +45,7 @@ namespace sak {
 
 namespace {
 constexpr int kOriginalIndexRole = Qt::UserRole + 100;
+constexpr int kProgramKeyRole = Qt::UserRole + 101;
 constexpr int kLeftoverCheckColumnWidth = 30;
 constexpr int kLeftoverRiskColumnWidth = 70;
 constexpr int kLeftoverTypeColumnWidth = 100;
@@ -711,6 +712,10 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
             &QTableWidget::itemChanged,
             this,
             &AdvancedUninstallPanel::onLeftoverSelectionChanged);
+    connect(m_program_table,
+            &QTableWidget::itemChanged,
+            this,
+            &AdvancedUninstallPanel::onProgramTickChanged);
 }
 
 void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
@@ -848,6 +853,14 @@ void AdvancedUninstallPanel::onEnumerationProgress(int current, int total) {
 
 void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs) {
     m_all_programs = programs;
+    // A tick outlives a refresh only on a program that is still installed.
+    QSet<QString> still_there;
+    for (const auto& program : m_all_programs) {
+        if (m_ticked_programs.contains(programKey(program))) {
+            still_there.insert(programKey(program));
+        }
+    }
+    m_ticked_programs = still_there;
     applyFilter();
     m_program_empty_state->clearLoading();
     setOperationRunning(false);
@@ -1439,7 +1452,9 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         // Check column
         auto* check_item = new QTableWidgetItem();
         check_item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
-        check_item->setCheckState(Qt::Unchecked);
+        const QString key = programKey(prog);
+        check_item->setData(kProgramKeyRole, key);
+        check_item->setCheckState(m_ticked_programs.contains(key) ? Qt::Checked : Qt::Unchecked);
         m_program_table->setItem(row, kColCheck, check_item);
 
         // Icon column
@@ -1450,20 +1465,7 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         icon_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         m_program_table->setItem(row, kColIcon, icon_item);
 
-        // Name
-        auto* name_item = new QTableWidgetItem(prog.displayName);
-        name_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        name_item->setData(kOriginalIndexRole, row);  // Store original index for sort-safe lookup
-        // Color code bloatware and orphaned
-        if (prog.isBloatware) {
-            name_item->setForeground(ui::themedColor(ui::kColorWarning));
-            name_item->setToolTip(tr("Potential bloatware"));
-        }
-        if (prog.isOrphaned) {
-            name_item->setForeground(ui::themedColor(ui::kColorError));
-            name_item->setToolTip(tr("Orphaned - program files not found"));
-        }
-        m_program_table->setItem(row, kColName, name_item);
+        m_program_table->setItem(row, kColName, programNameItem(prog, row));
 
         // Publisher
         auto* pub_item = new QTableWidgetItem(prog.publisher);
@@ -1729,26 +1731,65 @@ ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
 }
 
 QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms(bool* all_resolved) const {
+    // Every ticked program, including those the search text hides now: a tick is the person's
+    // choice, and a filter is only what they are looking at.
     QVector<ProgramInfo> result;
-    if (all_resolved != nullptr) {
-        *all_resolved = true;
-    }
-    for (int row = 0; row < m_program_table->rowCount(); ++row) {
-        auto* check_item = m_program_table->item(row, kColCheck);
-        if ((check_item != nullptr) && check_item->checkState() == Qt::Checked) {
-            // A CHECKED row that cannot be resolved back to a program is reported, never
-            // quietly skipped: dropping it would run the batch against a subset of what the
-            // user checked while the UI still showed the full selection.
-            auto* name_item = m_program_table->item(row, kColName);
-            const int idx = (name_item != nullptr) ? originalRowIndex(name_item) : -1;
-            if (idx >= 0 && idx < m_filtered_programs.size()) {
-                result.append(m_filtered_programs[idx]);
-            } else if (all_resolved != nullptr) {
-                *all_resolved = false;
-            }
+    QSet<QString> found;
+    for (const auto& program : m_all_programs) {
+        const QString key = programKey(program);
+        if (m_ticked_programs.contains(key) && !found.contains(key)) {
+            found.insert(key);
+            result.append(program);
         }
     }
+    // A tick that no longer resolves to a program is reported, never quietly skipped: dropping
+    // it would run the batch against a subset of what was ticked.
+    if (all_resolved != nullptr) {
+        *all_resolved = found.size() == m_ticked_programs.size();
+    }
     return result;
+}
+
+QTableWidgetItem* AdvancedUninstallPanel::programNameItem(const ProgramInfo& prog, int row) {
+    // A provisioned package is the copy Windows installs for each new account, and it often has
+    // the same name as the installed one: shown bare, it read as a duplicate.
+    auto* name_item =
+        new QTableWidgetItem(prog.source == ProgramInfo::Source::Provisioned
+                                 ? tr("%1 (provisioned for new accounts)").arg(prog.displayName)
+                                 : prog.displayName);
+    name_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    name_item->setData(kOriginalIndexRole, row);  // Store original index for sort-safe lookup
+    // Color code bloatware and orphaned
+    if (prog.isBloatware) {
+        name_item->setForeground(ui::themedColor(ui::kColorWarning));
+        name_item->setToolTip(tr("Potential bloatware"));
+    }
+    if (prog.isOrphaned) {
+        name_item->setForeground(ui::themedColor(ui::kColorError));
+        name_item->setToolTip(tr("Orphaned - program files not found"));
+    }
+    return name_item;
+}
+
+QString AdvancedUninstallPanel::programKey(const ProgramInfo& program) {
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(static_cast<int>(program.source))
+        .arg(program.registryKeyPath, program.packageFullName, program.displayName);
+}
+
+void AdvancedUninstallPanel::onProgramTickChanged(QTableWidgetItem* item) {
+    if (item == nullptr || item->column() != kColCheck) {
+        return;
+    }
+    const QString key = item->data(kProgramKeyRole).toString();
+    if (key.isEmpty()) {
+        return;
+    }
+    if (item->checkState() == Qt::Checked) {
+        m_ticked_programs.insert(key);
+    } else {
+        m_ticked_programs.remove(key);
+    }
 }
 
 QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers(bool* all_resolved) const {
