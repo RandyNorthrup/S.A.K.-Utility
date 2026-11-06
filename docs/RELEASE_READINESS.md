@@ -1510,7 +1510,7 @@ left as found. The capture VM is powered off at pre-round8, its throwaway VDI de
 ### UI review round 4: read-back from the media, the property table, and round 3's open list (2026-11-06)
 
 From round 3's open list and review 2's findings, on dev at 87c04b54. Every fix has a test; every test was
-drilled red with its fix broken in the source: 50 drills, 47 planted by a script that restores every byte and
+drilled red with its fix broken in the source: 53 drills, 50 planted by a script that restores every byte and
 touches the file, and three inside test_partition_image_volume_lock (a buffered open, an unaligned start and the
 file-tail length). Two survived the first run and their tests were tightened, then went red: the Full Suite's mark
 column (the offscreen platform has no fonts of its own, so the four marks came out one width; the test now
@@ -1573,7 +1573,8 @@ longer splits its label: the label moves to the widest stretch beside the handle
 kept a layout's own margins and stood 10 px in from the other fields with its label above them. File Explorer:
 Properties, Safety and Evidence are labels scrolled together by the details scroller, not three text boxes each
 scrolling on its own (F23); with nothing selected the preview says "No file selected. Select one to see it here."
-(F24); a Windows volume's Root and Path read with backslashes, an ext, HFS+ or APFS path stays its own (S21); the
+(F24); a Windows volume's Root, Path and Safety Identity read with backslashes, an ext, HFS+ or APFS path stays
+its own (S21); the
 Hashes tab's label column has the large spacing (N15). Advanced Search: a search with no matches sent the status
 bar (0, 0), the busy indicator, and left it running (N6); result paths read with backslashes (S21). File Organizer's
 starting target reads with backslashes (N19). Address Book: fixed widths that added up to more than the list's pane
@@ -1616,6 +1617,14 @@ keys unlock); Windows opens it where the app runs, which for a portable tool is 
 Settings' Installed apps and Gaming pages, and the Wi-Fi page on a PC with no Wi-Fi adapter (#59), need the VM,
 which this round did not use. DF16 needs nothing more: round 2 hid Qt's Aero back arrow in every wizard, so neither
 theme draws one.
+
+**T2 caught one regression.** The first push of this round (T2 42214861764) failed the accessibility audit in two
+shards. File Explorer's three detail sections, labels now, had kept the accessible names their text boxes had, and
+a label's name is what a screen reader says in place of its text ("hides its text", three findings). They carry
+those words as descriptions now. test_file_management_explorer_panel audits each section, and
+test_accessibility_audit's whole-window audit passes; this round's local test list had left it out. The audit's
+printout also showed the Safety pane's "Identity: C:/Users/Username" line, S21 again; it reads with backslashes now. Both
+are drilled red.
 
 **What no test here covers.** That a real drive's slowness shows: the tests prove each check opens its file with
 FILE_FLAG_NO_BUFFERING and reads every byte, and the timing on the stick was measured on testpc1 (above). The
