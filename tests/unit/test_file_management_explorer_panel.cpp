@@ -22,6 +22,7 @@
 #include "sak/file_management_explorer_panel.h"
 #include "sak/portable_settings.h"
 #include "sak/rich_text_safety.h"
+#include "sak/style_constants.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -36,6 +37,7 @@
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFormLayout>
 #include <QHash>
 #include <QHeaderView>
 #include <QImage>
@@ -676,9 +678,26 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
     // The persistent preview pane is always populated by the auto-preview wiring (a hint when
     // no single readable file is selected), never left blank for the user to wonder about.
     QVERIFY2(!preview->toPlainText().trimmed().isEmpty(), qPrintable(preview->toPlainText()));
-    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPropertiesText"));
-    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerSafetyText"));
-    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerEvidenceText"));
+    // Review 2 (F24): the preview shows on the Details tab too, so its hint is not about
+    // previewing.
+    if (child<QTableView>(&panel, "fileExplorerTable")
+            ->selectionModel()
+            ->selectedRows()
+            .isEmpty()) {
+        QCOMPARE(preview->toPlainText(),
+                 QStringLiteral("No file selected. Select one to see it here."));
+    }
+    // Review 2 (F23): Properties, Safety and Evidence were five-line text boxes, each scrolling
+    // on its own inside the details scroller and cutting its text. They are labels as tall as
+    // their text, and the one scroller scrolls them together.
+    for (const char* name :
+         {"fileExplorerPropertiesText", "fileExplorerSafetyText", "fileExplorerEvidenceText"}) {
+        auto* section = child<QLabel>(&panel, name);
+        QVERIFY2(section != nullptr, name);
+        QVERIFY(section->wordWrap());
+        QCOMPARE(section->textFormat(), Qt::PlainText);
+        QVERIFY(scroller->widget()->isAncestorOf(section));
+    }
 
     // The preview region stays visible on both tabs; only the details
     // scroller toggles (InfoPane.xaml SelectedTab visual states).
@@ -2069,6 +2088,51 @@ private Q_SLOTS:
         QVERIFY(comparablePath(pathEdit->text()).endsWith(QStringLiteral("/inside")));
     }
 
+    // Review 2 (N6): a search that ended with no matches sent (0, 0), the busy indicator, so the
+    // status bar's bar kept running beside the search's message. Every end says "done".
+    void aFinishedSearchLeavesNoBusyBar() {
+        sak::AdvancedSearchPanel panel;
+        QSignalSpy progress(&panel, &sak::AdvancedSearchPanel::progressUpdate);
+        for (const bool complete : {true, false}) {
+            QVERIFY(QMetaObject::invokeMethod(&panel,
+                                              "onSearchFinished",
+                                              Qt::DirectConnection,
+                                              Q_ARG(int, 0),
+                                              Q_ARG(int, 0),
+                                              Q_ARG(bool, complete)));
+            QVERIFY(!progress.isEmpty());
+            const int current = progress.last().at(0).toInt();
+            const int maximum = progress.last().at(1).toInt();
+            QVERIFY2(maximum > 0 && current >= maximum,
+                     qPrintable(QStringLiteral("%1 / %2").arg(current).arg(maximum)));
+        }
+    }
+
+    // Review 2 (S21): results read "C:/SAK-Samples/Docs/...".
+    void searchResultsShowWindowsPaths() {
+        sak::AdvancedSearchPanel panel;
+        sak::SearchMatch match;
+        match.file_path = QStringLiteral("C:/SAK-Samples/Docs/notes.txt");
+        match.line_number = 3;
+        match.line_content = QStringLiteral("harbor");
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onResultsReceived",
+                                          Qt::DirectConnection,
+                                          Q_ARG(QVector<sak::SearchMatch>, {match})));
+        QTreeWidget* results = nullptr;
+        for (auto* tree : panel.findChildren<QTreeWidget*>()) {
+            if (tree->toolTip().startsWith(QStringLiteral("Click a result to preview"))) {
+                results = tree;
+            }
+        }
+        QVERIFY(results != nullptr);
+        QCOMPARE(results->topLevelItemCount(), 1);
+        QCOMPARE(results->topLevelItem(0)->text(0),
+                 QStringLiteral("C:\\SAK-Samples\\Docs\\notes.txt  (1)"));
+        // It still opens the file it was found under.
+        QCOMPARE(results->topLevelItem(0)->data(0, Qt::UserRole).toString(), match.file_path);
+    }
+
     // Advanced Search's tree opened expanded at Home, with the drives out of sight below it.
     void advancedSearchTreeStartsCollapsed() {
         sak::AdvancedSearchPanel panel;
@@ -2349,7 +2413,7 @@ private Q_SLOTS:
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
         auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
-        auto* safety = child<QPlainTextEdit>(&panel, "fileExplorerSafetyText");
+        auto* safety = child<QLabel>(&panel, "fileExplorerSafetyText");
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(safety);
@@ -2359,12 +2423,21 @@ private Q_SLOTS:
         targetList->setCurrentRow(targetRow);
         QApplication::processEvents();
         QVERIFY(!pathEdit->text().trimmed().isEmpty());
+        // Review 2 (S21): "Root: C:/" and "Path: C:/SAK-Samples/Docs" on a Windows volume.
+        const QString properties = child<QLabel>(&panel, "fileExplorerPropertiesText")->text();
+        for (const QString& line : properties.split(QLatin1Char('\n'))) {
+            if (line.startsWith(QStringLiteral("Root: ")) ||
+                line.startsWith(QStringLiteral("Path: "))) {
+                QVERIFY2(!line.contains(QLatin1Char('/')), qPrintable(line));
+            }
+        }
+        QVERIFY2(properties.contains(QStringLiteral("Root: ")), qPrintable(properties));
         // buildDetailsSafety emits six fixed lines in a fixed order. The current probe checks
         // one LABEL and ignores its value and every sibling line, so an empty capability word
         // or a lost Read/Browse line passes. The host-dependent label, file system and root
         // path are deliberately left unpinned; the capability words are a closed vocabulary.
-        const QStringList safety_lines = safety->toPlainText().split(QLatin1Char('\n'));
-        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->toPlainText()));
+        const QStringList safety_lines = safety->text().split(QLatin1Char('\n'));
+        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->text()));
         const QStringList prefixes{QStringLiteral("Target: "),
                                    QStringLiteral("File system: "),
                                    QStringLiteral("Identity: ")};
@@ -2510,7 +2583,7 @@ private Q_SLOTS:
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
-        auto* safety = child<QPlainTextEdit>(&panel, "fileExplorerSafetyText");
+        auto* safety = child<QLabel>(&panel, "fileExplorerSafetyText");
         QVERIFY(targetList);
         QVERIFY(safety);
 
@@ -2523,7 +2596,7 @@ private Q_SLOTS:
     }
 
     // One Safety-pane verdict: identity, capability words, and the file-system note.
-    void verifySafetyPaneCase(QPlainTextEdit* safety, const SafetyPaneCase& expected) {
+    void verifySafetyPaneCase(QLabel* safety, const SafetyPaneCase& expected) {
         const QString& file_system = expected.file_system;
         const QString& image_path = expected.image;
         const bool write_enabled = expected.write_enabled;
@@ -2532,8 +2605,8 @@ private Q_SLOTS:
         // The pane repaints from the selection change; wait for THIS target's identity
         // line so a stale previous verdict can never be read as this one's.
         const QString identity = QStringLiteral("Identity: %1").arg(image_path);
-        QTRY_VERIFY2(safety->toPlainText().contains(identity), qPrintable(safety->toPlainText()));
-        const QString text = safety->toPlainText();
+        QTRY_VERIFY2(safety->text().contains(identity), qPrintable(safety->text()));
+        const QString text = safety->text();
         const QStringList lines = text.split(QLatin1Char('\n'));
         const auto verdict = [](bool enabled) {
             return enabled ? QStringLiteral("enabled") : QStringLiteral("blocked");
@@ -2672,6 +2745,11 @@ private Q_SLOTS:
         const QString expected = QString::fromLatin1(
             QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
         QTRY_COMPARE_WITH_TIMEOUT(sha->text(), expected, 5000);
+        // Review 2 (N15): "SHA-256" ended 5 px before its digest.
+        const auto* sha_form = qobject_cast<QFormLayout*>(sha->parentWidget()->layout());
+        QVERIFY(sha_form != nullptr);
+        QVERIFY2(sha_form->horizontalSpacing() >= sak::ui::kSpacingLarge,
+                 qPrintable(QString::number(sha_form->horizontalSpacing())));
 
         // Editing the name and accepting commits a rename through the bridge.
         name->setText(QStringLiteral("props2.txt"));

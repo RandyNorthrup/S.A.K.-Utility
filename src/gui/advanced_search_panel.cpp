@@ -1357,12 +1357,18 @@ QTreeWidgetItem* AdvancedSearchPanel::findOrCreateFileItem(
             // appends only the newly-arrived matches. Deleting and rebuilding every child
             // on each batch is quadratic in a file's total match count, which lets a file
             // with many matches freeze the UI thread.
-            item->setText(0, QString("%1  (%2)").arg(file_path).arg(file_matches.size()));
+            item->setText(0,
+                          QString("%1  (%2)")
+                              .arg(QDir::toNativeSeparators(file_path))
+                              .arg(file_matches.size()));
             return item;
         }
     }
     auto* file_item = new QTreeWidgetItem(m_results_tree);
-    file_item->setText(0, QString("%1  (%2)").arg(file_path).arg(file_matches.size()));
+    // Shown as Windows writes a path ("C:/SAK-Samples/Docs/...", review 2, S21); the item keeps
+    // the path it was found under for opening it.
+    file_item->setText(
+        0, QString("%1  (%2)").arg(QDir::toNativeSeparators(file_path)).arg(file_matches.size()));
     file_item->setData(0, Qt::UserRole, file_path);
     file_item->setData(0, Qt::UserRole + 1, -1);
     file_item->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
@@ -1414,7 +1420,9 @@ void AdvancedSearchPanel::onSearchFinished(int total_matches, int total_files, b
     setSearchRunning(false);
     Q_EMIT statusMessage(tr("Found %1 matches in %2 files").arg(total_matches).arg(total_files),
                          sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(total_matches, total_matches);
+    // The run is over, whatever it found. (0, 0) is the busy indicator, so a search with no
+    // matches left the status bar's bar running beside its message (review 2, N6).
+    Q_EMIT progressUpdate(sak::kPercentMax, sak::kPercentMax);
     m_results_count_label->setText(
         tr("(%1 matches, %2 files)").arg(total_matches).arg(total_files));
     // Lift the loading overlay; the shared empty state shows "No matches found."

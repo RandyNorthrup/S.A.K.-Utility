@@ -880,7 +880,10 @@ void OrganizerPanel::onOrganizerTargetChanged(int) {
         return;
     }
     m_browse_button->setEnabled(target.local_file_system && !m_operation_running);
-    m_target_path->setText(target.local_file_system ? target.root_path : QStringLiteral("/"));
+    // A Windows folder reads as Windows writes it, as Browse already puts it
+    // ("C:/Users/Username", review 2, N19).
+    m_target_path->setText(target.local_file_system ? QDir::toNativeSeparators(target.root_path)
+                                                    : QStringLiteral("/"));
     updateDirectorySummary();
 }
 

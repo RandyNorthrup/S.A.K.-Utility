@@ -6874,8 +6874,13 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
     }
     properties.append(tr("Target: %1").arg(target.label));
     properties.append(tr("File system: %1").arg(target.file_system));
-    properties.append(tr("Root: %1").arg(target.root_path));
-    properties.append(tr("Path: %1").arg(m_current_path));
+    // A Windows volume's paths read with backslashes, as everywhere else in the app ("Root: C:/",
+    // review 2, S21). A path inside an ext, HFS+ or APFS image is that file system's own.
+    const auto shown = [&target](const QString& path) {
+        return isMountedVolumeTarget(target) ? QDir::toNativeSeparators(path) : path;
+    };
+    properties.append(tr("Root: %1").arg(shown(target.root_path)));
+    properties.append(tr("Path: %1").arg(shown(m_current_path)));
     properties.append(
         tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
     if (selection.count() == 1) {
@@ -7052,14 +7057,14 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     const FileExplorerSelection selection = currentSelection();
 
     if (m_properties_text != nullptr) {
-        m_properties_text->setPlainText(
+        m_properties_text->setText(
             buildDetailsProperties(target, selection).join(QStringLiteral("\n")));
     }
     if (m_safety_text != nullptr) {
-        m_safety_text->setPlainText(buildDetailsSafety(target).join(QStringLiteral("\n")));
+        m_safety_text->setText(buildDetailsSafety(target).join(QStringLiteral("\n")));
     }
     if (m_evidence_text != nullptr) {
-        m_evidence_text->setPlainText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
+        m_evidence_text->setText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
     }
     updatePreviewPane(target, selection);
     if (m_status_label != nullptr) {
@@ -7126,7 +7131,9 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
     // Any selection change supersedes an in-flight preview read.
     const quint64 preview_revision = ++m_preview_revision;
     if (selection.count() != 1) {
-        showPreviewHint(selection.isEmpty() ? tr("Select a readable file to preview its contents.")
+        // The region shows on the Details tab too, where "Select a readable file to preview its
+        // contents" read as the Details tab's own text (review 2, F24).
+        showPreviewHint(selection.isEmpty() ? tr("No file selected. Select one to see it here.")
                                             : tr("%1 items selected.").arg(selection.count()));
         return;
     }
@@ -8587,7 +8594,9 @@ void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_i
     QStringList lines;
     lines.append(tr("Target: %1").arg(target.label));
     lines.append(tr("ID: %1").arg(FileExplorerTargetId::fromTarget(target).value));
-    lines.append(tr("Root: %1").arg(target.root_path));
+    lines.append(tr("Root: %1")
+                     .arg(isMountedVolumeTarget(target) ? QDir::toNativeSeparators(target.root_path)
+                                                        : target.root_path));
     lines.append(tr("File system: %1").arg(target.file_system));
     lines.append(tr("Source: %1").arg(target.source));
     lines.append(tr("Size: %1 bytes").arg(QString::number(target.size_bytes)));

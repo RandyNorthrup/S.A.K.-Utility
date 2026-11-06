@@ -27,7 +27,6 @@ constexpr int kInfoPanePillButtonHeight = 32;
 constexpr int kInfoPanePillMargin = 12;
 constexpr int kInfoPanePreviewStretch = 2;
 constexpr int kInfoPaneDetailsStretch = 3;
-constexpr int kInfoPaneSectionMinHeight = 96;
 
 }  // namespace
 
@@ -138,15 +137,16 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
     auto* layout = new QVBoxLayout(content);
     layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
 
-    m_properties_text = makeDetailsText(tr("Explorer item properties"));
+    m_properties_text = makeDetailsLabel(tr("Explorer item properties"));
     m_properties_text->setObjectName(QStringLiteral("fileExplorerPropertiesText"));
     addDetailsSection(layout, tr("Properties"), m_properties_text);
-    m_safety_text = makeDetailsText(tr("Explorer target safety"));
+    m_safety_text = makeDetailsLabel(tr("Explorer target safety"));
     m_safety_text->setObjectName(QStringLiteral("fileExplorerSafetyText"));
     addDetailsSection(layout, tr("Safety"), m_safety_text);
-    m_evidence_text = makeDetailsText(tr("Explorer evidence details"));
+    m_evidence_text = makeDetailsLabel(tr("Explorer evidence details"));
     m_evidence_text->setObjectName(QStringLiteral("fileExplorerEvidenceText"));
     addDetailsSection(layout, tr("Evidence"), m_evidence_text);
+    layout->addStretch(1);
 
     scroll->setWidget(content);
     return scroll;
@@ -154,12 +154,25 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
 
 void FileExplorerDetailsPane::addDetailsSection(QVBoxLayout* layout,
                                                 const QString& title,
-                                                QPlainTextEdit* editor) {
+                                                QLabel* text) {
     auto* header = new QLabel(title, this);
     header->setProperty("infoPaneSectionHeader", true);
     layout->addWidget(header);
-    editor->setMinimumHeight(kInfoPaneSectionMinHeight);
-    layout->addWidget(editor, 1);
+    layout->addWidget(text);
+}
+
+QLabel* FileExplorerDetailsPane::makeDetailsLabel(const QString& accessible_name) {
+    // Each section is as tall as its text and the details scroller scrolls them together. As
+    // five-line text boxes each scrolled on its own inside that scroller and cut its lines
+    // ("Capability: NTFS - local file API -", review 2, F23).
+    auto* label = new QLabel(this);
+    // Paths and names in here come from the disk being browsed, so nothing is read as markup.
+    label->setTextFormat(Qt::PlainText);
+    label->setWordWrap(true);
+    label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    label->setAccessibleName(accessible_name);
+    return label;
 }
 
 void FileExplorerDetailsPane::applySelectedTab(const bool details, const bool persist) {
@@ -216,15 +229,15 @@ QLabel* FileExplorerDetailsPane::previewCaption() const {
     return m_preview_caption;
 }
 
-QPlainTextEdit* FileExplorerDetailsPane::propertiesText() const {
+QLabel* FileExplorerDetailsPane::propertiesText() const {
     return m_properties_text;
 }
 
-QPlainTextEdit* FileExplorerDetailsPane::safetyText() const {
+QLabel* FileExplorerDetailsPane::safetyText() const {
     return m_safety_text;
 }
 
-QPlainTextEdit* FileExplorerDetailsPane::evidenceText() const {
+QLabel* FileExplorerDetailsPane::evidenceText() const {
     return m_evidence_text;
 }
 

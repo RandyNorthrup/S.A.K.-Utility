@@ -262,6 +262,8 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
 void FileExplorerPropertiesDialog::buildHashesPage() {
     auto* page = new QWidget(this);
     auto* form = new QFormLayout(page);
+    // The longest names ("SHA-256") ended 5 px before their digests (review 2, N15).
+    form->setHorizontalSpacing(ui::kSpacingLarge);
     // Files HashesViewModel defaults: CRC32/MD5/SHA-1/SHA-256 on, the long
     // digests opt-in; values compute only once the page is opened.
     const QStringList algorithms = {QStringLiteral("CRC32"),

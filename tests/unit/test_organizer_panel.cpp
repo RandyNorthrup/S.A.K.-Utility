@@ -97,6 +97,15 @@ private Q_SLOTS:
         }
         QFAIL("no category table");
     }
+    // Review 2 (N19): the target the page starts on read "C:/Users/Username".
+    void theStartingTargetReadsAsAWindowsPath() {
+        sak::OrganizerPanel panel;
+        auto* target = findByAccessibleName<QLineEdit>(panel,
+                                                       QStringLiteral("Target Directory Path"));
+        QVERIFY(target != nullptr);
+        QVERIFY2(!target->text().isEmpty(), "the page starts with no target");
+        QVERIFY2(!target->text().contains(QLatin1Char('/')), qPrintable(target->text()));
+    }
     void previewMovesNothingAndOrganizeMovesEverything();
     void aFileThatWillNotMoveIsListedWithWhatDidMove();
     void thereIsNoPreviewModeLeftToForget();

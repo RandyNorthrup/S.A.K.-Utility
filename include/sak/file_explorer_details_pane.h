@@ -32,9 +32,11 @@ public:
     [[nodiscard]] QPlainTextEdit* previewText() const;
     [[nodiscard]] QLabel* previewImage() const;
     [[nodiscard]] QLabel* previewCaption() const;
-    [[nodiscard]] QPlainTextEdit* propertiesText() const;
-    [[nodiscard]] QPlainTextEdit* safetyText() const;
-    [[nodiscard]] QPlainTextEdit* evidenceText() const;
+    /// The Details tab's sections. Labels, so the one details scroller scrolls them together:
+    /// as text boxes each had a scroll bar of its own inside it and cut its text (review 2, F23).
+    [[nodiscard]] QLabel* propertiesText() const;
+    [[nodiscard]] QLabel* safetyText() const;
+    [[nodiscard]] QLabel* evidenceText() const;
     [[nodiscard]] QPushButton* detailsTabButton() const;
     [[nodiscard]] QPushButton* previewTabButton() const;
 
@@ -51,10 +53,11 @@ protected:
 
 private:
     QPlainTextEdit* makeDetailsText(const QString& accessible_name);
+    QLabel* makeDetailsLabel(const QString& accessible_name);
     QWidget* buildTabPill();
     QWidget* buildPreviewRegion();
     QScrollArea* buildDetailsScroller();
-    void addDetailsSection(QVBoxLayout* layout, const QString& title, QPlainTextEdit* editor);
+    void addDetailsSection(QVBoxLayout* layout, const QString& title, QLabel* text);
     void applySelectedTab(bool details, bool persist);
 
     QPushButton* m_details_tab_button{nullptr};
@@ -65,9 +68,9 @@ private:
     QLabel* m_preview_caption{nullptr};
     QLabel* m_preview_image{nullptr};
     QStackedWidget* m_preview_stack{nullptr};
-    QPlainTextEdit* m_properties_text{nullptr};
-    QPlainTextEdit* m_safety_text{nullptr};
-    QPlainTextEdit* m_evidence_text{nullptr};
+    QLabel* m_properties_text{nullptr};
+    QLabel* m_safety_text{nullptr};
+    QLabel* m_evidence_text{nullptr};
 };
 
 }  // namespace sak
