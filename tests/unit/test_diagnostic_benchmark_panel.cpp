@@ -26,6 +26,7 @@
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -103,6 +104,58 @@ private Q_SLOTS:
                  QStringLiteral("D: (size unknown volume on Best Buy NS-PCNVMEHDE(-C))"));
     }
 
+    // Review 2 (S17): the report's Notes box started 24 px left of the Technician field above it.
+    void theReportFieldsShareALeftEdge() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        panel.resize(1280, 900);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        QWidget* technician = nullptr;
+        QWidget* notes = nullptr;
+        for (auto* widget : panel.findChildren<QWidget*>()) {
+            if (widget->accessibleName() == QStringLiteral("Technician Name")) {
+                technician = widget;
+            } else if (widget->accessibleName() == QStringLiteral("Diagnostic report notes")) {
+                notes = widget;
+            }
+        }
+        QVERIFY(technician != nullptr && notes != nullptr);
+        // Bring the page holding them to the front, so they are laid out.
+        for (QWidget* child = technician; child->parentWidget() != nullptr;
+             child = child->parentWidget()) {
+            if (auto* stack = qobject_cast<QStackedWidget*>(child->parentWidget())) {
+                stack->setCurrentWidget(child);
+            }
+        }
+        QApplication::processEvents();
+        QVERIFY(technician->isVisible() && notes->isVisible());
+        QCOMPARE(notes->mapTo(&panel, QPoint(0, 0)).x(),
+                 technician->mapTo(&panel, QPoint(0, 0)).x());
+    }
+
+    // Review 2 (F40): Disk's "Sequential:" and Memory's "Bandwidth:" were bold and their other
+    // measurements not, and CPU's scores did not look like the other groups' scores.
+    void benchmarkGroupsShareOneLayout() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        QHash<QString, QString> style_of;
+        for (auto* label : panel.findChildren<QLabel*>()) {
+            style_of.insert(label->text(), label->styleSheet());
+        }
+        const QString score = style_of.value(QStringLiteral("Score: --"));
+        QVERIFY(!score.isEmpty());
+        for (const char* text : {"Single-Thread: --", "Multi-Thread: --"}) {
+            QCOMPARE(style_of.value(QString::fromLatin1(text)), score);
+        }
+        const QString measurement = style_of.value(QStringLiteral("Random 4K: --"));
+        for (const char* text :
+             {"Sequential: --", "Latency: --", "Bandwidth: --", "Random Latency: --"}) {
+            QVERIFY2(style_of.contains(QString::fromLatin1(text)), text);
+            QCOMPARE(style_of.value(QString::fromLatin1(text)), measurement);
+        }
+    }
+
     // UI review F17: before any sensor answered, and for one that never does, Thermal read
     // "0 C" with a bar of "0 / 100 C", where the other views said N/A.
     void thermalSaysNotAvailableUntilASensorAnswers() {
@@ -154,18 +207,47 @@ private Q_SLOTS:
     }
     // UI review F16: steps not yet run showed the hourglass that means "running".
     void pendingSuiteStepsShowTheIdleMark() {
+        constexpr qsizetype kSuiteSteps = 7;
         sak::QuickActionController quick_actions;
         sak::DiagnosticBenchmarkPanel panel(quick_actions);
-        int pending = 0;
-        for (const QLabel* label : panel.findChildren<QLabel*>()) {
-            if (label->text().startsWith(QStringLiteral("  ")) &&
-                label->text().endsWith(QStringLiteral("Hardware Inventory"))) {
-                ++pending;
-                QVERIFY2(label->text().contains(QChar(0x25CB)), qPrintable(label->text()));
-                QVERIFY2(!label->text().contains(QChar(0x23F3)), qPrintable(label->text()));
-            }
+        const auto marks = panel.findChildren<QLabel*>(QStringLiteral("suiteStepMark"));
+        QCOMPARE(marks.size(), kSuiteSteps);
+        for (const QLabel* mark : marks) {
+            QCOMPARE(mark->text(), QString(QChar(0x25CB)));
         }
-        QVERIFY(pending > 0);
+    }
+    // Review 2 (F16): with each step's mark in its label, the names started at three places
+    // (done 78, running 67, pending 70), because the marks are glyphs of different widths.
+    void suiteStepNamesStartInOneColumn() {
+        constexpr qsizetype kSuiteSteps = 7;
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        panel.resize(1280, 900);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        QVERIFY(
+            QMetaObject::invokeMethod(&panel,
+                                      "onSuiteStateChanged",
+                                      Qt::DirectConnection,
+                                      Q_ARG(sak::DiagnosticController::SuiteState,
+                                            sak::DiagnosticController::SuiteState::CpuBenchmark)));
+        QApplication::processEvents();
+        const auto names = panel.findChildren<QLabel*>(QStringLiteral("suiteStepName"));
+        QCOMPARE(names.size(), kSuiteSteps);
+        QSet<int> lefts;
+        for (const QLabel* name : names) {
+            lefts.insert(name->mapTo(&panel, QPoint(0, 0)).x());
+        }
+        QCOMPARE(lefts.size(), 1);
+        const auto marks = panel.findChildren<QLabel*>(QStringLiteral("suiteStepMark"));
+        QStringList shown;
+        for (const QLabel* mark : marks) {
+            shown << mark->text();
+        }
+        // Two done, one running, four pending.
+        QCOMPARE(shown.join(QString()),
+                 QString(QChar(0x2705)) + QChar(0x2705) + QChar(0x25B6) + QChar(0x25CB) +
+                     QChar(0x25CB) + QChar(0x25CB) + QChar(0x25CB));
     }
     void initTestCase();
     void cleanupTestCase();

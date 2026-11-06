@@ -68,8 +68,6 @@ constexpr int kStressThermalDefaultC = 95;
 constexpr int kCpuThermalMaxC = 100;
 constexpr int kGpuThermalMaxC = 100;
 constexpr int kDiskThermalMaxC = 70;
-// A step that has not started: the idle circle. The hourglass is the colour constants' "running".
-constexpr ushort kSuitePendingSymbol = 0x25CB;
 constexpr int kProgressMaximum = 100;
 
 // Debug-level phase timing, the same in every run mode: it was a smoke-only info line with a
@@ -407,12 +405,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
     auto* cpu_scores = new QHBoxLayout();
+    // Each group shows its measurements in the body weight and its score in the score style:
+    // Disk's Sequential and Memory's Bandwidth were bold and their other lines not, and CPU's
+    // scores did not look like scores (review 2, F40).
+    const QString score_style = sak::ui::fontWeightAndColorStyle(kFontWeightSemibold,
+                                                                 sak::ui::kColorPrimaryDark);
     m_cpu_single_score_label = new QLabel("Single-Thread: --", this);
-    m_cpu_single_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
+    m_cpu_single_score_label->setStyleSheet(score_style);
     cpu_scores->addWidget(m_cpu_single_score_label);
 
     m_cpu_multi_score_label = new QLabel("Multi-Thread: --", this);
-    m_cpu_multi_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
+    m_cpu_multi_score_label->setStyleSheet(score_style);
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
     cpu_scores->addStretch();
@@ -468,7 +471,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     disk_layout->addLayout(drive_row);
 
     m_disk_seq_label = new QLabel("Sequential: --", this);
-    m_disk_seq_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     disk_layout->addWidget(m_disk_seq_label);
 
     m_disk_rand_label = new QLabel("Random 4K: --", this);
@@ -512,7 +514,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     auto* mem_layout = new QVBoxLayout(mem_group);
 
     m_mem_bandwidth_label = new QLabel("Bandwidth: --", this);
-    m_mem_bandwidth_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     mem_layout->addWidget(m_mem_bandwidth_label);
 
     m_mem_latency_label = new QLabel("Random Latency: --", this);
@@ -723,13 +724,43 @@ void DiagnosticBenchmarkPanel::createSuiteStepLabels(QVBoxLayout* layout) {
         "Stress Test",
         "Aggregate Results",
     };
+    // The marks are glyphs of different widths (a check mark is wider than a circle), so they get
+    // a column of their own, as wide as the widest, and every name starts at one place.
+    const QFontMetrics metrics(font());
+    int mark_width = 0;
+    for (const char16_t mark :
+         {kSuitePendingMark, kSuiteRunningMark, kSuiteDoneMark, kSuiteSkippedMark}) {
+        mark_width = std::max(mark_width, metrics.horizontalAdvance(QChar(mark)));
+    }
+    mark_width += sak::ui::kSpacingSmall + sak::ui::kSpacingSmall;  // either side
     for (int i = 0; i < kSuiteStepCount; ++i) {
         m_suite_step_names[i] = QString::fromLatin1(kSuiteStepNames[i]);
-        m_suite_step_labels[i] = new QLabel(
-            QString("  %1  %2").arg(QChar(kSuitePendingSymbol)).arg(m_suite_step_names[i]), this);
-        m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
-        layout->addWidget(m_suite_step_labels[i]);
+        auto* row = new QHBoxLayout();
+        row->setSpacing(sak::ui::kSpacingSmall);
+        m_suite_step_marks[i] = new QLabel(this);
+        m_suite_step_marks[i]->setObjectName(QStringLiteral("suiteStepMark"));
+        m_suite_step_marks[i]->setAlignment(Qt::AlignCenter);
+        m_suite_step_marks[i]->setFixedWidth(mark_width);
+        m_suite_step_labels[i] = new QLabel(this);
+        m_suite_step_labels[i]->setObjectName(QStringLiteral("suiteStepName"));
+        row->addWidget(m_suite_step_marks[i]);
+        row->addWidget(m_suite_step_labels[i], 1);
+        layout->addLayout(row);
+        showSuiteStep(i,
+                      kSuitePendingMark,
+                      m_suite_step_names[i],
+                      sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
     }
+}
+
+void DiagnosticBenchmarkPanel::showSuiteStep(int step,
+                                             char16_t mark,
+                                             const QString& text,
+                                             const QString& style) {
+    m_suite_step_marks[step]->setText(QString(QChar(mark)));
+    m_suite_step_marks[step]->setStyleSheet(style);
+    m_suite_step_labels[step]->setText(text);
+    m_suite_step_labels[step]->setStyleSheet(style);
 }
 
 QHBoxLayout* DiagnosticBenchmarkPanel::createSuiteButtonRow() {
@@ -813,7 +844,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection() {
 void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
     // Technician / Ticket row
     auto* info_row = new QHBoxLayout();
-    info_row->addWidget(new QLabel("Technician:", this));
+    auto* technician_label = new QLabel("Technician:", this);
+    info_row->addWidget(technician_label);
     m_report_technician_edit = new QLineEdit(this);
     m_report_technician_edit->setPlaceholderText("Name");
     m_report_technician_edit->setAccessibleName(QStringLiteral("Technician Name"));
@@ -834,7 +866,11 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
 
     // Notes
     auto* notes_row = new QHBoxLayout();
-    notes_row->addWidget(new QLabel("Notes:", this));
+    auto* notes_label = new QLabel("Notes:", this);
+    // Technician and Notes start their fields at one edge (Notes' field began 24 px left of the
+    // other, review 2, S17); Notes sits beside its box's first line.
+    alignLabelColumn({technician_label, notes_label});
+    notes_row->addWidget(notes_label, 0, Qt::AlignTop);
     m_report_notes_edit = new QTextEdit(this);
     m_report_notes_edit->setMaximumHeight(kReportNotesMaxHeight);
     m_report_notes_edit->setPlaceholderText("Additional notes for the report...");

@@ -142,11 +142,14 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
         unreadable.device_path = QString("\\\\.\\PhysicalDrive%1").arg(disk_number);
         unreadable.model = QString("PhysicalDrive%1").arg(disk_number);
         unreadable.overall_health = SmartHealthStatus::Unknown;
-        unreadable.warnings.append(QString("PhysicalDrive%1: %2")
-                                       .arg(disk_number)
-                                       .arg(m_last_read_failure.isEmpty()
-                                                ? QStringLiteral("SMART data could not be read.")
-                                                : m_last_read_failure));
+        // One wording for every drive with no verdict, then why: a drive smartctl could not read
+        // and one it read with nothing to judge by said it two ways (review 2, observation 31).
+        unreadable.warnings.append(
+            QString("PhysicalDrive%1: SMART health could not be determined. %2")
+                .arg(disk_number)
+                .arg(m_last_read_failure.isEmpty()
+                         ? QStringLiteral("Its SMART data could not be read.")
+                         : m_last_read_failure));
         unreadable.scan_timestamp = QDateTime::currentDateTime();
         m_reports.append(unreadable);
         Q_EMIT driveAnalyzed(unreadable);
@@ -708,7 +711,9 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
                                  ? drive
                                  : QStringLiteral("%1 (%2)").arg(drive, report.model.trimmed());
         report.warnings.append(
-            QStringLiteral("%1: SMART health could not be determined").arg(name));
+            QStringLiteral("%1: SMART health could not be determined. It reported no SMART health "
+                           "data.")
+                .arg(name));
         report.recommendations.append(
             "SMART data was unavailable or unreadable -- verify the drive connection and "
             "re-run with administrator privileges");

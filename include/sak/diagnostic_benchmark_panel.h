@@ -126,6 +126,11 @@ private Q_SLOTS:
 private:
     void fillSmartRow(int row, const sak::SmartReport& report);
     static constexpr int kSuiteStepCount = 7;
+    /// A suite step's marks. Pending is the idle circle; the hourglass means running elsewhere.
+    static constexpr char16_t kSuitePendingMark = u'\u25CB';
+    static constexpr char16_t kSuiteRunningMark = u'\u25B6';
+    static constexpr char16_t kSuiteDoneMark = u'\u2705';
+    static constexpr char16_t kSuiteSkippedMark = u'\u23ED';
     enum SmartTableColumn {
         SmartColDrive = 0,
         SmartColType,
@@ -177,6 +182,8 @@ private:
     QGroupBox* createThermalSection();
     QGroupBox* createSuiteSection();
     void createSuiteStepLabels(QVBoxLayout* layout);
+    /// Show @p step with @p mark and @p text, both in @p style.
+    void showSuiteStep(int step, char16_t mark, const QString& text, const QString& style);
     QHBoxLayout* createSuiteButtonRow();
     void connectSuiteButtons();
     QGroupBox* createReportSection();
@@ -289,6 +296,10 @@ private:
     double m_smart_hottest_drive_celsius{0.0};
 
     // -- Full Suite Widgets --------------------------------------
+    /// Each step's mark (pending, running, done, skipped) in a column of one width, and its name
+    /// after it: in one label the marks' different widths started the names at three places
+    /// (review 2, F16).
+    QLabel* m_suite_step_marks[kSuiteStepCount]{nullptr};
     QLabel* m_suite_step_labels[kSuiteStepCount]{nullptr};
     QString m_suite_step_names[kSuiteStepCount];  ///< Stored for safe label reconstruction
     QLabel* m_suite_status_label{nullptr};

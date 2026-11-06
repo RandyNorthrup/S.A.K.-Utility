@@ -45,9 +45,6 @@ constexpr int kDefaultDiskTestFileSizeMb = 1024;
 constexpr int kReferenceBenchmarkScore = 1000;
 constexpr int kTemperatureWarningCelsius = 60;
 constexpr int kTemperatureCriticalCelsius = 80;
-constexpr int kSuiteStepDoneSymbol = 0x2705;
-constexpr int kSuiteStepRunningSymbol = 0x25B6;
-constexpr int kSuiteStepSkippedSymbol = 0x23ED;  // BMP "skip" marker, distinct from the done check
 constexpr int kBenchmarkMetricPrecision = 2;
 }  // namespace
 
@@ -633,7 +630,10 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
     // Reset step labels and per-step skip flags
     for (int i = 0; i < kSuiteStepCount; ++i) {
         m_suite_step_skipped[i] = false;
-        m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
+        showSuiteStep(i,
+                      kSuitePendingMark,
+                      m_suite_step_names[i],
+                      sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -689,25 +689,26 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
         if (step >= 0 && i < step) {
             if (m_suite_step_skipped[i]) {
                 // Skipped -- must not read as a completed/passed step.
-                m_suite_step_labels[i]->setText(QString("  %1  %2 (skipped)")
-                                                    .arg(QChar(kSuiteStepSkippedSymbol))
-                                                    .arg(m_suite_step_names[i]));
-                m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                    sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+                showSuiteStep(i,
+                              kSuiteSkippedMark,
+                              m_suite_step_names[i] + QStringLiteral(" (skipped)"),
+                              sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                               sak::ui::kStatusColorWarning));
             } else {
                 // Completed -- reconstruct label from stored step name
-                m_suite_step_labels[i]->setText(QString("  %1  %2")
-                                                    .arg(QChar(kSuiteStepDoneSymbol))
-                                                    .arg(m_suite_step_names[i]));
-                m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                    sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+                showSuiteStep(i,
+                              kSuiteDoneMark,
+                              m_suite_step_names[i],
+                              sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                               sak::ui::kStatusColorSuccess));
             }
         } else if (i == step) {
             // Current \u2014 use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
-            m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(kSuiteStepRunningSymbol)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorRunning));
+            showSuiteStep(i,
+                          kSuiteRunningMark,
+                          m_suite_step_names[i],
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorRunning));
         }
     }
 }
@@ -739,16 +740,17 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
     // overwriting it with a completed checkmark.
     for (int i = 0; i < kSuiteStepCount; ++i) {
         if (m_suite_step_skipped[i]) {
-            m_suite_step_labels[i]->setText(QString("  %1  %2 (skipped)")
-                                                .arg(QChar(kSuiteStepSkippedSymbol))
-                                                .arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+            showSuiteStep(i,
+                          kSuiteSkippedMark,
+                          m_suite_step_names[i] + QStringLiteral(" (skipped)"),
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorWarning));
         } else {
-            m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+            showSuiteStep(i,
+                          kSuiteDoneMark,
+                          m_suite_step_names[i],
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorSuccess));
         }
     }
 

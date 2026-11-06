@@ -446,14 +446,16 @@ void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
     // Must carry the exact indeterminate-health warning, naming the drive (pins the specific
     // message, not just that some warning mentions "could not be determined"): the panel lists
     // every drive's warnings together, and five unnamed ones could not be told apart.
-    QVERIFY2(report.warnings.contains(
-                 QStringLiteral("PhysicalDrive0: SMART health could not be determined")),
+    QVERIFY2(report.warnings.contains(QStringLiteral(
+                 "PhysicalDrive0: SMART health could not be determined. It reported no "
+                 "SMART health data.")),
              qPrintable(report.warnings.join(QLatin1Char('|'))));
     sak::SmartDiskAnalyzer second;
     const sak::SmartReport named =
         second.parseAndAssessForTesting(R"({"model_name": "VBOX HARDDISK"})", 3);
     QVERIFY2(named.warnings.contains(QStringLiteral(
-                 "PhysicalDrive3 (VBOX HARDDISK): SMART health could not be determined")),
+                 "PhysicalDrive3 (VBOX HARDDISK): SMART health could not be determined. It "
+                 "reported no SMART health data.")),
              qPrintable(named.warnings.join(QLatin1Char('|'))));
 }
 
@@ -525,8 +527,8 @@ void SmartDiskAnalyzerTests::unreadableDrive_keepsARowAndSaysWhy() {
     QCOMPARE(report.model, QStringLiteral("PhysicalDrive7"));
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
     QCOMPARE(report.warnings,
-             QStringList{QStringLiteral("PhysicalDrive7: Reading it needs "
-                                        "administrator rights.")});
+             QStringList{QStringLiteral("PhysicalDrive7: SMART health could not be determined. "
+                                        "Reading it needs administrator rights.")});
 }
 
 void SmartDiskAnalyzerTests::unreadableDrive_withNoReasonStillSaysSo() {
@@ -534,7 +536,8 @@ void SmartDiskAnalyzerTests::unreadableDrive_withNoReasonStillSaysSo() {
     analyzer.analyzeDrive(2);
     QCOMPARE(analyzer.reports().size(), 1);
     QCOMPARE(analyzer.reports().first().warnings,
-             QStringList{QStringLiteral("PhysicalDrive2: SMART data could not be read.")});
+             QStringList{QStringLiteral("PhysicalDrive2: SMART health could not be determined. "
+                                        "Its SMART data could not be read.")});
 }
 
 void SmartDiskAnalyzerTests::readableDrive_isNotMarkedUnreadable() {
