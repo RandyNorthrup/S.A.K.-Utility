@@ -117,11 +117,14 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_contact_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_contact_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contact_table->setSortingEnabled(true);
-    m_contact_table->horizontalHeader()->setStretchLastSection(true);
-    m_contact_table->setColumnWidth(ColName, email::kContactsNameColumnWidth);
-    m_contact_table->setColumnWidth(ColEmail, email::kContactsEmailColumnWidth);
-    m_contact_table->setColumnWidth(ColCompany, email::kContactsCompanyColumnWidth);
-    fitHeaderLabels(m_contact_table);
+    // Name, Company and Phone take what they hold and Email the rest, eliding a long address:
+    // fixed widths that added up to more than the list's pane put Company behind a scroll bar
+    // ("Harbor La", review 2). The full address is in the detail pane beside the list.
+    QHeaderView* header = m_contact_table->horizontalHeader();
+    header->setSectionResizeMode(ColName, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColEmail, QHeaderView::Stretch);
+    header->setSectionResizeMode(ColCompany, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColPhone, QHeaderView::ResizeToContents);
     m_contact_table->verticalHeader()->setVisible(false);
     connect(
         m_contact_table, &QTableWidget::cellClicked, this, &EmailContactsDialog::onContactSelected);

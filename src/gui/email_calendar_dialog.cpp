@@ -102,6 +102,13 @@ QColor calendarFill(const char* light) {
     return ui::themedColor(light);
 }
 
+/// Today's day header text on today's fill, at WCAG AA in both themes. The primary blue read at
+/// 3.4:1 on the light fill and 3.8:1 on the dark one (review 2, DF2); the fill marks the day.
+QColor todayHeaderText() {
+    return QColor(QString::fromLatin1(ui::htmlUsingDarkPalette() ? ui::kColorDarkTextPrimary
+                                                                 : ui::kColorPrimaryDark));
+}
+
 }  // namespace
 
 // ============================================================================
@@ -591,8 +598,7 @@ private:
             if (is_today) {
                 painter.fillRect(header_rect, calendarFill(email::kCalColorTodayBg));
             }
-            painter.setPen(is_today ? QColor(ui::kColorPrimary)
-                                    : ui::themedColor(ui::kColorTextBody));
+            painter.setPen(is_today ? todayHeaderText() : ui::themedColor(ui::kColorTextBody));
             const QString label = day.toString(QStringLiteral("ddd M/d"));
             painter.drawText(header_rect, Qt::AlignCenter, label);
 
@@ -902,7 +908,9 @@ void EmailCalendarDialog::setupUi() {
 
 void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent_layout) {
     auto* toolbar = new QWidget(this);
-    toolbar->setStyleSheet(ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault));
+    toolbar->setObjectName(QStringLiteral("calendarToolbar"));
+    toolbar->setStyleSheet(ui::namedBarStyle(
+        QStringLiteral("calendarToolbar"), ui::kColorBgSurface, ui::kColorBorderDefault));
     auto* layout = new QHBoxLayout(toolbar);
     layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginSmall, ui::kMarginMedium, ui::kMarginSmall);
@@ -1058,6 +1066,9 @@ void EmailCalendarDialog::setupSidebar(QSplitter* splitter) {
 
     setupFilterSection(layout);
     setupDayEventList(layout);
+    // The day list has a height limit, so without this the spare height went into the gaps
+    // between the sections, 49 to 73 px of them (review 2, F28).
+    layout->addStretch(1);
 
     splitter->addWidget(sidebar);
 }
@@ -1212,8 +1223,11 @@ void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
 
 void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
     auto* footer = new QWidget(this);
-    footer->setStyleSheet(
-        ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault, "top"));
+    // Scoped to the bar: written bare, the rule reached every widget in it, and the status label
+    // drew its own top border, a stray line above "5 events" (review 2, F28).
+    footer->setObjectName(QStringLiteral("calendarFooter"));
+    footer->setStyleSheet(ui::namedBarStyle(
+        QStringLiteral("calendarFooter"), ui::kColorBgSurface, ui::kColorBorderDefault, "top"));
     auto* layout = new QHBoxLayout(footer);
     layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginSmall, ui::kMarginMedium, ui::kMarginSmall);

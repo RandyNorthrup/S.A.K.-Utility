@@ -28,6 +28,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -46,6 +47,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <optional>
 
 using namespace sak::pst_fixture;
 
@@ -178,6 +181,64 @@ QStringList treeTexts(const QTreeWidget& tree) {
     return texts;
 }
 
+
+// WCAG 2 relative luminance and contrast, for the calendar's header checks.
+double wcagLuminance(const QColor& color) {
+    const auto linear = [](double c) {
+        return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    return (0.2126 * linear(color.redF())) + (0.7152 * linear(color.greenF())) +
+           (0.0722 * linear(color.blueF()));
+}
+
+double wcagContrast(const QColor& a, const QColor& b) {
+    const double la = wcagLuminance(a);
+    const double lb = wcagLuminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+QWidget* visibleChildOfClass(const QWidget& parent, const char* class_name) {
+    for (QWidget* child : parent.findChildren<QWidget*>()) {
+        if (QByteArray(child->metaObject()->className()) == class_name && child->isVisible()) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+// Today's fill in a week view's header row: the one colour along its top that is not the row's
+// own, which every other day's header has.
+std::optional<QRgb> todaysHeaderFill(const QImage& image) {
+    QHash<QRgb, int> counts;
+    for (int x = sak::email::kCalendarTimeColumnWidth; x < image.width(); ++x) {
+        ++counts[image.pixel(x, 2)];
+    }
+    QList<std::pair<int, QRgb>> ranked;
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+        ranked.append({it.value(), it.key()});
+    }
+    std::ranges::sort(ranked, std::greater<>());
+    constexpr int kFewestPixelsOfAColumn = 40;
+    if (ranked.size() < 2 || ranked.at(1).first < kFewestPixelsOfAColumn) {
+        return std::nullopt;
+    }
+    return ranked.at(1).second;
+}
+
+// The sharpest pixel of today's header text against its fill: antialiased strokes of 10 pt text
+// do not all reach their full colour, but the stems do.
+double sharpestHeaderContrast(const QImage& image, QRgb fill) {
+    double best = 1.0;
+    for (int x = sak::email::kCalendarTimeColumnWidth; x < image.width(); ++x) {
+        if (image.pixel(x, 2) != fill) {
+            continue;
+        }
+        for (int y = 1; y < sak::email::kCalendarDayHeaderHeight - 1; ++y) {
+            best = std::max(best, wcagContrast(QColor(image.pixel(x, y)), QColor(fill)));
+        }
+    }
+    return best;
+}
 }  // namespace
 
 class EmailToolsViewsTests : public QObject {
@@ -1144,6 +1205,21 @@ private Q_SLOTS:
         QCOMPARE(dialog.m_contact_table->item(theo, 3)->text(), QStringLiteral("555-0101"));
         QCOMPARE(dialog.m_contact_table->item(ines, 3)->text(), QStringLiteral("555-0202"));
 
+        // Review 2: fixed column widths added up to more than the list's pane, so Company sat
+        // behind a scroll bar ("Harbor La", "Oven Wor"). The columns take what they hold.
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        const QHeaderView* header = dialog.m_contact_table->horizontalHeader();
+        QVERIFY2(header->length() <= header->viewport()->width(),
+                 qPrintable(QStringLiteral("columns %1 px (%3, %4, %5, %6) in a %2 px list")
+                                .arg(header->length())
+                                .arg(header->viewport()->width())
+                                .arg(header->sectionSize(0))
+                                .arg(header->sectionSize(1))
+                                .arg(header->sectionSize(2))
+                                .arg(header->sectionSize(3))));
+        dialog.hide();
+
         // Search reaches the real fields too.
         dialog.filterContacts(QStringLiteral("oven works"));
         QCOMPARE(dialog.m_contact_table->rowCount(), 1);
@@ -1354,6 +1430,81 @@ private Q_SLOTS:
                                         .arg(samples)));
             }
         }
+    }
+
+    // Review 2 (DF2): today's day header was the primary blue on today's fill, 3.4:1 in light and
+    // 3.8:1 in dark. The sharpest pixel of its text against the fill is the measure; light allows
+    // a little for antialiasing on 10 pt text, where the old colour could not get past 3.4.
+    void todaysWeekHeaderReadsInBothThemes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            EmailInspectorController controller;
+            sak::EmailCalendarDialog dialog(&controller, {});
+            dialog.resize(900, 700);
+            dialog.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+            dialog.setViewMode(sak::EmailCalendarDialog::ViewMode::Week);
+            QCoreApplication::processEvents();
+            QWidget* week = visibleChildOfClass(dialog, "sak::CalendarWeekDayView");
+            QVERIFY(week != nullptr);
+            const QImage image = week->grab().toImage();
+            const std::optional<QRgb> fill = todaysHeaderFill(image);
+            QVERIFY2(fill.has_value(), "no column carries today's fill");
+            const double best = sharpestHeaderContrast(image, *fill);
+            const bool dark = mode == sak::ui::AppThemeMode::Dark;
+            QVERIFY2(best >= (dark ? 4.5 : 4.0),
+                     qPrintable(QStringLiteral("%1 theme: %2:1 on %3")
+                                    .arg(dark ? "dark" : "light")
+                                    .arg(best, 0, 'f', 2)
+                                    .arg(QColor(*fill).name())));
+        }
+    }
+
+    // Review 2 (F28): the footer's rule was written bare, so the status label in it drew its own
+    // top border, a stray line above "5 events".
+    void theCalendarFooterDrawsOneTopBorder() {
+        EmailInspectorController controller;
+        sak::EmailCalendarDialog dialog(&controller, {});
+        dialog.resize(900, 700);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        auto* footer = dialog.findChild<QWidget*>(QStringLiteral("calendarFooter"));
+        QVERIFY(footer != nullptr);
+        QLabel* status = nullptr;
+        for (auto* label : footer->findChildren<QLabel*>()) {
+            if (label->isVisible()) {
+                status = label;
+                break;
+            }
+        }
+        QVERIFY(status != nullptr);
+        status->setText(QStringLiteral("5 events"));
+        QCoreApplication::processEvents();
+        const QImage image = footer->grab().toImage();
+        const QPoint top = status->mapTo(footer, QPoint(2, 0));
+        const QColor beside(image.pixel(qMax(0, top.x() - 6), top.y()));
+        const QColor on_label(image.pixel(top));
+        QCOMPARE(on_label.name(), beside.name());
+        // And the sidebar's sections sit the layout's spacing apart; the spare height went into
+        // the gaps, 61 px under "Filter by Status".
+        QLabel* filter_heading = nullptr;
+        for (auto* label : dialog.findChildren<QLabel*>()) {
+            if (label->text() == QStringLiteral("Filter by Status")) {
+                filter_heading = label;
+            }
+        }
+        QCheckBox* free = nullptr;
+        for (auto* box : dialog.findChildren<QCheckBox*>()) {
+            if (box->accessibleName() == QStringLiteral("Show free calendar events")) {
+                free = box;
+            }
+        }
+        QVERIFY(filter_heading != nullptr && free != nullptr);
+        const int gap = free->mapTo(&dialog, QPoint(0, 0)).y() -
+                        filter_heading->mapTo(&dialog, QPoint(0, filter_heading->height())).y();
+        QVERIFY2(gap <= sak::ui::kSpacingMedium + 1, qPrintable(QString::number(gap)));
     }
 
     // UI review F2: the work-hours shading was painted after the grid and covered its lines.

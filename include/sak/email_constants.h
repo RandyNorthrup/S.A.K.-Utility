@@ -178,9 +178,6 @@ constexpr int kContactsListPaneWidth = 550;
 constexpr int kContactsDetailPaneWidth = 350;
 
 /// Contacts table column widths
-constexpr int kContactsNameColumnWidth = 200;
-constexpr int kContactsEmailColumnWidth = 250;
-constexpr int kContactsCompanyColumnWidth = 180;
 constexpr int kContactsDetailMinWidth = 280;
 
 /// Attachment browser dimensions
