@@ -935,6 +935,23 @@ bool PackageInternalizationEngine::binaryChecksumMatches(const QByteArray& data,
     return actual.compare(expected, Qt::CaseInsensitive) == 0;
 }
 
+QString PackageInternalizationEngine::installerRefusalMessage(const QString& url,
+                                                              const QString& declared_checksum) {
+    // Review 2: adobereader failed every bundle with "Installer checksum verification failed",
+    // which read like a fault of the bundle. The package's own declaration is what disagrees.
+    if (declared_checksum.trimmed().isEmpty()) {
+        return QStringLiteral(
+                   "Not bundled: the package declares no checksum for %1, so its installer "
+                   "cannot be verified. The package needs fixing upstream.")
+            .arg(url);
+    }
+    return QStringLiteral(
+               "Not bundled: the installer at %1 does not match the checksum its package "
+               "declares. The vendor has changed the file and the upstream package has not "
+               "caught up, or the file was altered; try again once the package is updated.")
+        .arg(url);
+}
+
 bool PackageInternalizationEngine::installerVerified(const QByteArray& data,
                                                      const QString& expected_checksum,
                                                      const QString& checksum_type) {
@@ -1084,7 +1101,7 @@ bool PackageInternalizationEngine::binaryChecksumOk(
             "[InternalizationEngine] Unverified installer (missing/mismatched "
             "checksum): {}",
             url.toStdString());
-        finishWithError(result, "Installer checksum verification failed for " + url);
+        finishWithError(result, installerRefusalMessage(url, cs));
         return false;
     }
     return true;

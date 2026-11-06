@@ -185,6 +185,11 @@ public:
                                                 const QString& expected_checksum,
                                                 const QString& checksum_type);
 
+    /// @brief Why an installer that failed installerVerified() was not bundled, naming the
+    ///        upstream package as the one at fault. Pure; unit-testable.
+    [[nodiscard]] static QString installerRefusalMessage(const QString& url,
+                                                         const QString& declared_checksum);
+
     /// @brief Reduce a URL-derived filename to a safe single-segment basename.
     ///        An empty name or one bearing traversal / path-separators / control
     ///        characters (per isSafePackageComponent) collapses to a deterministic

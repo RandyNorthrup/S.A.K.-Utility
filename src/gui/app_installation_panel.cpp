@@ -847,6 +847,15 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
             [this](const QString& msg) { Q_EMIT logOutput(msg); });
 }
 
+QString AppInstallationPanel::offlineStatusBarText(const QString& summary) const {
+    // The status bar names what failed too: it read "9 succeeded, 1 failed" with no name.
+    QString text = tr("Offline operation: %1").arg(summary);
+    if (!m_offline_failures.isEmpty()) {
+        text += tr(" - Failed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
+    }
+    return text;
+}
+
 void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
     connect(
         m_offline_worker.get(),
@@ -886,8 +895,7 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
             // full and stayed on screen at 80%.
             Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
 
-            Q_EMIT statusMessage(tr("Offline operation: %1").arg(summary),
-                                 sak::kTimerStatusDefaultMs);
+            Q_EMIT statusMessage(offlineStatusBarText(summary), sak::kTimerStatusDefaultMs);
         });
 
     connect(m_offline_worker.get(),

@@ -167,6 +167,7 @@ private:
     void setupOfflineWorkerConnections();
     void setupOfflineWorkerProgressConnections();
     void setupOfflineWorkerCompletionConnections();
+    [[nodiscard]] QString offlineStatusBarText(const QString& summary) const;
     void setupOfflinePresetRow(QVBoxLayout* offline_layout);
     void setupOfflineSearchGroup(QHBoxLayout* side_by_side);
     void setupOfflineDeployListGroup(QHBoxLayout* side_by_side);

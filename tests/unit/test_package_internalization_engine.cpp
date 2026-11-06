@@ -28,6 +28,7 @@ private Q_SLOTS:
     void binaryChecksumMatches_verifiesNamedAndInferredAlgorithms();
     void binaryChecksumMatches_rejectsMismatchAndUnresolvable();
     void installerVerified_failsClosedOnMissingChecksum();
+    void anInstallerRefusalNamesTheUpstreamPackage();
     void sanitizedBinaryBasename_reducesUnsafeNamesToFallback();
     void isAllowedInstallerUrl_acceptsOnlyHttps();
     void nupkgHashMatches_verifiesBase64FeedHash();
@@ -377,6 +378,20 @@ void TestPackageInternalizationEngine::binaryChecksumMatches_rejectsMismatchAndU
     // from its length.
     QVERIFY(!PackageInternalizationEngine::binaryChecksumMatches(
         data, QStringLiteral("5d41402abc4b2a76b9719d911017c592"), QStringLiteral("sha256")));
+}
+
+// Review 2: "9 succeeded, 1 failed" with adobereader, whose reason read like the bundle's fault.
+void TestPackageInternalizationEngine::anInstallerRefusalNamesTheUpstreamPackage() {
+    const QString url = QStringLiteral("https://ardownload2.adobe.com/AcroRdrDC.exe");
+    const QString mismatch =
+        PackageInternalizationEngine::installerRefusalMessage(url, QStringLiteral("ab12"));
+    QVERIFY2(mismatch.startsWith(QStringLiteral("Not bundled: the installer at ") + url),
+             qPrintable(mismatch));
+    QVERIFY(mismatch.contains(QStringLiteral("upstream package has not caught up")));
+    const QString undeclared =
+        PackageInternalizationEngine::installerRefusalMessage(url, QStringLiteral("  "));
+    QVERIFY2(undeclared.contains(QStringLiteral("declares no checksum for ") + url),
+             qPrintable(undeclared));
 }
 
 void TestPackageInternalizationEngine::installerVerified_failsClosedOnMissingChecksum() {
