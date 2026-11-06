@@ -799,14 +799,14 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
         }
     }
 
-    // A sensor with no reading says why: a bare N/A told a technician nothing (testpc1).
-    const auto not_available = [this](const QString& sensor) {
-        return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-            .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
-            .arg(sak::ui::kFontWeightSemibold)
-            .arg(tr("N/A - %1").arg(ThermalMonitor::unavailableReason(m_thermal_statuses, sensor)));
-    };
+    const QString not_available = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
+                                      .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
+                                      .arg(sak::ui::kFontWeightSemibold)
+                                      .arg(tr("N/A"));
 
+    // The value column holds a number or "N/A"; anything longer goes on the bar, which spans the
+    // row. A sensor with no reading says why there: a bare N/A told a technician nothing, and the
+    // reason in the value column was cut to "N/A - not" (testpc1).
     const auto render =
         [&](QLabel* label, QProgressBar* bar, bool found, int temp, const char* id) {
             if (found) {
@@ -815,9 +815,11 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
                 bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
             } else {
                 // An empty bar that says so: "0 / 100 C" read as a reading of zero.
-                label->setText(not_available(QString::fromLatin1(id)));
+                label->setText(not_available);
                 bar->setValue(0);
-                bar->setFormat(tr("N/A"));
+                bar->setFormat(tr("N/A - %1")
+                                   .arg(ThermalMonitor::unavailableReason(
+                                       m_thermal_statuses, QString::fromLatin1(id))));
             }
         };
     render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp, "cpu");
@@ -825,9 +827,9 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
     if (!disk_found && m_smart_hottest_drive_celsius > 0.0) {
         // Windows' counters do not report this drive, but its SMART data did.
         const int smart_temp = static_cast<int>(m_smart_hottest_drive_celsius);
-        m_thermal_disk_label->setText(temperatureHtml(smart_temp) + tr(" (from the SMART scan)"));
+        m_thermal_disk_label->setText(temperatureHtml(smart_temp));
         m_thermal_disk_bar->setValue(smart_temp);
-        m_thermal_disk_bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
+        m_thermal_disk_bar->setFormat(tr("%v / %m \u00B0C, from the SMART scan"));
         return;
     }
     render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp, "disk");

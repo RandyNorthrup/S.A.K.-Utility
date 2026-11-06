@@ -19,6 +19,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMap>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
@@ -108,7 +109,7 @@ private Q_SLOTS:
         QCOMPARE(cpu->text(), QStringLiteral("55 / 100 \u00B0C"));
         QVERIFY(QMetaObject::invokeMethod(
             &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
-        QCOMPARE(cpu->text(), QStringLiteral("N/A"));
+        QVERIFY2(cpu->text().startsWith(QStringLiteral("N/A - ")), qPrintable(cpu->text()));
     }
     // UI review F39: Type was blank in one view, and "N/A" and "--" both meant "not known".
     void smartTableUsesOneMarkerForNotKnown() {
@@ -160,6 +161,7 @@ private Q_SLOTS:
     void thermalLimitTooltipSaysWhatHappens();
     void anUnreadableDriveShowsNoFakeNumbers();
     void thermalDiskRowSaysItIsTheHottestDisk();
+    void thermalReasonsAreShownInFull();
     void exportScanReportWritesTheHtmlItSays();
 
 private:
@@ -343,6 +345,78 @@ void DiagnosticBenchmarkPanelTests::thermalDiskRowSaysItIsTheHottestDisk() {
     QVERIFY(std::ranges::none_of(labels, [](const QLabel* label) {
         return label->text() == QStringLiteral("Disk 0:");
     }));
+}
+
+// testpc1: the reason a sensor has no reading sat in the 60 px value column and read "N/A - not".
+// Each row's value fits its column, and the reason, or the note that a drive's temperature came
+// from the SMART scan, is on the bar in full.
+void DiagnosticBenchmarkPanelTests::thermalReasonsAreShownInFull() {
+    // Shown, the panel polls its sensors; each poll says what testpc1's did.
+    const sak::ScopedProcessFaultInjector testpc1_sensors(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral(
+                "status_cpu=unavailable:command_not_supported\n"
+                "status_gpu=unavailable:command_not_supported\n"
+                "identity_disk1=USB-NVME-B\nstatus_disk1=unavailable:no_answer");
+            return result;
+        });
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    Q_EMIT controller->thermalSensorStatusesUpdated(
+        {QStringLiteral("status_cpu=unavailable:command_not_supported"),
+         QStringLiteral("status_gpu=unavailable:command_not_supported"),
+         QStringLiteral("status_disk1=unavailable:no_answer")});
+    using Readings = QVector<sak::ThermalReading>;
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
+    panel.resize(1280, 860);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QCoreApplication::processEvents();
+
+    QMap<QString, QProgressBar*> bars;
+    for (auto* bar : panel.findChildren<QProgressBar*>()) {
+        bars.insert(bar->accessibleName(), bar);
+    }
+    QProgressBar* cpu = bars.value(QStringLiteral("CPU Temperature"));
+    QProgressBar* disk = bars.value(QStringLiteral("Hottest disk Temperature"));
+    QVERIFY(cpu != nullptr && disk != nullptr);
+    QCOMPARE(cpu->text(), QStringLiteral("N/A - not reported by this PC"));
+    QCOMPARE(disk->text(), QStringLiteral("N/A - did not answer in time"));
+    QVERIFY2(cpu->fontMetrics().horizontalAdvance(cpu->text()) < cpu->width(),
+             qPrintable(QString::number(cpu->width())));
+
+    const auto rowValueFits = [&panel](QProgressBar* bar) {
+        // The value label sits just left of its bar, on the same row.
+        for (auto* label : panel.findChildren<QLabel*>()) {
+            const QPoint at = label->mapTo(&panel, QPoint(0, label->height() / 2));
+            const QPoint bar_at = bar->mapTo(&panel, QPoint(0, bar->height() / 2));
+            if (qAbs(at.y() - bar_at.y()) < bar->height() && at.x() < bar_at.x() &&
+                bar_at.x() - (at.x() + label->width()) < 24) {
+                return label->sizeHint().width() <= label->width();
+            }
+        }
+        return false;
+    };
+    QVERIFY2(rowValueFits(cpu), "the CPU row's value is cut");
+
+    // A drive temperature from the SMART scan: the number in the column, the note on the bar.
+    sak::SmartReport drive;
+    drive.model = QStringLiteral("ST8000DM004-2CX188");
+    drive.overall_health = sak::SmartHealthStatus::Warning;
+    drive.temperature_celsius = 45.0;
+    using Reports = QVector<sak::SmartReport>;
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onSmartAnalysisComplete", Qt::DirectConnection, Q_ARG(Reports, Reports{drive})));
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
+    QCoreApplication::processEvents();
+    QCOMPARE(disk->text(), QStringLiteral("45 / 70 \u00B0C, from the SMART scan"));
+    QVERIFY2(rowValueFits(disk), "the disk row's value is cut");
 }
 
 // Its tooltip says HTML. JSON and CSV have their own buttons beside it.
