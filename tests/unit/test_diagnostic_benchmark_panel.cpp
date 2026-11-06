@@ -33,6 +33,7 @@
 #include <QTimer>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -241,8 +242,20 @@ private Q_SLOTS:
         QCOMPARE(lefts.size(), 1);
         const auto marks = panel.findChildren<QLabel*>(QStringLiteral("suiteStepMark"));
         QStringList shown;
+        // The offscreen platform has no fonts of its own, so the four glyphs can come out one
+        // width and the names line up whatever holds them. The column must not follow its glyph:
+        // every mark is one fixed width, room for the widest of the four.
+        int widest = 0;
+        for (const char16_t glyph :
+             {char16_t{0x25CB}, char16_t{0x25B6}, char16_t{0x2705}, char16_t{0x23ED}}) {
+            widest = std::max(widest, marks.first()->fontMetrics().horizontalAdvance(QChar(glyph)));
+        }
         for (const QLabel* mark : marks) {
             shown << mark->text();
+            QCOMPARE(mark->minimumWidth(), mark->maximumWidth());
+            QCOMPARE(mark->width(), marks.first()->width());
+            QVERIFY2(mark->width() >= widest,
+                     qPrintable(QStringLiteral("%1 < %2").arg(mark->width()).arg(widest)));
         }
         // Two done, one running, four pending.
         QCOMPARE(shown.join(QString()),

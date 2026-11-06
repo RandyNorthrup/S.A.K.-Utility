@@ -1488,7 +1488,12 @@ private Q_SLOTS:
         const QColor on_label(image.pixel(top));
         QCOMPARE(on_label.name(), beside.name());
         // And the sidebar's sections sit the layout's spacing apart; the spare height went into
-        // the gaps, 61 px under "Filter by Status".
+        // the gaps, 61 px under "Filter by Status". At 700 px the sidebar has none to spare, so
+        // the dialog is made tall enough to have some. The spare height can go into the widgets
+        // as well as between them (a label grows and centres its text), so the heading's top is
+        // measured to the next row's top, against the heading's own height and the spacing.
+        dialog.resize(900, 1400);
+        QCoreApplication::processEvents();
         QLabel* filter_heading = nullptr;
         for (auto* label : dialog.findChildren<QLabel*>()) {
             if (label->text() == QStringLiteral("Filter by Status")) {
@@ -1502,9 +1507,10 @@ private Q_SLOTS:
             }
         }
         QVERIFY(filter_heading != nullptr && free != nullptr);
-        const int gap = free->mapTo(&dialog, QPoint(0, 0)).y() -
-                        filter_heading->mapTo(&dialog, QPoint(0, filter_heading->height())).y();
-        QVERIFY2(gap <= sak::ui::kSpacingMedium + 1, qPrintable(QString::number(gap)));
+        const int pitch = free->mapTo(&dialog, QPoint(0, 0)).y() -
+                          filter_heading->mapTo(&dialog, QPoint(0, 0)).y();
+        const int most = filter_heading->sizeHint().height() + sak::ui::kSpacingMedium + 1;
+        QVERIFY2(pitch <= most, qPrintable(QStringLiteral("%1 > %2").arg(pitch).arg(most)));
     }
 
     // UI review F2: the work-hours shading was painted after the grid and covered its lines.
