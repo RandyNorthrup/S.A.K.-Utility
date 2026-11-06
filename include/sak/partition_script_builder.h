@@ -48,6 +48,12 @@ public:
     /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.
     /// Public so a test can run it on bytes, with no disk involved.
     [[nodiscard]] static QString bootSectorKindFunctionScript();
+    /// PowerShell functions of the partition recovery scan: what each boot sector found is, its
+    /// size, and whether it is a partition there now (Invoke-SakRecoveryScan reads any stream).
+    [[nodiscard]] static QString recoveryScanFunctionScript();
+    /// PowerShell function the helper runs before writing a recovered partition back: refuses
+    /// one past the disk's end or over any partition there now.
+    [[nodiscard]] static QString recoveredPartitionFitFunctionScript();
     /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
     [[nodiscard]] static QString freeBootLetterFunctionScript();
 

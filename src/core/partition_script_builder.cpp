@@ -5222,12 +5222,96 @@ QString PartitionScriptBuilder::bootSectorKindFunctionScript() {
         "  $ascii = [System.Text.Encoding]::ASCII\n"
         "  $oem = $ascii.GetString($s, 3, 8)\n"
         "  if ($oem -ceq 'NTFS    ') { return 'NTFS' }\n"
+        // BitLocker writes a FAT32-shaped boot sector, FAT32 at offset 82 included, so that older
+        // Windows sees a volume; its name is in the OEM field. The live E: of a capture rig, NTFS
+        // under BitLocker, was logged as FAT32.
+        "  if ($oem -ceq '-FVE-FS-') { return 'BitLocker' }\n"
         "  if ($oem -ceq 'EXFAT   ') { return 'exFAT' }\n"
         "  if ($ascii.GetString($s, 82, 8) -ceq 'FAT32   ') { return 'FAT32' }\n"
         "  $fat = $ascii.GetString($s, 54, 8)\n"
         "  if ($fat -ceq 'FAT16   ' -or $fat -ceq 'FAT12   ' -or $fat -ceq 'FAT     ') { "
         "return $fat.Trim() }\n"
         "  return $null\n"
+        "}\n");
+}
+
+QString PartitionScriptBuilder::recoveryScanFunctionScript() {
+    return bootSectorKindFunctionScript() +
+           QStringLiteral(
+               // The size a boot sector gives its volume, or 0 when it gives none that can be
+               // trusted. NTFS counts every sector but the backup boot sector at the end.
+               "function Get-SakBootSectorBytes([byte[]]$s, [string]$kind) {\n"
+               "  if ($kind -eq 'exFAT') {\n"
+               "    if ($s[108] -lt 9 -or $s[108] -gt 12) { return [uint64]0 }\n"
+               "    return ([uint64]1 -shl $s[108]) * [BitConverter]::ToUInt64($s, 72)\n"
+               "  }\n"
+               "  $bps = [uint64][BitConverter]::ToUInt16($s, 11)\n"
+               "  if (@(512, 1024, 2048, 4096) -notcontains $bps) { return [uint64]0 }\n"
+               "  if ($kind -eq 'NTFS') {\n"
+               "    $n = [BitConverter]::ToUInt64($s, 40)\n"
+               "    if ($n -eq 0 -or $n -gt [uint64]281474976710656) { return [uint64]0 }\n"
+               "    return $bps * ($n + 1)\n"
+               "  }\n"
+               "  if ($kind -like 'FAT*') {\n"
+               "    $n = [uint64][BitConverter]::ToUInt16($s, 19)\n"
+               "    if ($n -eq 0) { $n = [uint64][BitConverter]::ToUInt32($s, 32) }\n"
+               "    return $bps * $n\n"
+               "  }\n"
+               "  return [uint64]0\n"
+               "}\n"
+               // A boot sector at, inside or running into a partition that is there now is that
+               // partition's, or something stored in it, and is not a lost one: writing it back
+               // would lay a second partition over a live one.
+               "function Get-SakRecoveryFinding([uint64]$offset, [string]$kind, [uint64]$bytes, "
+               "$live) {\n"
+               "  foreach ($p in $live) { if ($offset -eq $p.Start) { return \"Partition "
+               "$($p.Number) is at byte offset $offset ($kind) and is not lost\" } }\n"
+               "  foreach ($p in $live) { if ($offset -gt $p.Start -and $offset -lt $p.End) { "
+               "return \"Boot sector at byte offset $offset ($kind) is inside Partition "
+               "$($p.Number), which is not lost: not a candidate\" } }\n"
+               "  if ($bytes -eq 0) { return \"Candidate partition boot sector at byte offset "
+               "$offset ($kind, size unknown)\" }\n"
+               "  $end = $offset + $bytes\n"
+               "  foreach ($p in $live) { if ($offset -lt $p.End -and $end -gt $p.Start) { "
+               "return \"Boot sector at byte offset $offset ($kind, $bytes bytes) runs into "
+               "Partition $($p.Number), which is not lost: not a candidate\" } }\n"
+               "  return \"Candidate partition boot sector at byte offset $offset ($kind, size "
+               "$bytes bytes)\"\n"
+               "}\n"
+               // A short read ends the scan: the bytes left in the buffer are the last sector's,
+               // and reading them again would report its boot sector at the next offset too.
+               "function Invoke-SakRecoveryScan($stream, [uint64]$limit, $live) {\n"
+               "  $step = [uint64]1048576\n"
+               "  $buffer = New-Object byte[] 512\n"
+               "  for ($offset = [uint64]0; $offset -lt $limit; $offset += $step) {\n"
+               "    [void]$stream.Seek([int64]$offset, [System.IO.SeekOrigin]::Begin)\n"
+               "    $have = 0\n"
+               "    while ($have -lt $buffer.Length) {\n"
+               "      $n = $stream.Read($buffer, $have, $buffer.Length - $have)\n"
+               "      if ($n -le 0) { break }\n"
+               "      $have += $n\n"
+               "    }\n"
+               "    if ($have -lt $buffer.Length) { break }\n"
+               "    $kind = Get-SakBootSectorKind $buffer\n"
+               "    if ($kind) { Get-SakRecoveryFinding $offset $kind "
+               "(Get-SakBootSectorBytes $buffer $kind) $live }\n"
+               "  }\n"
+               "}\n");
+}
+
+QString PartitionScriptBuilder::recoveredPartitionFitFunctionScript() {
+    return QStringLiteral(
+        "function Assert-SakRecoveredPartitionFits([uint64]$start, [uint64]$size, "
+        "[uint64]$diskSize, $parts) {\n"
+        "  if ($start -ge $diskSize -or $size -gt ($diskSize - $start)) { throw 'Candidate "
+        "exceeds disk bounds' }\n"
+        "  $end = $start + $size\n"
+        "  foreach ($p in $parts) {\n"
+        "    $pStart = [uint64]$p.Offset\n"
+        "    $pEnd = $pStart + [uint64]$p.Size\n"
+        "    if ($start -lt $pEnd -and $end -gt $pStart) { throw \"Candidate overlaps existing "
+        "partition $($p.PartitionNumber) at byte offset $pStart\" }\n"
+        "  }\n"
         "}\n");
 }
 
@@ -5247,37 +5331,24 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
                       .arg(fullScan ? QStringLiteral("Full") : QStringLiteral("Quick"))
                       .arg(operation.target.disk_number.value());
     out.script =
-        commonHeader(out.preview) + bootSectorKindFunctionScript() +
+        commonHeader(out.preview) + recoveryScanFunctionScript() +
         QStringLiteral(
             "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
             // The partitions there now are not lost ones: the first "candidate" every scan
             // reported was the disk's own first partition, at 16 MiB.
-            "$sakLive = @{}\n"
             "try { $sakParts = @(Get-Partition -DiskNumber %1 -ErrorAction Stop) } catch { "
             "if (\"$($_.FullyQualifiedErrorId)\" -notlike 'CmdletizationQuery_NotFound*') "
             "{ throw }; $sakParts = @() }\n"
-            "foreach ($p in $sakParts) { $sakLive[[uint64]$p.Offset] = $p.PartitionNumber }\n"
+            "$sakLive = @($sakParts | ForEach-Object { [pscustomobject]@{ Number = "
+            "$_.PartitionNumber; Start = [uint64]$_.Offset; End = [uint64]$_.Offset + "
+            "[uint64]$_.Size } })\n"
             "$path = '\\\\.\\PhysicalDrive%1'\n"
             "$limit = [uint64]$disk.Size\n"
             "if (-not %2) { $limit = [Math]::Min([uint64]$disk.Size, [uint64]137438953472) }\n"
-            "$step = [uint64]1048576\n"
-            "$buffer = New-Object byte[] 512\n"
             "$stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, "
             "[System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)\n"
-            "try {\n"
-            "  for ($offset = [uint64]0; $offset -lt $limit; $offset += $step) {\n"
-            "    [void]$stream.Seek([int64]$offset, [System.IO.SeekOrigin]::Begin)\n"
-            "    [void]$stream.Read($buffer, 0, $buffer.Length)\n"
-            "    $kind = Get-SakBootSectorKind $buffer\n"
-            "    if ($kind -and $sakLive.ContainsKey([uint64]$offset)) {\n"
-            "      Write-Output \"Partition $($sakLive[[uint64]$offset]) is at byte offset "
-            "$offset ($kind) and is not lost\"\n"
-            "    } elseif ($kind) {\n"
-            "      Write-Output \"Candidate partition boot sector at byte offset $offset "
-            "($kind)\"\n"
-            "    }\n"
-            "  }\n"
-            "} finally { $stream.Dispose() }\n")
+            "try { Invoke-SakRecoveryScan $stream $limit $sakLive } finally { "
+            "$stream.Dispose() }\n")
             .arg(operation.target.disk_number.value())
             .arg(fullScan ? QStringLiteral("$true") : QStringLiteral("$false"));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -5309,18 +5380,18 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
                       .arg(operation.target.disk_number.value())
                       .arg(formatPartitionBytes(offset));
     out.script =
-        commonHeader(out.preview) +
+        commonHeader(out.preview) + recoveredPartitionFitFunctionScript() +
         QStringLiteral(
             "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
             "if ($disk.IsReadOnly) { throw 'Target disk is read-only' }\n"
-            "$existing = @(Get-Partition -DiskNumber %1 -ErrorAction Stop)\n"
+            // Asked again in the helper, from the disk as it is now: the queue checked the
+            // inventory it was shown, which can be older.
+            "try { $existing = @(Get-Partition -DiskNumber %1 -ErrorAction Stop) } catch { "
+            "if (\"$($_.FullyQualifiedErrorId)\" -notlike 'CmdletizationQuery_NotFound*') "
+            "{ throw }; $existing = @() }\n"
             "$start = [uint64]%2\n"
-            "$end = [uint64](%2 + %3)\n"
-            "if ($start -gt [uint64]$disk.Size -or [uint64]%3 -gt ([uint64]$disk.Size - "
-            "$start)) { throw 'Candidate exceeds disk bounds' }\n"
-            "foreach ($p in $existing) { $pStart = [uint64]$p.Offset; $pEnd = "
-            "[uint64]($p.Offset + $p.Size); if ($start -lt $pEnd -and $end -gt "
-            "$pStart) { throw 'Candidate overlaps existing partition' } }\n"
+            "Assert-SakRecoveredPartitionFits $start ([uint64]%3) ([uint64]$disk.Size) "
+            "$existing\n"
             // Windows blanks the start of a partition it creates, about 33 KB, and a boot
             // sector is there. So a restored partition read as an empty one, and its files
             // were out of reach. The start goes back as it was, and the volume is dismounted

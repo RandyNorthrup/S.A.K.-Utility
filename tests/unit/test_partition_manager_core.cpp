@@ -1877,6 +1877,7 @@ private Q_SLOTS:
     void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
     void safetyValidator_restoreImageRequiresSizesAndOverwriteConfirmation();
     void safetyValidator_requiresRecoveredPartitionRestoreAcknowledgement();
+    void safetyValidator_refusesARecoveredPartitionOverALiveOne();
     void safetyValidator_requiresPartitionRegionCloneConfirmation();
     void safetyValidator_blocksUnsafePayloadTargetDisk();
     void safetyValidator_blocksRawVolumeAliasTargetDisk();
@@ -1918,6 +1919,8 @@ private Q_SLOTS:
     void scriptBuilder_convertAnswersItsOwnPrompts();
     void scriptBuilder_splitPutsTheNewPartitionNextToTheOriginal();
     void scriptBuilder_recoveryScanReadsEachKindOfBootSector();
+    void scriptBuilder_recoveryScanOffersOnlyALostPartition();
+    void scriptBuilder_recoveredPartitionRestoreRefusesALiveOnesPlace();
     void safetyValidator_refusesLargeEncryptedApfsWhenQueued();
     void defragRuleIsTheSameInTheValidatorAndTheScript();
     void operationQueue_blocksLayoutMismatch();
@@ -20765,6 +20768,47 @@ void PartitionManagerCoreTests::safetyValidator_requiresRecoveredPartitionRestor
     QVERIFY(preview.canApply());
 }
 
+// The capture typed a live partition's place into the write-back page. Queueing it must refuse,
+// at the partition's start, inside it, running into it, and with a size that wraps round.
+void PartitionManagerCoreTests::safetyValidator_refusesARecoveredPartitionOverALiveOne() {
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    inventory.disks.first().is_system = false;
+    inventory.disks.first().is_boot = false;
+    const auto& live = inventory.disks.first().partitions.at(1);
+    QVERIFY(live.size_bytes > 2ULL * 1024ULL * 1024ULL);
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    const auto previewCandidate = [&](uint64_t offset, uint64_t size) {
+        QJsonObject payload;
+        payload[QStringLiteral("offset_bytes")] = QString::number(offset);
+        payload[QStringLiteral("size_bytes")] = QString::number(size);
+        payload[QStringLiteral("type_id")] = QStringLiteral("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7");
+        payload[QStringLiteral("restore_acknowledged")] = true;
+        return PartitionOperationPlanner().previewOperation(
+            inventory,
+            PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::RestoreRecoveredPartition, target, payload));
+    };
+    const QString overlap = QStringLiteral("overlaps an existing partition");
+    const uint64_t mib = 1024ULL * 1024ULL;
+    const struct {
+        uint64_t offset;
+        uint64_t size;
+    } cases[] = {{live.offset_bytes, mib},
+                 {live.offset_bytes + mib, mib},
+                 {live.offset_bytes - mib, 2 * mib},
+                 {live.offset_bytes + mib, std::numeric_limits<uint64_t>::max() - mib}};
+    for (const auto& candidate : cases) {
+        const auto preview = previewCandidate(candidate.offset, candidate.size);
+        QVERIFY2(!preview.canApply(), qPrintable(QString::number(candidate.offset)));
+        QVERIFY2(preview.blockers.join(QLatin1Char(' ')).contains(overlap),
+                 qPrintable(preview.blockers.join(QLatin1Char(' '))));
+    }
+    const auto free_space = previewCandidate(85'899'345'920ULL, 104'857'600ULL);
+    QVERIFY2(free_space.canApply(), qPrintable(free_space.blockers.join(QLatin1Char(' '))));
+}
+
 void PartitionManagerCoreTests::safetyValidator_requiresPartitionRegionCloneConfirmation() {
     auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     makeFixtureDataPartitionMutable(&inventory);
@@ -22945,6 +22989,132 @@ void PartitionManagerCoreTests::scriptBuilder_recoveryScanReadsEachKindOfBootSec
                           QStringLiteral("oemonly="),
                           QStringLiteral("unsigned="),
                           QStringLiteral("loose=")}));
+}
+
+namespace {
+// A 13 MiB disk in memory, in PowerShell: Partition 1 (NTFS, 1-3 MiB) holds a FAT32 boot sector
+// at 2 MiB, as a disk image stored on it would; a deleted NTFS volume at 4 MiB; at 7 MiB a
+// deleted NTFS volume whose 2 MiB would run into Partition 2; Partition 2 (BitLocker, 8-10 MiB);
+// a deleted exFAT volume at 12 MiB. The stream ends at 13 MiB and the scan is told 16.
+QString recoveryScanDiskScript() {
+    return PartitionScriptBuilder::recoveryScanFunctionScript() +
+           QStringLiteral(
+               "$mib = 1048576\n"
+               "$d = New-Object byte[] (13 * $mib)\n"
+               "$a = [System.Text.Encoding]::ASCII\n"
+               "function Put([int]$at, [string]$text) { $b = $a.GetBytes($text); "
+               "[Array]::Copy($b, 0, $d, $at, $b.Length) }\n"
+               "function Sector([int]$at, [string]$oem) { Put ($at + 3) $oem; $d[$at + 510] = "
+               "0x55; $d[$at + 511] = 0xAA }\n"
+               "function Ntfs([int]$at, [uint64]$sectors) { Sector $at 'NTFS    '; "
+               "[Array]::Copy([BitConverter]::GetBytes([uint16]512), 0, $d, $at + 11, 2); "
+               "[Array]::Copy([BitConverter]::GetBytes([uint64]$sectors), 0, $d, $at + 40, 8) }\n"
+               "Ntfs (1 * $mib) 4095\n"
+               "Sector (2 * $mib) 'MSDOS5.0'; Put (2 * $mib + 82) 'FAT32   '\n"
+               "Ntfs (4 * $mib) 4095\n"
+               "Ntfs (7 * $mib) 4095\n"
+               "Sector (8 * $mib) '-FVE-FS-'; Put (8 * $mib + 82) 'FAT32   '\n"
+               "Sector (12 * $mib) 'EXFAT   '; $d[12 * $mib + 108] = 9\n"
+               "[Array]::Copy([BitConverter]::GetBytes([uint64]2048), 0, $d, 12 * $mib + 72, 8)\n"
+               "$live = @([pscustomobject]@{ Number = 1; Start = [uint64](1 * $mib); End = "
+               "[uint64](3 * $mib) }, [pscustomobject]@{ Number = 2; Start = [uint64](8 * $mib); "
+               "End = [uint64](10 * $mib) })\n"
+               "$stream = New-Object System.IO.MemoryStream (, $d)\n"
+               "try { Invoke-SakRecoveryScan $stream ([uint64](16 * $mib)) $live } finally { "
+               "$stream.Dispose() }\n");
+}
+}  // namespace
+
+// The capture's scan named a live NTFS volume under BitLocker "FAT32". Only a lost partition may
+// be offered: never one that is there now, a boot sector inside one, or a volume that would run
+// into one.
+void PartitionManagerCoreTests::scriptBuilder_recoveryScanOffersOnlyALostPartition() {
+    const ProcessResult proc = sak::runPowerShell(recoveryScanDiskScript(), 60'000);
+    QVERIFY2(proc.succeeded(), qPrintable(proc.std_err));
+    const QStringList lines = proc.std_out.split(QRegularExpression(QStringLiteral("\\r?\\n")),
+                                                 Qt::SkipEmptyParts);
+    QCOMPARE(
+        lines,
+        QStringList(
+            {QStringLiteral("Partition 1 is at byte offset 1048576 (NTFS) and is not lost"),
+             QStringLiteral("Boot sector at byte offset 2097152 (FAT32) is inside Partition 1, "
+                            "which is not lost: not a candidate"),
+             QStringLiteral("Candidate partition boot sector at byte offset 4194304 (NTFS, size "
+                            "2097152 bytes)"),
+             QStringLiteral("Boot sector at byte offset 7340032 (NTFS, 2097152 bytes) runs into "
+                            "Partition 2, which is not lost: not a candidate"),
+             QStringLiteral("Partition 2 is at byte offset 8388608 (BitLocker) and is not lost"),
+             QStringLiteral("Candidate partition boot sector at byte offset 12582912 (exFAT, size "
+                            "1048576 bytes)")}));
+    const auto scan = PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::PartitionRecoveryScan,
+        [] {
+            PartitionTarget disk;
+            disk.kind = PartitionTargetKind::Disk;
+            disk.disk_number = DiskNumber{3};
+            return disk;
+        }(),
+        QJsonObject{{QStringLiteral("scan_mode"), QStringLiteral("Quick")}}));
+    QVERIFY(scan.valid());
+    QVERIFY(scan.script.contains(QStringLiteral("Invoke-SakRecoveryScan $stream $limit $sakLive")));
+}
+
+// The helper asks the disk again before it writes a recovered partition back: a live one's
+// place, or any part of it, is refused; free space is not.
+void PartitionManagerCoreTests::scriptBuilder_recoveredPartitionRestoreRefusesALiveOnesPlace() {
+    const QString script =
+        PartitionScriptBuilder::recoveredPartitionFitFunctionScript() +
+        QStringLiteral(
+            "$parts = @([pscustomobject]@{ PartitionNumber = 1; Offset = [uint64]1048576; Size = "
+            "[uint64]1073741824 }, [pscustomobject]@{ PartitionNumber = 2; Offset = "
+            "[uint64]3238002688; Size = [uint64]1073741824 })\n"
+            "function Test-Fit([uint64]$start, [uint64]$size) { try { "
+            "Assert-SakRecoveredPartitionFits $start $size ([uint64]8589934592) $parts; 'fits' } "
+            "catch { $_.Exception.Message } }\n"
+            "Test-Fit 1048576 1073741824\n"
+            "Test-Fit 2097152 1048576\n"
+            "Test-Fit 1073741824 1048576000\n"
+            "Test-Fit 3238002688 1048576\n"
+            "Test-Fit 2147483648 1073741824\n"
+            "Test-Fit 8589934592 1048576\n"
+            "Test-Fit 8588886016 2097152\n");
+    const ProcessResult proc = sak::runPowerShell(script, 60'000);
+    QVERIFY2(proc.succeeded(), qPrintable(proc.std_err));
+    const QStringList lines = proc.std_out.split(QRegularExpression(QStringLiteral("\\r?\\n")),
+                                                 Qt::SkipEmptyParts);
+    QCOMPARE(lines,
+             QStringList({QStringLiteral("Candidate overlaps existing partition 1 at byte offset "
+                                         "1048576"),
+                          QStringLiteral("Candidate overlaps existing partition 1 at byte offset "
+                                         "1048576"),
+                          QStringLiteral("Candidate overlaps existing partition 1 at byte offset "
+                                         "1048576"),
+                          QStringLiteral("Candidate overlaps existing partition 2 at byte offset "
+                                         "3238002688"),
+                          QStringLiteral("fits"),
+                          QStringLiteral("Candidate exceeds disk bounds"),
+                          QStringLiteral("Candidate exceeds disk bounds")}));
+
+    // The restore runs that check, on the disk as it is then, before it creates anything.
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&disk);
+    const QJsonObject payload{{QStringLiteral("offset_bytes"), QStringLiteral("1048576")},
+                              {QStringLiteral("size_bytes"), QStringLiteral("1073741824")},
+                              {QStringLiteral("type_id"),
+                               QStringLiteral("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7")},
+                              {QStringLiteral("partition_style"), QStringLiteral("GPT")}};
+    const auto restore =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreRecoveredPartition, disk, payload));
+    QVERIFY(restore.valid());
+    const qsizetype checked = restore.script.indexOf(
+        QStringLiteral("Assert-SakRecoveredPartitionFits $start ([uint64]1073741824) "
+                       "([uint64]$disk.Size) $existing"));
+    const qsizetype listed = restore.script.indexOf(QStringLiteral("$existing = @(Get-Partition"));
+    const qsizetype created = restore.script.indexOf(QStringLiteral("New-Partition -DiskNumber 4"));
+    QVERIFY2(listed >= 0 && checked > listed && created > checked, qPrintable(restore.script));
 }
 
 // The limit is the writer's, and a person used to learn it only when Apply ran.

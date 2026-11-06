@@ -1243,13 +1243,15 @@ bool recoveryCandidateOverlapsExistingPartition(const PartitionDiskInfo& disk,
     if (start == 0 || size == 0) {
         return false;
     }
-    const uint64_t end = start + size;
-    return std::ranges::any_of(disk.partitions,
-
-                               [start, end](const auto& p) {
-                                   const uint64_t partition_end = p.offset_bytes + p.size_bytes;
-                                   return start < partition_end && end > p.offset_bytes;
-                               });
+    // Saturated, so a size typed past the end of the range cannot wrap round to an end before
+    // the partition it covers.
+    constexpr uint64_t kMax = std::numeric_limits<uint64_t>::max();
+    const uint64_t end = size > kMax - start ? kMax : start + size;
+    return std::ranges::any_of(disk.partitions, [start, end](const auto& p) {
+        const uint64_t partition_end =
+            p.size_bytes > kMax - p.offset_bytes ? kMax : p.offset_bytes + p.size_bytes;
+        return start < partition_end && end > p.offset_bytes;
+    });
 }
 
 bool recoveryCandidateExceedsDisk(const PartitionDiskInfo& disk,
