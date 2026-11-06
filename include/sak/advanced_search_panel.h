@@ -20,6 +20,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QSplitter>
+#include <QTextCharFormat>
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <QWidget>
@@ -61,6 +62,10 @@ public:
 
     /// @brief Access the log toggle switch for MainWindow connection
     LogToggleSwitch* logToggle() const { return m_log_toggle; }
+
+    /// @brief How a match is marked in the preview: a yellow or, for the current one, orange
+    ///        fill, with dark text on it in either theme.
+    [[nodiscard]] static QTextCharFormat matchHighlightFormat(bool current);
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);

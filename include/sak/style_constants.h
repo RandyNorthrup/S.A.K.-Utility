@@ -927,7 +927,7 @@ inline QString buttonBaseRule(const QString& selector,
 }
 
 // Defined with the token alias table below; the disabled rule names its text colour through it.
-inline QString cssColor(const char* color);
+inline QString cssColor(const char* token);
 
 inline QString buttonDisabledRule(const QString& selector) {
     return selectorsInState(selector, ":disabled") +
@@ -1132,7 +1132,13 @@ inline QString darkStatusTextColor(const QString& color) {
     return color;
 }
 
-inline QString cssColor(const QString& color) {
+/// The QSS for a colour token: the palette role it stands for (kCssColorAliases), or in the dark
+/// theme its dark value. Only a token reaches the aliases. A colour already resolved for the theme
+/// (htmlColor, a QColor's name) is used as it is, by the style helpers' QString overloads: run
+/// through the aliases a second time, the dark theme's text #f8fafc, which is also the light
+/// surface token, became the dark surface, and the AI context chips lost their labels.
+inline QString cssColor(const char* token) {
+    const QString color = QString::fromLatin1(token);
     for (const auto& alias : kCssColorAliases) {
         if (color == QString::fromLatin1(alias.token)) {
             return QString::fromLatin1(alias.css);
@@ -1141,9 +1147,9 @@ inline QString cssColor(const QString& color) {
     return usingDarkUiTheme() ? darkStatusTextColor(color) : color;
 }
 
-inline QString cssColor(const char* color) {
-    return cssColor(QString::fromLatin1(color));
-}
+/// A resolved colour must not be aliased again (see above): pass a token, or use the colour as
+/// it is.
+QString cssColor(const QString& color) = delete;
 
 inline QString selectorDropDownStyle(const char* selector,
                                      const QString& border,
@@ -1399,8 +1405,9 @@ inline QString textColorStyle(const char* color) {
     return QStringLiteral("color: %1;").arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString textColorStyle(const QString& color) {
-    return QStringLiteral("color: %1;").arg(cssColor(color));
+    return QStringLiteral("color: %1;").arg(color);
 }
 
 inline QString fontSizeStyle(int point_size) {
@@ -1411,8 +1418,9 @@ inline QString textColorAndFontSizeStyle(const char* color, int point_size) {
     return QStringLiteral("color: %1; font-size: %2pt;").arg(cssColor(color)).arg(point_size);
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString textColorAndFontSizeStyle(const QString& color, int point_size) {
-    return QStringLiteral("color: %1; font-size: %2pt;").arg(cssColor(color)).arg(point_size);
+    return QStringLiteral("color: %1; font-size: %2pt;").arg(color).arg(point_size);
 }
 
 inline QString paddedTextStyle(const char* color, int padding_px) {
@@ -1427,8 +1435,9 @@ inline QString fontWeightAndColorStyle(int weight, const char* color) {
     return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString fontWeightAndColorStyle(int weight, const QString& color) {
-    return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(cssColor(color));
+    return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(color);
 }
 
 inline QString fontSizeWeightColorStyle(int point_size, int weight, const char* color) {
@@ -1438,11 +1447,12 @@ inline QString fontSizeWeightColorStyle(int point_size, int weight, const char* 
         .arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString fontSizeWeightColorStyle(int point_size, int weight, const QString& color) {
     return QStringLiteral("font-size: %1pt; font-weight: %2; color: %3;")
         .arg(point_size)
         .arg(weight)
-        .arg(cssColor(color));
+        .arg(color);
 }
 
 inline QString backgroundStyle(const char* selector, const char* background) {
@@ -1786,12 +1796,13 @@ inline QString transcriptBubbleStyle(bool user) {
                       .arg(kCssPaddingXXLargePx);
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString transcriptToggleStyle(const QString& color) {
     return QStringLiteral(
                "QPushButton { border: 0; padding: %1px 0; text-align: left; "
                "font-weight: 700; color: %2; background: transparent; }")
         .arg(kCssPaddingTinyPx)
-        .arg(cssColor(color));
+        .arg(color);
 }
 
 inline QString transcriptActivityBubbleStyle() {

@@ -67,8 +67,7 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_summary_label->setStyleSheet(
         ui::fontSizeWeightColorStyle(ui::kFontSizeSection,
                                      ui::kFontWeightBold,
-                                     stats.failed > 0 ? QString::fromLatin1(ui::kColorError)
-                                                      : QString::fromLatin1(ui::kColorSuccess)));
+                                     stats.failed > 0 ? ui::kColorError : ui::kColorSuccess));
     layout->addWidget(m_summary_label);
 
     // Per-package table

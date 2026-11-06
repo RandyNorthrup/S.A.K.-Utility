@@ -1880,16 +1880,18 @@ void AdvancedSearchPanel::highlightMatches() {
         cursor.setPosition(block.position() + highlight_start);
         cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, highlight_len);
 
-        QTextCharFormat fmt;
-        if (i == m_current_match_index) {
-            // Current match: orange highlight
-            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchCurrentMatchHighlight)));
-        } else {
-            // Other matches: yellow highlight
-            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchOtherMatchHighlight)));
-        }
-        cursor.setCharFormat(fmt);
+        cursor.setCharFormat(matchHighlightFormat(i == m_current_match_index));
     }
+}
+
+QTextCharFormat AdvancedSearchPanel::matchHighlightFormat(bool current) {
+    QTextCharFormat format;
+    format.setBackground(QColor(QString::fromLatin1(
+        current ? ui::kColorSearchCurrentMatchHighlight : ui::kColorSearchOtherMatchHighlight)));
+    // The fill is the same in both themes, so the text on it is too. Only the fill was set, and
+    // in dark the preview's light text sat on yellow and orange at 1.3:1.
+    format.setForeground(QColor(QString::fromLatin1(ui::kColorTextPrimary)));
+    return format;
 }
 
 void AdvancedSearchPanel::highlightMetadataMatches() {
@@ -1928,13 +1930,7 @@ void AdvancedSearchPanel::highlightMetadataMatches() {
         cursor.setPosition(abs_pos);
         cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, highlight_len);
 
-        QTextCharFormat fmt;
-        if (i == m_current_match_index) {
-            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchCurrentMatchHighlight)));
-        } else {
-            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchOtherMatchHighlight)));
-        }
-        cursor.setCharFormat(fmt);
+        cursor.setCharFormat(matchHighlightFormat(i == m_current_match_index));
     }
 }
 

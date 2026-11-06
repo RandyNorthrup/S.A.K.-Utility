@@ -10,6 +10,7 @@
 /// colour tokens under WCAG AA. Each is drawn offscreen with the real theme and read back by pixel,
 /// or computed from the tokens the theme uses.
 
+#include "sak/advanced_search_panel.h"
 #include "sak/color_constants.h"
 #include "sak/file_explorer_style_constants.h"
 #include "sak/style_constants.h"
@@ -221,6 +222,9 @@ private Q_SLOTS:
     void anInvalidItemColourLeavesTheViewsOwn();
     void statusBarItemsHaveNoSeparators_data();
     void statusBarItemsHaveNoSeparators();
+    // The dark re-check (RD1, DN1).
+    void aResolvedColourIsNotAliasedAgain();
+    void searchHighlightsCarryDarkText();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -1090,6 +1094,49 @@ void ThemeWidgetStatesTests::statusBarItemsHaveNoSeparators() {
         }
     }
     QVERIFY2(marks.isEmpty(), qPrintable(marks.join(QStringLiteral(", "))));
+}
+
+// Dark re-check RD1: the dark text colour #f8fafc is also the light surface token, and a label
+// given it went through the token aliases a second time and became the dark surface. A colour
+// that is already resolved stays itself; a token still follows the theme.
+void ThemeWidgetStatesTests::aResolvedColourIsNotAliasedAgain() {
+    sak::ui::applyWindows11Theme(*qApp, AppThemeMode::Dark);
+    const QString dark_text = sak::ui::htmlColor(sak::ui::kColorTextHeading);
+    QCOMPARE(QString::fromLatin1(sak::ui::kColorBgSurface), QStringLiteral("#f8fafc"));
+    for (const QString& resolved : {dark_text,
+                                    QStringLiteral("#f8fafc"),
+                                    QString::fromLatin1(sak::ui::kColorBorderDefault)}) {
+        QCOMPARE(sak::ui::textColorAndFontSizeStyle(resolved, 9),
+                 QStringLiteral("color: %1; font-size: 9pt;").arg(resolved));
+        QCOMPARE(sak::ui::textColorStyle(resolved), QStringLiteral("color: %1;").arg(resolved));
+        QCOMPARE(sak::ui::fontWeightAndColorStyle(700, resolved),
+                 QStringLiteral("font-weight: 700; color: %1;").arg(resolved));
+        QCOMPARE(sak::ui::fontSizeWeightColorStyle(10, 700, resolved),
+                 QStringLiteral("font-size: 10pt; font-weight: 700; color: %1;").arg(resolved));
+        QVERIFY(sak::ui::transcriptToggleStyle(resolved).contains(
+            QStringLiteral("color: %1;").arg(resolved)));
+    }
+    // The token itself still means the surface.
+    QCOMPARE(sak::ui::textColorStyle(sak::ui::kColorBgSurface),
+             QStringLiteral("color: palette(alternate-base);"));
+}
+
+// Dark re-check DN1: Advanced Search marked a match with a yellow or orange fill only, and in the
+// dark theme the preview's light text sat on it at 1.3:1.
+void ThemeWidgetStatesTests::searchHighlightsCarryDarkText() {
+    for (const AppThemeMode mode : {AppThemeMode::Light, AppThemeMode::Dark}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        for (const bool current : {true, false}) {
+            const QTextCharFormat format = sak::AdvancedSearchPanel::matchHighlightFormat(current);
+            QVERIFY(format.hasProperty(QTextFormat::ForegroundBrush));
+            const double ratio = contrast(format.foreground().color(), format.background().color());
+            QVERIFY2(ratio >= kWcagAaNormalText,
+                     qPrintable(QStringLiteral("%1 on %2 is %3:1")
+                                    .arg(format.foreground().color().name(),
+                                         format.background().color().name())
+                                    .arg(ratio, 0, 'f', 2)));
+        }
+    }
 }
 
 QTEST_MAIN(ThemeWidgetStatesTests)

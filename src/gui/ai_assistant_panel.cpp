@@ -4847,8 +4847,8 @@ void AiAssistantPanel::setApiKeyStatus(const QString& text,
                                        const char* marker_color) {
     if (m_connectionStatusIconLabel != nullptr) {
         m_connectionStatusIconLabel->setText(marker);
-        m_connectionStatusIconLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-            kFontWeightExtraBold, QString::fromLatin1(marker_color)));
+        m_connectionStatusIconLabel->setStyleSheet(
+            sak::ui::fontWeightAndColorStyle(kFontWeightExtraBold, marker_color));
     }
     if (m_connectionStatusLabel != nullptr) {
         m_connectionStatusLabel->setText(text);

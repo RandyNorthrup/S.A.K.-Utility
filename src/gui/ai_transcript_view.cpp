@@ -516,9 +516,11 @@ void AiTranscriptView::addTranscriptToggle(
         message.expanded ? QObject::tr("Collapse") : QObject::tr("Expand full result"), bubble);
     toggle->setFlat(true);
     toggle->setCursor(Qt::PointingHandCursor);
+    // White on the blue user bubble in either theme; on the assistant's, the theme's link blue.
+    // The white went through the token aliases and became the dark theme's base colour.
     toggle->setStyleSheet(
         sak::ui::transcriptToggleStyle(user ? QString::fromLatin1(sak::ui::kColorBgWhite)
-                                            : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
+                                            : sak::ui::cssColor(sak::ui::kColorPrimaryDark)));
     const QString message_id = message.id;
     connect(toggle, &QPushButton::clicked, this, [this, message_id]() {
         toggleMessageExpanded(message_id);

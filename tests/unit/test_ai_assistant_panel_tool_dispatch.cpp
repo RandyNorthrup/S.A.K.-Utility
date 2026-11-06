@@ -41,6 +41,7 @@
 #include "sak/pst_parser.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
+#include "sak/windows11_theme.h"
 #include "sak/windows_usb_creator.h"
 
 #include "../support/iso_fixture.h"
@@ -56,10 +57,12 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSet>
@@ -75,6 +78,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -336,6 +340,55 @@ private Q_SLOTS:
         QVERIFY(AiAssistantPanel::blockedWorkflowStepsNotice(workflow,
                                                              ai::AiAccessMode::ChatAndResearch)
                     .isEmpty());
+    }
+
+    // Review 2, dark (RD1): the workflow chip's label was #1e293b on #111827 and the instruction
+    // chips' labels were the colour of their own fill. The label's colour, already the dark text
+    // colour, went through the token aliases again and became the dark surface.
+    void contextChipLabelsReadOnTheirChipsInBothThemes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        static const QRegularExpression kColour(QStringLiteral("color:\\s*(#[0-9a-fA-F]{6})"));
+        static const QRegularExpression kFill(QStringLiteral("background:\\s*(#[0-9a-fA-F]{6})"));
+        const auto luminance = [](const QColor& c) {
+            const auto channel = [](int v) {
+                const double s = v / 255.0;
+                return s <= 0.04045 ? s / 12.92 : std::pow((s + 0.055) / 1.055, 2.4);
+            };
+            return (0.2126 * channel(c.red())) + (0.7152 * channel(c.green())) +
+                   (0.0722 * channel(c.blue()));
+        };
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            AiAssistantPanel panel;
+            QVERIFY(panel.m_contextList != nullptr);
+            AiAssistantPanel::ContextItem workflow;
+            workflow.type = AiAssistantPanel::ContextItem::Type::Workflow;
+            workflow.display_name = QStringLiteral("Windows Update Repair");
+            AiAssistantPanel::ContextItem instruction;
+            instruction.type = AiAssistantPanel::ContextItem::Type::Instruction;
+            instruction.display_name = QStringLiteral("evidence_policy.md");
+            panel.m_contextItems = {workflow, instruction};
+            panel.refreshContextList();
+            QCOMPARE(panel.m_contextList->count(), 2);
+            for (int row = 0; row < panel.m_contextList->count(); ++row) {
+                QWidget* chip = panel.m_contextList->itemWidget(panel.m_contextList->item(row));
+                QVERIFY(chip != nullptr);
+                const auto fill = kFill.match(chip->styleSheet());
+                QVERIFY2(fill.hasMatch(), qPrintable(chip->styleSheet()));
+                QLabel* label = chip->findChild<QLabel*>();
+                QVERIFY(label != nullptr);
+                const auto colour = kColour.match(label->styleSheet());
+                QVERIFY2(colour.hasMatch(), qPrintable(label->styleSheet()));
+                const double a = luminance(QColor(colour.captured(1)));
+                const double b = luminance(QColor(fill.captured(1)));
+                const double ratio = (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
+                QVERIFY2(ratio >= 4.5,
+                         qPrintable(QStringLiteral("%1: %2 on %3 is %4:1")
+                                        .arg(label->text(), colour.captured(1), fill.captured(1))
+                                        .arg(ratio, 0, 'f', 2)));
+            }
+        }
     }
 
     // Through the real Send route, stopped at the run itself so nothing reaches a model.
