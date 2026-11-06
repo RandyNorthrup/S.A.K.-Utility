@@ -168,7 +168,8 @@ keeps their history.
 9. FIXED 2026-11-05, release blocker: a Windows install USB did not start a UEFI PC. The app wrote one NTFS partition
    and reported success, and UEFI firmware, which Windows 11 with Secure Boot needs, reads FAT32. It writes one FAT32
    partition and has Windows' DISM split a large install.wim into .swm parts, and its final check reads the result
-   back (4505a84f, 6edd85d0). Built and read back on testpc1; see UI review round 3 below.
+   back (4505a84f, 6edd85d0). Built and read back on testpc1, and a byte-for-byte image of the stick started
+   Windows Setup in a Hyper-V Generation 2 VM with Secure Boot, to its edition list; see UI review round 3 below.
 
 ### Fixed by the lifecycle package (2026-10-25)
 
@@ -1408,15 +1409,28 @@ and copy 16 min, read-back 2 min) and said "Flash completed successfully". Read 
 a media reload, so from the stick and not the file cache: MBR; one partition at 1 MiB, type 0x0C FAT32, active, label
 WINDOWS; \EFI\BOOT\BOOTX64.EFI, bootmgr, boot\BCD and setup.exe present; no install.wim and no file of 4 GiB or more;
 install.swm (3,984,050,148 bytes) and install2.swm (2,839,447,229 bytes) with the SHA-256 the app logged as it wrote
-them; DISM /Get-ImageInfo on install.swm lists all 11 editions. Whether a PC starts from it, in a Hyper-V
-Generation 2 VM with Secure Boot on testpc1, is recorded here once run.
+them; DISM /Get-ImageInfo on install.swm lists all 11 editions.
+
+The stick was built again with de6c7c2b's package, the final code, in 22 minutes: "Flash completed successfully",
+and the same layout read back after a media reload, with install.swm and install2.swm matching the SHA-256 the app
+logged for that run (DISM's parts differ between splits). It then started a PC. Hyper-V is on testpc1 now, but
+Windows will not take the stick offline ("Removable media cannot be set to offline"), so it cannot be passed
+through; the stick was copied byte for byte, read-only, into a throwaway VHDX of its exact size (31,042,043,904
+bytes, SHA-256 of the whole stick 97164b30...). A Generation 2 VM with Secure Boot on (the MicrosoftWindows
+template) and a virtual TPM, with that VHDX as its only disk, started from the MBR FAT32 layout through
+\EFI\BOOT\BOOTX64.EFI into Windows 11 Setup. Through the VM's screen (the Msvm thumbnail call) and keyboard:
+"Select language settings", "Select keyboard settings", "Select setup option" (Install Windows 11), "Product key"
+("I don't have a product key"), and "Select Image", which lists Windows 11 Home, Home N, Home Single Language,
+Education, Education N, Pro and the rest: Setup read the split image. The VM and the VHDX were then removed; Setup
+installed nothing.
 
 That run also showed two things fixed after its package. The status bar read "Ready" beside the bar for the whole
 run, because the creator's steps reached only the page (54bd3241). The bar sat at 13% from the start of the
 extraction to the end of the copy, about 15 minutes: the build reads 7-Zip's progress from stdout and ran it with
 -bsp2, which writes it to stderr (measured on testpc1 with the bundled 7-Zip 26.05; the progress lines were also
-logged as a 7-Zip error). It runs with -bsp1, and the split moves the bar per step and per part (ddeaca96). Neither
-has been seen on a real build yet.
+logged as a 7-Zip error). It runs with -bsp1, and the split moves the bar per step and per part (ddeaca96). In the
+de6c7c2b build both showed: "Extracting Windows files... 12%" on the page and the status bar with the bar at 19%,
+then "Step 2/3: Copying install image part 1 of 2..." at 52%, and no 7-Zip error in the log.
 
 **Verify System Files.** ScanHealth had 10 minutes; it has 30 inside the run's one 60-minute bound, and its percent
 reaches the status bar as DISM prints it. A ScanHealth that runs out of time after SFC passed is incomplete, not
@@ -1487,6 +1501,11 @@ the panel's "The target drive was not changed" after a failed check (a GUI lambd
 (the test closes the handle as a kill does). For the Windows USB: the FAT32 check and the UEFI file in the final
 verification, 7-Zip leaving install.wim out and writing its progress to stdout, DISM's split, and the drive booting
 run only on a real drive and a real 7-Zip and DISM; they were proved on testpc1 (above), not by a test here.
+
+**Left behind.** testpc1: Hyper-V on (the owner allowed it), no VM; the recovery rig VHDX, the stick image, the
+round's scripts and the copied ISO deleted; the console at 1024x768; the USB DISK 3.0 stick holds the Windows 11
+FAT32 install media de6c7c2b built; de6c7c2b's package in C:\SAK. Its component store is damaged (above) and was
+left as found. The capture VM is powered off at pre-round8, its throwaway VDI deleted.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
