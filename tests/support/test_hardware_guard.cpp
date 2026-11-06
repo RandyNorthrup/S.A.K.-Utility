@@ -358,8 +358,11 @@ std::wstring blockedDevicePath(std::wstring_view path) {
     if (isForeignVolumeAlias(tail)) {
         return normal;
     }
+    // The device's name starts the path. Found anywhere, it matched ordinary files reached through
+    // "\\?\": a temporary file Qt named test_mbox_parser.KQSCsi was refused for its "scsi", and
+    // test_mbox_parser failed now and then under load, when more temporary names were drawn.
     for (const std::wstring_view text : kBlockedDeviceText) {
-        if (tail.find(text) != std::wstring::npos) {
+        if (tail.starts_with(text)) {
             return normal;
         }
     }

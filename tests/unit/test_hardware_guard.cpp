@@ -247,6 +247,13 @@ void HardwareGuardTests::devicePaths_data() {
     QTest::newRow("a partition") << QStringLiteral("\\\\.\\Harddisk1\\Partition1") << true;
     QTest::newRow("a volume number") << QStringLiteral("\\\\.\\HarddiskVolume3") << true;
     QTest::newRow("globalroot") << QStringLiteral("\\\\?\\GLOBALROOT\\Device\\X") << true;
+    QTest::newRow("a SCSI port") << QStringLiteral("\\\\.\\Scsi0:") << true;
+    QTest::newRow("an optical drive") << QStringLiteral("\\\\.\\CdRom0") << true;
+    // test_mbox_parser failed now and then: Qt's random temporary name held a device's name.
+    QTest::newRow("a temporary file named like a device")
+        << QStringLiteral("\\\\?\\C:\\Temp\\test_mbox_parser.KQSCsi") << false;
+    QTest::newRow("a file with a device word in its folder")
+        << QStringLiteral("\\\\?\\C:\\Images\\cdrom\\harddisk.img") << false;
     QTest::newRow("a pipe") << QStringLiteral("\\\\.\\pipe\\sak") << false;
     QTest::newRow("a plain file") << QStringLiteral("C:\\Temp\\disk.img") << false;
     QTest::newRow("a UNC share") << QStringLiteral("\\\\server\\share\\file") << false;
