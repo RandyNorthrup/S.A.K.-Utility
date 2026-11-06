@@ -1269,6 +1269,30 @@ up when the run ends, and the clock waits on nothing but itself. The CPU benchma
 Unit tests measure the wall clock on short runs: a 6 s run ends within 2 s of 6 s while the read hangs, and Stop at
 1 s ends a 1-minute run within 2 s.
 
+**The stress test on testpc1, from 333199b2's package.** Runs ended on time: 60.7 s for 1 minute (twice) and 300.7 s
+for 5. The harness's UI Automation waits still did not return until each run ended, so Stop was never pressed. A probe
+in the console session found the app's window answering at once (WM_NULL 0 ms, a UIA read 0 to 3 ms), and the whole
+below-normal half of the machine starving: the harness and the probe run from Task Scheduler at BelowNormal, and so
+did the app they started, and a `cmd /c exit` from that class took 19 to 35 s, against 37 ms from a Normal process.
+CPU-only and CPU-plus-memory runs were alike (commit 4.5 and 13.2 of 16.8 GB, no page reads), so memory was not the
+cause. Sampled over ssh mid-run, the stress threads had base priority 5 and current priority 7: Windows had boosted
+the below-normal threads by 2 while the app had the foreground, above every BelowNormal process at 6, the thermal
+reading's own PowerShell included (every poll timed out during the run). The stress threads now run at idle
+priority with boosting off. `aBelowNormalThreadKeepsRunningWhileTheStressRuns` reproduces the relation without a
+foreground window: with the old priority, 150 ms of below-normal work took 5218 ms while the stress held both test
+cores; at idle priority it takes its own time.
+
+**The stress test on testpc1, from 7c5a7186's package (idle priority).** A 1-minute default run (CPU and 8.8 GB of
+memory) ended 60.5 s after Start. The harness, still at BelowNormal, read "Elapsed: 00:25" through UI Automation 25 s
+after Start, with no OCR fallback. A 5-minute run was stopped through the Stop button when the harness read
+"Elapsed: 00:15": the app logged the run's end 16 s after its start, the harness read "Status: FAILED - Cancelled by
+user" within 1 s of its click, and the window's picture shows it. The thermal reading's PowerShell, which timed out on
+every poll during a run before, timed out on none. The Thermal Monitor then read CPU and GPU "N/A - not reported by this
+PC" (testpc1's ACPI zone answers not supported, and it has no NVIDIA GPU) and the hottest disk 45 C. SMART read the
+Seagate WARN with "Pending sectors awaiting reallocation: 16", the SK hynix PASS, and the enclosure N/A ("SMART cannot
+be read through this drive's USB adapter"). Both USB disks are linked at High Speed (USB 2, 480 Mb/s) although both
+are USB 3 devices (bcdUSB 3.20 and 3.00), which is why D: BENCH reads at 28.7 MB/s.
+
 **Regressions from round 1.** R1: the disk map's legend shares the Log switch's row and the map keeps room for three
 disks. R2: a size bar's label takes the colour with the higher WCAG contrast on its fill, and a mid grey that neither
 text colour reads on (the lightened unallocated shade, 4.26:1) is darkened only as far as AA needs. R3: Qt's Aero back
@@ -1288,7 +1312,11 @@ in 4.8 to 5.9 s cold on testpc1 and 2.7 to 3.1 s once the enclosure is skipped.
 **The disk benchmark on D: BENCH.** It uses no shared pool. It is slow because the thermal poll kept asking the same
 USB enclosure for its counters: on testpc1 a 512 MB write-through to D: took 27.6 s alone, twice, and 376 s while a loop
 asked that disk for its counters. The 3eccb7c5 package's logs show the run created its 1 GB file and finished the
-sequential read, then spent 9 minutes in the sequential write until the capture closed the app.
+sequential read, then spent 9 minutes in the sequential write until the capture closed the app. From 333199b2's
+package the run on D: finished in 7 min 22 s: 54 s to create the file, 107 s for three reads, 161 s for three
+write-through passes, and 120 s of timed random passes, at 28.7 MB/s read and 19.1 MB/s write. A raw baseline with
+nothing else asking the disk gave the same, 28.7 and 18.9 MB/s, so nothing contends for it now. The enclosure reads far
+slower than in the 3eccb7c5 pass (730 MB/s, unbuffered in both builds), so its link has changed since then.
 
 **Functional leftovers from round 8.** Check Disk Errors counts an unsupported drive with the ones it could not check.
 The restore log prints its summary once, and both profile pages finish their bars. Manage BitLocker offers only the
@@ -1307,7 +1335,8 @@ VM. F18 is unchanged by round 1's decision. Round 1's untested fixes (S17 Static
 messages, DF7, DF8, DF9, DF14, the flasher warning title, the network icon) still have no test.
 
 **What no test here covers.** The stress fix end to end (a 1-minute default run, Stop, and UI Automation answering
-while every CPU is busy) and the thermal and SMART behaviour on real sensors need testpc1. The thermal script's own
+while every CPU is busy) and the thermal and SMART behaviour on real sensors were proved on testpc1 (above), not by a
+test here; nor is the foreground boost itself, which needs a real foreground window. The thermal script's own
 handling of a CIM time-out, "not supported" and each disk's UniqueId is checked here only as text; it was run on
 testpc1 by hand (timings above), and the real-script test runs only where real hardware is allowed. The hidden Aero
 arrow has no test: Qt creates it only in a real DWM window, never offscreen. The ISO save paths, the Linux ISO ready

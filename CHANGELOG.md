@@ -57,8 +57,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   calls such as UI Automation's through that pool, and Qt reads a child process's output through it, so the
   temperature reading the run's clock waited for every 5 seconds never returned. Each stress job now has a thread of
   its own, and the temperature is read on its own thread, so nothing the run's clock does waits on a process. The
-  CPU benchmark's parallel pass no longer fills the pool either. A memory pass still checks every 8 MiB, and the
-  stress threads still run below normal priority.
+  CPU benchmark's parallel pass no longer fills the pool either. A memory pass still checks every 8 MiB. The stress
+  threads now run at idle priority, never boosted, as burn-in tools do: on a lab PC Windows ran the below-normal
+  ones 2 steps higher while the app was in front, above every below-normal process, and a program started from one
+  took 19 to 35 seconds. The run still uses every cycle nothing else wants.
 - **SMART says FAIL only when the drive does** - A drive with 16 pending sectors read FAIL while its own check
   passed. FAIL now means the drive's own verdict: its SMART self-assessment failed, a value is past the threshold the
   drive sets, or an NVMe SSD's spare is below its own threshold. Sectors, wear and errors the drive counts read WARN.
@@ -69,8 +71,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   has a 2 second limit, and a drive that gives no reading is not asked again until a drive arrives or leaves or a
   hardware or SMART scan runs. It is remembered by its unique ID, not its disk number, so a drive plugged in under
   the same number is asked. Asking that enclosure again on every reading also slowed a disk benchmark on it about
-  13 times, past 9 minutes. A sensor without a reading now says "needs administrator rights", "not reported by
-  this PC", "did not answer in time" or "could not be read". A thermal zone Windows calls "not supported" reads as
+  13 times, past 9 minutes. A sensor without a reading now says on its bar "needs administrator rights", "not
+  reported by this PC", "did not answer in time" or "could not be read". A thermal zone Windows calls "not supported" reads as
   not reported, not as a failure. Without administrator rights it also reads the PC's thermal zone through the
   counters any account may read. A disk that refused a standard user blanked every reading, CPU and GPU too; it now
   has its own line. A drive temperature Windows does not report comes from the last SMART scan.
