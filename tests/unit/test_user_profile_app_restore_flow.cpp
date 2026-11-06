@@ -33,6 +33,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QTreeWidget>
 #include <QtTest/QtTest>
 
 #include <vector>
@@ -141,6 +142,7 @@ class UserProfileAppRestoreFlowTests : public QObject {
 
 private Q_SLOTS:
     void scanToRestoreOffersOnlyRealInstalls();
+    void theWifiListSaysWhyItIsEmpty();
     void deselectedAppIsNotInTheBackup();
     void restoreIgnoresAnIdChocolateyWouldRefuse();
     void restoreInstallsAPackageOnce();
@@ -180,6 +182,20 @@ sak::UserProfileRestoreAppRestorePage* UserProfileAppRestoreFlowTests::restorePa
     return wizard.findChild<sak::UserProfileRestoreAppRestorePage*>();
 }
 
+// Review 2 (F35): the Wi-Fi page's list was empty with nothing to say why, before a scan and after
+// one that found no profiles (the capture VM has no Wi-Fi adapter).
+void UserProfileAppRestoreFlowTests::theWifiListSaysWhyItIsEmpty() {
+    sak::UserProfileBackupWizard backup_wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupKnownNetworksPage*>(
+        backup_wizard.page(sak::UserProfileBackupWizard::Page_KnownNetworks));
+    QVERIFY(page != nullptr);
+    const QLabel* empty = page->m_networkTree->viewport()->findChild<QLabel*>();
+    QVERIFY(empty != nullptr);
+    QVERIFY2(empty->text().startsWith(QStringLiteral("Press Scan Networks")),
+             qPrintable(empty->text()));
+    page->populateTree({});
+    QCOMPARE(empty->text(), QStringLiteral("This PC has no saved Wi-Fi profiles."));
+}
 // The defect this file exists for: the scan recorded no id, the page dropped any id it was given,
 // and the restore page therefore listed every application as "(no match)".
 void UserProfileAppRestoreFlowTests::scanToRestoreOffersOnlyRealInstalls() {

@@ -220,6 +220,22 @@ private Q_SLOTS:
         QVERIFY(continuation.untrusted_input_messages.first().text.contains(stored_tool_text));
     }
 
+    // Review 2 (DF11): the narrow combo cut the chosen workflow to "Repair - Windows Update Re",
+    // and nothing said what it was. Its tooltip names it whole.
+    void theChosenWorkflowIsNamedWholeInItsTooltip() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_promptTemplateCombo != nullptr);
+        QVERIFY2(panel.m_promptTemplateCombo->count() > 1, "no workflows in the library");
+        const QString help = panel.m_promptTemplateCombo->toolTip();
+        panel.m_promptTemplateCombo->setCurrentIndex(1);
+        const QString chosen = panel.m_promptTemplateCombo->itemText(1);
+        QVERIFY2(panel.m_promptTemplateCombo->toolTip().startsWith(chosen),
+                 qPrintable(panel.m_promptTemplateCombo->toolTip()));
+        QVERIFY(panel.m_promptTemplateCombo->toolTip().endsWith(help));
+        panel.m_promptTemplateCombo->setCurrentIndex(0);
+        QCOMPARE(panel.m_promptTemplateCombo->toolTip(), help);
+    }
+
     // Unattended lets the assistant change the PC unasked, so choosing it asks first, and until the
     // person agrees it is not in force.
     void unattendedAccessAsksFirstAndHoldsTheOldModeUntilAnswered() {

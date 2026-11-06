@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDateEdit>
+#include <QLineEdit>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QtTest/QtTest>
@@ -29,6 +30,20 @@ private:
     }
 
 private Q_SLOTS:
+    // Review 2 (S17): the filters' fields started at 120, 96 and 108 px.
+    void theFilterFieldsShareALeftEdge() {
+        sak::OstConverterWidget widget;
+        widget.resize(1280, 860);
+        widget.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&widget));
+        const auto left = [&widget](const QWidget* field) {
+            return field->mapTo(&widget, QPoint(0, 0)).x();
+        };
+        QVERIFY(widget.m_date_from_edit->isVisible());
+        QCOMPARE(left(widget.m_sender_filter_edit), left(widget.m_date_from_edit));
+        QCOMPARE(left(widget.m_recipient_filter_edit), left(widget.m_date_from_edit));
+    }
+
     // A partial conversion once read Complete, because the row had its own rule: "failed" only
     // when nothing at all was written.
     void aRowWithAnyFailedItemReadsFailed() {

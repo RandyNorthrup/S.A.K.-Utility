@@ -258,6 +258,8 @@ constexpr int kReasoningComboContentsLength = 14;
 constexpr int kReasoningComboPopupMinWidth = 260;
 constexpr int kWorkflowComboContentsLength = 32;
 constexpr int kWorkflowComboPopupMinWidth = 620;
+/// Where the workflow picker keeps its own help text, which its tooltip follows the choice with.
+constexpr const char* kWorkflowPickerHelpProperty = "sakPickerHelp";
 constexpr ushort kStatusMarkerSuccess = 0x2714;
 constexpr ushort kStatusMarkerError = 0x2718;
 constexpr int kActivityTimerIntervalMs = 450;
@@ -4276,8 +4278,10 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
     configureReadableCombo(m_promptTemplateCombo,
                            kWorkflowComboContentsLength,
                            kWorkflowComboPopupMinWidth);
-    m_promptTemplateCombo->setToolTip(
-        tr("Choose a multi-step workflow. The list shows category, job name, and phase count."));
+    const QString picker_help =
+        tr("Choose a multi-step workflow. The list shows category, job name, and phase count.");
+    m_promptTemplateCombo->setToolTip(picker_help);
+    m_promptTemplateCombo->setProperty(kWorkflowPickerHelpProperty, picker_help);
     setAccessible(m_promptTemplateCombo,
                   tr("Workflow library"),
                   tr("AI workflow templates for technician tasks"));
@@ -4306,6 +4310,15 @@ void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
     const bool has_selection = index > 0;
     if (m_addWorkflowButton != nullptr) {
         m_addWorkflowButton->setEnabled(has_selection);
+    }
+    if (m_promptTemplateCombo != nullptr) {
+        // The narrow combo cuts the chosen workflow ("Repair - Windows Update Re", review 2,
+        // DF11); its tooltip names it whole.
+        const QString picker_help =
+            m_promptTemplateCombo->property(kWorkflowPickerHelpProperty).toString();
+        m_promptTemplateCombo->setToolTip(has_selection ? m_promptTemplateCombo->itemText(index) +
+                                                              QStringLiteral("\n\n") + picker_help
+                                                        : picker_help);
     }
     if (!has_selection) {
         clearWorkflowSelectionPreview();

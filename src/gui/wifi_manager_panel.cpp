@@ -12,6 +12,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 #include "sak/wifi_profile_scanner.h"
 #include "sak/wifi_setup_script.h"
@@ -317,6 +318,10 @@ void WifiManagerPanel::setupNetworkIdentityFields(QFormLayout* layout) {
 
 void WifiManagerPanel::setupNetworkPasswordField(QFormLayout* layout) {
     auto* pass_row = new QHBoxLayout();
+    // The row sits in a form cell like the fields above and below it. With a layout's own
+    // margins it stood 10 px in from them and its label rode above the field (review 2).
+    pass_row->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     m_password_input = new QLineEdit(m_form_group);
     m_password_input->setPlaceholderText("Password");
     m_password_input->setEchoMode(QLineEdit::Password);
@@ -448,6 +453,11 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
     m_network_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_network_table->setAlternatingRowColors(true);
     m_network_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // An empty table said nothing about how to fill it (review 2, F35).
+    new sak::ui::ViewEmptyState(
+        m_network_table,
+        tr("No networks yet. Add one with Add to Table, load a saved list, or "
+           "scan this PC's known networks."));
     m_network_table->setToolTip("Double-click a row to load it into the form");
     // No row numbers: no other table here shows them (UI review F42). The password cell is a
     // widget, and gets its whole cell.

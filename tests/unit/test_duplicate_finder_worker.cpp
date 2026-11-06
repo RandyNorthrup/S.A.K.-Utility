@@ -214,6 +214,12 @@ private Q_SLOTS:
         // The largest group wastes 1200 bytes and the smallest 100.
         QVERIFY(summary.indexOf(QStringLiteral("a11.bin")) <
                 summary.indexOf(QStringLiteral("a0.bin")));
+        // Review 2 (F38): "Total wasted space: 0.36 MB" over groups in KB. One formatter for all.
+        for (const QString& line : {QStringLiteral("Total wasted space: 7.6 KB"),
+                                    QStringLiteral("(2 files, 1.2 KB wasted)"),
+                                    QStringLiteral("(2 files, 100 bytes wasted)")}) {
+            QVERIFY2(summary.contains(line), qPrintable(line + QLatin1Char('\n') + summary));
+        }
     }
 
     // A path handed to std::filesystem as UTF-8 is read in the system code page, so a folder with

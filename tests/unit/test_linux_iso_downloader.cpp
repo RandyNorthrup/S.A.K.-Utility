@@ -125,6 +125,7 @@ private Q_SLOTS:
     void testCancelFromIdle();
     void testCancelMidDownloadRemovesThePartialFilesAtOnce();
     void testDiscardDownloadRemovesTheFileAndItsResumeData();
+    void testThePercentShowsTenthsBelowOne();
 
     // Verify-result staleness guard (B10-19)
     void testShouldApplyVerifyResult_gating();
@@ -885,6 +886,20 @@ void LinuxISODownloaderTests::testDiscardDownloadRemovesTheFileAndItsResumeData(
     QVERIFY(held.open(QIODevice::WriteOnly));
     QVERIFY(!LinuxISODownloader::discardDownload(iso, &error));
     QVERIFY2(error.contains(QDir::toNativeSeparators(iso)), qPrintable(error));
+}
+
+// Review 2: "0%" on the bar with 17.6 MB of 6.07 GB down (0.3%) and the speed showing.
+void LinuxISODownloaderTests::testThePercentShowsTenthsBelowOne() {
+    constexpr qint64 kMb = 1024LL * 1024;
+    const qint64 iso = 6'517'000'000LL;  // 6.07 GB
+    QCOMPARE(LinuxISODownloader::percentText(18 * kMb, iso), QStringLiteral("0.2%"));
+    QCOMPARE(LinuxISODownloader::percentText(20 * kMb, iso), QStringLiteral("0.3%"));
+    QCOMPARE(LinuxISODownloader::percentText(0, iso), QStringLiteral("0%"));
+    QCOMPARE(LinuxISODownloader::percentText(iso / 100, iso), QStringLiteral("1%"));
+    QCOMPARE(LinuxISODownloader::percentText(iso / 2, iso), QStringLiteral("50%"));
+    QCOMPARE(LinuxISODownloader::percentText(iso, iso), QStringLiteral("100%"));
+    QCOMPARE(LinuxISODownloader::percentText(iso + 1, iso), QStringLiteral("100%"));
+    QCOMPARE(LinuxISODownloader::percentText(5, 0), QStringLiteral("0%"));
 }
 
 void LinuxISODownloaderTests::testShouldApplyVerifyResult_gating() {

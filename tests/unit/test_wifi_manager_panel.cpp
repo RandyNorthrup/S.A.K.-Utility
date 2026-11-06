@@ -7,6 +7,8 @@
 #include "sak/wifi_manager_panel.h"
 
 #include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QtTest/QtTest>
@@ -27,7 +29,45 @@ private Q_SLOTS:
     void jsonWriteFailsClosedOnShortWrite();
     void installRefusesIncompleteRows();
     void deleteSelectedNeedsASelectedRow();
+    void thePasswordRowLinesUpWithTheOthers();
+    void anEmptyTableSaysHowToFillIt();
 };
+
+// Review 2: the Password field stood 10 px in from the fields above and below it, its label riding
+// above it, because its row kept a layout's own margins.
+void WifiManagerPanelTests::thePasswordRowLinesUpWithTheOthers() {
+    WifiManagerPanel panel;
+    panel.resize(1280, 800);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QLineEdit* ssid = nullptr;
+    QLineEdit* password = nullptr;
+    for (auto* edit : panel.findChildren<QLineEdit*>()) {
+        if (edit->accessibleName() == QStringLiteral("Network SSID")) {
+            ssid = edit;
+        } else if (edit->accessibleName() == QStringLiteral("Network Password")) {
+            password = edit;
+        }
+    }
+    QVERIFY(ssid != nullptr && password != nullptr);
+    QCOMPARE(password->mapTo(&panel, QPoint(0, 0)).x(), ssid->mapTo(&panel, QPoint(0, 0)).x());
+}
+
+// Review 2 (F35): the empty Saved Networks table said nothing.
+void WifiManagerPanelTests::anEmptyTableSaysHowToFillIt() {
+    WifiManagerPanel panel;
+    QTableWidget* table = nullptr;
+    for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+            table = candidate;
+        }
+    }
+    QVERIFY(table != nullptr);
+    const QLabel* empty = table->viewport()->findChild<QLabel*>();
+    QVERIFY(empty != nullptr);
+    QVERIFY2(empty->text().startsWith(QStringLiteral("No networks yet.")),
+             qPrintable(empty->text()));
+}
 
 // A benign SSID yields a runnable script with the base64 profile and netsh call.
 void WifiManagerPanelTests::normalSsidProducesScript() {

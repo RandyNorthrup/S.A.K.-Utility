@@ -637,7 +637,9 @@ void LinuxISODownloader::onProgressPollTimer() {
                 static_cast<int>((readout->downloaded_bytes * kPercentMax) / readout->total_bytes);
             const QString detail = QString("%1 / %2").arg(formatSize(readout->downloaded_bytes),
                                                           formatSize(readout->total_bytes));
-            Q_EMIT progressUpdated(percent, detail);
+            Q_EMIT progressUpdated(percent,
+                                   detail,
+                                   percentText(readout->downloaded_bytes, readout->total_bytes));
             Q_EMIT speedUpdated(speedMBps);
             continue;
         }
@@ -996,6 +998,19 @@ QString LinuxISODownloader::findAria2c() const {
         "aria2c.exe not found at required bundled path. "
         "Run scripts/bundle_uup_tools.ps1 to install it.");
     return {};
+}
+
+QString LinuxISODownloader::percentText(qint64 done, qint64 total) {
+    constexpr qint64 kTenthsPerPercent = 10;
+    if (total <= 0 || done <= 0) {
+        return QStringLiteral("0%");
+    }
+    // Rounded down, as the whole percent above it is: the bar never claims more than is down.
+    const qint64 tenths = (std::min(done, total) * kPercentMax * kTenthsPerPercent) / total;
+    if (tenths < kTenthsPerPercent) {
+        return QStringLiteral("0.%1%").arg(tenths);
+    }
+    return QStringLiteral("%1%").arg(tenths / kTenthsPerPercent);
 }
 
 bool LinuxISODownloader::discardDownload(const QString& save_path, QString* error) {

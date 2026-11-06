@@ -21,6 +21,7 @@
 #include "sak/image_flasher_panel.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/windows_iso_download_dialog.h"
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_usb_creator.h"
 
@@ -97,6 +98,34 @@ class ImageFlasherPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // Review 2 (S17): Build Configuration's fields started near 250 px, Language and Edition's
+    // near 361: two group boxes, two label columns.
+    void theIsoFormHasOneLabelColumn() {
+        WindowsISODownloader downloader;
+        WindowsISODownloadDialog dialog(&downloader);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        QHash<QString, int> left;
+        for (auto* combo : dialog.findChildren<QComboBox*>()) {
+            left.insert(combo->accessibleName(), combo->mapTo(&dialog, QPoint(0, 0)).x());
+        }
+        for (const char* name : {"Architecture", "Release channel", "Language", "Edition"}) {
+            QVERIFY2(left.contains(QString::fromLatin1(name)), name);
+            QCOMPARE(left.value(QString::fromLatin1(name)), left.value(QStringLiteral("Language")));
+        }
+        // Review 2 (F35): the Available Builds list was empty with nothing to say why.
+        QListWidget* builds = nullptr;
+        for (auto* list : dialog.findChildren<QListWidget*>()) {
+            if (list->accessibleName() == QStringLiteral("Builds")) {
+                builds = list;
+            }
+        }
+        QVERIFY(builds != nullptr);
+        const QLabel* empty = builds->viewport()->findChild<QLabel*>();
+        QVERIFY(empty != nullptr);
+        QVERIFY2(empty->text().startsWith(QStringLiteral("Press Fetch Builds")),
+                 qPrintable(empty->text()));
+    }
     // UI review S5: success read "[x] Flash Completed Successfully!", a failure mark.
     // The page said only that the stick "could NOT be ejected"; it was still offline and showed
     // up with no drive letter afterwards.

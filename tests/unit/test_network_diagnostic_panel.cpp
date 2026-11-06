@@ -14,6 +14,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -25,6 +26,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -173,11 +175,15 @@ public:
     QStringList boxes_seen;
     QStringList adapters_offered;
     QString adapter_chosen_first;
+    QString file_dialog_started_in;
 
 private:
     void answerOpenDialog() {
         QWidget* modal = QApplication::activeModalWidget();
         if (auto* file_dialog = qobject_cast<QFileDialog*>(modal)) {
+            if (file_dialog_started_in.isEmpty()) {
+                file_dialog_started_in = file_dialog->directory().absolutePath();
+            }
             const QFileInfo target(m_path);
             file_dialog->setDirectory(target.absolutePath());
             auto* name_edit = file_dialog->findChild<QLineEdit*>(QStringLiteral("fileNameEdit"));
@@ -898,6 +904,9 @@ void NetworkDiagnosticPanelTests::backupOnAWifiAdapterSavesThatAdapter() {
     QVERIFY(found);
     QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Backup Complete")),
                              kDialogTimeoutMs);
+    // Review 2 (F36): the picker opened in the app's own folder, among Qt's plugin folders.
+    QCOMPARE(QDir::cleanPath(driver.file_dialog_started_in),
+             QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)));
 
     QFile written(backup);
     QVERIFY(written.open(QIODevice::ReadOnly));

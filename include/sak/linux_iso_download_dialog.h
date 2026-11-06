@@ -61,7 +61,7 @@ private Q_SLOTS:
 
     // Downloader progress handlers
     void onPhaseChanged(LinuxISODownloader::Phase phase, const QString& description);
-    void onProgressUpdated(int percent, const QString& detail);
+    void onProgressUpdated(int percent, const QString& detail, const QString& percent_text);
     void onSpeedUpdated(double speed_m_bps);
     void onDownloadComplete(const QString& iso_path, qint64 file_size);
     void onDownloadError(const QString& error);

@@ -37,6 +37,9 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <initializer_list>
+
 namespace sak {
 
 namespace {
@@ -346,7 +349,8 @@ void OstConverterWidget::addFilterTextRows(QVBoxLayout* layout) {
     // Sender filter row
     auto* sender_row = new QHBoxLayout();
     sender_row->setSpacing(ui::kSpacingSmall);
-    sender_row->addWidget(new QLabel(tr("Sender:"), m_filter_group));
+    auto* sender_label = new QLabel(tr("Sender:"), m_filter_group);
+    sender_row->addWidget(sender_label);
     m_sender_filter_edit = new QLineEdit(m_filter_group);
     m_sender_filter_edit->setAccessibleName(tr("Sender filter"));
     m_sender_filter_edit->setPlaceholderText(tr("Filter by sender email (contains)"));
@@ -356,12 +360,24 @@ void OstConverterWidget::addFilterTextRows(QVBoxLayout* layout) {
     // Recipient filter row
     auto* recip_row = new QHBoxLayout();
     recip_row->setSpacing(ui::kSpacingSmall);
-    recip_row->addWidget(new QLabel(tr("Recipient:"), m_filter_group));
+    auto* recipient_label = new QLabel(tr("Recipient:"), m_filter_group);
+    recip_row->addWidget(recipient_label);
     m_recipient_filter_edit = new QLineEdit(m_filter_group);
     m_recipient_filter_edit->setAccessibleName(tr("Recipient filter"));
     m_recipient_filter_edit->setPlaceholderText(tr("Filter by recipient email (contains)"));
     recip_row->addWidget(m_recipient_filter_edit, 1);
     layout->addLayout(recip_row);
+
+    // The date range's box and the two labels lead their rows at one width, so the three fields
+    // start at one edge; they started at 120, 96 and 108 px (review 2, S17).
+    const std::initializer_list<QWidget*> leads{m_date_filter_check, sender_label, recipient_label};
+    int lead_width = 0;
+    for (QWidget* lead : leads) {
+        lead_width = std::max(lead_width, lead->sizeHint().width());
+    }
+    for (QWidget* lead : leads) {
+        lead->setMinimumWidth(lead_width);
+    }
 }
 
 QWidget* OstConverterWidget::createRecoverySection() {

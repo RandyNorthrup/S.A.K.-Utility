@@ -121,6 +121,11 @@ public:
     ///        resume. False, with the file named in @p error, when one stays.
     [[nodiscard]] static bool discardDownload(const QString& save_path, QString* error);
 
+    /// @brief The share of @p total that @p done is, for the progress bar: whole percent, but one
+    ///        decimal below 1%, where a whole percent read "0%" with 17.6 MB of a 6.07 GB ISO
+    ///        already down and the speed showing (review 2). Pure.
+    [[nodiscard]] static QString percentText(qint64 done, qint64 total);
+
     /// @brief Algorithm name of a per-algorithm heading line such as "### SHA256SUMS:",
     ///        uppercased ("SHA256"), or an empty string when @p line is not such a heading.
     ///        A release note groups its digests under these headings, and a BLAKE3 digest is
@@ -151,8 +156,9 @@ Q_SIGNALS:
      * @brief Emitted periodically with download progress
      * @param percent Overall progress percentage (0-100)
      * @param detail Detail text (e.g., "3.2 GB / 6.2 GB")
+     * @param percent_text What the bar shows, from percentText(); empty for "<percent>%"
      */
-    void progressUpdated(int percent, const QString& detail);
+    void progressUpdated(int percent, const QString& detail, const QString& percent_text = {});
 
     /**
      * @brief Emitted with current download speed

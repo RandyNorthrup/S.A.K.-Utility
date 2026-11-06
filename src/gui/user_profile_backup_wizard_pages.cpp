@@ -15,6 +15,7 @@
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 #include "sak/wifi_profile_scanner.h"
 
@@ -1809,6 +1810,9 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     m_networkTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_networkTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_networkTree->setEnabled(false);
+    // An empty list said nothing, before a scan or after one that found nothing (review 2, F35).
+    new sak::ui::ViewEmptyState(m_networkTree,
+                                tr("Press Scan Networks to list this PC's saved Wi-Fi profiles."));
     connect(m_networkTree,
             &QTreeWidget::itemChanged,
             this,
@@ -1889,6 +1893,9 @@ void UserProfileBackupKnownNetworksPage::populateTree(const QVector<WifiProfileI
     // Keep the full scanned profiles (incl. XML payload) so the committed
     // selection copies them intact rather than reconstructing from columns.
     m_scannedProfiles = profiles;
+    if (auto* empty = m_networkTree->findChild<sak::ui::ViewEmptyState*>()) {
+        empty->setEmptyText(tr("This PC has no saved Wi-Fi profiles."));
+    }
     for (int i = 0; i < profiles.size(); ++i) {
         const auto& profile = profiles[i];
         auto* item = new QTreeWidgetItem(m_networkTree);

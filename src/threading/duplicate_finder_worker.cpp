@@ -6,6 +6,7 @@
 
 #include "sak/duplicate_finder_worker.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
@@ -26,7 +27,6 @@
 
 namespace {
 constexpr std::size_t kExpectedDuplicateScanFiles = 1000;
-constexpr int kDuplicateSummarySizePrecision = 2;
 // Enough for any listing a person will read, without building a window that cannot scroll.
 constexpr int kDuplicateSummaryGroupLimit = 2000;
 constexpr uint64_t kDuplicateVirtualReadMaxBytes = 512ULL * 1024ULL * 1024ULL;
@@ -520,11 +520,9 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     }
 
     summary += QString("Total duplicate files: %1\n").arg(total_duplicates);
-    summary += QString("Total wasted space: %1 MB\n\n")
-                   .arg(static_cast<double>(total_wasted) / sak::kBytesPerMBf,
-                        0,
-                        'f',
-                        kDuplicateSummarySizePrecision);
+    // One formatter for the total and the groups: "0.36 MB" over groups in KB read as two scales
+    // (review 2, F38).
+    summary += QString("Total wasted space: %1\n\n").arg(sak::formatBytes(total_wasted));
 
     // Most wasted space first: the groups come out of a hash table in no useful order, and these
     // are the ones worth a person's time.
@@ -547,11 +545,10 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
             break;
         }
 
-        summary +=
-            QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
-                .arg(count)
-                .arg(group->file_paths.size())
-                .arg(static_cast<double>(group->wasted_space) / sak::kBytesPerKBf, 0, 'f', 1);
+        summary += QString("\nGroup %1 (%2 files, %3 wasted):\n")
+                       .arg(count)
+                       .arg(group->file_paths.size())
+                       .arg(sak::formatBytes(group->wasted_space));
 
         for (const auto& path : group->file_paths) {
             summary += QString("  - %1\n").arg(path);

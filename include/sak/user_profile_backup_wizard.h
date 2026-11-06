@@ -309,6 +309,7 @@ private:
  */
 class UserProfileBackupKnownNetworksPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupKnownNetworksPage(QWidget* parent = nullptr);

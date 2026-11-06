@@ -487,8 +487,12 @@ void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
     }
 }
 
-void LinuxISODownloadDialog::onProgressUpdated(int percent, const QString& detail) {
+void LinuxISODownloadDialog::onProgressUpdated(int percent,
+                                               const QString& detail,
+                                               const QString& percent_text) {
     m_progressBar->setValue(percent);
+    // "0.3%" while the first percent comes down, not "0%" with 17.6 MB already in (review 2).
+    m_progressBar->setFormat(percent_text.isEmpty() ? QStringLiteral("%p%") : percent_text);
     m_detailLabel->setText(detail);
 }
 

@@ -49,6 +49,7 @@
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QStandardPaths>
 #include <QtConcurrent>
 #include <QTextEdit>
 #include <QTextStream>
@@ -2327,11 +2328,14 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
 
     const auto& adapter = m_adapters[data_idx];
 
-    const QString file_path =
-        QFileDialog::getSaveFileName(this,
-                                     tr("Save Adapter Settings Backup"),
-                                     QStringLiteral("%1_settings_backup.json").arg(adapter.name),
-                                     tr("JSON Files (*.json);;All Files (*.*)"));
+    // In Documents, as the app's other save pickers start: a bare file name opened the picker in
+    // the app's own folder, among Qt's plugin folders (review 2, F36).
+    const QString file_path = QFileDialog::getSaveFileName(
+        this,
+        tr("Save Adapter Settings Backup"),
+        QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+            .filePath(QStringLiteral("%1_settings_backup.json").arg(adapter.name)),
+        tr("JSON Files (*.json);;All Files (*.*)"));
 
     if (file_path.isEmpty()) {
         return;

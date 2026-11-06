@@ -8,6 +8,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/windows_iso_downloader.h"
 
 #include <QDateTime>
@@ -36,6 +37,15 @@ constexpr int kIsoSizeDisplayPrecision = 2;
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
     return std::ranges::any_of(keywords, [&text](const auto& kw) { return text.contains(kw); });
+}
+
+/// The object name the form's labels share, so the two groups can give them one width.
+constexpr const char* kFormLabelName = "isoFormLabel";
+
+QLabel* formLabel(const QString& text, QWidget* parent) {
+    auto* label = new QLabel(text, parent);
+    label->setObjectName(QString::fromLatin1(kFormLabelName));
+    return label;
 }
 
 }  // namespace
@@ -79,26 +89,37 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* main_layout) {
     setupUi_buildSelection(main_layout);
     setupUi_languageEdition(main_layout);
     setupUi_saveLocation(main_layout);
+    // Two groups, one label column: Build Configuration's fields started near 250 px and Language
+    // and Edition's near 361 (review 2, S17).
+    const auto labels = findChildren<QLabel*>(QString::fromLatin1(kFormLabelName));
+    int width = 0;
+    for (const QLabel* label : labels) {
+        width = std::max(width, label->sizeHint().width());
+    }
+    for (QLabel* label : labels) {
+        label->setMinimumWidth(width);
+    }
 }
 
 void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* main_layout) {
     auto* config_group = new QGroupBox("Build Configuration", this);
     auto* config_layout = new QGridLayout(config_group);
 
-    config_layout->addWidget(new QLabel("Architecture:", config_group), 0, 0);
+    config_layout->addWidget(formLabel("Architecture:", config_group), 0, 0);
     m_archCombo = new QComboBox(config_group);
     m_archCombo->setAccessibleName(tr("Architecture"));
     m_archCombo->addItem("64-bit (x64)", "amd64");
     m_archCombo->addItem("ARM64", "arm64");
     config_layout->addWidget(m_archCombo, 0, 1);
 
-    config_layout->addWidget(new QLabel("Channel:", config_group), 1, 0);
+    config_layout->addWidget(formLabel("Channel:", config_group), 1, 0);
     m_channelCombo = new QComboBox(config_group);
     m_channelCombo->setAccessibleName(tr("Release channel"));
     for (auto ch : UupDumpApi::allChannels()) {
         m_channelCombo->addItem(UupDumpApi::channelToDisplayName(ch), static_cast<int>(ch));
     }
     config_layout->addWidget(m_channelCombo, 1, 1);
+    config_layout->setColumnStretch(1, 1);
 
     m_fetchBuildsButton = new QPushButton("Fetch Builds", config_group);
     m_fetchBuildsButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -119,6 +140,9 @@ void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* main_layout) 
     m_buildListWidget->setAccessibleName(tr("Builds"));
     m_buildListWidget->setMaximumHeight(sak::kListAreaMaxH);
     m_buildListWidget->setEnabled(false);
+    new sak::ui::ViewEmptyState(m_buildListWidget,
+                                tr("Press Fetch Builds to list the builds for the architecture "
+                                   "and channel above."));
     build_layout->addWidget(m_buildListWidget);
 
     m_buildInfoLabel = new QLabel("", build_group);
@@ -134,17 +158,18 @@ void WindowsISODownloadDialog::setupUi_languageEdition(QVBoxLayout* main_layout)
     auto* selection_group = new QGroupBox("Language && Edition", this);
     auto* selection_layout = new QGridLayout(selection_group);
 
-    selection_layout->addWidget(new QLabel("Language:", selection_group), 0, 0);
+    selection_layout->addWidget(formLabel("Language:", selection_group), 0, 0);
     m_languageCombo = new QComboBox(selection_group);
     m_languageCombo->setAccessibleName(tr("Language"));
     m_languageCombo->setEnabled(false);
     selection_layout->addWidget(m_languageCombo, 0, 1);
 
-    selection_layout->addWidget(new QLabel("Edition:", selection_group), 1, 0);
+    selection_layout->addWidget(formLabel("Edition:", selection_group), 1, 0);
     m_editionCombo = new QComboBox(selection_group);
     m_editionCombo->setAccessibleName(tr("Edition"));
     m_editionCombo->setEnabled(false);
     selection_layout->addWidget(m_editionCombo, 1, 1);
+    selection_layout->setColumnStretch(1, 1);
 
     main_layout->addWidget(selection_group);
 }
