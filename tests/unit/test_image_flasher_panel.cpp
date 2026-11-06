@@ -180,6 +180,7 @@ private Q_SLOTS:
     void imagePickerOffersOnlyWhatFlashes();
     void readingACompressedImageIsNotShownAsWriting();
     void aRefusalBeforeWritingSaysNothingWasWritten();
+    void aWindowsUsbStepReachesTheStatusBar();
     void aBuiltIsoIsNotAnnouncedTwice();
     void shredOsStillGetsASaveLocation();
     void aWicImageIsNotCalledWindowsImaging();
@@ -217,6 +218,20 @@ void ImageFlasherPanelTests::aRefusalBeforeWritingSaysNothingWasWritten() {
     Q_EMIT coordinator->flashError(QStringLiteral("Refusing to flash: too small"));
     QVERIFY2(dialog_text.contains(QStringLiteral("Nothing was written")), qPrintable(dialog_text));
     QVERIFY2(!dialog_text.contains(QStringLiteral("unusable")), qPrintable(dialog_text));
+}
+
+// testpc1: through a whole Windows USB run the status bar read "Ready" beside its progress bar, as
+// the creator's steps reached only the page. Each step reaches the status bar as well.
+void ImageFlasherPanelTests::aWindowsUsbStepReachesTheStatusBar() {
+    WindowsUSBCreator creator;
+    QThread thread;  // never started: the panel only wires its end
+    m_panel->connectWindowsUSBCreatorSignals(&creator, &thread);
+    QSignalSpy status(m_panel.get(), &ImageFlasherPanel::statusMessage);
+    Q_EMIT creator.statusChanged(
+        QStringLiteral("Step 2/3: Splitting install.wim for FAT32 (DISM)..."));
+    QCOMPARE(status.count(), 1);
+    const QString shown = status.first().first().toString();
+    QVERIFY2(shown.contains(QStringLiteral("Splitting install.wim")), qPrintable(shown));
 }
 
 // The build dialog says it finished and the panel offers to flash. The downloader's own signal used

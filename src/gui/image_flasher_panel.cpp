@@ -1455,6 +1455,9 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
     Q_ASSERT(thread);
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
         m_flashStateLabel->setText(status);
+        // testpc1: the status bar read "Ready" beside its progress bar for a whole Windows USB
+        // run, because each step reached only this page.
+        Q_EMIT statusMessage(QString("Image Flasher: %1").arg(status), sak::kTimerStatusDefaultMs);
     });
 
     connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
