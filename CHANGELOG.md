@@ -8,6 +8,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Screenshot Settings captures Installed apps and Gaming, and says when a PC has no Wi-Fi** - Two of its Settings
+  links were not pages, so Settings stayed on the page before and both were reported as failed after three tries.
+  Every link is now one Microsoft publishes for Windows 10 and 11, with Windows 11's other name tried next, and
+  Gaming captures Game Mode. A page that Settings never opens is reported as one this Windows does not have, and
+  nothing is saved for it. On a PC with no Wi-Fi adapter the WiFi page is left out and the result says so; neither
+  counts as a failure. "1 monitors" reads "1 monitor".
+- **One look for buttons and cards** - Close, Cancel and No, which only leave a dialog or message, are the plain
+  secondary colour everywhere, as are a wizard's Back and Cancel; the button that does the work keeps the blue. The
+  Backup and Restore, Image Flasher and Help cards share one layout: a centred title under a 48 px picture.
+- **Tab icons read in both themes** - The File Management and Email Tools tab icons were faint, and in the dark
+  theme File Management's lines all but vanished; both are drawn again, with a dark-theme drawing where the light
+  one does not show. Selected, the Help and About icons keep their question mark and "i" instead of becoming plain
+  discs. The Linux ISO card's black penguin is drawn in light grey in the dark theme. Icons follow a theme change
+  at once.
+- **SMART and the hardware list name each drive** - The SMART table names each drive by its number and model
+  ("PhysicalDrive0 (VBOX HARDDISK)"), so drives of one model can be told apart, takes an unreadable drive's model and
+  bus from the hardware scan, and each warning under it starts with the drive it is about. The Battery row no
+  longer shows a virtual machine's battery index as a name ("1 - health unknown").
+- **Smaller fixes** - Calendar chips show the subject first, then the time. Email Tools' item count is on a line of
+  its own, so the Folders pane keeps its width whatever the count says.
 - **Checks that read back what was written read the drive, not Windows' memory** - Straight after a copy, Windows
   still holds the file in its cache, and a check that reads it from there proves only what was written. On a test
   PC the Windows install USB's check read a 2.8 GB part back in 0.5 s from the cache, against 44 s from the stick.
