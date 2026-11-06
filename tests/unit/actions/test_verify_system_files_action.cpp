@@ -34,6 +34,7 @@ private Q_SLOTS:
     void englishRefusalIsStillAFailure();
     void cleanEnglishRunStillPasses();
     void dismScanThatRunsOutOfTimeIsIncompleteNotFailed();
+    void dismDamageItCannotRepairIsSaidSo();
     void lastDismProgressPercent_readsTheBar();
     // One 60-minute bound for the whole run, and the registry waits exactly that long.
     void runIsBoundByOneSixtyMinuteTimeout();
@@ -200,6 +201,11 @@ public:
     bool scan_health_times_out = false;
     QStringList scan_health_progress;
     int scan_health_granted_ms = 0;
+    // When set, what ScanHealth prints, apart from CheckHealth.
+    std::optional<QString> scan_health_output;
+    // When set, what RestoreHealth prints and the exit code it ends with.
+    std::optional<QString> restore_health_output;
+    int restore_health_exit_code = 0;
 
 protected:
     sak::ProcessResult runStep(const QString& script,
@@ -208,6 +214,13 @@ protected:
         sak::ProcessResult proc;
         proc.exit_code = 0;
         proc.std_out = script.contains(QStringLiteral("sfc.exe")) ? sfc_output : dism_output;
+        if (script.contains(QStringLiteral("/ScanHealth")) && scan_health_output) {
+            proc.std_out = *scan_health_output;
+        }
+        if (script.contains(QStringLiteral("/RestoreHealth")) && restore_health_output) {
+            proc.std_out = *restore_health_output;
+            proc.exit_code = restore_health_exit_code;
+        }
         if (script.contains(QStringLiteral("/ScanHealth"))) {
             scan_health_granted_ms = timeout_ms;
             for (const QString& piece : scan_health_progress) {
@@ -355,6 +368,62 @@ void VerifySystemFilesActionTests::dismScanThatRunsOutOfTimeIsIncompleteNotFaile
     broken.execute();
     QVERIFY(!broken.lastExecutionResult().success);
     QVERIFY(!broken.lastExecutionResult().inconclusive);
+}
+
+// testpc1, round 3, through the window: SFC passed, ScanHealth said "The component store is
+// repairable.", RestoreHealth /LimitAccess failed with 0x800f0915, and the run said "DISM did not
+// complete a component store assessment". It did; it found damage it could not repair. DISM's own
+// words below are that PC's, from the same two commands.
+void VerifySystemFilesActionTests::dismDamageItCannotRepairIsSaidSo() {
+    ScriptedVerifyAction action;
+    action.sfc_output =
+        QStringLiteral("Windows Resource Protection did not find any integrity violations.");
+    action.dism_output = QStringLiteral(
+        "Deployment Image Servicing and Management tool\r\nVersion: 10.0.26100.9549\r\n\r\n"
+        "Image Version: 10.0.26200.9711\r\n\r\nThe component store is repairable.\r\n"
+        "The operation completed successfully.\r\n");
+    action.restore_health_output = QStringLiteral(
+        "Deployment Image Servicing and Management tool\r\nVersion: 10.0.26100.9549\r\n\r\n"
+        "Image Version: 10.0.26200.9711\r\n\r\nError: 0x800f0915\r\n\r\n"
+        "The repair content could not be found anywhere.\r\nCheck the internet connectivity or "
+        "use the \"Source\" option to specify the location of the files that are required to "
+        "restore the image.\r\n\r\nThe DISM log file can be found at "
+        "C:\\WINDOWS\\Logs\\DISM\\dism.log\r\n");
+    action.restore_health_exit_code = 1;
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QVERIFY(!result.success);
+    QVERIFY(!result.inconclusive);
+    QCOMPARE(result.message,
+             QStringLiteral("SFC found no integrity violations. DISM found damage in the component "
+                            "store and could not repair it from this PC. DISM said: Error: "
+                            "0x800f0915 The repair content could not be found anywhere. A repair "
+                            "needs a source, such as Windows Update or a Windows ISO of the same "
+                            "version."));
+    QCOMPARE(Action::dismErrorText(QStringLiteral("The operation completed successfully.")),
+             QString());
+
+    // CheckHealth only reads what was flagged before; ScanHealth alone finding the damage counts.
+    ScriptedVerifyAction scanned;
+    scanned.sfc_output = action.sfc_output;
+    scanned.dism_output = kDismHealthy;
+    scanned.scan_health_output = action.dism_output;
+    scanned.restore_health_output = action.restore_health_output;
+    scanned.restore_health_exit_code = 1;
+    scanned.execute();
+    QCOMPARE(scanned.lastExecutionResult().message, result.message);
+
+    // And CheckHealth's flag alone, with ScanHealth finding nothing more.
+    ScriptedVerifyAction flagged;
+    flagged.sfc_output = action.sfc_output;
+    flagged.dism_output = action.dism_output;
+    flagged.scan_health_output = kDismHealthy;
+    flagged.restore_health_output = action.restore_health_output;
+    flagged.restore_health_exit_code = 1;
+    flagged.execute();
+    QCOMPARE(flagged.lastExecutionResult().message, result.message);
 }
 
 void VerifySystemFilesActionTests::lastDismProgressPercent_readsTheBar() {

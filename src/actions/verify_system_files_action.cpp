@@ -253,6 +253,7 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     // probe (or one that never reached DISM) is NOT an assessment and must not count.
     if (proc.completedSuccessfully() && dismProbeCompleted(proc)) {
         m_dism_check_assessed = true;
+        m_dism_found_damage = m_dism_found_damage || dismReportsCorruption(proc.std_out);
     }
     return dismReportsCorruption(proc.std_out);
 }
@@ -299,6 +300,7 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     // probe (or one that never reached DISM) is NOT an assessment and must not count.
     if (proc.completedSuccessfully() && dismProbeCompleted(proc)) {
         m_dism_scan_assessed = true;
+        m_dism_found_damage = m_dism_found_damage || dismReportsCorruption(proc.std_out);
     }
     return dismReportsCorruption(proc.std_out);
 }
@@ -331,7 +333,24 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
         proc.std_out.contains(QStringLiteral("completed successfully"), Qt::CaseInsensitive)) {
         m_dism_successful = true;
         m_dism_repaired_issues = true;
+        return;
     }
+    m_dism_repair_error = dismErrorText(proc.std_out);
+}
+
+QString VerifySystemFilesAction::dismErrorText(const QString& dism_output) {
+    // DISM ends a failed run with "Error: 0x800f0915", a blank line, then its sentence.
+    const QStringList lines = dism_output.split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
+                                                Qt::SkipEmptyParts);
+    for (qsizetype i = 0; i < lines.size(); ++i) {
+        const QString line = lines.at(i).trimmed();
+        if (!line.startsWith(QLatin1String("Error:"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        const QString next = i + 1 < lines.size() ? lines.at(i + 1).trimmed() : QString();
+        return next.isEmpty() ? line : line + QLatin1Char(' ') + next;
+    }
+    return {};
 }
 
 void VerifySystemFilesAction::runDISM() {
@@ -401,6 +420,8 @@ void VerifySystemFilesAction::execute() {
     m_dism_scan_assessed = false;
     m_dism_scan_timed_out = false;
     m_dism_scan_granted_ms = 0;
+    m_dism_found_damage = false;
+    m_dism_repair_error.clear();
     m_time_limit_reached = false;
     m_run_deadline = QDeadlineTimer(kVerifySystemFilesTimeoutMs);
     m_cbs_log_path.clear();  // never carry a prior run's CBS log path into this run
@@ -440,9 +461,21 @@ QString VerifySystemFilesAction::buildDismSummary() const {
                           m_dism_scan_granted_ms /
                               (sak::kMillisecondsPerSecond * sak::kSecondsPerMinute)));
     }
+    if (m_dism_found_damage) {
+        // testpc1: ScanHealth found the store repairable, RestoreHealth /LimitAccess failed with
+        // 0x800f0915, and the run said DISM "did not complete a component store assessment".
+        const QString said = m_dism_repair_error.isEmpty()
+                                 ? QString()
+                                 : QStringLiteral(" DISM said: %1").arg(m_dism_repair_error);
+        return QStringLiteral(
+                   "DISM found damage in the component store and could not repair it from this "
+                   "PC.%1 A repair needs a source, such as Windows Update or a Windows ISO of the "
+                   "same version.")
+            .arg(said);
+    }
     // DISM did not reach an authoritative verdict (launch/elevation failure, timeout, an
-    // incomplete probe, or a failed repair). Do NOT claim health -- fail closed in the
-    // human-facing message, matching result.success == false.
+    // incomplete probe). Do NOT claim health -- fail closed in the human-facing message,
+    // matching result.success == false.
     return QStringLiteral("DISM did not complete a component store assessment.");
 }
 

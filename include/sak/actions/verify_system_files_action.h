@@ -87,6 +87,10 @@ public:
     ///        nothing when it holds none. Pure; unit-testable.
     [[nodiscard]] static std::optional<double> lastDismProgressPercent(const QString& chunk);
 
+    /// @brief DISM's own error from a failed run: its "Error: 0x..." line and the sentence after
+    ///        it, or empty when the output holds none. Pure; unit-testable.
+    [[nodiscard]] static QString dismErrorText(const QString& dism_output);
+
 protected:
     /// @brief Run one step's PowerShell, stopped by cancel(). @p on_output, when set, sees its
     ///        output as it arrives.
@@ -111,6 +115,10 @@ private:
     // ScanHealth ran out of time; how long it had. Not a failure: nothing was found or refused.
     bool m_dism_scan_timed_out{false};
     int m_dism_scan_granted_ms{0};
+    // A probe assessed the store and found damage; RestoreHealth then failed with this error.
+    // testpc1: the run said "DISM did not complete a component store assessment" for exactly that.
+    bool m_dism_found_damage{false};
+    QString m_dism_repair_error;
     // Set when a step was skipped or cut short because the run's single time budget ran out.
     bool m_time_limit_reached{false};
     QDeadlineTimer m_run_deadline;
