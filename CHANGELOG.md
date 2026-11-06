@@ -8,12 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
-- **Screenshot Settings captures Installed apps and Gaming, and says when a PC has no Wi-Fi** - Two of its Settings
-  links were not pages, so Settings stayed on the page before and both were reported as failed after three tries.
-  Every link is now one Microsoft publishes for Windows 10 and 11, with Windows 11's other name tried next, and
-  Gaming captures Game Mode. A page that Settings never opens is reported as one this Windows does not have, and
-  nothing is saved for it. On a PC with no Wi-Fi adapter the WiFi page is left out and the result says so; neither
-  counts as a failure. "1 monitors" reads "1 monitor", and the report names its folder with backslashes.
+- **Screenshot Settings saves each page as itself, captures Installed apps and Gaming, and says when a PC has no
+  Wi-Fi** - On a slow PC most of its pictures were of the wrong page: a page drawn half way was taken as drawn, and
+  the rest of it was saved under the next page's name (in a test virtual machine, 2 of 14 pictures showed their
+  page). Each page is now opened in a Settings window of its own, from Settings' About page, and saved once it has
+  stayed the same for 8 seconds; About is checked in two windows before the first page. The run does not start while
+  Settings is open, and says so. Two of its Settings links were not pages, so Installed apps and Gaming failed after
+  three tries: every link is now one Microsoft publishes for Windows 10 and 11, with Windows 11's other name tried
+  next, and Gaming captures Game Mode. A page that Settings never opens is reported as one this Windows does not
+  have, and nothing is saved for it. On a PC with no Wi-Fi adapter the WiFi page is left out and the result says so;
+  neither counts as a failure. "1 monitors" reads "1 monitor", and the report names its folder with backslashes.
 - **One look for buttons and cards** - Close, Cancel and No, which only leave a dialog or message, are the plain
   secondary colour everywhere, as are a wizard's Back and Cancel; the button that does the work keeps the blue. The
   Backup and Restore, Image Flasher and Help cards share one layout: a centred title under a 48 px picture.
@@ -126,8 +130,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Fixes the review capture found** - Advanced Uninstall keeps your ticks when you change the search, and marks an
   app that is only provisioned for new accounts. An offline bundle names each package that failed and why, and its
   progress bar finishes. Screenshot Settings captures the Settings window a person sees, not a blank picture, waits for
-  each page to be drawn, where every page after the first was a picture of the page before, and calls a blank or
-  repeated picture a failure. Advanced Search names each file it could not read, and its folder tree starts
+  each page to be drawn, where every page after the first was a picture of the page before, and calls a blank
+  picture a failure. Advanced Search names each file it could not read, and its folder tree starts
   closed. File Explorer selects the drive or folder in the sidebar that holds a path you type. A SMART warning names
   the drive, and one behind a USB adapter says so. Hardware inventory shows uptime, and says "Unknown" for battery
   health Windows did not report. A temperature or SMART value nobody read says "N/A", not 0 degrees or "--". A port

@@ -41,9 +41,6 @@ public:
     void execute() override;
 
 private:
-    /// The Settings window that was open before this run (the user's), or 0. Never closed.
-    WId m_settings_window_before_launch{0};
-
     /// @brief Result of capturing all settings pages
     struct CaptureResult {
         int screenshots_taken{0};
@@ -63,9 +60,25 @@ private:
         QStringList uris;
         bool needs_wifi{false};
     };
-    /// @brief Every page captured, About first: it exists on every Windows, and the first page
-    ///        has no page before it to tell an unopened page by.
+    /// @brief Every page captured, About first. Every page is opened from About, which exists on
+    ///        every Windows: a link that is no page leaves About on screen.
     [[nodiscard]] static QList<SettingsPage> settingsPages();
+
+    /// How long a picture must hold still to count as drawn: twice the longest a page drawn half
+    /// way held. Measured 2026-11-06, every page opened as the run opens it: at most 0.65 s on
+    /// testpc1; in the capture VM Installed apps held its title over an empty page for 3.83 s,
+    /// then six of its 32 apps for 3.62 s. What else held 3 s or more there was the page drawn:
+    /// Storage with a loading ring on one row, Personalization before its wallpaper preview
+    /// loaded, Privacy 17 px short of the end of its slide-in.
+    static constexpr qint64 kPageSettleMs = 8000;
+    /// How long About must hold still in a window of its own once it is known. It must also be
+    /// close to the About learned at the start, so no other page, half drawn or not, passes.
+    static constexpr qint64 kAboutSettleMs = 2000;
+    /// Two pictures are of one page while fewer than one pixel in this many differ. Measured:
+    /// every page differed from About in 21 to 45 % of the window (VM and testpc1); About
+    /// differed from itself by at most 4.8 % while it slid in, and by under 0.9 % from one
+    /// window to the next.
+    static constexpr qint64 kSamePagePixelDenominator = 10;
 
     /// What waiting on the Settings window for one page came to.
     enum class PageOutcome {
@@ -74,19 +87,42 @@ private:
         Failed
     };
 
-    /// @brief Watches the pictures the reused Settings window gives while one page is asked for.
-    ///        Pure, so the decision is tested without Settings.
+    /// @brief Watches the pictures one Settings window gives after one ms-settings: link was
+    ///        opened. Pure: each look carries its time, so the decision is tested without
+    ///        Settings.
     struct PageWatch {
-        QImage moment_before;
-        QImage changed;  ///< the latest picture of a new page, settled or not
-        bool saw_previous_page{false};
-        /// The page, once drawn: not blank, not @p previous_page, and the same as a moment ago.
-        [[nodiscard]] QImage look(const QImage& now, const QImage& previous_page);
-        /// When the wait runs out: a new page that never settled (a list filling in) is still
-        /// the page; a window that showed only the page before never opened this one, which on
-        /// Windows means the page does not exist there; anything else is a failed try.
+        /// What the window showed when the link was opened in it (About), or null for a window
+        /// the link itself opened. A page is never a picture close to this one.
+        QImage opened_on;
+        /// The picture the window must settle on, when it is known (About, in a window of its
+        /// own, once two such windows agreed on it), or null.
+        QImage expected;
+        qint64 settle_ms{kPageSettleMs};  ///< how long a picture must hold still to count
+        QImage held;                      ///< the latest picture that was not blank
+        qint64 held_since_ms{0};          ///< when that picture was first seen
+        bool saw_opened_on{false};        ///< a picture close to opened_on was seen
+        bool left_opened_on{false};       ///< a picture that is not close to opened_on was seen
+        /// The page, once a picture has held still for the settle time: not blank, not close to
+        /// opened_on, and close to expected when that is set. Null until then.
+        [[nodiscard]] QImage look(const QImage& now, qint64 now_ms);
+        /// When the wait runs out: a window that showed opened_on and never left it did not open
+        /// a page (on Windows, that page does not exist there). Anything else, a page that never
+        /// held still included, is a failed try. Nothing is saved for either.
         [[nodiscard]] PageOutcome outcomeAtDeadline() const;
     };
+    /// @brief True when @p a and @p b are pictures of different pages: other sizes, or more than
+    ///        a small share of their pixels apart. A blinking caret, a scroll bar fading in or a
+    ///        highlight under the pointer leave a page the same page.
+    [[nodiscard]] static bool picturesDiffer(const QImage& a, const QImage& b);
+    /// @brief The watch for About in a window of its own: before About is known, any picture
+    ///        that holds still for the page settle time; once it is known, @p learned_about,
+    ///        held for the shorter About settle time.
+    [[nodiscard]] static PageWatch aboutWatch(const QImage& learned_about);
+    /// @brief True when About from the window before (@p previous) and from this one (@p now)
+    ///        agree. A first window has nothing to agree with.
+    [[nodiscard]] static bool aboutWindowsAgree(const QImage& previous, const QImage& now);
+    /// About as Settings draws it, from two windows of its own that agreed; null until then.
+    QImage m_about_page;
 
     /// @brief True when @p adapters hold a Wi-Fi adapter. Settings has no Wi-Fi page without one.
     [[nodiscard]] static bool hasWifiAdapter(const QVector<NetworkAdapterInfo>& adapters);
@@ -111,47 +147,54 @@ private:
     /// @brief True when a picture is one colour throughout, which is what copying a window drawn
     ///        by the compositor gives. Such a picture is a failed capture, never a saved one.
     [[nodiscard]] static bool pictureIsBlank(const QImage& image);
-    /// @brief True when @p now shows a page that has finished drawing: not one colour, the same
-    ///        as @p moment_before, and not @p previous_page, which the reused window showed last.
-    [[nodiscard]] static bool pageIsDrawn(const QImage& now,
-                                          const QImage& moment_before,
-                                          const QImage& previous_page);
-    /// @brief True when @p now shows a page, settled or not, other than @p previous_page.
-    [[nodiscard]] static bool pageHasChanged(const QImage& now, const QImage& previous_page);
     /// @brief The picture @p window renders of itself, taken on the GUI thread
     ///        (BlockingQueuedConnection) so a worker thread can capture safely; null (fails
     ///        closed) if there is no QCoreApplication or the invocation cannot be marshalled.
     static QImage renderOnGui(WId window);
-    /// @brief Brings @p window to the front and waits, bounded and cancellable, for it to draw a
-    ///        page other than the last one saved. @p page is set to it when it does.
-    PageOutcome waitForDrawnPage(WId window, QImage* page);
-    /// The last page saved, which the reused Settings window shows until it draws the next.
-    QImage m_previous_page;
+    /// @brief Brings @p window to the front and feeds @p watch what it shows until the watch has
+    ///        the page, the wait runs out, or the run is cancelled. @p page is set to the page.
+    PageOutcome waitForDrawnPage(WId window, PageWatch* watch, QImage* page);
+
+    /// @brief Opens About in a Settings window of its own, the one before closed, and waits for
+    ///        it to settle on About (on m_about_page, once that is known). @p window is set to the
+    ///        window and @p about to its picture.
+    PageOutcome openAboutInItsOwnWindow(WId* window, QImage* about);
+    /// @brief Learns m_about_page: About in windows of its own until two in a row agree.
+    bool learnAboutPage();
+    /// @brief learnAboutPage(), ending the run as failed (or cancelled) when it cannot.
+    bool startFromAbout(const QDateTime& start_time);
+    /// @brief Ends the run as failed when a Settings window is already open; true when it did.
+    bool refuseWhileSettingsIsOpen(const QDateTime& start_time);
+    /// @brief One try at @p ms_uri: About in a window of its own, then the link in that window,
+    ///        compared against the About it showed when the link was opened.
+    PageOutcome tryPageFromAbout(const QString& ms_uri, const QString& page_name, QImage* page);
+    /// @brief Opens ms-settings:@p ms_uri through explorer.exe; false when it could not start.
+    [[nodiscard]] static bool openSettingsLink(const QString& ms_uri);
 
     /// @brief Each of @p page's names in turn until one opens; NotOnThisWindows when none does.
     PageOutcome captureSettingsPage(const SettingsPage& page,
                                     const QString& output_dir_path,
                                     const QString& timestamp);
-    /// @brief Opens ms-settings:@p ms_uri and saves what it draws, trying again after a window
-    ///        that did not answer or drew nothing.
+    /// @brief Saves ms-settings:@p ms_uri's page, trying again after a try that failed.
     PageOutcome captureSettingsUri(const QString& ms_uri,
                                    const QString& page_name,
                                    const QDir& output_dir,
                                    const QString& timestamp);
-    /// @brief The visible SystemSettings.exe top-level window, found by EnumWindows, or 0.
+    /// @brief The visible, not minimized Settings frame window, found by EnumWindows, or 0.
     static WId findSettingsWindow();
+    /// @brief True when any Settings window is open, minimized or not.
+    [[nodiscard]] static bool settingsWindowIsOpen();
     /// @brief Poll (bounded, cancellable) until a Settings window exists and answers messages.
     WId findRespondingSettingsWindow();
-    /// @brief Pure: the window this run may close -- @p settings_window, unless it is the one
-    ///        that was already open before the run (@p window_before_launch), or none.
-    static quintptr windowToClose(quintptr window_before_launch, quintptr settings_window);
-    /// @brief WM_CLOSE to the Settings window this run opened (never the user's), then wait.
-    void closeSettingsWindowWeOpened();
-    /// @brief Capture only the Settings window @p settings_window (not entire screen)
-    PageOutcome captureSettingsWindow(WId settings_window,
-                                      const QDir& output_dir,
-                                      const QString& page_name,
-                                      const QString& timestamp);
+    /// @brief WM_CLOSE to the Settings window, then a bounded wait for it to go. The run starts
+    ///        only with no Settings window open, so the window is always one this run opened.
+    ///        False when it was still open when the wait ran out.
+    bool closeSettingsWindowWeOpened();
+    /// @brief Saves @p page as @p page_name's picture in @p output_dir.
+    [[nodiscard]] static PageOutcome savePage(const QImage& page,
+                                              const QDir& output_dir,
+                                              const QString& page_name,
+                                              const QString& timestamp);
     /// @brief Write the screenshot report to disk.
     /// @return true only if the report was fully written and committed; a write
     /// failure is surfaced (the report path is not advertised as if it exists).

@@ -16,6 +16,7 @@
 #include <QDateTime>
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
@@ -34,16 +35,23 @@ namespace sak {
 namespace {
 constexpr int kSettingsCaptureFirstAttempt = 1;
 constexpr int kSettingsCaptureMaxAttempts = 3;
-// How long a Settings page may take to come up and answer, how often to look, and how long one
-// "are you responsive" probe may block.
-constexpr int kSettingsWindowWaitMs = 15'000;
+// Every page is opened from About, in a Settings window of its own. About is known once two
+// windows of its own in a row settle on the same picture, in at most this many windows.
+constexpr auto kAboutUri = QLatin1StringView("about");
+constexpr int kAboutMaxWindows = 4;
+// How long a Settings window may take to come up and answer, how often to look, and how long one
+// "are you responsive" probe may block. Measured 2026-11-06: a new window showed its page 1.0 to
+// 1.8 s after its link on testpc1, and 16.8 to 21.7 s in the capture VM.
+constexpr int kSettingsWindowWaitMs = 45'000;
 constexpr int kSettingsPollMs = 100;
 constexpr UINT kSettingsResponsiveTimeoutMs = 2000;
-constexpr int kSettingsCloseWaitMs = 5000;
-// How long a page may take to draw after Settings is asked for it, and how long a picture must
-// stay the same to count as drawn.
-constexpr int kSettingsPageDrawWaitMs = 10'000;
-constexpr int kSettingsPageSettleMs = 300;
+constexpr int kSettingsCloseWaitMs = 10'000;
+// How long a page may take to draw and hold still once its link is opened in About's window.
+// Measured: About stayed 0.4 to 1.2 s after the link on testpc1 and 5.8 to 19.4 s in the capture
+// VM; there the last page drew by 19.4 s, and Storage, whose loading ring never stops, first
+// held still for the settle time 33 s after its link.
+constexpr qint64 kSettingsPageDrawWaitMs = 60'000;
+constexpr int kSettingsLookMs = 100;
 constexpr int kMsPerSecond = 1000;
 constexpr int kScreenshotReportFieldWidth = 61;
 
@@ -101,18 +109,36 @@ bool ScreenshotSettingsAction::pictureIsBlank(const QImage& image) {
     return true;
 }
 
-bool ScreenshotSettingsAction::pageIsDrawn(const QImage& now,
-                                           const QImage& moment_before,
-                                           const QImage& previous_page) {
-    // Settings navigates its one window, so until it has drawn the new page it still shows the
-    // last one: every page after the first was saved as a picture of System > About. Drawn means
-    // not one colour, the same as a moment ago (no loading spinner or slide-in mid-way), and not
-    // the page before it.
-    return pageHasChanged(now, previous_page) && now == moment_before;
+namespace {
+
+qint64 differingPixels(const QRgb* left, const QRgb* right, int width) {
+    qint64 differing = 0;
+    for (int x = 0; x < width; ++x) {
+        differing += (left[x] & RGB_MASK) != (right[x] & RGB_MASK) ? 1 : 0;
+    }
+    return differing;
 }
 
-bool ScreenshotSettingsAction::pageHasChanged(const QImage& now, const QImage& previous_page) {
-    return !pictureIsBlank(now) && now != previous_page;
+}  // namespace
+
+bool ScreenshotSettingsAction::picturesDiffer(const QImage& a, const QImage& b) {
+    if (a.isNull() || b.isNull() || a.size() != b.size()) {
+        return true;
+    }
+    const QImage left = a.convertToFormat(QImage::Format_RGB32);
+    const QImage right = b.convertToFormat(QImage::Format_RGB32);
+    const qint64 allowed = static_cast<qint64>(left.width()) * left.height() /
+                           kSamePagePixelDenominator;
+    qint64 differing = 0;
+    for (int y = 0; y < left.height(); ++y) {
+        differing += differingPixels(reinterpret_cast<const QRgb*>(left.constScanLine(y)),
+                                     reinterpret_cast<const QRgb*>(right.constScanLine(y)),
+                                     left.width());
+        if (differing > allowed) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QImage ScreenshotSettingsAction::renderOnGui(WId window) {
@@ -139,33 +165,43 @@ QImage ScreenshotSettingsAction::renderOnGui(WId window) {
     return shot;
 }
 
-QImage ScreenshotSettingsAction::PageWatch::look(const QImage& now, const QImage& previous_page) {
-    if (pageIsDrawn(now, moment_before, previous_page)) {
-        return now;
+QImage ScreenshotSettingsAction::PageWatch::look(const QImage& now, qint64 now_ms) {
+    if (pictureIsBlank(now)) {
+        held = QImage();
+        return {};
     }
-    if (pageHasChanged(now, previous_page)) {
-        changed = now;
-    } else if (!previous_page.isNull() && !pictureIsBlank(now) && now == previous_page) {
-        saw_previous_page = true;
+    if (now != held) {
+        held = now;
+        held_since_ms = now_ms;
     }
-    moment_before = now;
-    return {};
+    if (!opened_on.isNull() && !picturesDiffer(now, opened_on)) {
+        // Settings still shows the page it was on when the link was opened.
+        saw_opened_on = true;
+        return {};
+    }
+    left_opened_on = true;
+    // Drawn means held still: in the capture VM a page drawn half way (its title over an empty
+    // page) held for up to 3.83 s, and with a 0.3 s wait such a picture was saved, and the rest
+    // of the page was saved under the next page's name.
+    if (now_ms - held_since_ms < settle_ms) {
+        return {};
+    }
+    // A window of its own that is meant to show About shows About, not whatever it drew first.
+    if (!expected.isNull() && picturesDiffer(now, expected)) {
+        return {};
+    }
+    return now;
 }
 
 ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::PageWatch::outcomeAtDeadline()
     const {
-    if (!changed.isNull()) {
-        // A page that keeps moving (a list filling in, an animation) never settles. It has still
-        // been drawn.
-        return PageOutcome::Captured;
-    }
     // Settings stays on the page it showed when it is asked for a page this Windows does not
-    // have: on testpc1 (Windows 11 25H2) ms-settings:apps-features and ms-settings:gaming each
-    // left System > About on screen. In the capture VM those two failed three 10 s tries apiece.
-    return saw_previous_page ? PageOutcome::NotOnThisWindows : PageOutcome::Failed;
+    // have: on testpc1 (Windows 11 25H2) ms-settings:apps-features left System > About on screen.
+    return saw_opened_on && !left_opened_on ? PageOutcome::NotOnThisWindows : PageOutcome::Failed;
 }
 
 ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::waitForDrawnPage(WId window,
+                                                                                 PageWatch* watch,
                                                                                  QImage* page) {
     // A Settings window behind another one stops drawing, so it would never show the new page.
     const auto hwnd = reinterpret_cast<HWND>(window);
@@ -173,22 +209,18 @@ ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::waitForDrawnPage
         ShowWindow(hwnd, SW_RESTORE);
     }
     SetForegroundWindow(hwnd);
-    QDeadlineTimer deadline(kSettingsPageDrawWaitMs);
-    PageWatch watch;
+    QElapsedTimer clock;
+    clock.start();
     while (!isCancelled()) {
-        QImage drawn = watch.look(renderOnGui(window), m_previous_page);
+        QImage drawn = watch->look(renderOnGui(window), clock.elapsed());
         if (!drawn.isNull()) {
             *page = std::move(drawn);
             return PageOutcome::Captured;
         }
-        if (deadline.hasExpired()) {
-            const PageOutcome outcome = watch.outcomeAtDeadline();
-            if (outcome == PageOutcome::Captured) {
-                *page = watch.changed;
-            }
-            return outcome;
+        if (clock.elapsed() >= kSettingsPageDrawWaitMs) {
+            return watch->outcomeAtDeadline();
         }
-        QThread::msleep(kSettingsPageSettleMs);
+        QThread::msleep(kSettingsLookMs);
     }
     return PageOutcome::Failed;
 }
@@ -225,6 +257,9 @@ void ScreenshotSettingsAction::execute() {
     const QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Detecting monitor configuration...", progress::kStep3);
     const int monitor_count = detectMonitorCount();
+    if (refuseWhileSettingsIsOpen(start_time)) {
+        return;
+    }
 
     Q_EMIT executionProgress("Preparing screenshot directory...", progress::kStep5);
     const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
@@ -235,9 +270,9 @@ void ScreenshotSettingsAction::execute() {
         emitFailedResult(folder_error, folder_error, start_time);
         return;
     }
-
-    // A Settings window open now is the user's: navigated (single-instance), never closed.
-    m_settings_window_before_launch = findSettingsWindow();
+    if (!startFromAbout(start_time)) {
+        return;
+    }
     const QList<SettingsPage> settings_pages = settingsPages();
     // Asked once: Settings has no Wi-Fi page on a PC without an adapter. When the adapters cannot
     // be listed, the page is tried like any other.
@@ -435,17 +470,21 @@ bool windowIsSettingsProcess(HWND hwnd) {
     return found;
 }
 
-}  // namespace
+struct SettingsFrameSearch {
+    bool include_minimized{false};
+    HWND frame{nullptr};
+};
 
-WId ScreenshotSettingsAction::findSettingsWindow() {
-    // Settings is a Store app: the window a person sees is ApplicationFrameHost's frame, with the
-    // SystemSettings.exe window inside it. The visible frame holding that window is the one to
-    // capture and to close. SystemSettings.exe's own top-level window was captured before, and
-    // gave a blank 1024x768 picture for every page.
-    HWND frame_hwnd = nullptr;
+// Settings is a Store app: the window a person sees is ApplicationFrameHost's frame, with the
+// SystemSettings.exe window inside it. The visible frame holding that window is the one to
+// capture and to close. SystemSettings.exe's own top-level window was captured before, and gave
+// a blank 1024x768 picture for every page.
+HWND findSettingsFrame(bool include_minimized) {
+    SettingsFrameSearch search{.include_minimized = include_minimized};
     EnumWindows(
         [](HWND hwnd, LPARAM lparam) -> BOOL {
-            if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
+            auto* wanted = reinterpret_cast<SettingsFrameSearch*>(lparam);
+            if (!IsWindowVisible(hwnd) || (IsIconic(hwnd) && !wanted->include_minimized)) {
                 return TRUE;
             }
             bool hosts_settings = false;
@@ -460,23 +499,23 @@ WId ScreenshotSettingsAction::findSettingsWindow() {
                 },
                 reinterpret_cast<LPARAM>(&hosts_settings));
             if (hosts_settings) {
-                *reinterpret_cast<HWND*>(lparam) = hwnd;
+                wanted->frame = hwnd;
                 return FALSE;
             }
             return TRUE;
         },
-        reinterpret_cast<LPARAM>(&frame_hwnd));
-    return reinterpret_cast<WId>(frame_hwnd);
+        reinterpret_cast<LPARAM>(&search));
+    return search.frame;
 }
 
-quintptr ScreenshotSettingsAction::windowToClose(quintptr window_before_launch,
-                                                 quintptr settings_window) {
-    // Settings is single-instance: ms-settings: navigates a window the user already had open
-    // rather than opening a new one. That window is theirs -- never close it.
-    if (settings_window == 0 || settings_window == window_before_launch) {
-        return 0;
-    }
-    return settings_window;
+}  // namespace
+
+WId ScreenshotSettingsAction::findSettingsWindow() {
+    return reinterpret_cast<WId>(findSettingsFrame(false));
+}
+
+bool ScreenshotSettingsAction::settingsWindowIsOpen() {
+    return findSettingsFrame(true) != nullptr;
 }
 
 WId ScreenshotSettingsAction::findRespondingSettingsWindow() {
@@ -505,14 +544,14 @@ WId ScreenshotSettingsAction::findRespondingSettingsWindow() {
     }
 }
 
-void ScreenshotSettingsAction::closeSettingsWindowWeOpened() {
-    const auto hwnd = reinterpret_cast<HWND>(
-        windowToClose(m_settings_window_before_launch, findSettingsWindow()));
+bool ScreenshotSettingsAction::closeSettingsWindowWeOpened() {
+    // The run starts only with no Settings window open, so any Settings window now is one this
+    // run opened. Minimized or not, it is asked to close (WM_CLOSE), as its own close button
+    // would; nothing is force-killed. Then the wait for it to go is bounded.
+    const HWND hwnd = findSettingsFrame(true);
     if (hwnd == nullptr) {
-        return;
+        return true;
     }
-    // Ask the one window this action opened to close (WM_CLOSE), as its own close button would;
-    // nothing is force-killed. Then wait for it to go, bounded.
     PostMessageW(hwnd, WM_CLOSE, 0, 0);
     QDeadlineTimer deadline(kSettingsCloseWaitMs);
     while (IsWindow(hwnd) && !deadline.hasExpired()) {
@@ -521,36 +560,141 @@ void ScreenshotSettingsAction::closeSettingsWindowWeOpened() {
     if (IsWindow(hwnd)) {
         Q_EMIT logMessage(QStringLiteral("Settings window did not close within %1 s; left open")
                               .arg(kSettingsCloseWaitMs / kMsPerSecond));
+        return false;
     }
+    return true;
 }
 
-ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsWindow(
-    WId settings_window,
-    const QDir& output_dir,
-    const QString& page_name,
-    const QString& timestamp) {
-    if (settings_window == 0) {
-        // Refuse to capture an arbitrary foreground window -- the caller
-        // asked for Settings, not "whatever happens to be on top".
-        sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
+bool ScreenshotSettingsAction::openSettingsLink(const QString& ms_uri) {
+    // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary): a
+    // shell-open resolves through the same CreateProcess search order as any other launch, so a
+    // bare name lets a planted explorer.exe run. Refuse the try rather than fall back to it.
+    return sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                         {QString("ms-settings:%1").arg(ms_uri)});
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::openAboutInItsOwnWindow(
+    WId* window, QImage* about) {
+    // A window of its own: the one before is closed first, so no page is drawn over another
+    // page's leftovers.
+    if (!closeSettingsWindowWeOpened() || !openSettingsLink(kAboutUri)) {
+        return PageOutcome::Failed;
+    }
+    *window = findRespondingSettingsWindow();
+    if (*window == 0) {
+        // Refuse to capture an arbitrary foreground window: the run asked for Settings.
+        sak::logWarning("ScreenshotSettingsAction: no Settings window answered within {} s",
+                        kSettingsWindowWaitMs / kMsPerSecond);
+        return PageOutcome::Failed;
+    }
+    PageWatch watch = aboutWatch(m_about_page);
+    return waitForDrawnPage(*window, &watch, about);
+}
+
+ScreenshotSettingsAction::PageWatch ScreenshotSettingsAction::aboutWatch(
+    const QImage& learned_about) {
+    PageWatch watch;
+    watch.expected = learned_about;
+    watch.settle_ms = learned_about.isNull() ? kPageSettleMs : kAboutSettleMs;
+    return watch;
+}
+
+bool ScreenshotSettingsAction::learnAboutPage() {
+    // A new window has nothing before it to compare against: its first steady picture can be
+    // Settings' splash or a page it drew last time (in the capture VM the first page was saved
+    // as Game Bar). About is known once two windows of its own settle on the same picture. Each
+    // run learns it again: the window's size, theme or text may have changed since the last.
+    m_about_page = QImage();
+    QImage previous;
+    for (int window_count = 0; window_count < kAboutMaxWindows && !isCancelled(); ++window_count) {
+        WId window = 0;
+        QImage about;
+        if (openAboutInItsOwnWindow(&window, &about) != PageOutcome::Captured) {
+            continue;
+        }
+        if (aboutWindowsAgree(previous, about)) {
+            m_about_page = about;
+            return true;
+        }
+        previous = about;
+    }
+    return false;
+}
+
+bool ScreenshotSettingsAction::aboutWindowsAgree(const QImage& previous, const QImage& now) {
+    // A null picture differs from every picture, so a first window agrees with nothing.
+    return !picturesDiffer(previous, now);
+}
+
+bool ScreenshotSettingsAction::refuseWhileSettingsIsOpen(const QDateTime& start_time) {
+    // Each page is opened in a Settings window of its own, which is then closed. Settings has one
+    // window, so a link would navigate the user's own window: the run does not start while one
+    // is open.
+    if (settingsWindowIsOpen()) {
+        sak::logWarning("ScreenshotSettingsAction: Settings is open; the run did not start");
+        emitFailedResult(
+            QStringLiteral("Settings is open: close it, then run Screenshot Settings again"),
+            QStringLiteral("Each page is opened in a Settings window of its own, and Settings "
+                           "has one window"),
+            start_time);
+        return true;
+    }
+    return false;
+}
+
+bool ScreenshotSettingsAction::startFromAbout(const QDateTime& start_time) {
+    Q_EMIT executionProgress("Opening About in Settings...", progress::kStep5);
+    if (learnAboutPage()) {
+        return true;
+    }
+    closeSettingsWindowWeOpened();
+    if (isCancelled()) {
+        emitCancelledResult("Settings screenshots cancelled", start_time);
+        return false;
+    }
+    sak::logWarning("ScreenshotSettingsAction: no two Settings windows drew About alike in {}",
+                    kAboutMaxWindows);
+    emitFailedResult(
+        QStringLiteral("Settings did not draw its About page alike twice; no page was captured"),
+        QStringLiteral("Every page is opened from About, which is known once two Settings "
+                       "windows of its own draw it alike"),
+        start_time);
+    return false;
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::tryPageFromAbout(
+    const QString& ms_uri, const QString& page_name, QImage* page) {
+    WId window = 0;
+    QImage about;
+    if (openAboutInItsOwnWindow(&window, &about) != PageOutcome::Captured) {
+        sak::logWarning("ScreenshotSettingsAction: Settings did not open About for page {}",
                         page_name.toStdString());
         return PageOutcome::Failed;
     }
-    const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
-    // A blank picture, or the last page again, saved as a screenshot is evidence of nothing.
-    QImage page;
-    const PageOutcome outcome = waitForDrawnPage(settings_window, &page);
+    // The page is compared against what Settings showed when its link was opened: About, held
+    // still and checked against the About learned at the start.
+    PageWatch watch;
+    watch.opened_on = about;
+    if (!openSettingsLink(ms_uri)) {
+        return PageOutcome::Failed;
+    }
+    const PageOutcome outcome = waitForDrawnPage(window, &watch, page);
     if (outcome == PageOutcome::NotOnThisWindows) {
-        sak::logWarning("ScreenshotSettingsAction: Settings stayed on the page before {}",
+        sak::logWarning("ScreenshotSettingsAction: Settings stayed on About for page {}",
                         page_name.toStdString());
-        return outcome;
+    } else if (outcome == PageOutcome::Failed) {
+        sak::logWarning("ScreenshotSettingsAction: Settings did not draw page {} within {} s",
+                        page_name.toStdString(),
+                        kSettingsPageDrawWaitMs / kMsPerSecond);
     }
-    if (outcome == PageOutcome::Failed) {
-        sak::logWarning("ScreenshotSettingsAction: Settings did not draw page {}",
-                        page_name.toStdString());
-        return outcome;
-    }
-    m_previous_page = page;
+    return outcome;
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::savePage(const QImage& page,
+                                                                         const QDir& output_dir,
+                                                                         const QString& page_name,
+                                                                         const QString& timestamp) {
+    const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
     return page.save(filepath, "PNG") ? PageOutcome::Captured : PageOutcome::Failed;
 }
 
@@ -559,8 +703,8 @@ ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::outcomeOfAttempt
     if (attempts.contains(PageOutcome::Captured)) {
         return PageOutcome::Captured;
     }
-    // Not on this Windows only when every try saw nothing but the page before: in the capture VM
-    // Game Mode took longer than one 10 s wait to draw, and the next try found it drawn.
+    // Not on this Windows only when every try saw nothing but About after the link: in the
+    // capture VM Game Mode once took longer than one wait to draw, and the next try found it.
     const bool never_left = !attempts.isEmpty() &&
                             std::ranges::all_of(attempts, [](PageOutcome outcome) {
                                 return outcome == PageOutcome::NotOnThisWindows;
@@ -573,21 +717,19 @@ ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsU
     const QString& page_name,
     const QDir& output_dir,
     const QString& timestamp) {
+    // About was drawn alike by two windows of its own before any page was opened.
+    if (ms_uri == kAboutUri) {
+        return savePage(m_about_page, output_dir, page_name, timestamp);
+    }
     QList<PageOutcome> attempts;
     for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
          ++attempt) {
-        // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary):
-        // a shell-open resolves through the same CreateProcess search order as any other
-        // launch, so a bare name lets a planted explorer.exe run. Refuse the whole capture
-        // attempt rather than fall back to the bare name.
-        if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
-                                           {QString("ms-settings:%1").arg(ms_uri)})) {
-            return PageOutcome::Failed;
+        QImage page;
+        attempts.append(tryPageFromAbout(ms_uri, page_name, &page));
+        if (attempts.last() == PageOutcome::Captured) {
+            return savePage(page, output_dir, page_name, timestamp);
         }
-        // The same window is reused page after page; it is closed once, when the run ends.
-        attempts.append(captureSettingsWindow(
-            findRespondingSettingsWindow(), output_dir, page_name, timestamp));
-        if (attempts.last() == PageOutcome::Captured || isCancelled()) {
+        if (isCancelled()) {
             break;
         }
     }

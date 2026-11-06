@@ -19,6 +19,7 @@
 #include <QtTest/QtTest>
 
 #include <memory>
+#include <utility>
 
 using sak::ScreenshotSettingsAction;
 
@@ -31,11 +32,15 @@ class ScreenshotSettingsActionTests : public QObject {
     using CaptureContext = ScreenshotSettingsAction::CaptureContext;
 
 private Q_SLOTS:
-    void windowToClose_neverTheUsersOwnSettingsWindow();
+    void aRunStartsOnlyWithNoSettingsWindowOpen();
     void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
     void aBlankPictureIsAFailedCapture();
-    void aPageIsSavedOnlyOnceSettingsHasDrawnIt();
-    void aPageSettingsNeverOpensIsNotOnThisWindows();
+    void picturesOfOnePageDifferByAFewPixelsOnly();
+    void aPageIsSavedOnlyOnceItHasHeldStill();
+    void aWindowOfItsOwnMustSettleOnTheAboutLearnedFirst();
+    void aboutIsKnownOnlyWhenTwoWindowsAgree();
+    void everyPageIsOpenedFromAboutInAWindowOfItsOwn();
+    void aLinkThatLeavesAboutOnScreenIsNoPage();
     void aPageIsMissingOnlyWhenEveryTryFindsThePageBefore();
     void settingsPagesUsePublishedNames();
     void buildExecutionResult_namesPagesThisPcDoesNotHave();
@@ -59,6 +64,54 @@ private:
     // action and reachable only through this class's friendship.
     static CaptureContext contextWith(bool report_written);
 };
+
+namespace {
+
+constexpr int kPictureWidth = 100;
+constexpr int kPictureHeight = 80;
+constexpr int kContentLeft = 10;
+constexpr int kContentRight = 90;
+constexpr int kContentTop = 10;
+
+// A picture of a Settings page: the light background, and as many rows of ink as the page has
+// content. About has 10 rows; a page such as Display has 40, as different as real pages are
+// (on testpc1 every page differed from About in 22 to 42 % of the window).
+QImage pagePicture(int content_rows, QRgb ink) {
+    QImage page(kPictureWidth, kPictureHeight, QImage::Format_RGB32);
+    page.fill(QColor(243, 243, 243));
+    for (int y = kContentTop; y < kContentTop + content_rows; ++y) {
+        for (int x = kContentLeft; x < kContentRight; ++x) {
+            page.setPixel(x, y, ink);
+        }
+    }
+    return page;
+}
+
+QImage aboutPicture() {
+    return pagePicture(10, qRgb(0, 0, 0));
+}
+
+QImage displayPicture() {
+    return pagePicture(40, qRgb(0, 120, 215));
+}
+
+// @p page with @p count pixels of its last rows changed: a caret, a scroll bar fading in, a
+// highlight under the pointer.
+QImage withPixelsChanged(const QImage& page, int count) {
+    QImage changed = page;
+    for (int i = 0; i < count; ++i) {
+        const int x = i % kPictureWidth;
+        const int y = kPictureHeight - 1 - (i / kPictureWidth);
+        changed.setPixel(x, y, qRgb(255, 0, 255));
+    }
+    return changed;
+}
+
+qint64 picturePixels() {
+    return static_cast<qint64>(kPictureWidth) * kPictureHeight;
+}
+
+}  // namespace
 
 ScreenshotSettingsAction::CaptureContext ScreenshotSettingsActionTests::contextWith(
     bool report_written) {
@@ -395,101 +448,226 @@ void ScreenshotSettingsActionTests::renderOnGui_failsClosedWhenMarshalledFromWor
              "invocation was delivered");
 }
 
-// The action used to force-kill every SystemSettings.exe by name -- including a Settings window
-// the user had open. Settings is single-instance, so a window that was already open is theirs:
-// it is never closed. Only a window this run brought up is asked to close (WM_CLOSE).
-void ScreenshotSettingsActionTests::windowToClose_neverTheUsersOwnSettingsWindow() {
-    constexpr quintptr kUsers = 0x1234;
-    constexpr quintptr kOurs = 0x5678;
-    QCOMPARE(Action::windowToClose(kUsers, kUsers), quintptr{0});
-    QCOMPARE(Action::windowToClose(0, kOurs), kOurs);
-    QCOMPARE(Action::windowToClose(kUsers, kOurs), kOurs);
-    QCOMPARE(Action::windowToClose(0, 0), quintptr{0});
-}
+namespace {
 
-// Detection is EnumWindows over visible top-level windows, waits are for state (window present
-// and answering), and nothing is force-killed: no taskkill, no tasklist per page, no fixed sleeps.
-// Eight pages saved as eight 1024x768 pictures of one colour: copying the pixels of a window the
-// compositor draws gives that. A blank is now a failed try, and the capture asks the frame window
-// a person sees to render itself.
-// Settings navigates its one window, so a picture taken as soon as it answered was the page before:
-// in the capture VM all fifteen pages were saved, and every one after the first showed System >
-// About. A page is saved once its picture is not blank, has stopped changing, and is not the
-// last page saved.
-void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceSettingsHasDrawnIt() {
-    QImage about(64, 48, QImage::Format_RGB32);
-    about.fill(QColor(243, 243, 243));
-    about.setPixel(10, 10, qRgb(0, 0, 0));
-    QImage display = about;
-    display.setPixel(20, 20, qRgb(0, 120, 215));
-    QImage spinner = display;
-    spinner.setPixel(30, 30, qRgb(128, 128, 128));
-    QImage blank(64, 48, QImage::Format_RGB32);
-    blank.fill(QColor(243, 243, 243));
-
-    QVERIFY(Action::pageIsDrawn(display, display, about));
-    QVERIFY(Action::pageIsDrawn(about, about, QImage()));    // the first page has no page before it
-    QVERIFY(!Action::pageIsDrawn(about, about, about));      // still the last page
-    QVERIFY(!Action::pageIsDrawn(display, spinner, about));  // still changing
-    QVERIFY(!Action::pageIsDrawn(display, QImage(), about));  // nothing to compare with yet
-    QVERIFY(!Action::pageIsDrawn(blank, blank, about));
-    // A page that never settles (a list filling in, an animation) is kept once the wait runs out,
-    // if it is a new page at all.
-    QVERIFY(Action::pageHasChanged(spinner, about));
-    QVERIFY(!Action::pageHasChanged(about, about));
-    QVERIFY(!Action::pageHasChanged(blank, about));
-
-    // Settings is brought to the front first: a window behind another one stops drawing.
+QString actionSource() {
     QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
                    .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    const QString source = QString::fromUtf8(file.readAll());
-    QVERIFY(source.contains(QStringLiteral("SetForegroundWindow(hwnd);")));
-    QVERIFY(source.contains(
-        QStringLiteral("const PageOutcome outcome = waitForDrawnPage(settings_window, &page);")));
-
-    // The wait itself: a page that keeps moving is kept once the wait runs out.
-    Action::PageWatch moving;
-    QVERIFY(moving.look(display, about).isNull());
-    QVERIFY(moving.look(spinner, about).isNull());
-    QCOMPARE(moving.outcomeAtDeadline(), Action::PageOutcome::Captured);
-    QCOMPARE(moving.changed, spinner);
-    Action::PageWatch settles;
-    QVERIFY(settles.look(display, about).isNull());
-    QCOMPARE(settles.look(display, about), display);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    // Line ends as git left them on this checkout; the checks below read "\n" alone.
+    return QString::fromUtf8(file.readAll()).remove(QLatin1Char('\r'));
 }
 
-// Coordinator, round 5: in the capture VM Installed apps and Gaming never left the page before
-// them in three 10 s tries apiece. Their names, ms-settings:apps-features and ms-settings:gaming,
-// are not pages at all: on testpc1 (Windows 11 25H2) each left System > About on screen. A window
-// that shows only the page before for the whole wait did not open this page, and the page is
-// reported as one this Windows does not have; nothing is saved for it. Blank or no window is a
-// failed try, as before.
-void ScreenshotSettingsActionTests::aPageSettingsNeverOpensIsNotOnThisWindows() {
-    QImage about(64, 48, QImage::Format_RGB32);
-    about.fill(QColor(243, 243, 243));
-    about.setPixel(10, 10, qRgb(0, 0, 0));
-    QImage blank(64, 48, QImage::Format_RGB32);
+// The definition of ScreenshotSettingsAction::@p function, up to its closing brace in column 0.
+QString functionBody(const QString& source, const QString& function) {
+    const qsizetype start =
+        source.indexOf(QStringLiteral("ScreenshotSettingsAction::%1(").arg(function));
+    if (start < 0) {
+        return {};
+    }
+    const qsizetype end = source.indexOf(QStringLiteral("\n}\n"), start);
+    return end < 0 ? QString() : source.mid(start, end - start);
+}
+
+}  // namespace
+
+// The action used to force-kill every SystemSettings.exe by name, and later navigated a Settings
+// window the user had open. Each page is now opened in a Settings window of its own, which is
+// then closed, and Settings has one window: so the run does not start while one is open, before
+// it makes its folder or opens anything. Every window it closes is then one it opened.
+void ScreenshotSettingsActionTests::aRunStartsOnlyWithNoSettingsWindowOpen() {
+    const QString source = actionSource();
+    QVERIFY(!source.isEmpty());
+    const QString run = functionBody(source, QStringLiteral("execute"));
+    const qsizetype refusal =
+        run.indexOf(QStringLiteral("if (refuseWhileSettingsIsOpen(start_time)) {"));
+    QVERIFY2(refusal > 0, "execute() must refuse to start while Settings is open");
+    QVERIFY(run.indexOf(QStringLiteral("createCaptureFolder(output_dir)")) > refusal);
+    QVERIFY(run.indexOf(QStringLiteral("startFromAbout(start_time)")) > refusal);
+    const QString refuse = functionBody(source, QStringLiteral("refuseWhileSettingsIsOpen"));
+    QVERIFY2(refuse.contains(QStringLiteral("    if (settingsWindowIsOpen()) {")),
+             "the run must not start while a Settings window is open");
+    QVERIFY(refuse.contains(
+        QStringLiteral("Settings is open: close it, then run Screenshot Settings again")));
+    // Minimized counts as open.
+    QVERIFY(source.contains(QStringLiteral("return findSettingsFrame(true) != nullptr;")));
+}
+
+// A page drawn half way is not the same picture as the page drawn, but a caret, a scroll bar
+// fading in or a highlight under the pointer leave a page the same page: on testpc1 About's own
+// blips changed 32 of 765,440 pixels, and every page differed from About in over a fifth.
+void ScreenshotSettingsActionTests::picturesOfOnePageDifferByAFewPixelsOnly() {
+    const QImage about = aboutPicture();
+    const auto allowed = static_cast<int>(picturePixels() / Action::kSamePagePixelDenominator);
+    QVERIFY(!Action::picturesDiffer(about, about));
+    QVERIFY(!Action::picturesDiffer(about, withPixelsChanged(about, 4)));
+    QVERIFY(!Action::picturesDiffer(about, withPixelsChanged(about, allowed)));
+    QVERIFY(Action::picturesDiffer(about, withPixelsChanged(about, allowed + 1)));
+    QVERIFY(Action::picturesDiffer(about, displayPicture()));
+    QVERIFY(Action::picturesDiffer(about, about.scaled(kPictureWidth / 2, kPictureHeight / 2)));
+    QVERIFY(Action::picturesDiffer(about, QImage()));
+    QVERIFY(Action::picturesDiffer(QImage(), QImage()));
+}
+
+// Round 5's final capture VM run saved two of fourteen pages right. The wait counted a picture
+// as drawn once it was not the last picture saved and was the same 0.3 s later. In the VM a page
+// drawn half way holds far longer than that. Measured with every page opened as the run opens
+// it: after Installed apps' link About stayed 9.9 s, then its title over an empty page held
+// 3.83 s and six of its 32 apps 3.62 s. Each such picture was saved, the page went on drawing,
+// and the next page's wait took the rest as the next page: Activation was saved as About,
+// Display as Activation half drawn, Power as Activation. A page is now drawn only once one
+// picture, not close to the About its link was opened on, has held still for the settle time.
+void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceItHasHeldStill() {
+    const QImage about = aboutPicture();
+    const QImage title_only = pagePicture(3, qRgb(0, 120, 215));
+    const QImage six_apps = pagePicture(20, qRgb(0, 120, 215));
+    const QImage installed_apps = displayPicture();
+    constexpr qint64 kLookMs = 300;
+    Action::PageWatch watch;
+    watch.opened_on = about;
+    QCOMPARE(watch.settle_ms, Action::kPageSettleMs);
+    qint64 now = 0;
+    for (; now < 9900; now += kLookMs) {
+        QVERIFY(watch.look(about, now).isNull());
+        QVERIFY(watch.look(withPixelsChanged(about, 30), now + 1).isNull());
+    }
+    for (const auto& [picture, held_ms] :
+         {std::pair{title_only, qint64{3830}}, std::pair{six_apps, qint64{3620}}}) {
+        const qint64 first_seen = now;
+        for (; now <= first_seen + held_ms; now += kLookMs) {
+            QVERIFY2(watch.look(picture, now).isNull(), "a page drawn half way was saved");
+        }
+    }
+    const qint64 drawn_from = now;
+    QVERIFY(watch.look(installed_apps, drawn_from).isNull());
+    QVERIFY(watch.look(installed_apps, drawn_from + Action::kPageSettleMs - 1).isNull());
+    QCOMPARE(watch.look(installed_apps, drawn_from + Action::kPageSettleMs), installed_apps);
+    QVERIFY(watch.left_opened_on);
+
+    // Twice the longest any page held drawn half way, in the VM and on testpc1.
+    QVERIFY(Action::kPageSettleMs >= 2 * 3830);
+
+    // A blank picture never counts, and restarts the wait for a still picture.
+    QImage blank(kPictureWidth, kPictureHeight, QImage::Format_RGB32);
+    blank.fill(QColor(243, 243, 243));
+    Action::PageWatch flicker;
+    flicker.opened_on = about;
+    QVERIFY(flicker.look(installed_apps, 0).isNull());
+    QVERIFY(flicker.look(blank, Action::kPageSettleMs / 2).isNull());
+    QVERIFY(flicker.look(installed_apps, Action::kPageSettleMs).isNull());
+    QCOMPARE(flicker.look(installed_apps, 2 * Action::kPageSettleMs), installed_apps);
+}
+
+// The first page has nothing before it to compare against: in round 5's final VM run About was
+// saved as Game Bar, the page Settings had shown last time, held still in a new window. Every
+// later window of its own must settle on the About learned at the start, however long something
+// else holds still in it.
+void ScreenshotSettingsActionTests::aWindowOfItsOwnMustSettleOnTheAboutLearnedFirst() {
+    const QImage about = aboutPicture();
+    const QImage game_bar = pagePicture(30, qRgb(16, 124, 16));
+    Action::PageWatch fresh = Action::aboutWatch(about);
+    QCOMPARE(fresh.expected, about);
+    for (qint64 now = 0; now <= 4 * Action::kPageSettleMs; now += Action::kPageSettleMs / 4) {
+        QVERIFY2(fresh.look(game_bar, now).isNull(), "a left-over page was taken for About");
+    }
+    // Once About is known, a picture close to it needs only the shorter hold: nothing else can
+    // pass for it, however long it holds.
+    QVERIFY(Action::kAboutSettleMs < Action::kPageSettleMs);
+    const qint64 about_from = 5 * Action::kPageSettleMs;
+    QVERIFY(fresh.look(withPixelsChanged(about, 30), about_from).isNull());
+    QVERIFY(
+        fresh.look(withPixelsChanged(about, 30), about_from + Action::kAboutSettleMs - 1).isNull());
+    QCOMPARE(fresh.look(withPixelsChanged(about, 30), about_from + Action::kAboutSettleMs),
+             withPixelsChanged(about, 30));
+
+    // Before About is known nothing can be checked against, so a window of its own waits the
+    // full page settle time, and two such windows must agree.
+    Action::PageWatch learning = Action::aboutWatch(QImage());
+    QVERIFY(learning.expected.isNull());
+    QCOMPARE(learning.settle_ms, Action::kPageSettleMs);
+    QVERIFY(learning.look(about, 0).isNull());
+    QVERIFY(learning.look(about, Action::kAboutSettleMs).isNull());
+    QCOMPARE(learning.look(about, Action::kPageSettleMs), about);
+}
+
+// So About itself is learned from two windows of its own that agree: a left-over page or a
+// splash that holds still in one window does not hold in the next.
+void ScreenshotSettingsActionTests::aboutIsKnownOnlyWhenTwoWindowsAgree() {
+    const QImage about = aboutPicture();
+    const QImage game_bar = pagePicture(30, qRgb(16, 124, 16));
+    QVERIFY(!Action::aboutWindowsAgree(QImage(), about));  // a first window agrees with nothing
+    QVERIFY(!Action::aboutWindowsAgree(game_bar, about));
+    QVERIFY(!Action::aboutWindowsAgree(about, QImage()));
+    QVERIFY(Action::aboutWindowsAgree(about, about));
+    QVERIFY(Action::aboutWindowsAgree(about, withPixelsChanged(about, 30)));
+
+    const QString learn = functionBody(actionSource(), QStringLiteral("learnAboutPage"));
+    QVERIFY(learn.contains(QStringLiteral("m_about_page = QImage();")));  // learned every run
+    QVERIFY(learn.contains(QStringLiteral("if (aboutWindowsAgree(previous, about)) {")));
+}
+
+// Coordinator, round 5: open each page so it cannot inherit the last one, and compare it against
+// what Settings showed when its link was opened. Each try closes the window before it, opens
+// About in a window of its own, waits for the About learned at the start, and only then opens
+// the page's link, in that window, watching for a picture that is not that About.
+void ScreenshotSettingsActionTests::everyPageIsOpenedFromAboutInAWindowOfItsOwn() {
+    const QString source = actionSource();
+    const QString own_window = functionBody(source, QStringLiteral("openAboutInItsOwnWindow"));
+    const qsizetype closed =
+        own_window.indexOf(QStringLiteral("if (!closeSettingsWindowWeOpened() ||"));
+    QVERIFY2(closed > 0, "a page's window must be opened only after the one before is closed");
+    QVERIFY(own_window.indexOf(QStringLiteral("!openSettingsLink(kAboutUri)")) > closed);
+    QVERIFY(own_window.contains(QStringLiteral("PageWatch watch = aboutWatch(m_about_page);")));
+
+    const QString one_try = functionBody(source, QStringLiteral("tryPageFromAbout"));
+    const qsizetype about_first = one_try.indexOf(QStringLiteral("openAboutInItsOwnWindow("));
+    const qsizetype compared = one_try.indexOf(QStringLiteral("watch.opened_on = about;"));
+    const qsizetype link = one_try.indexOf(QStringLiteral("openSettingsLink(ms_uri)"));
+    QVERIFY(about_first > 0);
+    QVERIFY(compared > about_first);
+    QVERIFY(link > compared);
+
+    // About itself is the picture two windows agreed on, saved without a third.
+    const QString uri = functionBody(source, QStringLiteral("captureSettingsUri"));
+    QVERIFY(uri.contains(
+        QStringLiteral("return savePage(m_about_page, output_dir, page_name, timestamp);")));
+    // Settings is brought to the front first: a window behind another one stops drawing.
+    QVERIFY(source.contains(QStringLiteral("SetForegroundWindow(hwnd);")));
+}
+
+// Coordinator, round 5: ms-settings:apps-features and ms-settings:gaming are not pages; on
+// testpc1 each left About on screen, to the pixel, for the whole wait. A window that showed the
+// About its link was opened on, and nothing else but a few pixels' change, did not open a page,
+// and the page is reported as one this Windows does not have; nothing is saved for it. No
+// picture, a blank one, or a page that never held still is a failed try.
+void ScreenshotSettingsActionTests::aLinkThatLeavesAboutOnScreenIsNoPage() {
+    const QImage about = aboutPicture();
+    QImage blank(kPictureWidth, kPictureHeight, QImage::Format_RGB32);
     blank.fill(QColor(243, 243, 243));
 
     Action::PageWatch stayed;
-    for (int look = 0; look < 5; ++look) {
-        QVERIFY(stayed.look(about, about).isNull());
+    stayed.opened_on = about;
+    for (qint64 now = 0; now < 30'000; now += 500) {
+        QVERIFY(stayed.look(about, now).isNull());
+        QVERIFY(stayed.look(withPixelsChanged(about, 30), now + 250).isNull());
     }
     QCOMPARE(stayed.outcomeAtDeadline(), Action::PageOutcome::NotOnThisWindows);
 
     Action::PageWatch nothing;
-    QVERIFY(nothing.look(blank, about).isNull());
-    QVERIFY(nothing.look(QImage(), about).isNull());
+    nothing.opened_on = about;
+    QVERIFY(nothing.look(QImage(), 0).isNull());
+    QVERIFY(nothing.look(blank, 500).isNull());
     QCOMPARE(nothing.outcomeAtDeadline(), Action::PageOutcome::Failed);
 
-    // The first page has no page before it: a window showing something is that page.
-    Action::PageWatch first;
-    QVERIFY(first.look(about, QImage()).isNull());
-    QCOMPARE(first.look(about, QImage()), about);
-    Action::PageWatch first_blank;
-    QVERIFY(first_blank.look(blank, QImage()).isNull());
-    QCOMPARE(first_blank.outcomeAtDeadline(), Action::PageOutcome::Failed);
+    Action::PageWatch never_still;
+    never_still.opened_on = about;
+    for (qint64 now = 0; now < 30'000; now += 500) {
+        const QImage moving = withPixelsChanged(displayPicture(), static_cast<int>(now / 500));
+        QVERIFY(never_still.look(moving, now).isNull());
+    }
+    QCOMPARE(never_still.outcomeAtDeadline(), Action::PageOutcome::Failed);
 
     QCOMPARE(Action::absentReason(Action::PageOutcome::NotOnThisWindows, false),
              QStringLiteral("this page does not exist on this Windows"));
@@ -591,6 +769,9 @@ void ScreenshotSettingsActionTests::buildExecutionResult_namesPagesThisPcDoesNot
     QVERIFY(text.contains(QStringLiteral("| [-] WiFi_Settings: this PC has no Wi-Fi adapter")));
 }
 
+// Eight pages saved as eight 1024x768 pictures of one colour: copying the pixels of a window the
+// compositor draws gives that. A blank is now a failed try, and the capture asks the frame window
+// a person sees to render itself.
 void ScreenshotSettingsActionTests::aBlankPictureIsAFailedCapture() {
     QImage blank(1024, 768, QImage::Format_RGB32);
     blank.fill(QColor(32, 32, 32));
@@ -615,6 +796,8 @@ void ScreenshotSettingsActionTests::aBlankPictureIsAFailedCapture() {
     QVERIFY(source.contains(QStringLiteral("EnumChildWindows(")));
 }
 
+// Detection is EnumWindows over visible top-level windows, waits are for state (window present
+// and answering), and nothing is force-killed: no taskkill, no tasklist per page, no fixed sleeps.
 void ScreenshotSettingsActionTests::settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills() {
     QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
                    .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
@@ -627,11 +810,10 @@ void ScreenshotSettingsActionTests::settingsWindowIsFoundAndWaitedForWithoutTask
                                 QStringLiteral("kTimerRetryBaseMs")}) {
         QVERIFY2(!source.contains(gone), qPrintable(gone));
     }
-    for (const QString& present :
-         {QStringLiteral("EnumWindows"),
-          QStringLiteral("WM_CLOSE"),
-          QStringLiteral("SendMessageTimeoutW"),
-          QStringLiteral("windowToClose(m_settings_window_before_launch")}) {
+    for (const QString& present : {QStringLiteral("EnumWindows"),
+                                   QStringLiteral("WM_CLOSE"),
+                                   QStringLiteral("SendMessageTimeoutW"),
+                                   QStringLiteral("const HWND hwnd = findSettingsFrame(true);")}) {
         QVERIFY2(source.contains(present), qPrintable(present));
     }
 }
