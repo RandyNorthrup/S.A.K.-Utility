@@ -973,10 +973,9 @@ double contrastRatio(const QColor& a, const QColor& b) {
     return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
 }
 
-/// The share of @p icon's ink that, drawn on @p background, stands 3:1 or more from it. A
+/// The share of @p icon's ink that, drawn on @p background, stands @p ratio or more from it. A
 /// line a quarter of a pixel wide is drawn at a quarter of its colour and counts for little.
-double inkAtThreeToOne(const QImage& icon, const QColor& background) {
-    constexpr double kNonTextContrast = 3.0;
+double inkAtLeast(const QImage& icon, const QColor& background, double ratio) {
     double ink = 0.0;
     double legible = 0.0;
     for (int y = 0; y < icon.height(); ++y) {
@@ -991,10 +990,16 @@ double inkAtThreeToOne(const QImage& icon, const QColor& background) {
                 static_cast<float>((pixel.greenF() * alpha) + (background.greenF() * (1 - alpha))),
                 static_cast<float>((pixel.blueF() * alpha) + (background.blueF() * (1 - alpha))));
             ink += alpha;
-            legible += contrastRatio(drawn, background) >= kNonTextContrast ? alpha : 0.0;
+            legible += contrastRatio(drawn, background) >= ratio ? alpha : 0.0;
         }
     }
     return ink > 0.0 ? legible / ink : 0.0;
+}
+
+/// The share of @p icon's ink at 3:1 or more, the bar for a graphic beside text.
+double inkAtThreeToOne(const QImage& icon, const QColor& background) {
+    constexpr double kNonTextContrast = 3.0;
+    return inkAtLeast(icon, background, kNonTextContrast);
 }
 
 }  // namespace
@@ -1016,6 +1021,8 @@ int opaquePixels(const QImage& image) {
 /// report.
 QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
     constexpr double kLegibleShare = 0.5;
+    constexpr double kBarelyThere = 1.5;  // contrast under which a line is all but gone
+    constexpr double kMostlyFaint = 0.2;
     constexpr int kGlyphPixels = 10;
     tabs->setCurrentIndex(0);
     QCoreApplication::processEvents();
@@ -1045,8 +1052,11 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
         const bool faint_before = QSet<QString>{QStringLiteral("File Management"),
                                                 QStringLiteral("Email Tools")}
                                       .contains(name);
-        if ((dark || faint_before) && share < kLegibleShare) {
-            wrong << line;
+        // And no part of it all but gone: the old File Management icon's bright boxes carried its
+        // share while its lines stood 1.41:1 from the dark tab.
+        const double faint = 1.0 - inkAtLeast(drawn, tab_colour, kBarelyThere);
+        if ((dark || faint_before) && (share < kLegibleShare || faint > kMostlyFaint)) {
+            wrong << QStringLiteral("%1, %2 faint").arg(line).arg(faint, 0, 'f', 2);
         }
         // Selected, Help's question mark and About's "i", drawn in white, are left out of the white
         // drawing, so they show in the tab's blue.

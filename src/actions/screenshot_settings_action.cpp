@@ -554,11 +554,26 @@ ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsW
     return page.save(filepath, "PNG") ? PageOutcome::Captured : PageOutcome::Failed;
 }
 
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::outcomeOfAttempts(
+    const QList<PageOutcome>& attempts) {
+    if (attempts.contains(PageOutcome::Captured)) {
+        return PageOutcome::Captured;
+    }
+    // Not on this Windows only when every try saw nothing but the page before: in the capture VM
+    // Game Mode took longer than one 10 s wait to draw, and the next try found it drawn.
+    const bool never_left = !attempts.isEmpty() &&
+                            std::ranges::all_of(attempts, [](PageOutcome outcome) {
+                                return outcome == PageOutcome::NotOnThisWindows;
+                            });
+    return never_left ? PageOutcome::NotOnThisWindows : PageOutcome::Failed;
+}
+
 ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsUri(
     const QString& ms_uri,
     const QString& page_name,
     const QDir& output_dir,
     const QString& timestamp) {
+    QList<PageOutcome> attempts;
     for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
          ++attempt) {
         // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary):
@@ -570,14 +585,13 @@ ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsU
             return PageOutcome::Failed;
         }
         // The same window is reused page after page; it is closed once, when the run ends.
-        const PageOutcome outcome =
-            captureSettingsWindow(findRespondingSettingsWindow(), output_dir, page_name, timestamp);
-        // A page Settings would not open does not open on a second try either.
-        if (outcome != PageOutcome::Failed || isCancelled()) {
-            return outcome;
+        attempts.append(captureSettingsWindow(
+            findRespondingSettingsWindow(), output_dir, page_name, timestamp));
+        if (attempts.last() == PageOutcome::Captured || isCancelled()) {
+            break;
         }
     }
-    return PageOutcome::Failed;
+    return outcomeOfAttempts(attempts);
 }
 
 ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsPage(
@@ -648,7 +662,7 @@ QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
 
     report << "+==============================================================+\n";
     report << QString("| Output Location: %1")
-                  .arg(QDir(output_dir_path).absolutePath())
+                  .arg(QDir::toNativeSeparators(QDir(output_dir_path).absolutePath()))
                   .leftJustified(kScreenshotReportFieldWidth, ' ')
            << "|\n";
     report << "+==============================================================+\n";

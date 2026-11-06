@@ -36,6 +36,7 @@ private Q_SLOTS:
     void aBlankPictureIsAFailedCapture();
     void aPageIsSavedOnlyOnceSettingsHasDrawnIt();
     void aPageSettingsNeverOpensIsNotOnThisWindows();
+    void aPageIsMissingOnlyWhenEveryTryFindsThePageBefore();
     void settingsPagesUsePublishedNames();
     void buildExecutionResult_namesPagesThisPcDoesNotHave();
     void reportPathLine_onlyAdvertisesWrittenReport();
@@ -149,7 +150,7 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
         QStringLiteral("| [ ] WiFi_Settings |"),  // failed page -> [ ], never [x]
         bar,
         QStringLiteral("| Output Location: %1 |")
-            .arg(QDir(QStringLiteral("C:/out")).absolutePath()),
+            .arg(QDir::toNativeSeparators(QDir(QStringLiteral("C:/out")).absolutePath())),
         bar,
     };
     QCOMPARE(lines, expected);
@@ -496,6 +497,22 @@ void ScreenshotSettingsActionTests::aPageSettingsNeverOpensIsNotOnThisWindows() 
              QStringLiteral("this PC has no Wi-Fi adapter"));
 }
 
+// In the capture VM Game Mode took longer than one 10 s wait to draw: the first try saw only the
+// page before, and the next found Game Mode drawn. One slow try does not make a page missing.
+void ScreenshotSettingsActionTests::aPageIsMissingOnlyWhenEveryTryFindsThePageBefore() {
+    using Outcome = Action::PageOutcome;
+    QCOMPARE(Action::outcomeOfAttempts({Outcome::NotOnThisWindows, Outcome::Captured}),
+             Outcome::Captured);
+    QCOMPARE(Action::outcomeOfAttempts(
+                 {Outcome::NotOnThisWindows, Outcome::NotOnThisWindows, Outcome::NotOnThisWindows}),
+             Outcome::NotOnThisWindows);
+    QCOMPARE(Action::outcomeOfAttempts(
+                 {Outcome::NotOnThisWindows, Outcome::Failed, Outcome::NotOnThisWindows}),
+             Outcome::Failed);
+    QCOMPARE(Action::outcomeOfAttempts({Outcome::Failed, Outcome::Failed, Outcome::Failed}),
+             Outcome::Failed);
+    QCOMPARE(Action::outcomeOfAttempts({}), Outcome::Failed);
+}
 // The ms-settings: names held against Microsoft's published list ("Launch Windows Settings",
 // learn.microsoft.com/windows/apps/develop/launch/launch-settings, read 2026-11-06), which serves
 // Windows 10 and 11. The first name of every page is published; a later one is a name testpc1's

@@ -94,6 +94,9 @@ private:
     [[nodiscard]] static std::optional<bool> wifiAdapterPresent();
     /// @brief "this PC has no Wi-Fi adapter" and "this page does not exist on this Windows".
     [[nodiscard]] static QString absentReason(PageOutcome outcome, bool no_wifi_adapter);
+    /// @brief One link's outcome from its tries: captured if one try captured it, not on this
+    ///        Windows only if every try saw the page before, otherwise failed.
+    [[nodiscard]] static PageOutcome outcomeOfAttempts(const QList<PageOutcome>& attempts);
     /// @brief Adds @p page_name to the list @p outcome puts it in.
     static void recordOutcome(const QString& page_name,
                               PageOutcome outcome,

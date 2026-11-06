@@ -13,7 +13,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   Every link is now one Microsoft publishes for Windows 10 and 11, with Windows 11's other name tried next, and
   Gaming captures Game Mode. A page that Settings never opens is reported as one this Windows does not have, and
   nothing is saved for it. On a PC with no Wi-Fi adapter the WiFi page is left out and the result says so; neither
-  counts as a failure. "1 monitors" reads "1 monitor".
+  counts as a failure. "1 monitors" reads "1 monitor", and the report names its folder with backslashes.
 - **One look for buttons and cards** - Close, Cancel and No, which only leave a dialog or message, are the plain
   secondary colour everywhere, as are a wizard's Back and Cancel; the button that does the work keeps the blue. The
   Backup and Restore, Image Flasher and Help cards share one layout: a centred title under a 48 px picture.
