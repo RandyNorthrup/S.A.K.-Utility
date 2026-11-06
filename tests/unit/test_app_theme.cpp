@@ -237,6 +237,7 @@ private Q_SLOTS:
     void windowTextUsesOneDashStyle();
     void selectedTabIconsAreWhite();
     void aTabsStatusMessageLeavesWithIt();
+    void aRunningJobsMessageStaysUntilItEnds();
     void aiWorkspaceLabelsTakeTheirPanesFill();
     void partitionManagerKeepsItsDiskMapHeight();
     void matchNavigationButtonsShowTheirArrows();
@@ -920,6 +921,22 @@ void AppThemeTests::aTabsStatusMessageLeavesWithIt() {
     QVERIFY2(!shown.contains(QStringLiteral("Explorer loaded 6 item(s)")),
              qPrintable(shown.join(QStringLiteral(" | "))));
     QVERIFY(shown.contains(QStringLiteral("Ready")));
+}
+
+// Review 2: a recovery scan's "Running Partition Recovery Scan" ran out after 5 s, and the bar
+// read "Ready" beside its progress at 5% for the rest of the scan.
+void AppThemeTests::aRunningJobsMessageStaysUntilItEnds() {
+    m_window->updateProgress(5, 100);
+    m_window->updateStatus(QStringLiteral("Running Partition Recovery Scan"), 40);
+    QTest::qWait(200);
+    QCOMPARE(m_window->statusBar()->currentMessage(),
+             QStringLiteral("Running Partition Recovery Scan"));
+    m_window->updateProgress(100, 100);
+    QVERIFY(m_window->statusBar()->currentMessage().isEmpty());
+    m_window->updateStatus(QStringLiteral("Partition operation complete"), 40);
+    QCOMPARE(m_window->statusBar()->currentMessage(),
+             QStringLiteral("Partition operation complete"));
+    QTRY_VERIFY_WITH_TIMEOUT(m_window->statusBar()->currentMessage().isEmpty(), 2000);
 }
 
 // UI re-check S22: a sub-tab's message stayed when another sub-tab of the same tab was opened,

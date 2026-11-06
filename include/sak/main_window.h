@@ -263,6 +263,9 @@ private:
     /// @brief Hide the progress bar if it has reached maximum
     void hideProgressBarIfComplete();
 
+    /// @brief Whether the progress bar is showing work that has not finished
+    [[nodiscard]] bool progressShowsRunningWork() const;
+
     /// @brief Apply chevron icons to the tab bar scroll buttons
     void applyTabBarChevrons();
 
@@ -335,6 +338,9 @@ private:
     QWidget* m_elevation_label{nullptr};
     QPushButton* m_theme_button{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+    // The bar's current message is about work the progress bar shows running, so it has no
+    // timeout and goes when that work ends.
+    bool m_status_message_is_work{false};
 
     // Asks before closing or relaunching while long work runs (child of this window).
     RunningWorkExitGuard* m_exit_guard{nullptr};

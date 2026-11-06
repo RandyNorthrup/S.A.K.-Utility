@@ -1220,6 +1220,7 @@ void MainWindow::createNetworkManagementPanel() {
 }
 
 void MainWindow::clearTabStatus() {
+    m_status_message_is_work = false;
     statusBar()->clearMessage();
     if (m_status_label != nullptr) {
         m_status_label->setText(tr("Ready"));
@@ -1803,14 +1804,24 @@ void MainWindow::refreshThemeButton() {
     }
 }
 
+bool MainWindow::progressShowsRunningWork() const {
+    return m_progress_bar != nullptr && !m_progress_bar->isHidden() &&
+           (m_progress_bar->maximum() == 0 || m_progress_bar->value() < m_progress_bar->maximum());
+}
+
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
-    if (m_status_label != nullptr) {
-        if (timeout_ms > 0) {
-            statusBar()->showMessage(message, timeout_ms);
-        } else {
-            m_status_label->setText(message);
-        }
+    if (m_status_label == nullptr) {
+        return;
     }
+    if (timeout_ms <= 0) {
+        m_status_label->setText(message);
+        return;
+    }
+    // While the bar shows work still running, the message about that work stays until the next
+    // one or the end of the work: a recovery scan's ran out after 5 s and left "Ready" beside a
+    // bar at 5%.
+    m_status_message_is_work = progressShowsRunningWork();
+    statusBar()->showMessage(message, m_status_message_is_work ? 0 : timeout_ms);
 }
 
 void MainWindow::updateProgress(int current, int maximum) {
@@ -1837,6 +1848,11 @@ void MainWindow::updateProgress(int current, int maximum) {
         // Indeterminate progress (busy indicator)
         m_progress_bar->setVisible(true);
     } else if (current >= maximum && maximum > 0) {
+        // The work is over, so its message goes; the result that follows takes its own time.
+        if (m_status_message_is_work) {
+            m_status_message_is_work = false;
+            statusBar()->clearMessage();
+        }
         // Hide after a brief delay so the user sees 100%
         QTimer::singleShot(sak::kTimerProgressCompleteHoldMs,
                            this,
