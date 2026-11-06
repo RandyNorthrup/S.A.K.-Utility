@@ -1639,6 +1639,148 @@ C:\SakIso, kept on purpose for the final capture and the VM smoke test (a read-o
 installer, which the coordinator approved); the console back at 1024x768; this round's scripts, scheduled task and
 display state file removed. The capture VM was not used.
 
+### UI review round 5: the last open items, Screenshot Settings' pages, and the flake hunt (2026-11-06)
+
+From round 4's open list, on dev at c6402fc9. Every fix has a test, and every test was drilled red with its fix
+broken in the source: 44 guards, each planted by a script that restores every byte and touches the file. The first
+30 were planted one per test function; Screenshot Settings' 14 new ones and its 9 earlier ones ran again one at a
+time on the final code, each with a build of its own. One earlier drill guarded the wait this round replaced, and
+went with it. Two drills survived their first run: one mutation of the Image Flasher card hit the wrong label,
+and was replaced by one that undoes the fix; and putting back the old File Management drawing passed the dark-tab check,
+whose share at 3:1 its bright boxes carried, so the test now also fails an icon with a fifth of its ink under 1.5:1.
+Both then went red. Judgement calls and items that were not defects are named below.
+
+**Screenshot Settings (#59).** Two of its fifteen Settings links were not pages. Opened on testpc1 (Windows 11 25H2,
+build 26200) the way the app opens them, `ms-settings:apps-features` and `ms-settings:gaming` each left System >
+About on screen, which is why in the capture VM Installed apps and Gaming "never left the page before" in three
+10 s tries apiece; `appsfeatures`, `installed-apps`, `gaming-gamemode` and `gaming-gamebar` opened their pages. The
+capture VM runs the same build, and no Windows 10 PC is at hand, so the links are held against Microsoft's
+published ms-settings list ("Launch Windows Settings", learn.microsoft.com, read 2026-11-06), which gives these
+fifteen pages one name on Windows 10 and 11: each page has its published name first and, where Windows 11 also
+answers to another, that name next (Network status: network-status, network; Installed apps: appsfeatures,
+installed-apps; Gaming: gaming-gamemode, gaming-gamebar; Privacy: privacy, privacy-general). Gaming captures Game
+Mode, the gaming setting that changes how the PC runs. The list says Settings has a Wi-Fi page only with a Wi-Fi
+adapter: the run lists the adapters first (the GetAdaptersAddresses call Network Adapters uses) and, with none,
+leaves that page out as "this PC has no Wi-Fi adapter". Pages a PC does not have are named in the result, the log
+and the report (NOT ON THIS PC), and are not failures. "1 monitors detected" reads "1 monitor detected", and the
+report names its folder with backslashes.
+
+The pictures were wrong as well, which the run's own report did not show. In the capture VM, with this round's
+first packages, the report read 14 of 14 saved, and opened one by one, two pictures were of their page
+(Personalization and Privacy): About was saved as Game Bar, Activation as About, Display as Activation half drawn,
+Power and sleep as Activation, Storage as Display, Sound as Storage, Notifications as Sound, Network status half
+drawn, Ethernet as Network status, Installed apps as Ethernet, Windows Update as a loading ring and Game Mode as its
+title over an empty page. Settings opens every link in its one window, and the wait took a picture as drawn once it
+was not the last picture saved and was the same 0.3 s later. Measured with a probe that opened every page the way
+the app does and saved every picture that changed (testpc1 and the capture VM, 2026-11-06): after a link About stayed 0.4 to 1.2 s on testpc1 and 5.8 to 19.4 s in the VM; a page drawn half
+way held at most 0.65 s on testpc1, and in the VM Installed apps held its title over an empty page for 3.83 s, then
+six of its 32 apps for 3.62 s. So a half-drawn page was saved, the page went on drawing, and the next page's wait
+took the rest as the next page; and the first page had nothing before it to compare against. What else held 3 s or
+more in the VM was the page drawn (Storage with a loading ring on one row, Personalization before its wallpaper
+preview loaded, Privacy 17 px short of the end of its slide-in). Every page differed from About in 21 to 45 % of the
+window; About differed from itself by at most 4.8 % while it slid in, and by under 0.9 % from one window to the
+next; Settings exited each time its window was closed, on both machines.
+
+So each page is now opened in a Settings window of its own, on About (the window before is closed first, with
+WM_CLOSE). About is learned at the start from two windows of their own that settle on the same picture, and every
+later window must settle on that About. The page's link is then opened in that window and compared against the
+About it showed when the link was opened: the picture is saved once it differs from that About in more than a tenth
+of the window and has held still for 8 s, twice the longest half-drawn hold measured (About itself, once known,
+needs 2 s).
+A link that leaves About on screen for the whole 60 s wait in all three tries is a page this Windows does not have;
+the next name is tried, and a page none of whose names opens is reported as "this page does not exist on this
+Windows". A blank window, or a page that never holds still, is a failed try. Nothing is saved for either. The run
+does not start while a Settings window is open ("Settings is open: close it, then run Screenshot Settings again"),
+so it never navigates or closes one the user had open; if the two About windows never agree, it stops before any
+page ("Settings did not draw its About page alike twice"). A run took about four minutes on testpc1 and fifteen in
+the VM.
+
+Proved with package bb0c56e3 (this round's code at 1b74bca1), through the window, every saved picture opened and
+looked at. On testpc1 (a Wi-Fi adapter): 15 of 15 saved in about four minutes, the result read "Captured 15/15
+settings pages (1 monitor detected)", and all 15 pictures show the page their name says, drawn in full (Ethernet as
+Settings opens it, scrolled to its adapter's details). In the capture VM (no Wi-Fi adapter), restored from
+pre-round8: 14 of 14 saved in 14 min 51 s, the report's NOT ON THIS PC section read "WiFi_Settings: this PC has no
+Wi-Fi adapter", and all 14 pictures show the page their name says. Thirteen are drawn in full; Personalization's
+preview still shows the stand-in wallpaper Settings draws before it loads the PC's own (the probe saw it change
+after 5.4 s; in this run it held past 8 s). Storage took 4 min 46 s against about half a minute for most pages: in
+the VM its Temporary files row computes for over a minute, and the picture saved shows it computed.
+
+Found on the way: Settings opened from a task with no foreground window (the probe's scheduled task) leaves its
+page out of its frame until it is brought to the front; the app is the foreground process when a person starts a
+run and brings Settings to the front itself, so this is the probe's condition, not the app's, and it made the
+probe's new windows slower to appear (17 to 22 s in the VM) than the app's. The VM's display took 1600x900 for
+this round's earlier runs and 1680x900 for the final one, which ran through the whole harness. The harness's
+20-minute wait in the guest ran past its time (the VM's timers run slower than its clock under load), so the
+pictures and the report were read from the run folder once the app had written them.
+
+**Fixed, each with a test.** F27, one tone per role: the theme makes every push button primary, so a dialog
+button box's Close or Cancel, and a message box's No or Cancel, came out in the colour of the action beside them.
+A button whose role only leaves a dialog (reject or no) now takes the secondary tone when it is polished, unless
+it carries a style of its own (a Cancel that stops running work is the danger tone, and keeps it); a wizard's
+Back and Cancel are secondary, Next and Finish primary; the Installation Summary's and the backup filter
+details' Close are secondary. The judgement call: Close, Cancel and No only leave, so they are secondary
+everywhere, and a dialog whose one button is Close has no primary button, as in Windows' own dialogs; the
+primary tone marks the one button that does the work. F41: Help, Backup and Restore and the Image Flasher build
+their cards with the one card builder: a 48 px logo with the title and description centred under it (two of the
+three layouts already were). F46: Email Tools' item count ("4 search result(s) (filtered)") sat beside the
+paging controls and set the Items pane's narrowest width, so the Folders pane moved between 293 and 240 px; it
+has a line of its own and wraps, and no text it shows moves the splitters. F39 and N14: the SMART table names
+each drive by its number and model ("PhysicalDrive0 (VBOX HARDDISK)"), the one naming the messages under it
+already used; a drive smartctl could not read takes its model and bus from the hardware scan; Type is the bus
+as the hardware scan names it, so the two views agree; and every warning starts with the drive it is about
+("High number of unsafe shutdowns: 630" did not say which). The Battery row leaves out a name with no letter
+in it (VirtualBox's battery is "1") and says "Health not reported" for a battery that gives no capacities. N16:
+calendar chips put the subject first and the start time after it ("Oven repair visit, 8:00 AM"), one label for
+the month and week views. S25 and DN4: the File Management tab icon's lines were a quarter of a pixel at the
+tab's 20 px; it is redrawn on the 20 px grid with 2 px lines and 1 px box outlines, in a dark slate for the light
+tab and a light grey and blue drawing for the dark one; Email Tools' "@" is a darker blue in light and keeps its
+light drawing in dark. Selected, the white tab icon leaves out the parts drawn in white or near it, so Help's
+question mark and About's "i" show in the tab's blue instead of making blank discs. DN5: the Linux card's
+penguin is drawn in slate grey in the dark theme. Icons drawn for a theme follow a change of theme at once (the
+tab bar and the cards). Thermal: see the flake hunt.
+
+**Already fixed, and not defects.** F34's title indent (backup wizard titles at x=23, Partition Manager's at
+x=12): fixed in round 2 with R3. A QWizard page with a subtitle titles itself in the header and one without titles
+itself in the page, at another indent; every Partition Manager wizard page has had a subtitle since round 2
+(wizardsTitleEveryPageInTheHeader), and every backup and restore page sets one, so all wizards title their pages
+in one place. Review 2's pictures were taken before that round. S25's fragments of tabs under the scroll arrows:
+not a defect. With eleven tabs and a 1280 px window the tab strip scrolls, and a strip that scrolls shows the tab
+it would scroll to cut at the arrow, as Windows Terminal's and Edge's do; the cut label is what says there is
+more that way. The tab icons themselves (S25, DN4) are fixed above. On the light tab (#cfd8e3) most tab icons are
+drawn in mid tones that stand under 3:1 from it but read as shapes beside their tab's name; only File Management
+and Email Tools were faint, and those two are held to half their ink at 3:1 and under a fifth below 1.5:1, as
+every icon is on the dark tab.
+
+**The flake hunt.** Six runs of the T2 labels (312 tests, -j 6) on c6402fc9 before any change: every run green,
+no test failed once, test_mbox_parser included (round 3's fix holds). thermalPollsOnlyWhileShown did not fail in
+those runs; reading it found why it failed once in round 4: ThermalMonitor::isRunning() was the timer or the poll's
+watcher, and between a poll finishing on the thread pool and its result reaching the GUI thread neither runs, so a
+started monitor read as stopped when the check right after show() lost the race. isRunning() is now started and not
+stopped, or stopped with its last poll still landing; the test waits for the pool without the event loop, so that
+moment is checked every run (with the old isRunning() it fails every time). After the fixes, four more
+runs at cd5378bd: all green. Ten runs in all, 312 tests each (two skipped in every run, test_startup_budget and
+test_single_instance_app, which start the app), and no test failed once. The run before the push, with Screenshot
+Settings' fix (1b74bca1), passed the same way.
+
+**What no test here covers.** Screenshot Settings' run itself (opening and closing each Settings window, the wait
+on the real window, the Wi-Fi adapter list and leaving out the WiFi page) is Windows behaviour with no unit seam:
+the decisions on what the window showed (the watch, the picture comparison, the About agreement), the page list,
+the outcome lists, the message, log and report are tested, the order of the steps (close, About, the link) is held
+by reading the source, and the run was proved in the capture VM and on testpc1 (above). The settle and wait times
+rest on one day's measurement on two machines; a PC slower than the capture VM could still take a page drawn half
+way for drawn. The month and week painters each draw the chip label through the
+tested eventChipLabel(); no picture of them is read. The dialog tone policy is tested on a button box, a message box
+and a wizard of the test's own, not on every dialog in the app. The tab icons were read offscreen at 20 px, not on
+every DPI. The accessibility runtime audit (the app started with --accessibility-audit) was left to T2: this round
+started no app on the workstation; test_accessibility_audit's whole-window audit passed in every local run.
+
+**Left behind.** testpc1: this round's package (bb0c56e3) in C:\SAK, as the capture harness installs it, with its
+copy in C:\SAKCapture\pkg and the run's output in C:\SAKCapture\out; C:\SakIso and C:\SAKCapture with its two tasks,
+kept; the console back at 1024x768; this round's scripts, probe pictures, scheduled tasks, display state file and
+C:\SAK-Samples\Settings removed. The capture VM: powered off and restored to pre-round8; the Mac keeps the
+harness's copy of the package in ~/sak-capture/pkg, as every run leaves it. On the workstation: the package under
+E:\SAK-Utility-Test-Scratch\round5, and the probe timelines and every picture both runs saved in its fix59 folder.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
