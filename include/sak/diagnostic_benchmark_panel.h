@@ -64,6 +64,11 @@ public:
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
 
+    /// @brief How the Benchmark Drive list names a volume: its letter and label, its own size, and
+    ///        the disk it is on.
+    [[nodiscard]] static QString benchmarkDriveText(const StorageDeviceInfo& disk,
+                                                    const PartitionInfo& volume);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);

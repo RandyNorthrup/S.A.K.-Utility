@@ -15,12 +15,16 @@
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QRegularExpression>
 #include <QStorageInfo>
 #include <QtGlobal>
 
 #include <algorithm>
 #include <atomic>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <vector>
@@ -144,10 +148,15 @@ HANDLE rejectReparseOrLinkedFile(HANDLE h) {
 // FILE_FLAG_OPEN_REPARSE_POINT and then verify (via rejectReparseOrLinkedFile) that
 // it is still our unique regular file, never following a symlink/junction/hard-link
 // swapped in at the guessable path between subtests.
+// The run holds a delete-on-close handle on its test file (see createTestFile), and Windows opens
+// such a file again only for a caller that shares delete with it. Nothing else is shared that was
+// not before.
+constexpr DWORD kShareWithTheRunsHandle = FILE_SHARE_DELETE;
+
 HANDLE openRandomWriteFile(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(),
                            GENERIC_WRITE,
-                           0,
+                           kShareWithTheRunsHandle,
                            nullptr,
                            OPEN_EXISTING,
                            FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH |
@@ -160,7 +169,7 @@ HANDLE openRandomReadFile(const std::wstring& path) {
     HANDLE h =
         CreateFileW(path.c_str(),
                     GENERIC_READ,
-                    FILE_SHARE_READ,
+                    FILE_SHARE_READ | kShareWithTheRunsHandle,
                     nullptr,
                     OPEN_EXISTING,
                     FILE_FLAG_NO_BUFFERING | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -171,7 +180,7 @@ HANDLE openRandomReadFile(const std::wstring& path) {
 HANDLE openSequentialReadFile(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(),
                            GENERIC_READ,
-                           FILE_SHARE_READ,
+                           FILE_SHARE_READ | kShareWithTheRunsHandle,
                            nullptr,
                            OPEN_EXISTING,
                            FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN |
@@ -188,7 +197,7 @@ HANDLE openBenchmarkFileForOverwrite(const std::wstring& path) {
     HANDLE h =
         CreateFileW(path.c_str(),
                     GENERIC_WRITE,
-                    0,
+                    kShareWithTheRunsHandle,
                     nullptr,
                     OPEN_EXISTING,
                     FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -310,6 +319,11 @@ bool fillTestFileWithRandom(HANDLE h,
 // ============================================================================
 
 DiskBenchmarkWorker::DiskBenchmarkWorker(QObject* parent) : WorkerBase(parent) {}
+
+DiskBenchmarkWorker::~DiskBenchmarkWorker() {
+    stopAndJoin();
+    cleanupTestFile();
+}
 
 // ============================================================================
 // WorkerBase Override
@@ -625,27 +639,36 @@ bool DiskBenchmarkWorker::createTestFile() {
     const QString name = makeUniqueBenchmarkFileName(GetCurrentProcessId(),
                                                      QDateTime::currentMSecsSinceEpoch(),
                                                      seq);
-    const QString path = QDir(diskTestFolder(m_config.drive_path)).filePath(name);
+    const QString folder = diskTestFolder(m_config.drive_path);
+    removeAbandonedBenchmarkFiles(folder);
+    const QString path = QDir(folder).filePath(name);
     const std::wstring wpath = QDir::toNativeSeparators(path).toStdWString();
 
-    // Create exclusively with direct I/O flags -- one call is both the atomic
-    // claim (CREATE_NEW) and the open, so there is no check-then-open window.
-    HANDLE h =
-        CreateFileW(wpath.c_str(),
-                    GENERIC_WRITE,
-                    0,
-                    nullptr,
-                    CREATE_NEW,
-                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_SEQUENTIAL_SCAN,
-                    nullptr);
-
-    if (h == INVALID_HANDLE_VALUE) {
+    // The claim (CREATE_NEW, so there is no check-then-open window) is a delete-on-close handle
+    // the run keeps until its cleanup. A run that is killed, or a PC that loses power before
+    // Windows starts again, leaves no file on the customer's drive: Windows closes the handle and
+    // removes it. testpc1's D: kept a 0-byte file from a killed run.
+    HANDLE anchor = CreateFileW(wpath.c_str(),
+                                DELETE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                CREATE_NEW,
+                                FILE_FLAG_DELETE_ON_CLOSE,
+                                nullptr);
+    if (anchor == INVALID_HANDLE_VALUE) {
         logError("Disk benchmark: failed to exclusively create test file: {}", path.toStdString());
         return false;
     }
+    m_test_file_anchor = anchor;
     // Record the claimed path only after a successful exclusive create, so every
     // read/write/cleanup targets exactly the file we own.
     m_test_file_path = path;
+
+    HANDLE h = openBenchmarkFileForOverwrite(wpath);
+    if (h == INVALID_HANDLE_VALUE) {
+        logError("Disk benchmark: failed to open the test file it created: {}", path.toStdString());
+        return false;
+    }
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
     if (!fillTestFileWithRandom(h, total_bytes, m_seq_block_bytes, [this] {
@@ -671,8 +694,84 @@ QString DiskBenchmarkWorker::claimTestFileForTesting() {
 }
 #endif  // SAK_CORE_TEST_HOOKS
 
+#ifdef SAK_CORE_TEST_HOOKS
+QString DiskBenchmarkWorker::abandonTestFileForTesting() {
+    m_seq_block_bytes = kSectorAlignment;
+    if (!createTestFile()) {
+        return {};
+    }
+    const QString path = testFilePath();
+    releaseTestFileAnchor();
+    m_test_file_path.clear();
+    return path;
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
+void DiskBenchmarkWorker::releaseTestFileAnchor() {
+    if (m_test_file_anchor != nullptr) {
+        CloseHandle(static_cast<HANDLE>(m_test_file_anchor));
+        m_test_file_anchor = nullptr;
+    }
+}
+
+namespace {
+// Does the process still run? One that cannot be opened for want of rights does; only an id that
+// names no process at all says it is gone, so a file is never taken from a run in progress.
+bool processIsRunning(quint32 pid) {
+    HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process == nullptr) {
+        return GetLastError() != ERROR_INVALID_PARAMETER;
+    }
+    const bool running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+    CloseHandle(process);
+    return running;
+}
+}  // namespace
+
+bool DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+    const QString& file_name,
+    quint32 self_pid,
+    const std::function<bool(quint32)>& process_running) {
+    static const QRegularExpression kName(QStringLiteral(
+                                              "^sak_disk_benchmark_(\\d{1,10})_\\d+_\\d+\\.tmp$"),
+                                          QRegularExpression::CaseInsensitiveOption);
+    const auto match = kName.match(file_name);
+    if (!match.hasMatch()) {
+        return false;
+    }
+    bool ok = false;
+    const qulonglong pid = match.captured(1).toULongLong(&ok);
+    if (!ok || pid > std::numeric_limits<quint32>::max() || pid == self_pid) {
+        return false;
+    }
+    return !process_running(static_cast<quint32>(pid));
+}
+
+QStringList DiskBenchmarkWorker::removeAbandonedBenchmarkFiles(const QString& folder) {
+    QStringList removed;
+    const QFileInfoList files = QDir(folder).entryInfoList(
+        {QStringLiteral("sak_disk_benchmark_*.tmp")}, QDir::Files | QDir::Hidden | QDir::System);
+    for (const QFileInfo& file : files) {
+        if (file.isSymLink() || !isAbandonedBenchmarkFileName(
+                                    file.fileName(), GetCurrentProcessId(), processIsRunning)) {
+            continue;
+        }
+        if (QFile::remove(file.absoluteFilePath())) {
+            logInfo("Removed a test file a stopped benchmark left: {}",
+                    file.absoluteFilePath().toStdString());
+            removed << file.absoluteFilePath();
+        } else {
+            logWarning("A test file a stopped benchmark left could not be removed: {}",
+                       file.absoluteFilePath().toStdString());
+        }
+    }
+    return removed;
+}
+
 void DiskBenchmarkWorker::cleanupTestFile() {
     const QString path = testFilePath();
+    // Closing the run's handle removes the file, now that every other handle on it is closed.
+    releaseTestFileAnchor();
     if (path.isEmpty()) {
         return;  // nothing was ever claimed this run
     }

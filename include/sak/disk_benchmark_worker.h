@@ -10,7 +10,9 @@
 #include "sak/worker_base.h"
 
 #include <QObject>
+#include <QStringList>
 
+#include <functional>
 #include <vector>
 
 namespace sak {
@@ -42,8 +44,9 @@ public:
     /// @param parent Parent QObject
     explicit DiskBenchmarkWorker(QObject* parent = nullptr);
     // Join the worker thread while this class's members are still alive (the base
-    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
-    ~DiskBenchmarkWorker() override { stopAndJoin(); }
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin. Then the test
+    // file goes, if a run left it.
+    ~DiskBenchmarkWorker() override;
 
     /// @brief Set the benchmark configuration
     /// @param config Benchmark parameters (drive, sizes, queue depth, etc.)
@@ -80,6 +83,18 @@ public:
     /// @note Pure + static for unit testing.
     [[nodiscard]] static size_t effectiveBlockBytes(int block_kb, int min_kb, int max_kb);
 
+    /// @brief Whether @p file_name is a benchmark test file a process no longer running left
+    ///        behind: this app's name pattern, a process id that is not @p self_pid, and
+    ///        @p process_running false for it. Pure; unit-testable.
+    [[nodiscard]] static bool isAbandonedBenchmarkFileName(
+        const QString& file_name,
+        quint32 self_pid,
+        const std::function<bool(quint32)>& process_running);
+
+    /// @brief Remove the benchmark test files in @p folder whose process is gone (a run that
+    ///        was killed before delete-on-close existed). Returns the paths removed.
+    static QStringList removeAbandonedBenchmarkFiles(const QString& folder);
+
 Q_SIGNALS:
     /// @brief Emitted when the benchmark suite completes
     /// @param result Complete disk benchmark results
@@ -95,6 +110,9 @@ public:
     /// @brief Test-only: claim the test file the way a run does, remove it again, and say where it
     ///        was. With a zero test size nothing is written to it.
     [[nodiscard]] QString claimTestFileForTesting();
+    /// @brief Test-only: claim the test file and drop the run's handle on it without removing
+    ///        it, as Windows does for a process that is killed. Says where the file was.
+    [[nodiscard]] QString abandonTestFileForTesting();
 #endif  // SAK_CORE_TEST_HOOKS
 
 private:
@@ -252,6 +270,13 @@ private:
     ///        until a file is claimed; every read/write/cleanup uses it so the
     ///        benchmark never touches a fixed, guessable path.
     QString m_test_file_path;
+
+    /// @brief The run's delete-on-close handle on the test file (a HANDLE), held from its
+    ///        creation to its cleanup, so a killed run leaves nothing behind. Null when none.
+    void* m_test_file_anchor{nullptr};
+
+    /// @brief Close the delete-on-close handle, which removes the file once nothing else has it.
+    void releaseTestFileAnchor();
 };
 
 }  // namespace sak

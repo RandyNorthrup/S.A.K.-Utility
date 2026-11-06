@@ -7,7 +7,9 @@
 #include "sak/disk_benchmark_worker.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <type_traits>
@@ -30,6 +32,8 @@ private Q_SLOTS:
     void construction_default();
     void construction_isWorkerBase();
     void aSystemDriveRunWritesToTheTempFolder();
+    void aKilledRunLeavesNoTestFile();
+    void aStoppedRunsLeftoverIsRemovedAtTheNextRun();
     void config_defaults();
     void config_setConfig();
     void config_fieldAssignment();
@@ -387,6 +391,66 @@ void TestDiskBenchmarkWorker::aSystemDriveRunWritesToTheTempFolder() {
     QVERIFY(!path.isEmpty());
     QCOMPARE(QFileInfo(path).absolutePath(), temp);
     QVERIFY(!QFileInfo::exists(path));
+}
+
+// testpc1: a disk benchmark that was killed left a 0-byte sak_disk_benchmark_*.tmp on D:. The run's
+// handle on its test file is delete-on-close, so Windows removes the file when it closes that
+// handle for a process that dies. Dropping the handle here is what a kill does to it.
+void TestDiskBenchmarkWorker::aKilledRunLeavesNoTestFile() {
+    const QString temp = QDir::tempPath();
+    sak::DiskBenchmarkConfig config;
+    config.drive_path = temp.left(2) + QStringLiteral("\\");
+    config.test_file_size_mb = 0;
+    sak::DiskBenchmarkWorker worker;
+    worker.setConfig(config);
+
+    const QString path = worker.abandonTestFileForTesting();
+
+    QVERIFY(!path.isEmpty());
+    QVERIFY2(!QFileInfo::exists(path), qPrintable(path));
+}
+
+// A file left before delete-on-close is removed by the next run, when the process that made it is
+// gone; one a running process owns, and any other file, is kept.
+void TestDiskBenchmarkWorker::aStoppedRunsLeftoverIsRemovedAtTheNextRun() {
+    using sak::DiskBenchmarkWorker;
+    const auto none_running = [](quint32) {
+        return false;
+    };
+    const auto all_running = [](quint32) {
+        return true;
+    };
+    QVERIFY(DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+        QStringLiteral("sak_disk_benchmark_4242_1762300000000_0.tmp"), 7, none_running));
+    QVERIFY(!DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+        QStringLiteral("sak_disk_benchmark_4242_1762300000000_0.tmp"), 7, all_running));
+    QVERIFY(!DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+        QStringLiteral("sak_disk_benchmark_7_1762300000000_0.tmp"), 7, none_running));
+    for (const char* other : {"sak_disk_benchmark_4242.tmp",
+                              "sak_disk_benchmark_4242_1_0.tmp.keep",
+                              "customer_sak_disk_benchmark_4242_1_0.tmp",
+                              "sak_disk_benchmark_99999999999_1_0.tmp"}) {
+        QVERIFY2(!DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+                     QString::fromLatin1(other), 7, none_running),
+                 other);
+    }
+
+    // On disk: a process id no PC hands out, this test's own, and a customer's file.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString gone = dir.filePath(QStringLiteral("sak_disk_benchmark_4294967292_1_0.tmp"));
+    const QString ours = dir.filePath(
+        QStringLiteral("sak_disk_benchmark_%1_1_0.tmp").arg(QCoreApplication::applicationPid()));
+    const QString customer = dir.filePath(QStringLiteral("report.tmp"));
+    for (const QString& path : {gone, ours, customer}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    QCOMPARE(DiskBenchmarkWorker::removeAbandonedBenchmarkFiles(dir.path()),
+             QStringList({QFileInfo(gone).absoluteFilePath()}));
+    QVERIFY(!QFileInfo::exists(gone));
+    QVERIFY(QFileInfo::exists(ours));
+    QVERIFY(QFileInfo::exists(customer));
 }
 
 QTEST_MAIN(TestDiskBenchmarkWorker)

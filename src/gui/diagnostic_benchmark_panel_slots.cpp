@@ -170,6 +170,22 @@ void DiagnosticBenchmarkPanel::populateDiskDriveCombo(const HardwareInventory& i
     for (const auto& disk : inventory.storage) {
         addDiskPartitionsToCombo(disk);
     }
+    // The run uses what the box shows, and the box shows its first row.
+    if (m_disk_drive_combo->count() > 0) {
+        m_disk_drive_combo->setCurrentIndex(0);
+    }
+}
+
+QString DiagnosticBenchmarkPanel::benchmarkDriveText(const StorageDeviceInfo& disk,
+                                                     const PartitionInfo& volume) {
+    // The volume's own size: testpc1's 32 GB D: read "238.47 GB", its disk's.
+    const QString size = volume.total_bytes > 0 ? formatBytes(volume.total_bytes)
+                                                : QStringLiteral("size unknown");
+    const QString name = volume.label.trimmed().isEmpty()
+                             ? volume.drive_letter
+                             : QStringLiteral("%1 %2").arg(volume.drive_letter,
+                                                           volume.label.trimmed());
+    return QStringLiteral("%1 (%2 volume on %3)").arg(name, size, disk.model);
 }
 
 void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(const StorageDeviceInfo& disk) {
@@ -177,10 +193,7 @@ void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(const StorageDeviceInfo&
         if (part.drive_letter.isEmpty()) {
             continue;
         }
-        m_disk_drive_combo->addItem(
-            QString("%1 (%2 - %3)")
-                .arg(part.drive_letter, disk.model, formatBytes(disk.size_bytes)),
-            part.drive_letter + "\\");
+        m_disk_drive_combo->addItem(benchmarkDriveText(disk, part), part.drive_letter + "\\");
     }
 }
 

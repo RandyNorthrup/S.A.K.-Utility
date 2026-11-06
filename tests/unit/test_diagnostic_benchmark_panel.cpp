@@ -85,6 +85,24 @@ class DiagnosticBenchmarkPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // Review 2 on testpc1: the Benchmark Drive list named the 32 GB D: BENCH by its disk's size,
+    // "238.47 GB".
+    void aBenchmarkDriveIsNamedByItsVolume() {
+        sak::StorageDeviceInfo disk;
+        disk.model = QStringLiteral("Best Buy NS-PCNVMEHDE(-C)");
+        disk.size_bytes = 256'060'514'304ULL;
+        sak::PartitionInfo bench;
+        bench.drive_letter = QStringLiteral("D:");
+        bench.label = QStringLiteral("BENCH");
+        bench.total_bytes = 34'359'738'368ULL;
+        QCOMPARE(sak::DiagnosticBenchmarkPanel::benchmarkDriveText(disk, bench),
+                 QStringLiteral("D: BENCH (32.00 GB volume on Best Buy NS-PCNVMEHDE(-C))"));
+        bench.label.clear();
+        bench.total_bytes = 0;
+        QCOMPARE(sak::DiagnosticBenchmarkPanel::benchmarkDriveText(disk, bench),
+                 QStringLiteral("D: (size unknown volume on Best Buy NS-PCNVMEHDE(-C))"));
+    }
+
     // UI review F17: before any sensor answered, and for one that never does, Thermal read
     // "0 C" with a bar of "0 / 100 C", where the other views said N/A.
     void thermalSaysNotAvailableUntilASensorAnswers() {
