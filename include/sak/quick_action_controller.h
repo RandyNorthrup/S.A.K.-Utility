@@ -128,7 +128,8 @@ Q_SIGNALS:
     void runQueued(const sak::QuickActionRun& run, const QString& running_action);
     void runStarted(const sak::QuickActionRun& run);
     void runProgress(const sak::QuickActionRun& run, const QString& message, int percent);
-    /// A line for @p run's caller's log (the same line goes to quick_actions.log).
+    /// A line for @p run's caller's log, "Action name: message". The caller's Log stamps it with
+    /// its own time; quick_actions.log gets the same line with the date and time in front.
     void runLog(const sak::QuickActionRun& run, const QString& line);
     /// @p run is over: completed, failed, refused or cancelled. @p result is this run's own,
     /// carried by value, so a slot never reads an action object a later run may be writing.

@@ -1897,9 +1897,8 @@ void MainWindow::appendLogIfActive(int tab_idx, const QString& formatted) {
         lines.erase(lines.cbegin(), lines.cbegin() + overflow);
     }
     if (m_tab_widget->currentIndex() == tab_idx && m_logWindow->isLogVisible()) {
-        // Panel log payloads carry paths, program names and command output; QTextEdit::append()
-        // would render markup inside them, so wrap the line to read literally.
-        m_logWindow->logTextEdit()->append(sak::ui::asLiteralRichText(formatted));
+        // Literal text, laid out as replaceLog() lays it out when the tab is shown again.
+        m_logWindow->appendLine(formatted);
     }
 }
 

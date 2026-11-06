@@ -361,7 +361,11 @@ void TestQuickActionController::anActionsDetailReachesTheRunLog() {
 
     QString lines;
     for (const auto& entry : logged) {
-        lines += entry.at(1).toString() + QLatin1Char('\n');
+        const QString line = entry.at(1).toString();
+        // The panel's Log stamps every line with its time; one with its own ISO stamp read
+        // "[06:51:00] [2026-11-05T06:51:00] Optimize Power Settings: ..." (review 2).
+        QVERIFY2(line.startsWith(QStringLiteral("Detailed: ")), qPrintable(line));
+        lines += line + QLatin1Char('\n');
     }
     QVERIFY2(lines.contains(QStringLiteral("Drive D: Errors found")), qPrintable(lines));
 }

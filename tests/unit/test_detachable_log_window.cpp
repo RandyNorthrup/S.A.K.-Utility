@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QMainWindow>
 #include <QScreen>
+#include <QTextBlock>
 #include <QTextDocument>
 #include <QtTest/QtTest>
 
@@ -39,6 +40,7 @@ private Q_SLOTS:
     void openingDoesNotTakeFocus();
     void hiddenWindowIsNotRebuilt();
     void shownWindowShowsLinesLiterally();
+    void aProgramsReportKeepsItsColumns();
 };
 
 void DetachableLogWindowTests::anchoredGeometry_snapsBesideWindowWithRoom() {
@@ -246,12 +248,57 @@ void DetachableLogWindowTests::shownWindowShowsLinesLiterally() {
                             QStringLiteral("two\nlines")};
     QVERIFY(log.replaceLog(lines));
     QTextDocument* document = log.logTextEdit()->document();
-    QCOMPARE(document->blockCount(), 3);
+    // The second line of "two\nlines" is program output, in a block of its own (below).
+    QCOMPARE(document->blockCount(), 4);
     QCOMPARE(log.logTextEdit()->toPlainText(),
              QStringLiteral("<b>bold?</b>\nAT&amp;T\ntwo\nlines"));
 
     QVERIFY(log.replaceLog({}));
     QVERIFY(log.logTextEdit()->toPlainText().isEmpty());
+}
+
+namespace {
+// Where each block of @p document starts, what font it is in, and whether it may wrap.
+QString describeBlocks(QTextDocument* document) {
+    QStringList blocks;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        const QTextCharFormat format = block.begin().fragment().charFormat();
+        blocks << QStringLiteral("%1|%2|%3")
+                      .arg(block.text().left(12),
+                           format.fontFamilies().toStringList().join(QLatin1Char(',')),
+                           block.blockFormat().nonBreakableLines() ? QStringLiteral("nowrap")
+                                                                   : QStringLiteral("wrap"));
+    }
+    return blocks.join(QLatin1Char('\n'));
+}
+}  // namespace
+
+// Review 2 (F29, F31): the power plan's boxed report and the dry run's script came out in the
+// log's proportional font, wrapped to the window, so the borders and columns fell apart. What a
+// program wrote under a message is set in a fixed-width font that does not wrap; the message
+// itself keeps the log's font. A refill and a line added live come out the same.
+void DetachableLogWindowTests::aProgramsReportKeepsItsColumns() {
+    const QString report = QStringLiteral(
+        "Optimize Power Settings: Details:\n"
+        "+============================+\n"
+        "| Current Plan: Balanced     |\n"
+        "+============================+\n");
+    const QString expected = QStringLiteral(
+        "Optimize Pow||wrap\n"
+        "+===========|Consolas|nowrap\n"
+        "next line||wrap");
+    sak::DetachableLogWindow log(QStringLiteral("Log"));
+    log.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&log));
+    QVERIFY(log.replaceLog({report, QStringLiteral("next line")}));
+    QTextDocument* document = log.logTextEdit()->document();
+    QCOMPARE(describeBlocks(document), expected);
+    QCOMPARE(document->begin().next().text().split(QChar::LineSeparator).size(), 3);
+
+    QVERIFY(log.replaceLog({}));
+    log.appendLine(report);
+    log.appendLine(QStringLiteral("next line"));
+    QCOMPARE(describeBlocks(document), expected);
 }
 
 QTEST_MAIN(DetachableLogWindowTests)

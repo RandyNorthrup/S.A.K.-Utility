@@ -549,9 +549,10 @@ QString QuickActionController::logLine(const QString& action_name, const QString
 }
 
 void QuickActionController::logRun(const QuickActionRun& run, const QString& message) {
-    const QString line = logLine(run.action_name, message);
-    Q_EMIT runLog(run, line);
-    writeLogLine(line);
+    // The file needs the date and time on each line. A caller's Log stamps every line with its
+    // own time already, so a second stamp there read "[06:51:00] [2026-11-05T06:51:00] ...".
+    Q_EMIT runLog(run, QStringLiteral("%1: %2").arg(run.action_name, message));
+    writeLogLine(logLine(run.action_name, message));
 }
 
 namespace {

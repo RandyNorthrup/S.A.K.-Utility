@@ -39,6 +39,11 @@ public:
     /// could see it was pure GUI-thread work. One edit block per refill.
     bool replaceLog(const QStringList& lines);
 
+    /// Add @p line at the end, as literal text. Its first line is the message; the lines under
+    /// it, a report or a script a program wrote, are set apart in a fixed-width font that does
+    /// not wrap, so their columns line up. replaceLog() lays each line out the same way.
+    void appendLine(const QString& line);
+
     /** Clear the log. */
     void clearLog();
 

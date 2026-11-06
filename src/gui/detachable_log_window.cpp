@@ -23,6 +23,9 @@
 #include <QScreen>
 #include <QShowEvent>
 #include <QSizePolicy>
+#include <QTextBlockFormat>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -55,6 +58,49 @@ int toggleSwitchWidth(const QString& label, const QFont& font) {
     return (std::max)(sak::kSnapButtonW,
                       kToggleTrackWidth + kToggleLabelGap + metrics.horizontalAdvance(label) +
                           kToggleLabelTrailingPadding);
+}
+
+struct LogBlockFormats {
+    QTextBlockFormat message_block;
+    QTextCharFormat message_text;
+    QTextBlockFormat output_block;
+    QTextCharFormat output_text;
+};
+
+LogBlockFormats logBlockFormats(const QFont& log_font) {
+    LogBlockFormats formats;
+    // Consolas is on every Windows install, so asking for it never sends Qt through the font
+    // alias table the way a missing family does (docs/GUI_STARTUP_FIELD_NOTES.md).
+    QFont fixed(QStringLiteral("Consolas"));
+    fixed.setPointSizeF(log_font.pointSizeF());
+    formats.output_text.setFont(fixed);
+    formats.output_block.setNonBreakableLines(true);
+    return formats;
+}
+
+// A message's first line is the message. The lines under it are what a program wrote: the power
+// plan and Check Disk reports drawn with | and =, a dry run's script, a command's output. In the
+// log's own proportional font, wrapped to the window, their borders and columns fell apart
+// (review 2, F29 and F31). They go in a block of their own in a fixed-width font that does not
+// wrap; a line wider than the window scrolls sideways. The message's own line breaks stay line
+// breaks inside that one block, so the kMaxLogBlocks cap still counts about one block per line.
+void insertLogMessage(QTextCursor* cursor, const QString& message, const LogBlockFormats& formats) {
+    const qsizetype newline = message.indexOf(QLatin1Char('\n'));
+    if (newline < 0) {
+        cursor->insertText(message, formats.message_text);
+        return;
+    }
+    cursor->insertText(message.left(newline), formats.message_text);
+    QString output = message.mid(newline + 1);
+    while (output.endsWith(QLatin1Char('\n'))) {
+        output.chop(1);
+    }
+    if (output.isEmpty()) {
+        return;
+    }
+    output.replace(QLatin1Char('\n'), QChar::LineSeparator);
+    cursor->insertBlock(formats.output_block, formats.output_text);
+    cursor->insertText(output, formats.output_text);
 }
 }  // namespace
 
@@ -123,17 +169,14 @@ bool DetachableLogWindow::replaceLog(const QStringList& lines) {
     m_logEdit->clear();
     QTextCursor cursor(m_logEdit->document());
     cursor.beginEditBlock();
+    const LogBlockFormats formats = logBlockFormats(m_logEdit->font());
     for (const QString& line : lines) {
         // Panel log lines carry paths, program names and command output; insert them as
         // literal text so nothing in them is rendered as markup.
-        // A message's own newlines stay line breaks inside its block (as append() of literal
-        // rich text renders them), so the kMaxLogBlocks cap still counts messages.
         if (!cursor.atStart()) {
-            cursor.insertBlock();
+            cursor.insertBlock(formats.message_block, formats.message_text);
         }
-        QString text = line;
-        text.replace(QLatin1Char('\n'), QChar::LineSeparator);
-        cursor.insertText(text);
+        insertLogMessage(&cursor, line, formats);
     }
     cursor.endEditBlock();
     m_logEdit->setUpdatesEnabled(true);
@@ -141,6 +184,18 @@ bool DetachableLogWindow::replaceLog(const QStringList& lines) {
         m_logScrollController->scrollToBottomLater();
     }
     return true;
+}
+
+void DetachableLogWindow::appendLine(const QString& line) {
+    QTextCursor cursor(m_logEdit->document());
+    cursor.movePosition(QTextCursor::End);
+    const LogBlockFormats formats = logBlockFormats(m_logEdit->font());
+    cursor.beginEditBlock();
+    if (!m_logEdit->document()->isEmpty()) {
+        cursor.insertBlock(formats.message_block, formats.message_text);
+    }
+    insertLogMessage(&cursor, line, formats);
+    cursor.endEditBlock();
 }
 
 void DetachableLogWindow::clearLog() {
