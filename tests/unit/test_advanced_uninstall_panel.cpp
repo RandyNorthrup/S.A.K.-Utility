@@ -6,17 +6,23 @@
 
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/advanced_uninstall_types.h"
+#include "sak/style_constants.h"
 
+#include <QApplication>
 #include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFormLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 namespace {
 constexpr qint64 kPayloadBytes = 64 * 1024;
@@ -47,6 +53,9 @@ private Q_SLOTS:
     void ticksSurviveTheSearchText();
     void aProvisionedPackageSaysWhatItIs();
     void aFinishedRefreshLeavesNoProgressBar();
+    void aRegistryKeyIsShownWholeOnOneLine();
+    void theUninstallConfirmationMatchesTheOtherUninstalls();
+    void theNameColoursHaveAKey();
 };
 
 // The batch is built from the ticked rows. Add to Batch Queue once wrote to a separate queue, which
@@ -187,6 +196,81 @@ void AdvancedUninstallPanelTests::aFinishedRefreshLeavesNoProgressBar() {
     const QList<QVariant> last = progress.last();
     QVERIFY(last.at(1).toInt() > 0);
     QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
+}
+
+// Review 2 (N7): the Registry Key label wrapped "...\Notepad++" into "Notepad+" and a lone "+".
+// Commands and keys are read-only one-line fields, whole and copyable.
+void AdvancedUninstallPanelTests::aRegistryKeyIsShownWholeOnOneLine() {
+    const sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo program;
+    program.displayName = QStringLiteral("Notepad++ (64-bit x64)");
+    program.registryKeyPath =
+        QStringLiteral("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Notepad++");
+    program.uninstallString = QStringLiteral("\"C:\\Program Files\\Notepad++\\uninstall.exe\"");
+    QWidget form_owner;
+    auto* form = new QFormLayout(&form_owner);
+    panel.populateProgramPropertiesForm(program, &form_owner, form);
+    QHash<QString, QLineEdit*> fields;
+    for (auto* field : form_owner.findChildren<QLineEdit*>()) {
+        fields.insert(field->accessibleName(), field);
+    }
+    for (const auto& [name, value] :
+         {std::pair{QStringLiteral("Registry Key"), program.registryKeyPath},
+          std::pair{QStringLiteral("Uninstall Command"), program.uninstallString}}) {
+        QLineEdit* field = fields.value(name);
+        QVERIFY2(field != nullptr, qPrintable(name));
+        QVERIFY(field->isReadOnly());
+        QCOMPARE(field->text(), value);
+    }
+}
+
+// Review 2 (N8): the bold name broke at "++", and Uninstall was primary blue where Force Uninstall
+// and Batch Uninstall are the danger tone.
+void AdvancedUninstallPanelTests::theUninstallConfirmationMatchesTheOtherUninstalls() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo program;
+    program.displayName = QStringLiteral("Notepad++ (64-bit x64)");
+    QString header;
+    QString button_style;
+    QTimer::singleShot(0, &panel, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+            return;
+        }
+        for (auto* label : dialog->findChildren<QLabel*>()) {
+            if (label->text().startsWith(QStringLiteral("Uninstall <b>"))) {
+                header = label->text();
+            }
+        }
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("Uninstall")) {
+                button_style = button->styleSheet();
+            }
+        }
+        dialog->reject();
+    });
+    panel.showUninstallConfirmation(program);
+    QCOMPARE(header, QStringLiteral("Uninstall <b>Notepad+\u2060+ (64-bit x64)</b>?"));
+    QCOMPARE(button_style, sak::ui::kDangerButtonStyle);
+}
+
+// Review 2 (DF10): a red program name, and orange ones in the bloatware view, with nothing saying
+// why. The list keeps a key in those colours, in the words each name's tooltip uses.
+void AdvancedUninstallPanelTests::theNameColoursHaveAKey() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo bloat;
+    bloat.displayName = QStringLiteral("Candy Game");
+    bloat.isBloatware = true;
+    sak::ProgramInfo orphan;
+    orphan.displayName = QStringLiteral("Gone Tool");
+    orphan.isOrphaned = true;
+    const std::unique_ptr<QTableWidgetItem> bloat_name(panel.programNameItem(bloat, 0));
+    const std::unique_ptr<QTableWidgetItem> orphan_name(panel.programNameItem(orphan, 1));
+    auto* bloat_key = panel.findChild<QLabel*>(QStringLiteral("programColorKeyBloatware"));
+    auto* orphan_key = panel.findChild<QLabel*>(QStringLiteral("programColorKeyOrphaned"));
+    QVERIFY(bloat_key != nullptr && orphan_key != nullptr);
+    QCOMPARE(bloat_key->text(), bloat_name->toolTip());
+    QCOMPARE(orphan_key->text(), orphan_name->toolTip());
 }
 
 QTEST_MAIN(AdvancedUninstallPanelTests)

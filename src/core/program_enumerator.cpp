@@ -12,9 +12,11 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 
@@ -651,7 +653,8 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     prog.displayName = obj["Name"].toString();
     prog.packageFamilyName = obj["PackageFamilyName"].toString();
     prog.packageFullName = obj["PackageFullName"].toString();
-    prog.publisher = obj["Publisher"].toString();
+    // The list showed "CN=Microsoft Corporation, O=Micro..." (review 2, N9).
+    prog.publisher = publisherFromSubject(obj["Publisher"].toString());
     prog.displayVersion = obj["Version"].toString();
     prog.installLocation = obj["InstallLocation"].toString();
     prog.source = ProgramInfo::Source::UWP;
@@ -661,6 +664,61 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     if (!prog.displayName.isEmpty()) {
         results.append(prog);
     }
+}
+
+namespace {
+
+/// @p value without the quotes an X.500 name puts around a value holding a comma.
+QString unquotedName(QString value) {
+    value = value.trimmed();
+    if (value.size() > 1 && value.startsWith(QLatin1Char('"')) &&
+        value.endsWith(QLatin1Char('"'))) {
+        value.chop(1);
+        value.remove(0, 1);
+    }
+    return value;
+}
+
+/// A certificate subject's names by their upper-cased keys. Relative names are separated by
+/// commas outside quotes; a quoted value may hold a comma.
+QHash<QString, QString> subjectNames(const QString& subject) {
+    QHash<QString, QString> names;
+    const auto take = [&names](const QString& part) {
+        const qsizetype equals = part.indexOf(QLatin1Char('='));
+        if (equals > 0) {
+            names.insert(part.left(equals).trimmed().toUpper(), unquotedName(part.mid(equals + 1)));
+        }
+    };
+    QString current;
+    bool quoted = false;
+    for (const QChar ch : subject) {
+        quoted = ch == QLatin1Char('"') ? !quoted : quoted;
+        if (ch == QLatin1Char(',') && !quoted) {
+            take(current);
+            current.clear();
+        } else {
+            current.append(ch);
+        }
+    }
+    take(current);
+    return names;
+}
+
+}  // namespace
+
+QString ProgramEnumerator::publisherFromSubject(const QString& subject) {
+    const QHash<QString, QString> names = subjectNames(subject);
+    if (const QString org = names.value(QStringLiteral("O")); !org.isEmpty()) {
+        return org;
+    }
+    // A Store-signed package's CN is an ID such as ED346674-0FA1-4272-85CE-3187C9C86E26, which
+    // names no one: the subject is shown as it is rather than dressed up as a name.
+    static const QRegularExpression kIdOnly(QStringLiteral("^[0-9A-Fa-f-]{32,36}$"));
+    if (const QString common = names.value(QStringLiteral("CN"));
+        !common.isEmpty() && !kIdOnly.match(common).hasMatch()) {
+        return common;
+    }
+    return subject;
 }
 
 bool ProgramEnumerator::appxScanSucceeded(const ProcessResult& result) {

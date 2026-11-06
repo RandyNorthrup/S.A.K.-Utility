@@ -26,11 +26,13 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QTableWidget>
 #include <QtConcurrent>
@@ -87,8 +89,11 @@ void addUninstallProgramHeader(QDialog* dialog,
     // non-admin process, so they are untrusted markup: escape them into the template that wants
     // <b>, and force plain text where the template wants none (see
     // populateProgramPropertiesForm(), which does the same for every other registry field).
-    auto* header_label = new QLabel(
-        QObject::tr("Uninstall <b>%1</b>?").arg(program.displayName.toHtmlEscaped()), dialog);
+    // A word joiner between each "+" and the next keeps "Notepad++" on one line: the line breaker
+    // allows a break between them, and the bold name broke into "Notepad+" and "+" (review 2, N8).
+    QString shown_name = program.displayName.toHtmlEscaped();
+    shown_name.replace(QRegularExpression(QStringLiteral("\\+(?=\\+)")), QStringLiteral("+\u2060"));
+    auto* header_label = new QLabel(QObject::tr("Uninstall <b>%1</b>?").arg(shown_name), dialog);
     header_label->setWordWrap(true);
     layout->addWidget(header_label);
 
@@ -188,6 +193,9 @@ QDialogButtonBox* addUninstallConfirmationButtons(QDialog* dialog, QVBoxLayout* 
     auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                             dialog);
     button_box->button(QDialogButtonBox::Ok)->setText(QObject::tr("Uninstall"));
+    // Removing a program is destructive, as Force Uninstall and Batch Uninstall are, and their
+    // buttons are the danger tone; this one alone was primary blue (review 2, N8).
+    button_box->button(QDialogButtonBox::Ok)->setStyleSheet(sak::ui::kDangerButtonStyle);
     layout->addWidget(button_box);
     QObject::connect(button_box, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
     QObject::connect(button_box, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
@@ -542,12 +550,26 @@ void AdvancedUninstallPanel::populateProgramPropertiesForm(const ProgramInfo& pr
     form_layout->addRow(
         new QLabel(QString("<br><b>%1</b>").arg(tr("Technical Details")), scroll_widget));
 
-    add_row(tr("Uninstall Command"), program.uninstallString);
-    add_row(tr("Quiet Uninstall"), program.quietUninstallString);
-    add_row(tr("Modify Path"), program.modifyPath);
-    add_row(tr("Registry Key"), program.registryKeyPath);
-    add_row(tr("Package Family"), program.packageFamilyName);
-    add_row(tr("Package Full Name"), program.packageFullName);
+    // Commands, keys and package names are one long token: a wrapping label broke "Notepad++" into
+    // "Notepad+" and a lone "+" (review 2, N7). Each sits in a read-only field on one line, whole,
+    // selectable and copyable exactly as Windows holds it.
+    const auto add_token_row = [&](const QString& label, const QString& value) {
+        if (value.isEmpty()) {
+            return;
+        }
+        auto* field = new QLineEdit(value, scroll_widget);
+        field->setReadOnly(true);
+        field->setCursorPosition(0);
+        field->setToolTip(value);
+        field->setAccessibleName(label);
+        form_layout->addRow(new QLabel(QString("<b>%1:</b>").arg(label), scroll_widget), field);
+    };
+    add_token_row(tr("Uninstall Command"), program.uninstallString);
+    add_token_row(tr("Quiet Uninstall"), program.quietUninstallString);
+    add_token_row(tr("Modify Path"), program.modifyPath);
+    add_token_row(tr("Registry Key"), program.registryKeyPath);
+    add_token_row(tr("Package Family"), program.packageFamilyName);
+    add_token_row(tr("Package Full Name"), program.packageFullName);
 }
 
 void AdvancedUninstallPanel::addInstallFolderSizeRow(const ProgramInfo& program,

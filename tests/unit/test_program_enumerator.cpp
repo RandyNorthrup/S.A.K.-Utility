@@ -21,6 +21,7 @@ class TestProgramEnumerator : public QObject {
 
 private Q_SLOTS:
     void construction_default();
+    void publisherFromSubject_namesThePublisher();
     void construction_nonCopyable();
     void programs_emptyInitially();
     void measureFolderBytes_emptyPath();
@@ -515,6 +516,27 @@ void TestProgramEnumerator::enumerateAll_cancelledBeforeStart() {
     QCOMPARE(args.at(1).toString(), QStringLiteral("Enumeration cancelled."));
     // No results were cached either: a refused run must not leave a partial catalogue behind.
     QVERIFY(enumerator.programs().isEmpty());
+}
+
+// Review 2 (N9): Store packages listed their certificate subject as the publisher,
+// "CN=Microsoft Corporation, O=Micro...".
+void TestProgramEnumerator::publisherFromSubject_namesThePublisher() {
+    using sak::ProgramEnumerator;
+    QCOMPARE(ProgramEnumerator::publisherFromSubject(QStringLiteral(
+                 "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, "
+                 "C=US")),
+             QStringLiteral("Microsoft Corporation"));
+    QCOMPARE(ProgramEnumerator::publisherFromSubject(
+                 QStringLiteral("CN=\"Contoso, Ltd.\", O=\"Contoso, Ltd.\", C=US")),
+             QStringLiteral("Contoso, Ltd."));
+    QCOMPARE(ProgramEnumerator::publisherFromSubject(QStringLiteral("CN=Fabrikam Tools")),
+             QStringLiteral("Fabrikam Tools"));
+    // A Store-signed CN is an ID, not a name.
+    const QString store = QStringLiteral("CN=ED346674-0FA1-4272-85CE-3187C9C86E26");
+    QCOMPARE(ProgramEnumerator::publisherFromSubject(store), store);
+    // A desktop program's Publisher is a plain name already.
+    QCOMPARE(ProgramEnumerator::publisherFromSubject(QStringLiteral("Mozilla")),
+             QStringLiteral("Mozilla"));
 }
 
 QTEST_MAIN(TestProgramEnumerator)

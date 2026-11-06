@@ -90,6 +90,12 @@ public:
     ///        ask about an attacker-writable Uninstall value before offering a measurement.
     [[nodiscard]] static bool isLocalInstallFolder(const QString& path);
 
+    /// @brief The publisher's name in a Store package's Publisher, which is the subject of the
+    ///        certificate the package was signed with ("CN=Microsoft Corporation, O=Microsoft
+    ///        Corporation, L=Redmond, ..."): the organization (O), else the common name (CN). A
+    ///        subject naming neither, or one whose CN is only an ID, comes back as it is. Pure.
+    [[nodiscard]] static QString publisherFromSubject(const QString& subject);
+
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);

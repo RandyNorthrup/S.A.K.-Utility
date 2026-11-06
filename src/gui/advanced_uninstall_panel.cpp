@@ -245,6 +245,18 @@ ProgramTableUi buildProgramTableUi(AdvancedUninstallPanel* panel,
     ui.program_count_label = new QLabel(QObject::tr("0 programs"), panel);
     ui.program_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     count_row->addWidget(ui.program_count_label);
+    // What the name colours mean, in those colours: a red or orange name with nothing to say why
+    // read as an error (review 2, DF10). The same words are each name's tooltip.
+    auto* bloat_key = new QLabel(QObject::tr("Potential bloatware"), panel);
+    bloat_key->setObjectName(QStringLiteral("programColorKeyBloatware"));
+    bloat_key->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
+    auto* orphan_key = new QLabel(QObject::tr("Orphaned - program files not found"), panel);
+    orphan_key->setObjectName(QStringLiteral("programColorKeyOrphaned"));
+    orphan_key->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+    count_row->addSpacing(sak::ui::kSpacingLarge);
+    count_row->addWidget(bloat_key);
+    count_row->addSpacing(sak::ui::kSpacingLarge);
+    count_row->addWidget(orphan_key);
     count_row->addStretch();
 
     ui.total_size_label = new QLabel(panel);
