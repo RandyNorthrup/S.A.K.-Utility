@@ -75,6 +75,8 @@ constexpr int kTableColumnWidthPort = 70;
 constexpr int kTableColumnWidthMedium = 75;
 constexpr int kTableColumnWidthStandard = 80;
 constexpr int kTableColumnWidthNarrow = 90;
+// A cell's text has the theme's padding on both sides and the grid line beside it.
+constexpr int kAdapterStatusCellPaddingPx = 24;
 constexpr int kTableColumnWidthRemotePort = 95;
 constexpr int kTableColumnWidthWide = 100;
 constexpr int kTableColumnWidthState = 105;
@@ -438,7 +440,12 @@ void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* lay
     header->setSectionResizeMode(KAdapterColumnType, QHeaderView::Interactive);
     header->resizeSection(KAdapterColumnType, kTableColumnWidthNarrow);
     header->setSectionResizeMode(KAdapterColumnStatus, QHeaderView::Interactive);
-    header->resizeSection(KAdapterColumnStatus, kTableColumnWidthNarrow);
+    // As wide as its longest word: 90 px cut "Disconnected" to "Disconnec..." on testpc1.
+    header->resizeSection(
+        KAdapterColumnStatus,
+        std::max(kTableColumnWidthNarrow,
+                 m_adapterTable->fontMetrics().horizontalAdvance(tr("Disconnected")) +
+                     kAdapterStatusCellPaddingPx));
     header->setSectionResizeMode(KAdapterColumnAddress, QHeaderView::Interactive);
     header->resizeSection(KAdapterColumnAddress, kTableColumnWidthName);
     header->setSectionResizeMode(KAdapterColumnMac, QHeaderView::Interactive);

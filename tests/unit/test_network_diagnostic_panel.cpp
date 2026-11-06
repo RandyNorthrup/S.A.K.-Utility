@@ -332,6 +332,8 @@ private Q_SLOTS:
     void cleanup();
     void aListeningConnectionUsesTheTablesTextColour();
     void everyColumnFitsItsHeaderLabel();
+    void aDisconnectedAdapterReadsWhole();
+    void aOneHopTraceSaysHop();
     void adapterScanRunsInEveryMode_data();
     void adapterScanRunsInEveryMode();
     void teardownRightAfterConstructionJoinsTheScan();
@@ -428,6 +430,54 @@ void NetworkDiagnosticPanelTests::everyColumnFitsItsHeaderLabel() {
         }
     }
     QVERIFY2(cut.isEmpty(), qPrintable(cut.join(QStringLiteral(", "))));
+}
+
+// Review 2: "Reached 127.0.0.1 in 1 hops". Round 2 fixed it with no test.
+void NetworkDiagnosticPanelTests::aOneHopTraceSaysHop() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy status(&panel, &sak::NetworkDiagnosticPanel::statusMessage);
+    sak::TracerouteResult result;
+    result.target = QStringLiteral("127.0.0.1");
+    result.reachedTarget = true;
+    result.hops.append(sak::TracerouteHop{});
+    Q_EMIT controller->tracerouteComplete(result);
+    QVERIFY(status.count() >= 1);
+    QCOMPARE(status.last().at(0).toString(), QStringLiteral("Reached 127.0.0.1 in 1 hop"));
+    result.hops.append(sak::TracerouteHop{});
+    Q_EMIT controller->tracerouteComplete(result);
+    QCOMPARE(status.last().at(0).toString(), QStringLiteral("Reached 127.0.0.1 in 2 hops"));
+}
+
+// testpc1: "Disconnec..." in the Status column, and a speed Windows does not know read as
+// 18446744073709 Mbps.
+void NetworkDiagnosticPanelTests::aDisconnectedAdapterReadsWhole() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo adapter;
+    adapter.name = QStringLiteral("Wi-Fi 2");
+    adapter.adapterType = QStringLiteral("Wi-Fi");
+    adapter.isConnected = false;
+    adapter.linkSpeedBps = 0;
+    Q_EMIT controller->adaptersScanComplete({adapter});
+    auto* table = panel.adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 1);
+    const int status_column = 2;
+    const int speed_column = 5;
+    QCOMPARE(table->item(0, status_column)->text(), QStringLiteral("Disconnected"));
+    const int needed = table->fontMetrics().horizontalAdvance(QStringLiteral("Disconnected")) + 12;
+    QVERIFY2(table->horizontalHeader()->sectionSize(status_column) >= needed,
+             qPrintable(QStringLiteral("%1 px for %2")
+                            .arg(table->horizontalHeader()->sectionSize(status_column))
+                            .arg(needed)));
+    QCOMPARE(table->item(0, speed_column)->text(), QStringLiteral("--"));
 }
 
 // Smoke and audit runs used to skip the adapter scan users get when the panel is created, so the

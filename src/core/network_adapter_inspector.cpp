@@ -13,6 +13,7 @@
 
 #include <QCoreApplication>
 
+#include <limits>
 #include <memory>
 
 #include <winsock2.h>
@@ -239,7 +240,7 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
 
     // -- Status --
     info.isConnected = (addr->OperStatus == IfOperStatusUp);
-    info.linkSpeedBps = addr->TransmitLinkSpeed;
+    info.linkSpeedBps = sak::NetworkAdapterInspector::knownLinkSpeed(addr->TransmitLinkSpeed);
     info.mediaState = info.isConnected ? QStringLiteral("Connected")
                                        : QStringLiteral("Disconnected");
 
@@ -280,6 +281,12 @@ void NetworkAdapterInspector::scan() {
 
 void NetworkAdapterInspector::refresh() {
     scan();
+}
+
+uint64_t NetworkAdapterInspector::knownLinkSpeed(uint64_t reported_bps) {
+    // Windows reports a disconnected adapter's speed as the largest 64-bit value, which read
+    // "18446744073709 Mbps" on testpc1's Wi-Fi adapters. It means not known.
+    return reported_bps == std::numeric_limits<uint64_t>::max() ? 0 : reported_bps;
 }
 
 QString NetworkAdapterInspector::formatLinkSpeed(uint64_t bps) {

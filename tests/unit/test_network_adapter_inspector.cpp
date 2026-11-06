@@ -8,6 +8,8 @@
 
 #include <QtTest/QtTest>
 
+#include <limits>
+
 using namespace sak;
 
 class TestNetworkAdapterInspector : public QObject {
@@ -20,6 +22,7 @@ private Q_SLOTS:
 
     // -- formatLinkSpeed -------------------------------------------
     void formatLinkSpeed_zero();
+    void aDisconnectedAdaptersSpeedIsNotKnown();
     void formatLinkSpeed_bitsPerSecond();
     void formatLinkSpeed_kilobits();
     void formatLinkSpeed_megabits();
@@ -55,6 +58,19 @@ void TestNetworkAdapterInspector::construction_nonCopyable() {
 // ===================================================================
 // formatLinkSpeed
 // ===================================================================
+
+// testpc1: three disconnected Wi-Fi adapters read "1844674407370..." in the Speed column, the
+// largest 64-bit value Windows reports for a speed it does not know.
+void TestNetworkAdapterInspector::aDisconnectedAdaptersSpeedIsNotKnown() {
+    QCOMPARE(sak::NetworkAdapterInspector::knownLinkSpeed(std::numeric_limits<uint64_t>::max()),
+             uint64_t{0});
+    QCOMPARE(sak::NetworkAdapterInspector::knownLinkSpeed(1'000'000'000ULL),
+             uint64_t{1'000'000'000});
+    QCOMPARE(
+        sak::NetworkAdapterInspector::formatLinkSpeed(
+            sak::NetworkAdapterInspector::knownLinkSpeed(std::numeric_limits<uint64_t>::max())),
+        QStringLiteral("N/A"));
+}
 
 void TestNetworkAdapterInspector::formatLinkSpeed_zero() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(0);
