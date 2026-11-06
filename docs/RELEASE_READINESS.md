@@ -165,6 +165,10 @@ keeps their history.
    aria2c) and three .NET Framework `*.dll.config` binding-redirect files that .NET ignores (the
    converter runs its help and its failure paths without them). Still to prove: an elevated
    conversion of a real UUP set on the Windows 11 VM (VM smoke).
+9. FIXED 2026-11-05, release blocker: a Windows install USB did not start a UEFI PC. The app wrote one NTFS partition
+   and reported success, and UEFI firmware, which Windows 11 with Secure Boot needs, reads FAT32. It writes one FAT32
+   partition and has Windows' DISM split a large install.wim into .swm parts, and its final check reads the result
+   back (4505a84f, 6edd85d0). Built and read back on testpc1; see UI review round 3 below.
 
 ### Fixed by the lifecycle package (2026-10-25)
 
@@ -1341,6 +1345,148 @@ handling of a CIM time-out, "not supported" and each disk's UniqueId is checked 
 testpc1 by hand (timings above), and the real-script test runs only where real hardware is allowed. The hidden Aero
 arrow has no test: Qt creates it only in a real DWM window, never offscreen. The ISO save paths, the Linux ISO ready
 text, the traceroute plural and the context chip's text have no test either.
+
+### UI review round 3: recovery, Windows USB, Verify, the dark re-check, and the mediums (2026-11-05)
+
+From review 2's capture (`observations.json`, `still_broken` and `worse`), the light and dark re-checks and round 2's
+open list, on dev at 99ac494a. Commits 2bd18d45 to de6c7c2b. Every fix has a test, and every test was drilled red with
+its fix broken in the source (62 drills; the capture harness's 4 below). The proofs ran on testpc1 through the window
+with the capture harness.
+
+**Partition Recovery.** The scan never wrote anything, and it did not propose the capture's write-back: that page
+takes what a technician types, and the capture typed a live partition's place (1048576, 1073741824). Writing it was
+already refused twice, by the queue validator and by the helper's script before New-Partition; neither had a test
+that ran it, and the validator's end could wrap round on a huge typed size. What the scan reported was wrong. A boot
+sector at a 1 MiB step that did not start a live partition read as a candidate, so one inside a live partition (a
+disk image stored on it) or a lost volume whose size runs into a live one was listed as lost. A live BitLocker volume
+was called FAT32: BitLocker writes a FAT32-shaped boot sector, FAT32 at offset 82 included, under the OEM name
+-FVE-FS-. Each finding now says whether it is a live partition, inside one, running into one, or a candidate, with
+the size its boot sector gives; BitLocker is named; a short read ends the scan. Proved on testpc1 (531143c5's
+package) on a throwaway 4 GB VHDX with phase 1's layout: Partition 1 live under BitLocker at 1048576, 1073741824
+bytes, and beside it at 1074790400 an NTFS volume deleted from the table. The scan logged "Partition 1 is at byte
+offset 1048576 (BitLocker) and is not lost" and "Candidate partition boot sector at byte offset 1074790400 (NTFS,
+size 1073741824 bytes)", and the live place typed into the write-back page was refused: "Not added to the queue:
+Recovered partition candidate overlaps an existing partition". A first try selected testpc1's own disk 0 by a wrong
+key (End moves along a table row, not down it): the read-only scan ran there, and the typed write-back was refused by
+the OS-disk block and the overlap check; nothing was written.
+
+**Windows USB, the safety check.** It ran Get-Disk in a fresh PowerShell with 5 s to answer. Timed on testpc1 against
+its USB DISK 3.0 stick: 2.3 to 2.9 s idle, 4.8 to 5.9 s with every logical CPU busy at normal priority. With
+99ac494a's package and that load, the build failed at once through the window with the capture's message: "Could not
+verify target disk 3 is safe to erase. The target drive may be left unusable." The check now waits 30 s; when it
+cannot answer it says why (no answer in time, or what Windows said) and that the drive was not changed, and the panel
+warns that the drive may be unusable only once the diskpart clean has started. With 531143c5's package under a
+harsher load (the app at the harness's BelowNormal against 24 Normal-priority spinners) the check ran out its 30 s and
+said so, with "The target drive was not changed"; unloaded, the build ran through. The capture VM case was not run
+again: the VM was free, and pre-round8 was restored with a throwaway 32 GB VDI on a VirtualBox USB storage
+controller, but started headless the guest would not take the harness's 1680x900 display mode, so the harness
+refused to run. pre-round8 was restored again and the VDI deleted rather than fight the VM's display; the cause was
+reproduced and fixed on testpc1 instead.
+
+Found on the way: the stick as handed over, raw-written before, was listed "[SYSTEM DRIVE]" and could not be
+flashed. Every path on a volume with no file system answers ERROR_UNRECOGNIZED_VOLUME (1005, measured on testpc1),
+which the system check read as "Windows may be here". Such a volume holds no Windows; access denied, not ready and
+the rest still fail closed. Also, Clear-Disk did not clear that stick (it kept a whole-disk partition at offset 0);
+diskpart's clean did.
+
+**Windows USB, the layout (release blocker, fixed).** The unloaded build on testpc1 said "Flash completed
+successfully" and left one NTFS partition (MBR, active) with \EFI\BOOT\BOOTX64.EFI on NTFS and a 6,868,632,137-byte
+install.wim. UEFI firmware reads FAT32, so no Windows 11 PC with Secure Boot would start from it. The USB is now one
+FAT32 partition on MBR, active for BIOS PCs; on a drive over 32 GB the partition is 32 GB, the most diskpart formats
+FAT32 (the app has no FAT32 formatter of its own, so the cap was chosen over writing one). An install.wim of 4 GiB or
+more is left out of the 7-Zip extraction, taken out of the ISO into a work folder on the PC, and split by Windows' own
+DISM (/Split-Image, 3800 MB parts, /CheckIntegrity) into install.swm, install2.swm and so on; each part is hashed and
+copied. An image under 4 GiB is copied as it is; an install.esd that large cannot be split and is refused. The final
+check reads the drive: FAT32, \EFI\BOOT\BOOTX64.EFI, no install.wim left, and every part's size and SHA-256 (4505a84f).
+
+The first real run failed as soon as the extraction ended, after the erase, with "CRITICAL: No Windows install image
+found": the check after the extraction still asked for the install.wim the extraction now leaves out (6edd85d0).
+DISM's split with the app's own arguments, by hand on testpc1 on the same ISO: exit 0 in 49 s, two parts, and DISM
+/Get-ImageInfo on install.swm lists all 11 editions. Then, through the window with 6edd85d0's package on the pinned
+stick (Windows 11 25H2 ISO, 7,736,125,440 bytes), the build ran in 21 minutes (format 20 s, extraction 3 min, split
+and copy 16 min, read-back 2 min) and said "Flash completed successfully". Read from testpc1 after the app's eject and
+a media reload, so from the stick and not the file cache: MBR; one partition at 1 MiB, type 0x0C FAT32, active, label
+WINDOWS; \EFI\BOOT\BOOTX64.EFI, bootmgr, boot\BCD and setup.exe present; no install.wim and no file of 4 GiB or more;
+install.swm (3,984,050,148 bytes) and install2.swm (2,839,447,229 bytes) with the SHA-256 the app logged as it wrote
+them; DISM /Get-ImageInfo on install.swm lists all 11 editions. Whether a PC starts from it, in a Hyper-V
+Generation 2 VM with Secure Boot on testpc1, is recorded here once run.
+
+That run also showed two things fixed after its package. The status bar read "Ready" beside the bar for the whole
+run, because the creator's steps reached only the page (54bd3241). The bar sat at 13% from the start of the
+extraction to the end of the copy, about 15 minutes: the build reads 7-Zip's progress from stdout and ran it with
+-bsp2, which writes it to stderr (measured on testpc1 with the bundled 7-Zip 26.05; the progress lines were also
+logged as a 7-Zip error). It runs with -bsp1, and the split moves the bar per step and per part (ddeaca96). Neither
+has been seen on a real build yet.
+
+**Verify System Files.** ScanHealth had 10 minutes; it has 30 inside the run's one 60-minute bound, and its percent
+reaches the status bar as DISM prints it. A ScanHealth that runs out of time after SFC passed is incomplete, not
+failed ("SFC found no integrity violations. DISM did not finish its component store scan in 30 min, so this check is
+incomplete."). The capture's "S.A.K. Log stayed at Execution started with the bar at 50%" was the picture taken while
+the run was still going: 50% is the panel's own bar during ScanHealth. On testpc1 through the window (6edd85d0's
+package): SFC ran (2.5 to 3.5 min, no violations) and the status bar read "DISM: Scanning component store...
+60.4%". The whole run then ended "Failed: Verify System Files - SFC found no integrity violations. DISM did not
+complete a component store assessment." DISM's log shows it did: ScanHealth reported "The component store is repairable.", and
+RestoreHealth /LimitAccess failed with 0x800f0915, "The repair content could not be found anywhere" (both re-run by
+hand there with the same words). testpc1's component store is damaged and cannot be repaired without a source. The
+result now says so: "DISM found damage in the component store and could not repair it from this PC. DISM said: Error:
+0x800f0915 The repair content could not be found anywhere. A repair needs a source, such as Windows Update or a
+Windows ISO of the same version." (de6c7c2b, tested with that PC's own DISM output). With de6c7c2b's package the
+same run on testpc1 took 7.5 minutes and ended with that wording, in the log and on the status bar.
+
+**The status bar.** A job's message ran out after 5 s while its progress bar still showed the job, which read
+"Ready" at 5%. While the bar shows unfinished work, its message stays until the next one or the end of the work.
+
+**RD1, the double alias.** `cssColor()` mapped any value equal to a light token to its palette role, so a colour
+already resolved for the dark theme (#f8fafc, the dark text, is also the light surface token) was mapped again. Only a
+token (`const char*`) reaches the aliases now; `cssColor(const QString&)` is deleted, and the style helpers' QString
+overloads take a resolved colour as it is. The sweep, by deleting those overloads and building, found four callers:
+the chips (now right), the transcript's Expand toggle (white on the user bubble had become the dark base colour), and
+two that held tokens in a QString (the API key marker, the install summary heading), now passed as tokens. Every
+`htmlColor()` caller passes a token. **DN1:** search highlights carry dark text, through one format both highlight
+paths use. **DN3:** Flash Another sits under the details instead of at the foot of a page as tall as the tallest.
+
+**The mediums.** test_mbox_parser's flake was the hardware guard: Qt named a temporary file
+test_mbox_parser.KQSCsi, and the guard refused `\\?\C:\...KQSCsi` for containing "scsi"; device names are matched
+where they start the path. Linux ISO cancel now removes the .iso and .aria2 at once, and Yes to overwrite replaces
+the file. BitLocker Key Backup and Screenshot Settings show what they saved and where. A disconnected adapter's
+speed, the largest 64-bit value, reads as unknown, and "Disconnected" fits. The Benchmark Drive list names a volume
+by its own size and selects its first row. A killed disk benchmark leaves no file (a delete-on-close handle for the
+run, and leftovers of gone processes removed at the next run). The restore page's title and both Cancel buttons
+follow its end. Close Programs First names the program and says when it runs with no window. A package installer that
+fails its declared checksum names the upstream package, and the offline result's status bar names the failures.
+Application data paths show backslashes.
+
+**Already fixed in round 2 (dac2667b, with tests):** Quick Partition and Map Users cells (F4, N2), Max online (F7),
+the Migrate review (F8), the calendar legend in both themes (S12, DN2), the disk map (R1; RD2 not re-checked by
+picture), the Linux ISO ready text (N11, DF15), the ISO save paths (S21, still untested), the traceroute plural (now
+tested). **Not defects:** provisioned packages listed twice (labelled on purpose), Manage BitLocker's elevation prompt
+in a standard session (round 8's design).
+
+**Capture harness (site repo `scripts/capture`, not committed).** The privacy gate takes a dotted number as a version
+on a line labelled Version, Installed, Fixed in or Affected, or beside such a label; a public address on such a line
+without the label's colon, or on the next line, still fails. Test-PrivacyRules.ps1: 10 new cases, pwsh 7 and 5.1;
+four drills red. The site's Windows install USB page and its shot waits now describe the FAT32 drive (working tree).
+
+**Not reached this round, with what each needs.** The Windows USB's own read-back: on testpc1 the second part read
+back in 17.5 s against 101 s for the first, so it came largely from Windows' file cache; the final check proves what
+was written, not that the stick holds it (an unbuffered read, FILE_FLAG_NO_BUFFERING, or a dismount before the
+read). Linux ISO "0%" at 0.3% (the bar is whole percent: a finer range or a percent label). The power plan, check
+disk and verify box reports in a proportional font (F29, F31: a monospace block in the log window). Property columns
+in Inspect, Properties, Defrag, Manage BitLocker and the Erase SSD method (S15, DF12, DN6, N13: a property table that
+sizes its first column to its longest label and wraps values). Copy Disk's target slivers (F32) and Create
+Partition's marker over its label. The Wi-Fi Password row's grey block, File Explorer's Properties and Safety text and
+"Root: C:/" (F23, S21, N19), Address Book's Company column, the attachments header, VM SMART wording that differs
+between runs (31). The benchmark starting on C: was not reproduced (the list now selects its first row). The re-check
+leftovers round 2 listed: S7, S17, S25, the rest of S15 and S21, F16, F21, F23, F24, F27, F28, F30, F35, F36, F38,
+F40, F41, F46, part of F39 and F34, N6 to N9, N12 to N18, DF10, DF11, D2, DF2, DF5, DF16, DN4, DN5, DN7, DN8, and
+Settings' screenshot item (#59).
+
+**What no test here covers.** The Verify step's streaming through runProcessStreaming (the tests replace the step);
+the panel's "The target drive was not changed" after a failed check (a GUI lambda); Close Programs' window check
+(EnumWindows on a real desktop); the offline result's status bar text; the delete-on-close file under a real kill
+(the test closes the handle as a kill does). For the Windows USB: the FAT32 check and the UEFI file in the final
+verification, 7-Zip leaving install.wim out and writing its progress to stdout, DISM's split, and the drive booting
+run only on a real drive and a real 7-Zip and DISM; they were proved on testpc1 (above), not by a test here.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 

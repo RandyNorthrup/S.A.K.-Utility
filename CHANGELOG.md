@@ -8,6 +8,44 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **A Windows install USB starts UEFI PCs** - The USB was one NTFS partition, and UEFI firmware reads FAT32, so a
+  Windows 11 PC with Secure Boot did not start from it, while the app reported success. The USB is now one FAT32
+  partition (32 GB at most on a larger drive, active for BIOS PCs too). An install.wim of 4 GB or more is split by
+  Windows' own DISM into install.swm parts, which Windows Setup reads; an install.esd that large is refused. The
+  final check reads the drive back: FAT32, the UEFI boot file, and every part's hash.
+- **Partition Recovery never offers a partition that is there now** - The scan reported any boot sector at a
+  1 MiB step that did not start a live partition, so one stored inside a live partition, or a lost volume that would
+  run into one, read as a candidate. Each finding now says whether it is a live partition, inside one, running into
+  one, or a real candidate, with the size its boot sector gives. A live BitLocker volume is named BitLocker: its boot
+  sector is shaped like FAT32 and was logged as FAT32. Writing a candidate back over a live partition was already
+  refused when it was queued and again before the write; both checks now have tests.
+- **A Windows install USB no longer fails at once on a busy PC** - Its check that the target disk is safe to erase
+  gave Windows 5 seconds to describe the disk, and a cold PowerShell took 5.9 s on a busy PC. It waits 30 s, and
+  when it cannot answer the message says why (no answer in time, or what Windows said) and that the drive was not
+  changed, instead of warning that the drive may be left unusable.
+- **Verify System Files gives DISM time, and shows how far it has got** - DISM's component store scan had 10 minutes
+  and timed out on a slow disk after SFC had passed, and the run said it failed. It has 30 minutes and shows its
+  percent. If it still does not finish, the result says SFC's verdict and that the DISM scan did not finish, as
+  incomplete rather than failed. When DISM finds damage it cannot repair without a source, the result says so and
+  quotes DISM's error; it said DISM "did not complete a component store assessment".
+- **The status bar keeps a running job's message** - A message about work in progress ran out after 5 seconds and
+  left "Ready" beside a progress bar at 5%. It now stays until the work ends. A Windows install USB's steps reach the
+  status bar too; they showed only on the page, and the status bar read "Ready" for the whole run.
+- **Dark theme: AI context chips and search matches are readable** - A colour already chosen for the theme went
+  through the light-theme aliases a second time, so the chips' labels took their own fill colour. Advanced Search
+  marked matches with a yellow or orange fill under light text; the text on a match is dark now.
+- **Cancelling a Linux ISO download removes the partial file** - The .iso and its .aria2 file stayed if the dialog
+  closed before the download's end was processed. Answering Yes to overwrite an existing file now replaces it.
+- **BitLocker Key Backup and Screenshot Settings say what they saved** - The result was only in the log. A box now
+  says what was saved and where, or what failed.
+- **A killed disk benchmark leaves no test file** - The benchmark's file is removed by Windows if the app is killed,
+  and a file an earlier killed run left is removed at the next run.
+- **Smaller fixes** - Network adapters with no link show no speed instead of 18446744073709 Mbps, and "Disconnected"
+  fits its column. The Benchmark Drive list names a volume by its own size. The restore page's header and Cancel
+  buttons show that it ended. Close Programs First names the program to close and says when it runs in the
+  background with no window. A package whose installer no longer matches its declared checksum says the upstream
+  package is at fault. Application data paths use backslashes.
+
 - **The Backup Wizard backs up again** - Its Backup Settings page showed Finish, which closed the wizard with nothing
   backed up. It shows Next, to the page with Start Backup. A backup no longer calls itself incomplete because of the
   hidden links Windows makes in every profile, such as Documents\My Music: every backup on every PC did. Any other
