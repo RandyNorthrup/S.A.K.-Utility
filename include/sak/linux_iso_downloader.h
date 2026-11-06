@@ -117,6 +117,10 @@ public:
     ///        as the hash, verifying nothing. Pure; unit-testable.
     [[nodiscard]] static bool isHexDigestOfLength(const QString& token, qsizetype hex_length);
 
+    /// @brief Remove a download at @p save_path and the .aria2 file aria2 keeps beside it to
+    ///        resume. False, with the file named in @p error, when one stays.
+    [[nodiscard]] static bool discardDownload(const QString& save_path, QString* error);
+
     /// @brief Algorithm name of a per-algorithm heading line such as "### SHA256SUMS:",
     ///        uppercased ("SHA256"), or an empty string when @p line is not such a heading.
     ///        A release note groups its digests under these headings, and a BLAKE3 digest is

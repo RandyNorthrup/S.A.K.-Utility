@@ -955,12 +955,24 @@ void LinuxISODownloader::cancel() {
     }
     m_catalog->cancelAll();
 
+    QString leftover;
     if ((m_aria2cProcess != nullptr) && m_aria2cProcess->state() != QProcess::NotRunning) {
         m_aria2cProcess->kill();
+        // The partial file goes now, not when the process's end reaches the event loop: in the
+        // capture VM the dialog went before that did, and a 4.89 GB .iso and its .aria2 stayed.
+        // A killed process ends in milliseconds, and the file cannot be removed while aria2c
+        // still has it open; the wait is bounded.
+        m_aria2cProcess->waitForFinished(sak::kTimeoutProcessTerminateMs);
+        if (!m_savePath.isEmpty() && !discardDownload(m_savePath, &leftover)) {
+            sak::logError(leftover.toStdString());
+        }
     }
 
     setPhase(Phase::Idle, "Cancelled");
-    Q_EMIT statusMessage("Download cancelled");
+    // A file that stays is named, since the next download would meet it.
+    Q_EMIT statusMessage(leftover.isEmpty()
+                             ? QStringLiteral("Download cancelled")
+                             : QStringLiteral("Download cancelled. %1").arg(leftover));
 }
 
 // ============================================================================
@@ -986,17 +998,29 @@ QString LinuxISODownloader::findAria2c() const {
     return {};
 }
 
-void LinuxISODownloader::cleanupPartialFiles() {
-    // Remove .aria2 control file
-    const QString aria2ControlFile = m_savePath + ".aria2";
-    if (QFile::exists(aria2ControlFile)) {
-        QFile::remove(aria2ControlFile);
-        sak::logInfo("Removed aria2 control file: " + aria2ControlFile.toStdString());
+bool LinuxISODownloader::discardDownload(const QString& save_path, QString* error) {
+    for (const QString& path : {save_path + QStringLiteral(".aria2"), save_path}) {
+        if (!QFile::exists(path)) {
+            continue;
+        }
+        QFile file(path);
+        if (!file.remove()) {
+            *error = QStringLiteral("Could not remove %1: %2")
+                         .arg(QDir::toNativeSeparators(path), file.errorString());
+            return false;
+        }
+        sak::logInfo("Removed partial download file: " + path.toStdString());
     }
+    return true;
+}
 
-    // Remove partial download
-    if (QFile::exists(m_savePath)) {
-        QFile::remove(m_savePath);
-        sak::logInfo("Removed partial download: " + m_savePath.toStdString());
+void LinuxISODownloader::cleanupPartialFiles() {
+    if (m_savePath.isEmpty()) {
+        return;
+    }
+    // A removal that fails is logged as failed, not as done; cancel() names it to the user.
+    QString error;
+    if (!discardDownload(m_savePath, &error)) {
+        sak::logError(error.toStdString());
     }
 }

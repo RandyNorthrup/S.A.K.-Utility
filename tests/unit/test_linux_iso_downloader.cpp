@@ -20,13 +20,17 @@
 #include "sak/linux_iso_downloader.h"
 #include "sak/network_constants.h"
 #include "sak/network_transfer_runner.h"
+#include "sak/process_runner.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QtTest/QSignalSpy>
@@ -119,6 +123,8 @@ private Q_SLOTS:
 
     // Cancel
     void testCancelFromIdle();
+    void testCancelMidDownloadRemovesThePartialFilesAtOnce();
+    void testDiscardDownloadRemovesTheFileAndItsResumeData();
 
     // Verify-result staleness guard (B10-19)
     void testShouldApplyVerifyResult_gating();
@@ -827,6 +833,58 @@ void LinuxISODownloaderTests::testCancelFromIdle() {
     // so the user is not left wondering whether the click registered.
     QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(statusSpy.at(0).at(0).toString(), QString("Download cancelled"));
+}
+
+// Review 2: Cancel then Yes ("Partial files will be removed") left the .iso and its .aria2, and
+// the next download met "File Exists". The removal waited for the killed process's end to reach
+// the event loop; a dialog closed first never ran it. A long sleep stands in for aria2c.
+void LinuxISODownloaderTests::testCancelMidDownloadRemovesThePartialFilesAtOnce() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString iso = dir.filePath(QStringLiteral("ubuntu-26.04-desktop-amd64.iso"));
+    for (const QString& path : {iso, iso + QStringLiteral(".aria2")}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray(4096, 'x'));
+    }
+    LinuxISODownloader downloader;
+    QSignalSpy status(&downloader, &LinuxISODownloader::statusMessage);
+    downloader.m_savePath = iso;
+    downloader.m_aria2cProcess = new QProcess(&downloader);
+    downloader.m_aria2cProcess->start(sak::systemPowerShellPath(),
+                                      {QStringLiteral("-NoProfile"),
+                                       QStringLiteral("-Command"),
+                                       QStringLiteral("Start-Sleep -Seconds 60")});
+    QVERIFY(downloader.m_aria2cProcess->waitForStarted(10'000));
+
+    downloader.cancel();
+
+    QVERIFY(!QFileInfo::exists(iso));
+    QVERIFY(!QFileInfo::exists(iso + QStringLiteral(".aria2")));
+    QVERIFY(status.count() >= 1);
+    QCOMPARE(status.last().at(0).toString(), QStringLiteral("Download cancelled"));
+}
+
+// "Do you want to overwrite it?" Yes now replaces: aria2 resumed into whatever was there.
+void LinuxISODownloaderTests::testDiscardDownloadRemovesTheFileAndItsResumeData() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString iso = dir.filePath(QStringLiteral("gparted.iso"));
+    QString error;
+    QVERIFY(LinuxISODownloader::discardDownload(iso, &error));  // nothing there is fine
+    for (const QString& path : {iso, iso + QStringLiteral(".aria2")}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    QVERIFY2(LinuxISODownloader::discardDownload(iso, &error), qPrintable(error));
+    QVERIFY(!QFileInfo::exists(iso));
+    QVERIFY(!QFileInfo::exists(iso + QStringLiteral(".aria2")));
+
+    // A file something still holds is named, not passed over.
+    QFile held(iso);
+    QVERIFY(held.open(QIODevice::WriteOnly));
+    QVERIFY(!LinuxISODownloader::discardDownload(iso, &error));
+    QVERIFY2(error.contains(QDir::toNativeSeparators(iso)), qPrintable(error));
 }
 
 void LinuxISODownloaderTests::testShouldApplyVerifyResult_gating() {

@@ -429,6 +429,12 @@ void LinuxISODownloadDialog::onStartDownload() {
         if (reply != QMessageBox::Yes) {
             return;
         }
+        // Replaced, as the question says: aria2 would otherwise resume into whatever is there.
+        QString error;
+        if (!LinuxISODownloader::discardDownload(save_path, &error)) {
+            sak::showWarningLogged(this, "File Exists", error);
+            return;
+        }
     }
 
     m_isDownloading = true;
@@ -558,9 +564,9 @@ void LinuxISODownloadDialog::onCancelDownload() {
                                          QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
+        // The downloader's status says it was cancelled, and names a file that could not go.
         m_downloader->cancel();
         m_isDownloading = false;
-        m_statusLabel->setText("Download cancelled");
         m_phaseLabel->clear();
         m_speedLabel->clear();
         m_detailLabel->clear();
