@@ -1507,6 +1507,129 @@ round's scripts and the copied ISO deleted; the console at 1024x768; the USB DIS
 FAT32 install media de6c7c2b built; de6c7c2b's package in C:\SAK. Its component store is damaged (above) and was
 left as found. The capture VM is powered off at pre-round8, its throwaway VDI deleted.
 
+### UI review round 4: read-back from the media, the property table, and round 3's open list (2026-11-06)
+
+From round 3's open list and review 2's findings, on dev at 87c04b54. Every fix has a test; every test was
+drilled red with its fix broken in the source: 50 drills, 47 planted by a script that restores every byte and
+touches the file, and three inside test_partition_image_volume_lock (a buffered open, an unaligned start and the
+file-tail length). Two survived the first run and their tests were tightened, then went red: the Full Suite's mark
+column (the offscreen platform has no fonts of its own, so the four marks came out one width; the test now
+requires one fixed width with room for the widest), and the calendar sidebar's stretch (at 700 px there was no
+spare height, and with some the labels grew instead of the gaps; the test now measures a taller dialog from top to
+top). Judgement calls and items that were not defects are named below.
+
+**Read-back from the media (release item).** A check that reads back what was just written proves nothing about
+the drive when Windows answers the read from the pages it still holds from the write. Measured read-only on
+testpc1's USB DISK 3.0 stick (pinned by model, serial 067D19C65080 and size 31042043904): install2.swm, 2,839,447,229
+bytes on its FAT32 volume, read with an ordinary buffered handle took 44.3 s and then 0.5 s (5.4 GB/s, the cache),
+and with FILE_FLAG_NO_BUFFERING 44.2 s (61.3 MB/s, the stick). The raw device \\.\PhysicalDrive3 read 1 GiB in 16.2 s
+buffered, twice, and 16.2 s unbuffered: Windows does not cache a raw disk handle. So the paths at risk were the ones
+that read a file back:
+- the Windows USB's final check of each install.swm part,
+- the backup's check of each stored file (plain copy and codec container),
+- the restore's check of each restored file,
+- the clone and image read-back when the target is a file (Create Image).
+They now read through one reader that opens the file unbuffered (`sak::MediaReadBackFile`, `sak::sha256FromMedia`
+in sak_foundation; `Sak.MediaReadStream` in the clone/image script). Such reads must start on a sector boundary, be
+a whole number of sectors long and land in a sector-aligned buffer: both read whole 4 MiB chunks from a chunk
+boundary into a VirtualAlloc buffer, a file asking for the whole chunk (the read past its end comes back short), a
+disk only as far as its end. Raw image flashing (Linux, Clonezilla and Ventoy media included) already opened the
+device with FILE_FLAG_NO_BUFFERING and verifies through that handle; Restore Image and Copy Disk to a raw disk read
+the disk while it is held offline, so nothing was cached there either; they use the new reader too.
+Tests: a recorder in the test binary's import table (`tests/support/create_file_recorder.h`) sees the flags each
+CreateFileW call passed, and the Windows USB check, the backup's two checks, the restore's check and the flasher's
+device open must each open with FILE_FLAG_NO_BUFFERING; test_media_read_back reads every byte back at sizes either
+side of a sector and a chunk, seeks, and refuses writes; the clone script's stream is compiled and run on a real
+file by test_partition_image_volume_lock, which asks Windows for the handle's mode (FILE_NO_INTERMEDIATE_BUFFERING)
+and drills the open, the chunk alignment and the file-tail length.
+Then the whole build through the window on testpc1, with a package of this round's read-back code (SHA-256
+6267c214...32a575fa) on the pinned stick and the Windows 11 25H2 ISO (7,736,125,440 bytes): format 22 s, extraction,
+split and copy 18 min, and the final check passed, "SUCCESS: ALL FINAL VERIFICATIONS PASSED". Straight after the copy
+it read install.swm (3,984,050,148 bytes) back in 98 s and install2.swm (2,839,447,229 bytes) in 67 s (40.7 and 42.4
+MB/s); round 3's buffered check had read the second part in 17.5 s. After the app's eject and a media reload
+(IOCTL_STORAGE_LOAD_MEDIA), Get-FileHash on the stick gave the same SHA-256 the app logged for both parts
+(18c25a16... and 48472366...), with BOOTX64.EFI, bootmgr, boot\BCD and setup.exe present and no install.wim. The
+cost: the unbuffered check takes about 45 s longer on this stick than a cold buffered read of the same parts (70 s
+and 50 s), most likely because it waits on each 4 MiB read in turn, with no read-ahead from Windows (not measured
+further).
+
+**The property table (S15, DF12, DN6, N13).** Inspect, Properties, Disk Defrag, Manage BitLocker and Erase SSD all
+build their table in createPropertiesTable. Its label column now takes its longest label, values wrap and each row
+grows to what it holds, and a value's tooltip holds it whole. Tested in the four dialog tests that open them (a
+label column narrower than its labels, or a row shorter than its wrapped value, fails).
+
+**The log window (F29, F31).** A message's first line is the message; the lines under it are what a program wrote
+(the power plan and Check Disk reports drawn with | and =, a dry run's script). They go in a block of their own in
+Consolas, which every Windows has, so asking for it never sends Qt through the font alias table, and the block does
+not wrap; a line wider than the window scrolls sideways. A refill and a line added live lay out the same. Quick
+action lines reached the Log as "[06:51:00] [2026-11-05T06:51:00] Optimize Power Settings: ..."; the panel stamps
+the time, so the run's line no longer carries a second one (quick_actions.log keeps its date and time).
+
+**Fixed, each with a test.** Linux ISO download: the bar reads tenths below 1% ("0.3%"), rounded down like the whole
+percent. Partition table: fitting the columns to their contents took the stretch off the last one, so the header
+stopped at "Status" (F30); the four tables that fit their columns stretch the last one again. Copy Disk and Apply
+bars draw no label in a segment too narrow for three characters of it (F32), and Create Partition's size handle no
+longer splits its label: the label moves to the widest stretch beside the handles. Wi-Fi Manager: the Password row
+kept a layout's own margins and stood 10 px in from the other fields with its label above them. File Explorer:
+Properties, Safety and Evidence are labels scrolled together by the details scroller, not three text boxes each
+scrolling on its own (F23); with nothing selected the preview says "No file selected. Select one to see it here."
+(F24); a Windows volume's Root and Path read with backslashes, an ext, HFS+ or APFS path stays its own (S21); the
+Hashes tab's label column has the large spacing (N15). Advanced Search: a search with no matches sent the status
+bar (0, 0), the busy indicator, and left it running (N6); result paths read with backslashes (S21). File Organizer's
+starting target reads with backslashes (N19). Address Book: fixed widths that added up to more than the list's pane
+put Company behind a scroll bar; the columns take what they hold. Duplicate summary: one byte formatter for the
+total and the groups (F38). Benchmarks: measurements in the body weight and each group's score in the score style
+(F40). Full Suite: each step's mark sits in a column of one width, so the names start at one place (F16). Forms:
+the diagnostics report's Notes box, the OST converter's three filter fields and the Windows ISO dialog's two groups
+each share one label column (S17). Empty lists say what goes in them: Wi-Fi Manager's saved networks, the Windows
+ISO builds, Pending Operations, and the backup wizard's Wi-Fi page before and after a scan that finds none (F35).
+AI: the workflow combo's tooltip names the chosen workflow whole (DF11); a workflow's name is an 11 pt heading in the
+290 px pane, not 13 pt (N17). Advanced Uninstall: commands, keys and package names are read-only one-line fields,
+whole and copyable (N7); the Uninstall button is the danger tone like Force and Batch Uninstall, and a word joiner
+keeps "Notepad++" whole in the bold name (N8); a Store package's publisher is its certificate's organization or
+common name, and a Store-signed ID stays as it is (N9); the list has a key for its orange and red names, in the words
+of their tooltips (DF10). Calendar: today's week header is the primary dark blue in light (4.7:1) and the dark
+theme's text colour in dark, on today's fill (DF2). SMART: a drive smartctl could not read and one it read with
+nothing to judge by both say "<drive>: SMART health could not be determined." and then why (observation 31).
+
+**Not defects, with the reason.** N4, the attachments header: fixed in round 2 with a test (everyHeaderFitsItsColumn).
+DF5, "Free" at 4.19:1: round 2's readableSegmentFill darkens the fill to AA, tested in both themes. N12, Media type
+"SSD" in Erase SSD and "Unspecified" in Properties and Defrag: all three print disk.media_type; the capture had set
+the rig non-rotational for the Erase SSD shot. N18, "8 GB threshold": the warning and Settings read one config key;
+the capture had lowered it to 8 GB for that shot. DN7: the legend's Unallocated swatch is filled with the map's free
+shade, #707d8d, 4.27:1 on the dark page and 3.84:1 on the light one; the 2.12:1 was the base colour, which the
+swatch no longer uses. F21: a combo's popup reaching past its window is how Windows' own combos behave; Qt keeps it
+on the screen. S7 and DN8: round 1 (bce065ab) made the explorer's selection the one shade and removed the theme's
+selection paint under it; the darker reading was a selected row under the pointer, not reproduced here.
+
+**Not reached this round, with what each needs.** F27 (one Close tone across six dialogs: a decision on which tone
+Close takes, then six call sites). F41 (Help and Image Flasher cards centre their titles, Backup's left-align: one
+card builder). F46 (the Email Tools folders pane changes width between states: the splitter's sizes saved and
+restored). F39's rest (SMART's Type column reads N/A where the inventory reads ATA: the SMART report needs the bus
+type the inventory has). F34's title indent (backup wizards x=23, Partition Manager wizards x=12). S25 and DN4 (tab
+icons faint on the tab colour, and fragments of tabs under the scroll arrows: icon assets with a stroke that
+reaches 3:1 on both tab colours). DN5 (the Linux card's penguin is black on the dark card: a dark variant of the
+icon). N14 (a VM's battery reads "1 - health unknown"; SMART lists VBOX HARDDISK four times without drive
+numbers). N16 (calendar chips show only the time and an ellipsis: the chip painter puts the subject first). The
+BitLocker key folder picker is left with no starting folder on purpose (the system drive is usually the volume the
+keys unlock); Windows opens it where the app runs, which for a portable tool is the technician's drive. Screenshot
+Settings' Installed apps and Gaming pages, and the Wi-Fi page on a PC with no Wi-Fi adapter (#59), need the VM,
+which this round did not use. DF16 needs nothing more: round 2 hid Qt's Aero back arrow in every wizard, so neither
+theme draws one.
+
+**What no test here covers.** That a real drive's slowness shows: the tests prove each check opens its file with
+FILE_FLAG_NO_BUFFERING and reads every byte, and the timing on the stick was measured on testpc1 (above). The
+partition dialogs' layouts were checked offscreen at the test's window size, not on every DPI. The log's fixed-width
+block was checked by its formats, not by a picture. Three call sites have no test of their own: the Linux ISO
+dialog putting percentText() on its bar (the function is tested), the Store package scan calling
+publisherFromSubject() (the function is tested), and the File Explorer target Properties box's Root line.
+
+**Left behind.** testpc1: the USB DISK 3.0 stick holds the Windows 11 FAT32 install media this round built, its
+media loaded again after the app's eject; this round's read-back package in C:\SAK; the Windows 11 25H2 ISO in
+C:\SakIso, kept on purpose for the final capture and the VM smoke test (a read-only copy of the offload drive's
+installer, which the coordinator approved); the console back at 1024x768; this round's scripts, scheduled task and
+display state file removed. The capture VM was not used.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

@@ -8,6 +8,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Checks that read back what was written read the drive, not Windows' memory** - Straight after a copy, Windows
+  still holds the file in its cache, and a check that reads it from there proves only what was written. On a test
+  PC the Windows install USB's check read a 2.8 GB part back in 0.5 s from the cache, against 44 s from the stick.
+  The Windows install USB's final check, the backup's check of each stored file, the restore's check of each
+  restored file, and the read-back after copying a disk, cloning a partition or making or restoring an image now
+  read with Windows' file cache bypassed, so a slow or failing drive shows as one. Image flashing already did.
+  On the test PC's stick the Windows USB's check now takes under 3 minutes for both parts.
+- **Property lists show their whole labels and values** - Inspect, Properties, Disk Defrag, Manage BitLocker and
+  Erase SSD cut their labels and values ("Raw target ...", "Optimizatio...", "This is not an ATA Secure ..."). The
+  label column now takes its longest label, values wrap, and each value's tooltip holds it whole.
+- **Reports in the log keep their columns** - The power plan and Check Disk reports, and a dry run's script, came
+  out in a proportional font wrapped to the window, so their borders fell apart; they are set in a fixed-width font
+  that does not wrap. Quick action lines no longer carry a second timestamp.
+- **Smaller fixes from the screenshot review** - A Linux ISO download shows tenths of a percent below 1%. The
+  partition table's header reaches the edge. Copy Disk's bars draw no broken label in a sliver, and Create
+  Partition's handle no longer splits its label. File Explorer's Properties, Safety and Evidence scroll as one
+  column, and its paths, Advanced Search's results and File Organizer's target read with backslashes. The Address
+  Book shows its Company column. The duplicate summary uses one size unit. Benchmark groups share one layout, and
+  the suite's steps line up. A finished search leaves no busy bar. Several forms line up their fields. Empty lists
+  say what goes in them. A Store app's publisher reads as a name, not a certificate subject. Uninstall's program
+  colours have a key, its Uninstall button is the danger colour like Force Uninstall, and a registry key shows
+  whole. SMART says one thing for every drive it cannot judge, and why. Today's week header, a workflow's name and
+  the Wi-Fi Password row read as they should.
 - **A Windows install USB starts UEFI PCs** - The USB was one NTFS partition, and UEFI firmware reads FAT32, so a
   Windows 11 PC with Secure Boot did not start from it, while the app reported success. The USB is now one FAT32
   partition (32 GB at most on a larger drive, active for BIOS PCs too). An install.wim of 4 GB or more is split by
