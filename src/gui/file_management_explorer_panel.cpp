@@ -479,6 +479,12 @@ bool isMountedVolumeTarget(const FileManagementTarget& target) {
     return target.local_file_system || target.kind == FileManagementTargetKind::LocalPath;
 }
 
+/// A Windows volume's paths read with backslashes, as everywhere else in the app ("Root: C:/",
+/// review 2, S21). A path inside an ext, HFS+ or APFS image is that file system's own.
+QString shownTargetPath(const FileManagementTarget& target, const QString& path) {
+    return isMountedVolumeTarget(target) ? QDir::toNativeSeparators(path) : path;
+}
+
 bool isPartitionTarget(const FileManagementTarget& target) {
     return target.kind == FileManagementTargetKind::Partition;
 }
@@ -6874,13 +6880,8 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
     }
     properties.append(tr("Target: %1").arg(target.label));
     properties.append(tr("File system: %1").arg(target.file_system));
-    // A Windows volume's paths read with backslashes, as everywhere else in the app ("Root: C:/",
-    // review 2, S21). A path inside an ext, HFS+ or APFS image is that file system's own.
-    const auto shown = [&target](const QString& path) {
-        return isMountedVolumeTarget(target) ? QDir::toNativeSeparators(path) : path;
-    };
-    properties.append(tr("Root: %1").arg(shown(target.root_path)));
-    properties.append(tr("Path: %1").arg(shown(m_current_path)));
+    properties.append(tr("Root: %1").arg(shownTargetPath(target, target.root_path)));
+    properties.append(tr("Path: %1").arg(shownTargetPath(target, m_current_path)));
     properties.append(
         tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
     if (selection.count() == 1) {
@@ -6905,7 +6906,7 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
     }
     safety.append(tr("Target: %1").arg(target.label));
     safety.append(tr("File system: %1").arg(target.file_system));
-    safety.append(tr("Identity: %1").arg(target.root_path));
+    safety.append(tr("Identity: %1").arg(shownTargetPath(target, target.root_path)));
     safety.append(
         tr("Write state: %1").arg(target.can_write_files ? tr("enabled") : tr("blocked")));
     safety.append(tr("Read state: %1").arg(target.can_read_files ? tr("enabled") : tr("blocked")));
@@ -8594,9 +8595,7 @@ void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_i
     QStringList lines;
     lines.append(tr("Target: %1").arg(target.label));
     lines.append(tr("ID: %1").arg(FileExplorerTargetId::fromTarget(target).value));
-    lines.append(tr("Root: %1")
-                     .arg(isMountedVolumeTarget(target) ? QDir::toNativeSeparators(target.root_path)
-                                                        : target.root_path));
+    lines.append(tr("Root: %1").arg(shownTargetPath(target, target.root_path)));
     lines.append(tr("File system: %1").arg(target.file_system));
     lines.append(tr("Source: %1").arg(target.source));
     lines.append(tr("Size: %1 bytes").arg(QString::number(target.size_bytes)));

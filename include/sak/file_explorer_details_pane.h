@@ -53,7 +53,7 @@ protected:
 
 private:
     QPlainTextEdit* makeDetailsText(const QString& accessible_name);
-    QLabel* makeDetailsLabel(const QString& accessible_name);
+    QLabel* makeDetailsLabel(const QString& description);
     QWidget* buildTabPill();
     QWidget* buildPreviewRegion();
     QScrollArea* buildDetailsScroller();

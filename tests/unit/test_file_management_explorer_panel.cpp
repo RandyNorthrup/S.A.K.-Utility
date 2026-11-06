@@ -4,6 +4,7 @@
 /// @file test_file_management_explorer_panel.cpp
 /// @brief GUI tests for the File Management Explorer shell.
 
+#include "sak/accessibility_audit.h"
 #include "sak/advanced_search_panel.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
@@ -697,6 +698,14 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
         QVERIFY(section->wordWrap());
         QCOMPARE(section->textFormat(), Qt::PlainText);
         QVERIFY(scroller->widget()->isAncestorOf(section));
+        // As a label, an accessible name is what a screen reader says in place of its text
+        // (T2's accessibility audit: "hides its text"); the section is described instead.
+        if (section->text().isEmpty()) {
+            section->setText(QStringLiteral("Target: Home"));
+        }
+        const sak::AccessibilityFindings findings = sak::auditWidgetTree(*section);
+        QVERIFY2(findings.hides_text.isEmpty(), qPrintable(findings.hides_text.join(u'\n')));
+        QVERIFY(!section->accessibleDescription().isEmpty());
     }
 
     // The preview region stays visible on both tabs; only the details
@@ -2444,6 +2453,9 @@ private Q_SLOTS:
         for (int i = 0; i < prefixes.size(); ++i) {
             QVERIFY2(safety_lines.at(i).startsWith(prefixes.at(i)), qPrintable(safety_lines.at(i)));
         }
+        // The Safety pane names the same root as Properties: "Identity: C:/Users/Username" (T2's
+        // accessibility audit printed it) was S21 again.
+        QVERIFY2(!safety_lines.at(2).contains(QLatin1Char('/')), qPrintable(safety_lines.at(2)));
         const QStringList capabilities{QStringLiteral("Write state: "),
                                        QStringLiteral("Read state: "),
                                        QStringLiteral("Browse state: ")};

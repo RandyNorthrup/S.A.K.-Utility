@@ -161,7 +161,7 @@ void FileExplorerDetailsPane::addDetailsSection(QVBoxLayout* layout,
     layout->addWidget(text);
 }
 
-QLabel* FileExplorerDetailsPane::makeDetailsLabel(const QString& accessible_name) {
+QLabel* FileExplorerDetailsPane::makeDetailsLabel(const QString& description) {
     // Each section is as tall as its text and the details scroller scrolls them together. As
     // five-line text boxes each scrolled on its own inside that scroller and cut its lines
     // ("Capability: NTFS - local file API -", review 2, F23).
@@ -171,7 +171,9 @@ QLabel* FileExplorerDetailsPane::makeDetailsLabel(const QString& accessible_name
     label->setWordWrap(true);
     label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-    label->setAccessibleName(accessible_name);
+    // A label's name is what a screen reader says for it, so a name would say "Explorer item
+    // properties" in place of the properties. With none it reads the text; this says what it is.
+    label->setAccessibleDescription(description);
     return label;
 }
 
