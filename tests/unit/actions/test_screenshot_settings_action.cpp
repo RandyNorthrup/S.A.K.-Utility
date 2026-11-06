@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -34,6 +35,9 @@ private Q_SLOTS:
     void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
     void aBlankPictureIsAFailedCapture();
     void aPageIsSavedOnlyOnceSettingsHasDrawnIt();
+    void aPageSettingsNeverOpensIsNotOnThisWindows();
+    void settingsPagesUsePublishedNames();
+    void buildExecutionResult_namesPagesThisPcDoesNotHave();
     void reportPathLine_onlyAdvertisesWrittenReport();
     void createCaptureFolder_reportsAFolderItCannotCreate();
     void buildScreenshotReportText_containsPagesAndSections();
@@ -236,7 +240,7 @@ void ScreenshotSettingsActionTests::buildExecutionResult_succeedsOnFullCaptureAn
     QVERIFY2(result.duration_ms >= kInjectedElapsedMs,
              qPrintable(QStringLiteral("duration_ms %1 did not measure from start_time")
                             .arg(result.duration_ms)));
-    QCOMPARE(result.message, QStringLiteral("Captured 3/3 settings pages (1 monitors detected)"));
+    QCOMPARE(result.message, QStringLiteral("Captured 3/3 settings pages (1 monitor detected)"));
     // The structured log the caller parses, REPORT_PATH line included.
     QCOMPARE(result.log,
              QStringLiteral("MONITORS_DETECTED:1\n"
@@ -440,9 +444,134 @@ void ScreenshotSettingsActionTests::aPageIsSavedOnlyOnceSettingsHasDrawnIt() {
     QVERIFY(file.open(QIODevice::ReadOnly));
     const QString source = QString::fromUtf8(file.readAll());
     QVERIFY(source.contains(QStringLiteral("SetForegroundWindow(hwnd);")));
-    QVERIFY(source.contains(QStringLiteral("            return changed;")));
-    QVERIFY(
-        source.contains(QStringLiteral("const QImage page = waitForDrawnPage(settings_window);")));
+    QVERIFY(source.contains(
+        QStringLiteral("const PageOutcome outcome = waitForDrawnPage(settings_window, &page);")));
+
+    // The wait itself: a page that keeps moving is kept once the wait runs out.
+    Action::PageWatch moving;
+    QVERIFY(moving.look(display, about).isNull());
+    QVERIFY(moving.look(spinner, about).isNull());
+    QCOMPARE(moving.outcomeAtDeadline(), Action::PageOutcome::Captured);
+    QCOMPARE(moving.changed, spinner);
+    Action::PageWatch settles;
+    QVERIFY(settles.look(display, about).isNull());
+    QCOMPARE(settles.look(display, about), display);
+}
+
+// Coordinator, round 5: in the capture VM Installed apps and Gaming never left the page before
+// them in three 10 s tries apiece. Their names, ms-settings:apps-features and ms-settings:gaming,
+// are not pages at all: on testpc1 (Windows 11 25H2) each left System > About on screen. A window
+// that shows only the page before for the whole wait did not open this page, and the page is
+// reported as one this Windows does not have; nothing is saved for it. Blank or no window is a
+// failed try, as before.
+void ScreenshotSettingsActionTests::aPageSettingsNeverOpensIsNotOnThisWindows() {
+    QImage about(64, 48, QImage::Format_RGB32);
+    about.fill(QColor(243, 243, 243));
+    about.setPixel(10, 10, qRgb(0, 0, 0));
+    QImage blank(64, 48, QImage::Format_RGB32);
+    blank.fill(QColor(243, 243, 243));
+
+    Action::PageWatch stayed;
+    for (int look = 0; look < 5; ++look) {
+        QVERIFY(stayed.look(about, about).isNull());
+    }
+    QCOMPARE(stayed.outcomeAtDeadline(), Action::PageOutcome::NotOnThisWindows);
+
+    Action::PageWatch nothing;
+    QVERIFY(nothing.look(blank, about).isNull());
+    QVERIFY(nothing.look(QImage(), about).isNull());
+    QCOMPARE(nothing.outcomeAtDeadline(), Action::PageOutcome::Failed);
+
+    // The first page has no page before it: a window showing something is that page.
+    Action::PageWatch first;
+    QVERIFY(first.look(about, QImage()).isNull());
+    QCOMPARE(first.look(about, QImage()), about);
+    Action::PageWatch first_blank;
+    QVERIFY(first_blank.look(blank, QImage()).isNull());
+    QCOMPARE(first_blank.outcomeAtDeadline(), Action::PageOutcome::Failed);
+
+    QCOMPARE(Action::absentReason(Action::PageOutcome::NotOnThisWindows, false),
+             QStringLiteral("this page does not exist on this Windows"));
+    QCOMPARE(Action::absentReason(Action::PageOutcome::NotOnThisWindows, true),
+             QStringLiteral("this PC has no Wi-Fi adapter"));
+}
+
+// The ms-settings: names held against Microsoft's published list ("Launch Windows Settings",
+// learn.microsoft.com/windows/apps/develop/launch/launch-settings, read 2026-11-06), which serves
+// Windows 10 and 11. The first name of every page is published; a later one is a name testpc1's
+// Windows 11 also opened. apps-features and gaming open nothing.
+void ScreenshotSettingsActionTests::settingsPagesUsePublishedNames() {
+    const QSet<QString> published = {QStringLiteral("about"),
+                                     QStringLiteral("activation"),
+                                     QStringLiteral("display"),
+                                     QStringLiteral("powersleep"),
+                                     QStringLiteral("storagesense"),
+                                     QStringLiteral("sound"),
+                                     QStringLiteral("notifications"),
+                                     QStringLiteral("personalization"),
+                                     QStringLiteral("privacy"),
+                                     QStringLiteral("privacy-general"),
+                                     QStringLiteral("windowsupdate"),
+                                     QStringLiteral("network-status"),
+                                     QStringLiteral("network-ethernet"),
+                                     QStringLiteral("network-wifi"),
+                                     QStringLiteral("appsfeatures"),
+                                     QStringLiteral("gaming-gamebar"),
+                                     QStringLiteral("gaming-gamemode")};
+    // Opened on testpc1 (Windows 11 25H2) by the round 5 probe, not in the published list.
+    const QSet<QString> windows11_too = {QStringLiteral("network"),
+                                         QStringLiteral("installed-apps")};
+    const QList<Action::SettingsPage> pages = Action::settingsPages();
+    QCOMPARE(pages.size(), qsizetype{15});
+    QCOMPARE(pages.first().name, QStringLiteral("System_About"));
+    QSet<QString> names;
+    for (const Action::SettingsPage& page : pages) {
+        QVERIFY2(!page.uris.isEmpty(), qPrintable(page.name));
+        QVERIFY2(published.contains(page.uris.first()), qPrintable(page.uris.first()));
+        for (const QString& uri : page.uris) {
+            QVERIFY2(published.contains(uri) || windows11_too.contains(uri), qPrintable(uri));
+        }
+        names.insert(page.name);
+        QCOMPARE(page.needs_wifi, page.name == QStringLiteral("WiFi_Settings"));
+    }
+    QCOMPARE(names.size(), pages.size());
+
+    sak::NetworkAdapterInfo ethernet;
+    ethernet.adapterType = QStringLiteral("Ethernet");
+    sak::NetworkAdapterInfo wifi;
+    wifi.adapterType = QStringLiteral("WiFi");
+    QVERIFY(!Action::hasWifiAdapter({}));
+    QVERIFY(!Action::hasWifiAdapter({ethernet}));
+    QVERIFY(Action::hasWifiAdapter({ethernet, wifi}));
+}
+
+// A page this PC does not have is said, in the message, the log and the report, and is not a
+// failure: the capture VM has no Wi-Fi adapter, and its run read "Incomplete" for it.
+void ScreenshotSettingsActionTests::buildExecutionResult_namesPagesThisPcDoesNotHave() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir out(dir.path());
+    ScreenshotSettingsAction action(dir.path());
+    CaptureResult cap;
+    cap.captured_pages << QStringLiteral("a") << QStringLiteral("b");
+    cap.screenshots_taken = 2;
+    cap.absent_pages << QStringLiteral("WiFi_Settings: this PC has no Wi-Fi adapter");
+    CaptureContext ctx = contextWith(true);
+    ctx.total_pages = 2;
+    ctx.monitor_count = 2;
+    action.buildExecutionResult(cap, out, ctx);
+    const auto& result = action.lastExecutionResult();
+    QVERIFY2(result.success, "a page this PC does not have is not a failed capture");
+    QCOMPARE(result.message,
+             QStringLiteral("Captured 2/2 settings pages (2 monitors detected). Not on this PC: "
+                            "WiFi_Settings: this PC has no Wi-Fi adapter"));
+    QVERIFY(result.log.contains(
+        QStringLiteral("\nNOT_ON_THIS_PC:WiFi_Settings: this PC has no Wi-Fi adapter\n")));
+
+    const QString text = Action::buildScreenshotReportText(
+        1, cap, QStringLiteral("C:/out"), QStringLiteral("20261106_010203"));
+    QVERIFY(text.contains(QStringLiteral("NOT ON THIS PC")));
+    QVERIFY(text.contains(QStringLiteral("| [-] WiFi_Settings: this PC has no Wi-Fi adapter")));
 }
 
 void ScreenshotSettingsActionTests::aBlankPictureIsAFailedCapture() {

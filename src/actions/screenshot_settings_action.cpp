@@ -9,6 +9,7 @@
 #include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_adapter_inspector.h"
 #include "sak/process_runner.h"
 
 #include <QCoreApplication>
@@ -138,7 +139,34 @@ QImage ScreenshotSettingsAction::renderOnGui(WId window) {
     return shot;
 }
 
-QImage ScreenshotSettingsAction::waitForDrawnPage(WId window) {
+QImage ScreenshotSettingsAction::PageWatch::look(const QImage& now, const QImage& previous_page) {
+    if (pageIsDrawn(now, moment_before, previous_page)) {
+        return now;
+    }
+    if (pageHasChanged(now, previous_page)) {
+        changed = now;
+    } else if (!previous_page.isNull() && !pictureIsBlank(now) && now == previous_page) {
+        saw_previous_page = true;
+    }
+    moment_before = now;
+    return {};
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::PageWatch::outcomeAtDeadline()
+    const {
+    if (!changed.isNull()) {
+        // A page that keeps moving (a list filling in, an animation) never settles. It has still
+        // been drawn.
+        return PageOutcome::Captured;
+    }
+    // Settings stays on the page it showed when it is asked for a page this Windows does not
+    // have: on testpc1 (Windows 11 25H2) ms-settings:apps-features and ms-settings:gaming each
+    // left System > About on screen. In the capture VM those two failed three 10 s tries apiece.
+    return saw_previous_page ? PageOutcome::NotOnThisWindows : PageOutcome::Failed;
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::waitForDrawnPage(WId window,
+                                                                                 QImage* page) {
     // A Settings window behind another one stops drawing, so it would never show the new page.
     const auto hwnd = reinterpret_cast<HWND>(window);
     if (IsIconic(hwnd) != 0) {
@@ -146,26 +174,43 @@ QImage ScreenshotSettingsAction::waitForDrawnPage(WId window) {
     }
     SetForegroundWindow(hwnd);
     QDeadlineTimer deadline(kSettingsPageDrawWaitMs);
-    QImage moment_before;
-    QImage changed;  // the latest picture of a new page, settled or not
+    PageWatch watch;
     while (!isCancelled()) {
-        QImage now = renderOnGui(window);
-        if (pageIsDrawn(now, moment_before, m_previous_page)) {
-            return now;
-        }
-        if (pageHasChanged(now, m_previous_page)) {
-            changed = now;
+        QImage drawn = watch.look(renderOnGui(window), m_previous_page);
+        if (!drawn.isNull()) {
+            *page = std::move(drawn);
+            return PageOutcome::Captured;
         }
         if (deadline.hasExpired()) {
-            // A page that keeps moving (Installed apps filling in its list, an animation) never
-            // settles, and in the capture VM two such pages failed. It has still been drawn: only
-            // a window that never left the last page, or stayed blank, fails.
-            return changed;
+            const PageOutcome outcome = watch.outcomeAtDeadline();
+            if (outcome == PageOutcome::Captured) {
+                *page = watch.changed;
+            }
+            return outcome;
         }
-        moment_before = std::move(now);
         QThread::msleep(kSettingsPageSettleMs);
     }
-    return {};
+    return PageOutcome::Failed;
+}
+
+void ScreenshotSettingsAction::recordOutcome(const QString& page_name,
+                                             PageOutcome outcome,
+                                             bool no_wifi_adapter,
+                                             CaptureResult* capture) {
+    switch (outcome) {
+    case PageOutcome::Captured:
+        capture->captured_pages.append(page_name);
+        capture->screenshots_taken++;
+        break;
+    case PageOutcome::NotOnThisWindows:
+        capture->absent_pages.append(
+            QStringLiteral("%1: %2").arg(page_name, absentReason(outcome, no_wifi_adapter)));
+        break;
+    case PageOutcome::Failed:
+        capture->failed_pages.append(page_name);
+        capture->failed_attempts++;
+        break;
+    }
 }
 
 void ScreenshotSettingsAction::execute() {
@@ -193,11 +238,14 @@ void ScreenshotSettingsAction::execute() {
 
     // A Settings window open now is the user's: navigated (single-instance), never closed.
     m_settings_window_before_launch = findSettingsWindow();
-    QMap<QString, QString> settings_pages = buildSettingsPageMap();
+    const QList<SettingsPage> settings_pages = settingsPages();
+    // Asked once: Settings has no Wi-Fi page on a PC without an adapter. When the adapters cannot
+    // be listed, the page is tried like any other.
+    const bool no_wifi_adapter = wifiAdapterPresent() == std::optional<bool>(false);
     CaptureResult capture;
     int processed = 0;
 
-    for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
+    for (const SettingsPage& page : settings_pages) {
         if (isCancelled()) {
             closeSettingsWindowWeOpened();
             emitCancelledResult("Settings screenshots cancelled", start_time);
@@ -206,16 +254,14 @@ void ScreenshotSettingsAction::execute() {
 
         const int progress = static_cast<int>(
             progress::kStep5 + ((processed * progress::kStep90) / settings_pages.size()));
-        Q_EMIT executionProgress(QString("Capturing %1...").arg(it.value()), progress);
-
-        if (captureSettingsPage(it.key(), it.value(), output_dir.absolutePath(), timestamp)) {
-            capture.captured_pages.append(it.value());
-            capture.screenshots_taken++;
-        } else {
-            capture.failed_pages.append(it.value());
-            capture.failed_attempts++;
-        }
+        Q_EMIT executionProgress(QString("Capturing %1...").arg(page.name), progress);
         processed++;
+
+        const bool skip_for_no_wifi = page.needs_wifi && no_wifi_adapter;
+        const PageOutcome outcome =
+            skip_for_no_wifi ? PageOutcome::NotOnThisWindows
+                             : captureSettingsPage(page, output_dir.absolutePath(), timestamp);
+        recordOutcome(page.name, outcome, skip_for_no_wifi, &capture);
     }
     closeSettingsWindowWeOpened();
 
@@ -224,13 +270,25 @@ void ScreenshotSettingsAction::execute() {
         generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
     Q_EMIT executionProgress("Screenshots complete", progress::kComplete);
 
-    const CaptureContext context{.total_pages = static_cast<int>(settings_pages.size()),
+    const CaptureContext context{.total_pages = static_cast<int>(settings_pages.size()) -
+                                                static_cast<int>(capture.absent_pages.size()),
                                  .monitor_count = monitor_count,
                                  .timestamp = timestamp,
                                  .start_time = start_time,
                                  .report_written = report_written};
     buildExecutionResult(capture, output_dir, context);
 }
+
+namespace {
+
+/// ". Not on this PC: WiFi_Settings: this PC has no Wi-Fi adapter", or nothing.
+QString notOnThisPcNote(const QStringList& absent_pages) {
+    return absent_pages.isEmpty()
+               ? QString()
+               : QStringLiteral(". Not on this PC: ") + absent_pages.join(QStringLiteral("; "));
+}
+
+}  // namespace
 
 void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture,
                                                     const QDir& output_dir,
@@ -248,7 +306,12 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     structured_log += QString("FAILED_CAPTURES:%1\n").arg(capture.failed_attempts);
     structured_log += QString("TOTAL_PAGES:%1\n").arg(context.total_pages);
     structured_log += QString("SUCCESS_RATE:%1%\n")
-                          .arg(capture.captured_pages.size() * kPercentMax / context.total_pages);
+                          .arg(context.total_pages > 0 ? capture.captured_pages.size() *
+                                                             kPercentMax / context.total_pages
+                                                       : 0);
+    for (const QString& absent : capture.absent_pages) {
+        structured_log += QStringLiteral("NOT_ON_THIS_PC:%1\n").arg(absent);
+    }
     const QString report_path =
         output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp));
     structured_log += reportPathLine(context.report_written, report_path);
@@ -261,10 +324,14 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     result.success = full_success;
 
     if (full_success) {
-        result.message = QString("Captured %1/%2 settings pages (%3 monitors detected)")
+        result.message = QString("Captured %1/%2 settings pages (%3 %4 detected)")
                              .arg(capture.captured_pages.size())
                              .arg(context.total_pages)
-                             .arg(context.monitor_count);
+                             .arg(context.monitor_count)
+                             .arg(context.monitor_count == 1 ? QStringLiteral("monitor")
+                                                             : QStringLiteral("monitors"));
+        // What this PC does not have is said, not counted as a failure.
+        result.message += notOnThisPcNote(capture.absent_pages);
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     } else if (capture.screenshots_taken == 0) {
         result.message = "Failed to capture any screenshots";
@@ -276,6 +343,7 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
                              .arg(capture.failed_attempts)
                              .arg(context.report_written ? QString()
                                                          : QStringLiteral(", report not written"));
+        result.message += notOnThisPcNote(capture.absent_pages);
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     }
 
@@ -284,22 +352,64 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
 
 // --- Private Helpers ------------------------------------------------------------
 
-QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
-    return {{"about", "System_About"},
-            {"network", "Network_Status"},
-            {"display", "Display_Settings"},
-            {"privacy", "Privacy_General"},
-            {"windowsupdate", "Windows_Update"},
-            {"activation", "System_Activation"},
-            {"network-wifi", "WiFi_Settings"},
-            {"network-ethernet", "Ethernet_Settings"},
-            {"personalization", "Personalization"},
-            {"apps-features", "Installed_Apps"},
-            {"powersleep", "Power_Sleep"},
-            {"storagesense", "Storage_Settings"},
-            {"sound", "Sound_Settings"},
-            {"notifications", "Notifications"},
-            {"gaming", "Gaming_Settings"}};
+QList<ScreenshotSettingsAction::SettingsPage> ScreenshotSettingsAction::settingsPages() {
+    // The names are Microsoft's published ms-settings: list ("Launch Windows Settings",
+    // learn.microsoft.com/windows/apps/develop/launch/launch-settings, read 2026-11-06), which
+    // gives these pages one name on Windows 10 and 11. The second name, where there is one, is
+    // the one Windows 11 also answers to (opened on testpc1, 25H2). "apps-features" and "gaming"
+    // were here before and are no page at all: Settings stayed on the page before them.
+    return {
+        {.name = QStringLiteral("System_About"), .uris = {QStringLiteral("about")}},
+        {.name = QStringLiteral("System_Activation"), .uris = {QStringLiteral("activation")}},
+        {.name = QStringLiteral("Display_Settings"), .uris = {QStringLiteral("display")}},
+        {.name = QStringLiteral("Power_Sleep"), .uris = {QStringLiteral("powersleep")}},
+        {.name = QStringLiteral("Storage_Settings"), .uris = {QStringLiteral("storagesense")}},
+        {.name = QStringLiteral("Sound_Settings"), .uris = {QStringLiteral("sound")}},
+        {.name = QStringLiteral("Notifications"), .uris = {QStringLiteral("notifications")}},
+        {.name = QStringLiteral("Personalization"), .uris = {QStringLiteral("personalization")}},
+        {.name = QStringLiteral("Privacy_General"),
+         .uris = {QStringLiteral("privacy"), QStringLiteral("privacy-general")}},
+        {.name = QStringLiteral("Windows_Update"), .uris = {QStringLiteral("windowsupdate")}},
+        {.name = QStringLiteral("Network_Status"),
+         .uris = {QStringLiteral("network-status"), QStringLiteral("network")}},
+        {.name = QStringLiteral("Ethernet_Settings"), .uris = {QStringLiteral("network-ethernet")}},
+        {.name = QStringLiteral("WiFi_Settings"),
+         .uris = {QStringLiteral("network-wifi")},
+         .needs_wifi = true},
+        {.name = QStringLiteral("Installed_Apps"),
+         .uris = {QStringLiteral("appsfeatures"), QStringLiteral("installed-apps")}},
+        // Game Mode is the gaming setting that changes how the PC runs; Game Bar is the page
+        // Windows 10 opens Gaming on.
+        {.name = QStringLiteral("Gaming_Settings"),
+         .uris = {QStringLiteral("gaming-gamemode"), QStringLiteral("gaming-gamebar")}},
+    };
+}
+
+bool ScreenshotSettingsAction::hasWifiAdapter(const QVector<NetworkAdapterInfo>& adapters) {
+    return std::ranges::any_of(adapters, [](const NetworkAdapterInfo& adapter) {
+        return adapter.adapterType == QStringLiteral("WiFi");
+    });
+}
+
+std::optional<bool> ScreenshotSettingsAction::wifiAdapterPresent() {
+    // GetAdaptersAddresses lists the adapters Windows has, connected or not; one turned off is not
+    // listed, and Settings has no Wi-Fi page for it either.
+    NetworkAdapterInspector inspector;
+    std::optional<bool> present;
+    QObject::connect(&inspector,
+                     &NetworkAdapterInspector::scanComplete,
+                     &inspector,
+                     [&present](const QVector<NetworkAdapterInfo>& adapters) {
+                         present = hasWifiAdapter(adapters);
+                     });
+    inspector.scan();
+    return present;
+}
+
+QString ScreenshotSettingsAction::absentReason(PageOutcome outcome, bool no_wifi_adapter) {
+    Q_ASSERT(outcome == PageOutcome::NotOnThisWindows);
+    return no_wifi_adapter ? QStringLiteral("this PC has no Wi-Fi adapter")
+                           : QStringLiteral("this page does not exist on this Windows");
 }
 
 namespace {
@@ -414,35 +524,41 @@ void ScreenshotSettingsAction::closeSettingsWindowWeOpened() {
     }
 }
 
-bool ScreenshotSettingsAction::captureSettingsWindow(WId settings_window,
-                                                     const QDir& output_dir,
-                                                     const QString& page_name,
-                                                     const QString& timestamp) {
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsWindow(
+    WId settings_window,
+    const QDir& output_dir,
+    const QString& page_name,
+    const QString& timestamp) {
     if (settings_window == 0) {
         // Refuse to capture an arbitrary foreground window -- the caller
         // asked for Settings, not "whatever happens to be on top".
         sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
                         page_name.toStdString());
-        return false;
+        return PageOutcome::Failed;
     }
     const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
-    // A blank picture, or the last page again, saved as a screenshot is evidence of nothing; count
-    // it as a failed try.
-    const QImage page = waitForDrawnPage(settings_window);
-    if (page.isNull()) {
+    // A blank picture, or the last page again, saved as a screenshot is evidence of nothing.
+    QImage page;
+    const PageOutcome outcome = waitForDrawnPage(settings_window, &page);
+    if (outcome == PageOutcome::NotOnThisWindows) {
+        sak::logWarning("ScreenshotSettingsAction: Settings stayed on the page before {}",
+                        page_name.toStdString());
+        return outcome;
+    }
+    if (outcome == PageOutcome::Failed) {
         sak::logWarning("ScreenshotSettingsAction: Settings did not draw page {}",
                         page_name.toStdString());
-        return false;
+        return outcome;
     }
     m_previous_page = page;
-    return page.save(filepath, "PNG");
+    return page.save(filepath, "PNG") ? PageOutcome::Captured : PageOutcome::Failed;
 }
 
-bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
-                                                   const QString& page_name,
-                                                   const QString& output_dir_path,
-                                                   const QString& timestamp) {
-    const QDir output_dir(output_dir_path);
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsUri(
+    const QString& ms_uri,
+    const QString& page_name,
+    const QDir& output_dir,
+    const QString& timestamp) {
     for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
          ++attempt) {
         // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary):
@@ -451,18 +567,31 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
         // attempt rather than fall back to the bare name.
         if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
                                            {QString("ms-settings:%1").arg(ms_uri)})) {
-            return false;
+            return PageOutcome::Failed;
         }
         // The same window is reused page after page; it is closed once, when the run ends.
-        if (captureSettingsWindow(
-                findRespondingSettingsWindow(), output_dir, page_name, timestamp)) {
-            return true;
-        }
-        if (isCancelled()) {
-            return false;
+        const PageOutcome outcome =
+            captureSettingsWindow(findRespondingSettingsWindow(), output_dir, page_name, timestamp);
+        // A page Settings would not open does not open on a second try either.
+        if (outcome != PageOutcome::Failed || isCancelled()) {
+            return outcome;
         }
     }
-    return false;
+    return PageOutcome::Failed;
+}
+
+ScreenshotSettingsAction::PageOutcome ScreenshotSettingsAction::captureSettingsPage(
+    const SettingsPage& page, const QString& output_dir_path, const QString& timestamp) {
+    const QDir output_dir(output_dir_path);
+    for (const QString& uri : page.uris) {
+        const PageOutcome outcome = captureSettingsUri(uri, page.name, output_dir, timestamp);
+        if (outcome != PageOutcome::NotOnThisWindows) {
+            return outcome;
+        }
+        Q_EMIT logMessage(
+            QStringLiteral("%1: ms-settings:%2 is not a page on this Windows").arg(page.name, uri));
+    }
+    return PageOutcome::NotOnThisWindows;
 }
 
 QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
@@ -503,6 +632,16 @@ QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
         report << "+==============================================================+\n";
         for (const QString& page : capture.failed_pages) {
             report << QString("| [ ] %1").arg(page).leftJustified(kScreenshotReportFieldWidth, ' ')
+                   << "|\n";
+        }
+    }
+
+    if (!capture.absent_pages.isEmpty()) {
+        report << "+==============================================================+\n";
+        report << "|                     NOT ON THIS PC                           |\n";
+        report << "+==============================================================+\n";
+        for (const QString& page : capture.absent_pages) {
+            report << QString("| [-] %1").arg(page).leftJustified(kScreenshotReportFieldWidth, ' ')
                    << "|\n";
         }
     }
