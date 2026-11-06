@@ -164,6 +164,7 @@ private Q_SLOTS:
     void extFilesystemWriteActionsQueueWithConfirmation() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
+    void theTableHeaderReachesTheRightEdge();
     void manageBitLockerReadsWhatAStandardScanCannot();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
@@ -383,6 +384,32 @@ QString propertyTableValue(QTableWidget* table, const QString& propertyName) {
         const auto* value = table->item(row, 1);
         if (name && value && name->text() == propertyName) {
             return value->text();
+        }
+    }
+    return {};
+}
+
+// Review 2 found every property dialog cutting its labels and values ("Raw target ...",
+// "Optimizatio...", "In-app ...", "This is not an ATA Secure ..."). The label column is as wide
+// as its longest label, and every row is as tall as its wrapped value.
+QString propertyTableCut(QTableWidget* table) {
+    if (!table->wordWrap()) {
+        return QStringLiteral("values do not wrap");
+    }
+    // QTableView keeps these protected; QAbstractItemView has them public.
+    const QAbstractItemView* view = table;
+    if (table->columnWidth(0) < view->sizeHintForColumn(0)) {
+        return QStringLiteral("the label column is %1 px for %2 px of label")
+            .arg(table->columnWidth(0))
+            .arg(view->sizeHintForColumn(0));
+    }
+    for (int row = 0; row < table->rowCount(); ++row) {
+        if (table->rowHeight(row) < view->sizeHintForRow(row)) {
+            return QStringLiteral("row %1 (%2) is %3 px for %4 px of text")
+                .arg(row)
+                .arg(table->item(row, 0)->text())
+                .arg(table->rowHeight(row))
+                .arg(view->sizeHintForRow(row));
         }
     }
     return {};
@@ -1026,6 +1053,8 @@ void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
         QCOMPARE(metadata, QStringLiteral("HFS wrapper: Yes\nVersion: 4\nBlock size: 4096"));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("File system")),
                  QStringLiteral("HFS+"));
+        const QString cut = propertyTableCut(properties);
+        QVERIFY2(cut.isEmpty(), qPrintable(cut));
         inspected = true;
         dialog->reject();
     });
@@ -4654,6 +4683,33 @@ void PartitionManagerPanelTests::manageBitLockerOffersOnlyTheActionThatApplies()
     }
 }
 
+// Review 2 (F30): the table's header stopped at "Status", with white beside it to the edge, because
+// fitting the columns to their contents had taken the stretch off the last one.
+void PartitionManagerPanelTests::theTableHeaderReachesTheRightEdge() {
+    sak::PartitionManagerPanel panel;
+    panel.resize(1280, 800);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    QHeaderView* header = table->horizontalHeader();
+    QTest::qWait(100);
+    QCOMPARE(header->length(), header->viewport()->width());
+    // Review 2 (F35): Pending Operations was an empty box with nothing to say what goes there.
+    QListWidget* queue = nullptr;
+    for (auto* list : panel.findChildren<QListWidget*>()) {
+        if (list->accessibleName() == QStringLiteral("Pending operations")) {
+            queue = list;
+        }
+    }
+    QVERIFY(queue != nullptr);
+    const QLabel* empty = queue->viewport()->findChild<QLabel*>();
+    QVERIFY(empty != nullptr);
+    QVERIFY2(empty->text().startsWith(QStringLiteral("Nothing queued.")),
+             qPrintable(empty->text()));
+}
+
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
@@ -4701,6 +4757,8 @@ void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
                                 "\"<48-digit-recovery-key>\""));
         QCOMPARE(propertyTableValue(status, QStringLiteral("In-app mutation")),
                  QStringLiteral("Queue unlock, suspend, or resume through elevated Apply"));
+        const QString cut = propertyTableCut(status);
+        QVERIFY2(cut.isEmpty(), qPrintable(cut));
         auto* unlockButton =
             findAccessibleWidget<QPushButton>(dialog, QStringLiteral("Queue BitLocker unlock"));
         QVERIFY(unlockButton != nullptr);
@@ -4756,6 +4814,8 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
                                 "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("In-app HDD defrag execution")),
                  QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
+        const QString cut = propertyTableCut(status);
+        QVERIFY2(cut.isEmpty(), qPrintable(cut));
         auto* defragButton = findAccessibleWidget<QPushButton>(dialog,
                                                                QStringLiteral("Queue HDD defrag"));
         QVERIFY(defragButton != nullptr);
@@ -4820,6 +4880,8 @@ void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {
         QCOMPARE(propertyTableValue(status, QStringLiteral("Erase method")),
                  QStringLiteral("Windows ReTrim, then a full overwrite of the whole disk. This is "
                                 "not an ATA Secure Erase or NVMe Sanitize/Format command."));
+        const QString cut = propertyTableCut(status);
+        QVERIFY2(cut.isEmpty(), qPrintable(cut));
         verifyEraseDialogShowsNoInternalChecklist(dialog, status);
         QVERIFY(findAccessibleWidget<QPushButton>(dialog, QStringLiteral("Queue SSD erase")) !=
                 nullptr);

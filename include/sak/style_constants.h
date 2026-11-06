@@ -1541,6 +1541,17 @@ inline QString topOrBottomBarStyle(const char* background,
         .arg(cssColor(border));
 }
 
+/// topOrBottomBarStyle() for the one bar named @p object_name. Written bare on the bar, the rule
+/// reached every widget in it, and the calendar's status label drew its own edge, a stray line
+/// above "5 events" (review 2, F28).
+inline QString namedBarStyle(const QString& object_name,
+                             const char* background,
+                             const char* border,
+                             const char* edge = "bottom") {
+    return QStringLiteral("#%1 { %2 }")
+        .arg(object_name, topOrBottomBarStyle(background, border, edge));
+}
+
 inline QString notePanelStyle(const char* background,
                               const char* text_color = kColorTextBody,
                               int padding_px = kCssPaddingXLargePx,
@@ -2041,12 +2052,15 @@ inline QString calendarEventTableStyle() {
         .arg(QString::fromLatin1(kColorButtonTextOnTone));
 }
 
+/// The workflow details pane is about 290 px wide. A workflow's name at the section size wrapped to
+/// two lines there and stood larger than the page's own title (review 2, N17), so its headings
+/// step down from the status size.
 inline QString aiWorkflowMarkdownStyle() {
     return QString::fromLatin1(kAiWorkflowMarkdownStyle)
         .arg(kFontSizeNote)
         .arg(cssColor(kColorTextBody),
              cssColor(kColorBgSurface),
-             QString::number(kFontSizeSection),
+             QString::number(kFontSizeStatus),
              QString::number(kSpacingSmall),
              cssColor(kColorTextHeading),
              QString::number(kFontSizeBody),

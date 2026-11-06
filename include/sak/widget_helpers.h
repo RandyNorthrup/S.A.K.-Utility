@@ -14,14 +14,17 @@
 #include <QAbstractItemView>
 #include <QDate>
 #include <QFont>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
 #include <QLabel>
+#include <QList>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRect>
 #include <QSizePolicy>
 #include <QString>
 #include <QStyledItemDelegate>
@@ -66,6 +69,50 @@ inline void fitHeaderLabels(QTableView* table) {
             header->resizeSection(section, needed);
         }
     }
+}
+
+/// @brief @p label as much of it as fits in @p width, or nothing when too little would show to
+///        read. A disk bar's segment a few pixels wide drew ": ." from "*: 16.0 MB" (review 2,
+///        F32); a segment that narrow says what it is in its tooltip and the table, not in glyphs.
+inline QString labelThatFits(const QFontMetrics& metrics, const QString& label, int width) {
+    if (metrics.horizontalAdvance(label) <= width) {
+        return label;
+    }
+    // Two characters and an ellipsis ("E:...") read as noise, not as a name.
+    constexpr qsizetype kFewestCharsShown = 3;
+    const QString elided = metrics.elidedText(label, Qt::ElideRight, width);
+    return elided.size() > kFewestCharsShown ? elided : QString();
+}
+
+/// @brief Where a bar's label of @p text_width goes so that no mark crosses it: centred on the
+/// whole
+///        @p track when it clears every mark in @p mark_xs by @p clearance, else the widest stretch
+///        of the track between its ends and the marks. Create Partition's size handle sat in the
+///        middle of "New 1.00 GB | Remaining 1.98 GB" and split it (review 2).
+inline QRect labelRectClearOfMarks(const QRect& track,
+                                   int text_width,
+                                   QList<int> mark_xs,
+                                   int clearance) {
+    const int text_left = track.center().x() - (text_width / 2);
+    const int text_right = text_left + text_width;
+    const bool crossed = std::ranges::any_of(mark_xs, [&](int x) {
+        return x + clearance >= text_left && x - clearance <= text_right;
+    });
+    if (!crossed) {
+        return track;
+    }
+    std::ranges::sort(mark_xs);
+    QRect widest;
+    int from = track.left();
+    mark_xs.append(track.right() + 1 + clearance);
+    for (const int x : mark_xs) {
+        const QRect gap(from, track.top(), (x - clearance) - from, track.height());
+        if (gap.width() > widest.width()) {
+            widest = gap;
+        }
+        from = std::max(from, x + clearance + 1);
+    }
+    return widest;
 }
 
 /// @brief Gives @p labels one width, the widest one's, so the fields after them in their rows

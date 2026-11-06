@@ -121,6 +121,16 @@ namespace sak {
 
 namespace {
 
+// resizeColumnsToContents() sizes the last column to its contents as well, and the header only
+// stretches it again at the next resize, so the partition table's header stopped at "Status" with
+// white beside it (review 2, F30). Fit the columns, then let the last one take the rest again.
+void fitColumnsAndStretchLast(QTableWidget* table) {
+    table->resizeColumnsToContents();
+    QHeaderView* header = table->horizontalHeader();
+    header->setStretchLastSection(false);
+    header->setStretchLastSection(true);
+}
+
 // The box's own words are its name, so a screen reader says what is being agreed to. The short
 // version is kept as the description.
 void nameConfirmationBox(QCheckBox* box, const QString& what) {
@@ -2255,12 +2265,12 @@ private:
                 rect.width(), static_cast<uint64_t>(segment.used_percent), kPartitionProgressMax));
             painter->fillRect(used, segment.color.darker(kPartitionSegmentTrackLightness));
         }
-        const QString text =
-            painter->fontMetrics().elidedText(segment.label, Qt::ElideRight, rect.width());
+        // A sliver too narrow for its name draws none, not ": ." (review 2, F32).
+        const QRect text_rect = rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0);
         painter->setPen(segmentLabelColor(fill));
-        painter->drawText(rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
+        painter->drawText(text_rect,
                           Qt::AlignCenter,
-                          text);
+                          labelThatFits(painter->fontMetrics(), segment.label, text_rect.width()));
     }
 
     const PartitionDiskInfo* m_source_disk{nullptr};
@@ -3031,13 +3041,13 @@ private:
                                                 kPartitionProgressMax));
                 painter->fillRect(used_rect, segment.color.darker(kPartitionSegmentTrackLightness));
             }
-            const QString text = painter->fontMetrics().elidedText(segment.label,
-                                                                   Qt::ElideRight,
-                                                                   segment_rect.width());
+            const QRect text_rect =
+                segment_rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0);
             painter->setPen(paint.label);
-            painter->drawText(segment_rect.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0),
-                              Qt::AlignCenter,
-                              text);
+            painter->drawText(
+                text_rect,
+                Qt::AlignCenter,
+                labelThatFits(painter->fontMetrics(), segment.label, text_rect.width()));
         }
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawRect(track);
@@ -3184,19 +3194,44 @@ private:
         drawInteractiveHandles(painter, row_index, row, track);
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawRect(track);
-        drawRowText(painter, row, track, filled.intersected(track));
+        drawRowText(
+            painter, row, track, filled.intersected(track), handleXs(row_index, row, track));
+    }
+
+    /// Where this row's drag handles stand, none for a row that has none.
+    [[nodiscard]] QList<int> handleXs(int row_index,
+                                      const SizePreviewRow& row,
+                                      const QRect& track) const {
+        QList<int> xs;
+        if (row_index != m_interaction.row_index) {
+            return xs;
+        }
+        if (m_interaction.left_handle) {
+            xs.append(handleX(track, row.total_bytes, row.offset_bytes));
+        }
+        if (m_interaction.right_handle) {
+            xs.append(
+                handleX(track, row.total_bytes, saturatingAdd(row.offset_bytes, row.filled_bytes)));
+        }
+        return xs;
     }
 
     /// The row's text, coloured for what is under each part of it: the fill's own label colour
     /// over the fill, the palette's text colour over the empty track. One colour for both left a
-    /// dark label on the darkened green and orange fills, at 3.5:1.
+    /// dark label on the darkened green and orange fills, at 3.5:1. A handle in the way of the
+    /// centred text moves it to the widest stretch beside the handles.
     void drawRowText(QPainter* painter,
                      const SizePreviewRow& row,
                      const QRect& track,
-                     const QRect& filled) {
-        const QRect text_rect = track.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0);
-        const QString text =
-            painter->fontMetrics().elidedText(row.text, Qt::ElideRight, track.width());
+                     const QRect& filled,
+                     const QList<int>& handle_xs) {
+        const QRect clear =
+            labelRectClearOfMarks(track,
+                                  painter->fontMetrics().horizontalAdvance(row.text),
+                                  handle_xs,
+                                  kSizePreviewHandleHalfWidth + ui::kSpacingTight);
+        const QRect text_rect = clear.adjusted(ui::kSpacingTight, 0, -ui::kSpacingTight, 0);
+        const QString text = labelThatFits(painter->fontMetrics(), row.text, text_rect.width());
         painter->save();
         painter->setClipRegion(QRegion(track).subtracted(QRegion(filled)));
         painter->setPen(palette().color(QPalette::Text));
@@ -5068,7 +5103,7 @@ void rebuildQuickPartitionTable(const QuickPartitionWidgets& widgets,
         widgets.partition_table->setRowHeight(
             row, std::max(label->sizeHint().height(), size->sizeHint().height()));
     }
-    widgets.partition_table->resizeColumnsToContents();
+    fitColumnsAndStretchLast(widgets.partition_table);
 }
 
 void updateQuickPartitionTableMode(const QuickPartitionWidgets& widgets) {
@@ -6074,14 +6109,25 @@ QTableWidget* createPropertiesTable(QWidget* parent, const QVector<PropertyRow>&
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setAlternatingRowColors(true);
-    table->horizontalHeader()->setStretchLastSection(true);
+    // Inspect, Properties, Defrag, Manage BitLocker and Erase SSD all show their facts here, and
+    // all cut them: "Raw target ...", "Optimizatio...", "In-app ...", an erase method that stopped
+    // at "This is not an ATA Secure ...". The label column takes its longest label, the values
+    // take the rest and wrap, and each row grows to what it holds. A value too long to wrap (a
+    // path with no spaces) still reads whole in its tooltip.
+    table->horizontalHeader()->setSectionResizeMode(PropertyColName, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(PropertyColValue, QHeaderView::Stretch);
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->setWordWrap(true);
+    table->setTextElideMode(Qt::ElideMiddle);
     for (qsizetype row = 0; row < rows.size(); ++row) {
-        table->setItem(static_cast<int>(row),
-                       PropertyColName,
-                       new QTableWidgetItem(rows.at(row).name));
-        table->setItem(static_cast<int>(row),
-                       PropertyColValue,
-                       new QTableWidgetItem(rows.at(row).value));
+        auto* name = new QTableWidgetItem(rows.at(row).name);
+        auto* value = new QTableWidgetItem(rows.at(row).value);
+        // A label sits beside the first line of a value that wraps, not halfway down it.
+        name->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        value->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        value->setToolTip(rows.at(row).value);
+        table->setItem(static_cast<int>(row), PropertyColName, name);
+        table->setItem(static_cast<int>(row), PropertyColValue, value);
     }
     return table;
 }
@@ -7574,7 +7620,7 @@ void populateSpaceAnalyzerTable(QTableWidget* table, const SpaceAnalyzerResult& 
         setSpaceAnalyzerRow(
             table, static_cast<int>(row), result.entries.at(row), result.total_bytes);
     }
-    table->resizeColumnsToContents();
+    fitColumnsAndStretchLast(table);
     table->setSortingEnabled(true);
     table->sortItems(SpaceAnalyzerColSize, Qt::DescendingOrder);
 }
@@ -7808,7 +7854,7 @@ void populateFileRecoveryTable(QTableWidget* table,
                        FileRecoveryColOffset,
                        new QTableWidgetItem(QString::number(candidate.offset_bytes)));
     }
-    table->resizeColumnsToContents();
+    fitColumnsAndStretchLast(table);
 }
 
 bool showFileRecoveryReviewDialog(QWidget* parent,
@@ -9025,6 +9071,8 @@ void PartitionManagerPanel::addPendingOperationsSection(QVBoxLayout* layout, QWi
     m_queue_list = new QListWidget(pane);
     m_queue_list->setMinimumHeight(kPendingQueueMinHeight);
     setAccessible(m_queue_list, tr("Pending operations"), tr("Queued partition operations"));
+    new ui::ViewEmptyState(m_queue_list,
+                           tr("Nothing queued. An operation waits here until you press Apply."));
     layout->addWidget(m_queue_list, 1);
 }
 
@@ -9654,7 +9702,7 @@ void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
         addDiskRow(disk);
         addDiskContentRows(disk);
     }
-    m_table->resizeColumnsToContents();
+    fitColumnsAndStretchLast(m_table);
     Q_EMIT statusMessage(inventorySummaryText(inventory), 0);
     updateActionState();
 }

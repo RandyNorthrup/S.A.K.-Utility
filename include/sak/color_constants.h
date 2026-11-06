@@ -135,9 +135,10 @@ constexpr auto kColorWifiSearchMatchHighlight = "#ffff96";
 // Action button text and disabled state. The disabled fill and border are translucent slate so
 // one value reads as a muted control on the light page and on the dark one.
 constexpr auto kColorButtonTextOnTone = "#ffffff";
-// Faint enough that on the dark page a disabled button cannot pass for a secondary one, which at
-// 0.35 it nearly matched.
-constexpr auto kColorButtonDisabledBackground = "rgba(148, 163, 184, 0.18)";
+// A disabled button is an outline on the surface it sits on, as Windows 11 draws one. At 0.35 a
+// disabled fill nearly matched a secondary one on the dark page, and at 0.18 it was still only
+// 1.28:1 from it, with the label the one cue (review 2, D2); a filled button is now always enabled.
+constexpr auto kColorButtonDisabledBackground = "transparent";
 constexpr auto kColorButtonDisabledBorder = "rgba(148, 163, 184, 0.35)";
 
 // Button gradient stops. White label text sits on the middle stop; each tone's normal and hover

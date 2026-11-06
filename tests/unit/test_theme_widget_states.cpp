@@ -225,6 +225,10 @@ private Q_SLOTS:
     // The dark re-check (RD1, DN1).
     void aResolvedColourIsNotAliasedAgain();
     void searchHighlightsCarryDarkText();
+    // Partition bars (F32, the Create Partition handle).
+    void aSegmentTooNarrowDrawsNoLabel();
+    void aBarLabelStepsAroundItsHandles();
+    void theWorkflowHeadingFitsItsPane();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -941,6 +945,12 @@ void ThemeWidgetStatesTests::disabledButtonsDoNotPassForSecondaryOnes() {
     QVERIFY2(qAbs(off.lightness() - page.lightness()) * 2 < qAbs(on.lightness() - page.lightness()),
              qPrintable(QStringLiteral("page %1, secondary %2, disabled %3")
                             .arg(page.name(), on.name(), off.name())));
+    // Review 2 (D2): in dark the disabled fill was still 1.28:1 from a secondary one and 1.37:1
+    // from its panel, so only the label told them apart. A disabled button is an outline: no fill.
+    QVERIFY2(contrast(off, page) < 1.05,
+             qPrintable(QStringLiteral("disabled fill %1 on %2 is %3:1")
+                            .arg(off.name(), page.name())
+                            .arg(contrast(off, page), 0, 'f', 2)));
 }
 
 void ThemeWidgetStatesTests::secondaryTextReachesAaInBothThemes_data() {
@@ -1139,5 +1149,39 @@ void ThemeWidgetStatesTests::searchHighlightsCarryDarkText() {
     }
 }
 
+// Review 2 (F32): Copy Disk's target bar drew ": ." in segments a few pixels wide.
+void ThemeWidgetStatesTests::aSegmentTooNarrowDrawsNoLabel() {
+    const QFontMetrics metrics(QApplication::font());
+    const QString label = QStringLiteral("*: 16.0 MB");
+    const int whole = metrics.horizontalAdvance(label);
+    QCOMPARE(sak::labelThatFits(metrics, label, whole), label);
+    QVERIFY(sak::labelThatFits(metrics, label, whole - 1).endsWith(QChar(0x2026)));
+    QCOMPARE(sak::labelThatFits(metrics, label, metrics.horizontalAdvance(QStringLiteral("*:"))),
+             QString());
+    QCOMPARE(sak::labelThatFits(metrics, label, 3), QString());
+}
+
+// Review 2: Create Partition's size handle sat in the middle of "New 1.00 GB | Remaining 1.98 GB".
+void ThemeWidgetStatesTests::aBarLabelStepsAroundItsHandles() {
+    const QRect track(100, 10, 300, 20);  // x 100 to 399, centre 249
+    constexpr int kText = 100;            // centred: 199 to 299
+    constexpr int kClear = 7;
+    // Nothing in the way: the whole track, the text centred on it.
+    QCOMPARE(sak::labelRectClearOfMarks(track, kText, {120, 380}, kClear), track);
+    // A handle at 230 crosses it: the text goes right of it, the wider side.
+    QCOMPARE(sak::labelRectClearOfMarks(track, kText, {230}, kClear), QRect(238, 10, 162, 20));
+    // At 290 the left side is the wider one.
+    QCOMPARE(sak::labelRectClearOfMarks(track, kText, {290}, kClear), QRect(100, 10, 183, 20));
+    // Two handles: the widest of the three stretches, here the middle.
+    QCOMPARE(sak::labelRectClearOfMarks(track, kText, {280, 140}, kClear), QRect(148, 10, 125, 20));
+}
+// Review 2 (N17): the workflow's name was a 13 pt heading in a 290 px pane, wrapping to two lines
+// and larger than the page's own title.
+void ThemeWidgetStatesTests::theWorkflowHeadingFitsItsPane() {
+    const QRegularExpression h1(QStringLiteral("h1\\{font-size:(\\d+)pt"));
+    const QRegularExpressionMatch match = h1.match(sak::ui::aiWorkflowMarkdownStyle());
+    QVERIFY(match.hasMatch());
+    QVERIFY2(match.captured(1).toInt() <= sak::ui::kFontSizeStatus, qPrintable(match.captured(1)));
+}
 QTEST_MAIN(ThemeWidgetStatesTests)
 #include "test_theme_widget_states.moc"
