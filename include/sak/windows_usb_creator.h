@@ -142,6 +142,11 @@ public:
     [[nodiscard]] bool verifySplitParts(const QString& sources_dir);
     /// @brief The parts the last split wrote, in order.
     [[nodiscard]] const QList<SplitPart>& splitParts() const { return m_split_parts; }
+    /// @brief What is missing from the extracted files at @p cleanDest ("X:\"), or empty. With
+    ///        @p install_split the install image is not asked for: it was left out to be split,
+    ///        and its parts are written and read back after this check.
+    [[nodiscard]] static QString extractedBootFilesProblem(const QString& cleanDest,
+                                                           bool install_split);
 
     /// @brief What the status line says when the media has passed its final checks: what was
     ///        checked, a FAT32 volume with the UEFI boot file and the install image read back.

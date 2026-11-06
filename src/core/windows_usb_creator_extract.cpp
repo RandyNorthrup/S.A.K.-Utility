@@ -708,54 +708,42 @@ bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
 bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
     // copyISOContents only calls this with the "X:\" path copyISO_normalizeDestination built.
     Q_ASSERT(!cleanDest.isEmpty());
-    // Verify other critical Windows boot files - REQUIRED for bootable USB
-    const QStringList criticalFiles = {"sources/boot.wim", "bootmgr"};
-
-    // At least one of these must exist (different Windows versions have different structures)
-    const QStringList alternateFiles = {"sources/install.wim", "sources/install.esd"};
-
-    QStringList foundFiles;
-    foundFiles << "setup.exe";  // Already verified above
-
-    // Check required critical files
-    for (const QString& file : criticalFiles) {
-        const QString fullPath = cleanDest + file;
-        if (QFile::exists(fullPath)) {
-            sak::logInfo(QString("\xe2\x9c\x93 Found: %1").arg(file).toStdString());
-            foundFiles << file;
-        } else {
-            setError(QString("CRITICAL: Required file not found: %1").arg(file));
-            sak::logError(m_lastError.toStdString());
-            sak::logError("Windows installation files incomplete - USB will not boot");
-            return false;
-        }
-    }
-
-    // Check that at least ONE alternate file exists
-    bool hasInstallImage = false;
-    for (const QString& file : alternateFiles) {
-        const QString fullPath = cleanDest + file;
-        if (QFile::exists(fullPath)) {
-            sak::logInfo(QString("\xe2\x9c\x93 Found install image: %1").arg(file).toStdString());
-            foundFiles << file;
-            hasInstallImage = true;
-            break;
-        }
-    }
-
-    if (!hasInstallImage) {
-        setError(
-            "CRITICAL: No Windows install image found (install.wim or install.esd "
-            "required)");
+    const QString problem = extractedBootFilesProblem(cleanDest, m_install_split);
+    if (!problem.isEmpty()) {
+        setError(problem);
         sak::logError(m_lastError.toStdString());
-        sak::logError("Windows installation incomplete - USB will not be able to install Windows");
+        sak::logError("Windows installation files incomplete - USB will not boot or install");
         return false;
     }
-
-    sak::logInfo(QString("\xe2\x9c\x93 All critical files verified: %1 core files found")
-                     .arg(foundFiles.count())
-                     .toStdString());
+    sak::logInfo("\xe2\x9c\x93 All critical files verified");
     return true;
+}
+
+QString WindowsUSBCreator::extractedBootFilesProblem(const QString& cleanDest, bool install_split) {
+    // Verify other critical Windows boot files - REQUIRED for bootable USB
+    for (const QString& file : {QStringLiteral("sources/boot.wim"), QStringLiteral("bootmgr")}) {
+        if (!QFile::exists(cleanDest + file)) {
+            return QString("CRITICAL: Required file not found: %1").arg(file);
+        }
+        sak::logInfo(QString("\xe2\x9c\x93 Found: %1").arg(file).toStdString());
+    }
+    // A split install.wim was left out of the extraction on purpose: its parts are copied after
+    // this check and read back by hash at the final verification. testpc1: requiring the image
+    // here failed every FAT32 build of a Windows 11 ISO as soon as its extraction ended.
+    if (install_split) {
+        sak::logInfo("install.wim is split after the extraction; its parts are checked at the end");
+        return {};
+    }
+    // At least one of these must exist (different Windows versions have different structures)
+    for (const QString& file :
+         {QStringLiteral("sources/install.wim"), QStringLiteral("sources/install.esd")}) {
+        if (QFile::exists(cleanDest + file)) {
+            sak::logInfo(QString("\xe2\x9c\x93 Found install image: %1").arg(file).toStdString());
+            return {};
+        }
+    }
+    return QStringLiteral(
+        "CRITICAL: No Windows install image found (install.wim or install.esd required)");
 }
 
 void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {

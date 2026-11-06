@@ -39,6 +39,7 @@ private Q_SLOTS:
     void finalStatus_saysFilesVerifiedNotBootable();
     void theMediaIsOneFat32Partition();
     void aSplitInstallImageIsCopiedAndReadBack();
+    void theExtractionCheckWaitsForASplitImage();
     void initTestCase();
     void cleanupTestCase();
 
@@ -836,6 +837,26 @@ void WindowsUSBCreatorTests::aSplitInstallImageIsCopiedAndReadBack() {
     QVERIFY(!creator.verifySplitParts(sources));
     QVERIFY2(creator.lastError().contains(QStringLiteral("install2.swm")),
              qPrintable(creator.lastError()));
+}
+
+// testpc1: the check after the extraction asked for install.wim, which a split leaves out of it on
+// purpose, so every FAT32 build of a Windows 11 ISO failed there. Unsplit, the image is required.
+void WindowsUSBCreatorTests::theExtractionCheckWaitsForASplitImage() {
+    QTemporaryDir drive;
+    QVERIFY(drive.isValid());
+    const QString root = QDir::toNativeSeparators(drive.path()) + QLatin1Char('\\');
+    QVERIFY(QDir(drive.path()).mkpath(QStringLiteral("sources")));
+    for (const QString& name : {QStringLiteral("bootmgr"), QStringLiteral("sources/boot.wim")}) {
+        QFile file(drive.filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("x");
+    }
+    QCOMPARE(WindowsUSBCreator::extractedBootFilesProblem(root, true), QString());
+    QVERIFY(WindowsUSBCreator::extractedBootFilesProblem(root, false)
+                .contains(QStringLiteral("No Windows install image")));
+    QVERIFY(QFile::remove(drive.filePath(QStringLiteral("sources/boot.wim"))));
+    QVERIFY(WindowsUSBCreator::extractedBootFilesProblem(root, true)
+                .contains(QStringLiteral("sources/boot.wim")));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)
