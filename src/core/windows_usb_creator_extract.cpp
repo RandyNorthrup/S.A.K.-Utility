@@ -7,6 +7,7 @@
 #include "sak/windows_usb_creator.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
@@ -14,6 +15,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTemporaryDir>
 #include <QThread>
 
 #include <algorithm>
@@ -24,6 +26,11 @@ constexpr qsizetype kSevenZipPathPrefixLength = 7;
 constexpr qsizetype kSevenZipSizePrefixLength = 7;
 constexpr qsizetype kSevenZipFolderPrefixLength = 9;
 constexpr int kExtractionWorkspaceMultiplier = 2;
+// Taking a 7 GB install.wim out of an ISO, and DISM splitting it with its integrity check, each
+// take minutes on a slow disk.
+constexpr int kSplitStepTimeoutMs = 45 * 60 * 1000;
+constexpr qsizetype kSplitErrorTailChars = 300;
+constexpr qsizetype kFat32LabelMaxChars = 11;
 constexpr int kCapacityDisplayPrecision = 2;
 constexpr int kProgressDisplayPrecision = 1;
 constexpr int kExtractProgressStart = 15;
@@ -117,16 +124,13 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     if (!copyISO_checkDiskSpace(cleanDest, sourcePath)) {
         return false;
     }
+    if (!copyISO_planInstallImage(sevenZipPath, sourcePath)) {
+        return false;
+    }
     if (!copyISO_runExtraction(sevenZipPath, sourcePath, cleanDest)) {
         return false;
     }
-    if (!copyISO_verifyDestination(cleanDest)) {
-        return false;
-    }
-    if (!copyISO_findSetupExe(cleanDest)) {
-        return false;
-    }
-    if (!copyISO_verifyBootFiles(cleanDest)) {
+    if (!copyISO_verifyExtracted(cleanDest)) {
         return false;
     }
 
@@ -141,6 +145,195 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         return false;
     }
 
+    return !m_install_split || copyISO_splitInstallImage(sevenZipPath, sourcePath, cleanDest);
+}
+
+bool WindowsUSBCreator::copyISO_verifyExtracted(const QString& cleanDest) {
+    return copyISO_verifyDestination(cleanDest) && copyISO_findSetupExe(cleanDest) &&
+           copyISO_verifyBootFiles(cleanDest);
+}
+
+bool WindowsUSBCreator::copyISO_planInstallImage(const QString& sevenZipPath,
+                                                 const QString& sourcePath) {
+    // FAT32 holds no file of 4 GiB or more. A Windows 11 install.wim is larger than that, so it
+    // is left out of the extraction and split; an install.esd cannot be split and is refused.
+    const auto listing = sak::runProcess(sevenZipPath,
+                                         {QStringLiteral("l"), QStringLiteral("-slt"), sourcePath},
+                                         sak::kTimeoutProcessVeryLongMs,
+                                         [this]() { return m_cancelled.load(); });
+    if (!listing.succeeded() || listing.output_truncated) {
+        setError(QStringLiteral("Could not list the ISO to size its install image"));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    m_install_split = false;
+    for (const auto& [path, bytes] :
+         parseIsoCriticalFiles(listing.std_out.split(QLatin1Char('\n')))) {
+        const QString normalized = QDir::fromNativeSeparators(path).toLower();
+        if (!installImageNeedsSplit(bytes)) {
+            continue;
+        }
+        if (normalized.endsWith(QStringLiteral("sources/install.esd"))) {
+            setError(QStringLiteral("This ISO's install.esd is larger than FAT32 can hold (%1 "
+                                    "bytes) and cannot be split; use an ISO with install.wim")
+                         .arg(bytes));
+            sak::logError(m_lastError.toStdString());
+            return false;
+        }
+        if (normalized.endsWith(QStringLiteral("sources/install.wim"))) {
+            m_install_split = true;
+            sak::logInfo(QString("install.wim is %1 bytes, larger than FAT32 holds: it will be "
+                                 "split into %2 MB parts")
+                             .arg(bytes)
+                             .arg(kInstallSplitPartMb)
+                             .toStdString());
+        }
+    }
+    return true;
+}
+
+bool WindowsUSBCreator::copyISO_splitInstallImage(const QString& sevenZipPath,
+                                                  const QString& sourcePath,
+                                                  const QString& cleanDest) {
+    const QString dism = system32ExePath(QStringLiteral("dism.exe"));
+    if (dism.isEmpty()) {
+        setError(QStringLiteral("Cannot resolve the system dism.exe to split install.wim"));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    // The split needs the image as a file, so it is taken out of the ISO into a work folder on
+    // this PC first; the folder holds the image and its parts at once, and goes at the end.
+    QTemporaryDir work(QDir(QDir::tempPath()).filePath(QStringLiteral("sak_usb_split_XXXXXX")));
+    const QStorageInfo space(QDir::tempPath());
+    if (!work.isValid() ||
+        space.bytesAvailable() < kExtractionWorkspaceMultiplier * m_isoSizeBytes) {
+        setError(QStringLiteral("Splitting install.wim needs about %1 GB free in %2")
+                     .arg(kExtractionWorkspaceMultiplier * m_isoSizeBytes / sak::kBytesPerGB)
+                     .arg(QDir::toNativeSeparators(QDir::tempPath())));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    Q_EMIT statusChanged("Step 2/3: Taking install.wim out of the ISO to split it...");
+    const auto extracted =
+        sak::runProcess(sevenZipPath,
+                        {QStringLiteral("e"),
+                         QStringLiteral("-y"),
+                         sourcePath,
+                         QStringLiteral("sources\\install.wim"),
+                         QStringLiteral("-o%1").arg(QDir::toNativeSeparators(work.path()))},
+                        kSplitStepTimeoutMs,
+                        [this]() { return m_cancelled.load(); });
+    const QString wim = QDir(work.path()).filePath(QStringLiteral("install.wim"));
+    if (!extracted.succeeded() || !QFileInfo::exists(wim)) {
+        setError(QStringLiteral("Could not take install.wim out of the ISO to split it"));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    return splitInstallImageInto(dism, wim, QDir(cleanDest).filePath(QStringLiteral("sources")));
+}
+
+namespace {
+// SHA-256 of a file, read in pieces; empty when it cannot be read.
+QByteArray fileSha256(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) {
+        return {};
+    }
+    return hash.result();
+}
+
+// install.swm, install2.swm, ... in the order Setup reads them.
+QStringList orderedSplitParts(const QString& folder) {
+    QStringList parts = QDir(folder).entryList({QStringLiteral("install*.swm")}, QDir::Files);
+    std::ranges::sort(parts, [](const QString& a, const QString& b) {
+        const auto number = [](const QString& name) {
+            const QString digits = name.mid(7, name.size() - 11);  // "install" .. ".swm"
+            return digits.isEmpty() ? 1 : digits.toInt();
+        };
+        return number(a) < number(b);
+    });
+    return parts;
+}
+}  // namespace
+
+bool WindowsUSBCreator::splitInstallImageInto(const QString& dism,
+                                              const QString& wim,
+                                              const QString& sources_dir) {
+    m_split_parts.clear();
+    const QString parts_dir = QFileInfo(wim).absolutePath() + QStringLiteral("/parts");
+    if (!QDir().mkpath(parts_dir)) {
+        setError(QStringLiteral("Could not make a folder for the split install image"));
+        return false;
+    }
+    Q_EMIT statusChanged("Step 2/3: Splitting install.wim for FAT32 (DISM)...");
+    const auto split = sak::runProcess(
+        dism,
+        splitImageArguments(wim, QDir(parts_dir).filePath(QStringLiteral("install.swm"))),
+        kSplitStepTimeoutMs,
+        [this]() { return m_cancelled.load(); });
+    const QStringList parts = orderedSplitParts(parts_dir);
+    if (!split.succeeded() || parts.isEmpty() || parts.first() != QStringLiteral("install.swm")) {
+        setError(QStringLiteral("DISM could not split install.wim (exit code %1): %2")
+                     .arg(split.exit_code)
+                     .arg(split.std_out.trimmed().right(kSplitErrorTailChars)));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    QFile::remove(wim);  // the parts hold it now, and the work folder needs the room
+    for (int i = 0; i < parts.size(); ++i) {
+        Q_EMIT statusChanged(QString("Step 2/3: Copying install image part %1 of %2...")
+                                 .arg(i + 1)
+                                 .arg(parts.size()));
+        const QString from = QDir(parts_dir).filePath(parts.at(i));
+        const QString to = QDir(sources_dir).filePath(parts.at(i));
+        SplitPart part{.name = parts.at(i),
+                       .sha256 = fileSha256(from),
+                       .bytes = QFileInfo(from).size()};
+        if (part.sha256.isEmpty() || part.bytes > kFat32MaxFileBytes || !QFile::copy(from, to)) {
+            setError(QStringLiteral("Could not copy %1 to the USB drive").arg(parts.at(i)));
+            sak::logError(m_lastError.toStdString());
+            return false;
+        }
+        m_split_parts.append(part);
+    }
+    sak::logInfo(QString("install.wim split into %1 part(s) on the USB drive")
+                     .arg(m_split_parts.size())
+                     .toStdString());
+    return true;
+}
+
+bool WindowsUSBCreator::verifySplitParts(const QString& sources_dir) {
+    if (m_split_parts.isEmpty() ||
+        QFileInfo::exists(QDir(sources_dir).filePath(QStringLiteral("install.wim")))) {
+        setError(
+            QStringLiteral("FINAL VERIFICATION FAILED: the split install image is not on the "
+                           "drive as written"));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    for (int i = 0; i < m_split_parts.size(); ++i) {
+        const SplitPart& part = m_split_parts.at(i);
+        Q_EMIT statusChanged(QString("Reading back install image part %1 of %2...")
+                                 .arg(i + 1)
+                                 .arg(m_split_parts.size()));
+        const QString path = QDir(sources_dir).filePath(part.name);
+        if (QFileInfo(path).size() != part.bytes || fileSha256(path) != part.sha256) {
+            setError(QStringLiteral("FINAL VERIFICATION FAILED: %1 on the drive does not match "
+                                    "what was written")
+                         .arg(part.name));
+            sak::logError(m_lastError.toStdString());
+            return false;
+        }
+        sak::logInfo(QString("  [x] %1 (%2 bytes, SHA-256 %3)")
+                         .arg(part.name)
+                         .arg(part.bytes)
+                         .arg(QString::fromLatin1(part.sha256.toHex()))
+                         .toStdString());
+    }
     return true;
 }
 
@@ -286,6 +479,9 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
     args << "-y";                            // Assume Yes on all queries
     args << sourcePath;
     args << QString("-o%1").arg(cleanDest);  // Output directory
+    if (m_install_split) {
+        args << QStringLiteral("-x!sources\\install.wim");  // too large for FAT32: split below
+    }
 
     sak::logInfo(QString("7z command: %1 %2").arg(sevenZipPath, args.join(" ")).toStdString());
     sak::logInfo(QString("Extracting to absolute path: %1").arg(cleanDest).toStdString());
@@ -580,7 +776,8 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
 
     // m_volumeLabel is already allowlisted; also double any single quote as defense in depth so a
     // future allowlist relaxation cannot reopen the single-quoted-string break-out.
-    QString safeLabel = m_volumeLabel;
+    // FAT32 keeps 11 characters of a label.
+    QString safeLabel = m_volumeLabel.left(kFat32LabelMaxChars);
     safeLabel.replace(QChar('\''), QStringLiteral("''"));
     const QString labelCmd =
         QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'").arg(driveLetter, safeLabel);
@@ -609,9 +806,8 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
 // media has none, so running it against the media root could only fail or write the wrong
 // thing (Codex review 3, finding 5). The extracted ISO already carries the boot files it was
 // built with (bootmgr, boot\BCD, efi\), which is what makes it bootable; the partition was
-// made active when it was created. The remaining limit is unchanged and stays recorded: the
-// media is NTFS with no FAT32 ESP or UEFI:NTFS loader, so firmware that cannot read NTFS will
-// not UEFI-boot it (Codex review 3, finding 4).
+// made active when it was created. The volume is FAT32, which UEFI firmware reads, so the same
+// files start a PC in UEFI and in legacy BIOS mode (Codex review 3, finding 4).
 
 bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     // Integer-validate before interpolating into the diskpart script (same class of
@@ -756,6 +952,13 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath,
     const QStringList lines = isoListing.split("\n");
 
     auto criticalFiles = parseIsoCriticalFiles(lines);
+    if (m_install_split) {
+        // Not on the drive whole: its parts are checked by hash at the final verification.
+        criticalFiles.removeIf([](const QPair<QString, qint64>& file) {
+            return QDir::fromNativeSeparators(file.first)
+                .endsWith(QStringLiteral("sources/install.wim"), Qt::CaseInsensitive);
+        });
+    }
 
     if (criticalFiles.isEmpty()) {
         setError("Verification failed: No critical Windows files found in ISO");
@@ -917,8 +1120,18 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
     // finalVerification, the only caller, rejects anything that is not a single drive
     // letter and passes the normalized "X:\" form it builds from it.
     Q_ASSERT(!cleanDrive.isEmpty());
-    // Verification 1: Check that critical boot files exist
-    const QStringList requiredFiles = {"setup.exe", "sources/boot.wim", "bootmgr"};
+    // Verification 0: the volume UEFI firmware reads. NTFS media does not start a UEFI PC.
+    const QString file_system = QString::fromUtf8(QStorageInfo(cleanDrive).fileSystemType());
+    if (file_system.compare(QLatin1String("FAT32"), Qt::CaseInsensitive) != 0) {
+        setError(QString("FINAL VERIFICATION FAILED: the drive is %1, not FAT32, so a UEFI PC "
+                         "would not start from it")
+                     .arg(file_system));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    // Verification 1: Check that critical boot files exist, the UEFI loader among them
+    const QStringList requiredFiles = {
+        "setup.exe", "sources/boot.wim", "bootmgr", "efi/boot/bootx64.efi"};
 
     sak::logInfo("Checking required files:");
     for (const QString& file : requiredFiles) {
@@ -934,6 +1147,9 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
 
     // Verification 2: Check for install image
     Q_EMIT statusChanged("Verifying Windows install image...");
+    if (m_install_split) {
+        return verifySplitParts(cleanDrive + "sources");
+    }
     const bool hasInstallWim = QFile::exists(cleanDrive + "sources/install.wim");
     const bool hasInstallEsd = QFile::exists(cleanDrive + "sources/install.esd");
 
@@ -957,7 +1173,7 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
 
 QString WindowsUSBCreator::finalVerificationStatus() {
     return QStringLiteral(
-        "[x] USB files verified. A PC whose UEFI firmware cannot read NTFS will not boot it.");
+        "[x] USB files verified: FAT32 with the UEFI boot file, and the install image read back.");
 }
 
 bool WindowsUSBCreator::listingHasInstallImage(const QString& listing) {

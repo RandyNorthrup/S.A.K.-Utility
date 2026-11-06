@@ -1302,8 +1302,8 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
     QString method_info;
     if (is_windows_iso) {
         method_info =
-            "\nMethod: Extract ISO to NTFS-formatted drive\n"
-            "(Proper Windows installation USB)";
+            "\nMethod: Extract ISO to a FAT32 drive\n"
+            "(Starts UEFI and BIOS PCs; a large install.wim is split into parts)";
     } else {
         method_info =
             "\nMethod: Raw disk imaging\n"

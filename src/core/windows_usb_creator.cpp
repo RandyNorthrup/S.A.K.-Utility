@@ -28,7 +28,7 @@
 namespace {
 
 constexpr int kFormatVerificationProgress = 5;
-constexpr int kNtfsVerificationProgress = 10;
+constexpr int kFat32VerificationProgress = 10;
 constexpr int kExtractionPreparationProgress = 13;
 constexpr int kExtractionVerifiedProgress = 60;
 
@@ -123,6 +123,8 @@ void WindowsUSBCreator::resetPerRunState(const QString& diskNumber) {
     m_targetDiskUniqueId.clear();
     m_isoSizeBytes = -1;
     m_isoModifiedMs = -1;
+    m_install_split = false;
+    m_split_parts.clear();
 }
 
 bool WindowsUSBCreator::cancellationRequested() {
@@ -577,10 +579,10 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     // against ^\d{1,3}$.
     Q_ASSERT(!diskNumber.isEmpty());
     Q_EMIT progressUpdated(0);
-    Q_EMIT statusChanged("Step 1/3: Formatting drive as NTFS...");
+    Q_EMIT statusChanged("Step 1/3: Formatting drive as FAT32...");
     sak::logInfo("STEP 1: Formatting disk...");
 
-    if (!formatDriveNTFS(diskNumber)) {
+    if (!formatDriveFat32(diskNumber)) {
         sak::logError("STEP 1 FAILED: Format failed");
         Q_EMIT failed(lastError());
         return {};
@@ -597,10 +599,10 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
         return {};
     }
 
-    Q_EMIT progressUpdated(kNtfsVerificationProgress);
-    Q_EMIT statusChanged("Verifying NTFS filesystem...");
+    Q_EMIT progressUpdated(kFat32VerificationProgress);
+    Q_EMIT statusChanged("Verifying FAT32 filesystem...");
 
-    if (!verifyNtfsFilesystem(driveLetter)) {
+    if (!verifyFat32Filesystem(driveLetter)) {
         return {};
     }
 
@@ -610,7 +612,7 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     return driveLetter;
 }
 
-bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
+bool WindowsUSBCreator::verifyFat32Filesystem(const QString& driveLetter) {
     // formatAndVerifyDrive returns before this call when the letter is empty, and
     // validateDriveLetter (its only producer) enforces exactly one A-Z character.
     Q_ASSERT(!driveLetter.isEmpty());
@@ -630,7 +632,7 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
         return false;
     }
 
-    // A non-zero exit means the query itself failed; a stray "NTFS" on stdout must not be
+    // A non-zero exit means the query itself failed; a stray "FAT32" on stdout must not be
     // accepted as a verified filesystem. Fail closed just like getDriveLetterFromDiskNumber.
     if (check_result.exit_code != 0) {
         setError(QString("STEP 1 VERIFICATION FAILED: "
@@ -643,16 +645,16 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
     }
 
     const QString fs = check_result.std_out.trimmed();
-    if (fs != "NTFS") {
+    if (fs != "FAT32") {
         setError(QString("STEP 1 VERIFICATION FAILED: "
-                         "Drive is %1, expected NTFS")
+                         "Drive is %1, expected FAT32")
                      .arg(fs));
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
         return false;
     }
     sak::logInfo(QString("[x] STEP 1 VERIFIED: "
-                         "Drive %1: formatted as NTFS")
+                         "Drive %1: formatted as FAT32")
                      .arg(driveLetter)
                      .toStdString());
     return true;
@@ -698,7 +700,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     }
     // Confirm the drive letter still maps to the pinned target disk before 7z writes anything,
     // so a hot-plug that reassigned the letter cannot redirect the extraction onto an unrelated
-    // NTFS volume. Together with the identity re-pin above, the letter resolves to the pinned
+    // volume. Together with the identity re-pin above, the letter resolves to the pinned
     // UniqueId/disk number.
     if (!verifyDriveLetterMapsToTarget(driveLetter)) {
         Q_EMIT failed(lastError());
@@ -740,9 +742,10 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
 
     // Check for install image
     const bool hasInstall = QFile::exists(basePath + "sources\\install.wim") ||
-                            QFile::exists(basePath + "sources\\install.esd");
+                            QFile::exists(basePath + "sources\\install.esd") ||
+                            QFile::exists(basePath + "sources\\install.swm");
     if (!hasInstall) {
-        setError("STEP 2 VERIFICATION FAILED: No install.wim or install.esd found");
+        setError("STEP 2 VERIFICATION FAILED: No install.wim, install.esd or install.swm found");
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
         return false;
@@ -765,7 +768,7 @@ QString WindowsUSBCreator::lastError() const {
 }
 
 bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
-    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
+    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveFat32,
     // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
     // Honor a cancellation that arrived before this destructive step launches, so the
@@ -782,14 +785,8 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 
     // The one and only place the legacy-BIOS "active" flag is set; final verification
     // checks it. A second diskpart run to set it again after extraction did nothing new.
-    const QString diskpartScript = QString(
-                                       "select disk %1\n"
-                                       "clean\n"
-                                       "create partition primary\n"
-                                       "select partition 1\n"
-                                       "active\n"
-                                       "exit\n")
-                                       .arg(diskNumber);
+    const QString diskpartScript = partitionScript(diskNumber,
+                                                   fat32PartitionMb(m_targetDiskSizeBytes));
 
     sak::logInfo(QString("Running diskpart script:\n%1").arg(diskpartScript).toStdString());
 
@@ -802,8 +799,8 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     return true;
 }
 
-bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
-    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
+bool WindowsUSBCreator::formatPartitionFat32(const QString& diskNumber) {
+    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveFat32,
     // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
     // Honor a cancellation that arrived before this second destructive step launches.
@@ -822,14 +819,9 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     if (!waitForNewPartitionVolume(diskNumber)) {
         return false;
     }
-    Q_EMIT statusChanged("Formatting partition as NTFS...");
+    Q_EMIT statusChanged("Formatting partition as FAT32...");
 
-    const QString formatScript = QString(
-                                     "select disk %1\n"
-                                     "select partition 1\n"
-                                     "format FS=NTFS QUICK label=\"BOOT\"\n"
-                                     "exit\n")
-                                     .arg(diskNumber);
+    const QString formatScript = formatFat32Script(diskNumber, QStringLiteral("WINDOWS"));
 
     sak::logInfo(QString("Running format script:\n%1").arg(formatScript).toStdString());
 
@@ -842,6 +834,34 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     // then waits (bounded) for the drive letter, which is what actually takes time to appear.
     assignDriveLetterIfMissing(diskNumber);
     return true;
+}
+
+int WindowsUSBCreator::fat32PartitionMb(qint64 disk_bytes) {
+    const qint64 cap_bytes = static_cast<qint64>(kFat32MaxPartitionMb) * sak::kBytesPerMB;
+    return disk_bytes > cap_bytes ? kFat32MaxPartitionMb : 0;
+}
+
+QString WindowsUSBCreator::partitionScript(const QString& disk, int partition_mb) {
+    // MBR, so the same stick also starts a PC in legacy BIOS mode from its active partition.
+    const QString create =
+        partition_mb > 0 ? QStringLiteral("create partition primary size=%1\n").arg(partition_mb)
+                         : QStringLiteral("create partition primary\n");
+    return QStringLiteral("select disk %1\nclean\nconvert mbr\n").arg(disk) + create +
+           QStringLiteral("select partition 1\nactive\nexit\n");
+}
+
+QString WindowsUSBCreator::formatFat32Script(const QString& disk, const QString& label) {
+    return QStringLiteral(
+               "select disk %1\nselect partition 1\nformat FS=FAT32 QUICK label=\"%2\"\nexit\n")
+        .arg(disk, label);
+}
+
+QStringList WindowsUSBCreator::splitImageArguments(const QString& wim, const QString& swm) {
+    return {QStringLiteral("/Split-Image"),
+            QStringLiteral("/ImageFile:%1").arg(QDir::toNativeSeparators(wim)),
+            QStringLiteral("/SWMFile:%1").arg(QDir::toNativeSeparators(swm)),
+            QStringLiteral("/FileSize:%1").arg(kInstallSplitPartMb),
+            QStringLiteral("/CheckIntegrity")};
 }
 
 QString WindowsUSBCreator::assignDriveLetterScript(const QString& diskNumber) {
@@ -883,14 +903,14 @@ void WindowsUSBCreator::assignDriveLetterIfMissing(const QString& diskNumber) {
     sak::logInfo(QString("Assign output:\n%1").arg(output).toStdString());
 }
 
-bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
+bool WindowsUSBCreator::formatDriveFat32(const QString& diskNumber) {
     // formatAndVerifyDrive, the only caller, is reached only after validateUSBInputs
     // matched diskNumber against ^\d{1,3}$.
     Q_ASSERT(!diskNumber.isEmpty());
     // Use the official Microsoft method: diskpart clean, then format command
     // Based on Windows Server USB creation documentation and Rufus implementation
 
-    sak::logInfo(QString("Formatting disk %1 as NTFS").arg(diskNumber).toStdString());
+    sak::logInfo(QString("Formatting disk %1 as FAT32").arg(diskNumber).toStdString());
     Q_EMIT statusChanged("Preparing USB drive...");
 
     // Step 1: Clean the disk and create MBR partition using diskpart
@@ -898,12 +918,12 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
         return false;
     }
 
-    // Step 2: Wait for partition and format with NTFS
-    if (!formatPartitionNTFS(diskNumber)) {
+    // Step 2: Wait for partition and format with FAT32
+    if (!formatPartitionFat32(diskNumber)) {
         return false;
     }
 
-    sak::logInfo(QString("Successfully formatted disk %1 as NTFS").arg(diskNumber).toStdString());
+    sak::logInfo(QString("Successfully formatted disk %1 as FAT32").arg(diskNumber).toStdString());
     return true;
 }
 

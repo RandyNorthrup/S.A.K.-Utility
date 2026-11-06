@@ -10,7 +10,7 @@
  * injection prevention) and ISO existence checks.
  *
  * No admin privileges or hardware required -- all tests exercise
- * validation that fires before formatDriveNTFS/QProcess calls.
+ * validation that fires before formatDriveFat32/QProcess calls.
  */
 
 #include "sak/process_runner.h"
@@ -37,6 +37,8 @@ private Q_SLOTS:
     void installImageListing_needsTheTopLevelSourcesFolder();
     void checkInstallImage_runsTheRealToolOverARealIso();
     void finalStatus_saysFilesVerifiedNotBootable();
+    void theMediaIsOneFat32Partition();
+    void aSplitInstallImageIsCopiedAndReadBack();
     void initTestCase();
     void cleanupTestCase();
 
@@ -487,7 +489,11 @@ void WindowsUSBCreatorTests::bootSetupHasNoBcdbootStepOrDuplicateActiveOrFixedSl
     QVERIFY2(source.size() > 0, "creator sources were not read");
     QVERIFY(!source.contains(QStringLiteral("QStringLiteral(\"bcdboot.exe\")")));
     QVERIFY(!source.contains(QStringLiteral("runBcdboot")));
-    QCOMPARE(source.count(QStringLiteral("\"active\\n\"")), 1);
+    // Once in the sources, in the partition script, and once in that script.
+    QCOMPARE(source.count(QStringLiteral("active\\n")), 1);
+    QCOMPARE(WindowsUSBCreator::partitionScript(QStringLiteral("3"), 0)
+                 .count(QStringLiteral("\nactive\n")),
+             1);
     QVERIFY(!source.contains(QStringLiteral("QThread::msleep(sak::kTimer")));
 }
 
@@ -559,7 +565,7 @@ void WindowsUSBCreatorTests::formatGivesTheVolumeALetterWhenWindowsDidNot() {
     QVERIFY(source.open(QIODevice::ReadOnly | QIODevice::Text));
     const QString text = QString::fromUtf8(source.readAll());
     const qsizetype format_start =
-        text.indexOf(QStringLiteral("bool WindowsUSBCreator::formatPartitionNTFS("));
+        text.indexOf(QStringLiteral("bool WindowsUSBCreator::formatPartitionFat32("));
     const qsizetype format_end =
         text.indexOf(QStringLiteral("QString WindowsUSBCreator::assignDriveLetterScript("));
     QVERIFY(format_start >= 0 && format_end > format_start);
@@ -729,13 +735,107 @@ void WindowsUSBCreatorTests::checkInstallImage_runsTheRealToolOverARealIso() {
              Check::Failed);
 }
 
-// "Verified bootable" was a claim nothing here tested, and false for firmware that cannot read
-// NTFS.
+// "Verified bootable" was a claim nothing here tested. It says what was checked: FAT32, the UEFI
+// boot file and the install image.
 void WindowsUSBCreatorTests::finalStatus_saysFilesVerifiedNotBootable() {
     const QString status = WindowsUSBCreator::finalVerificationStatus();
     QVERIFY2(!status.contains(QStringLiteral("BOOTABLE"), Qt::CaseInsensitive), qPrintable(status));
     QVERIFY2(status.contains(QStringLiteral("files verified")), qPrintable(status));
-    QVERIFY2(status.contains(QStringLiteral("NTFS")), qPrintable(status));
+    QVERIFY2(status.contains(QStringLiteral("FAT32")), qPrintable(status));
+}
+
+// testpc1: the media was one NTFS partition, which a UEFI PC with Secure Boot, as Windows 11
+// needs, does not start. It is one FAT32 partition, capped at 32 GB on a larger stick, made
+// active for BIOS PCs as well.
+void WindowsUSBCreatorTests::theMediaIsOneFat32Partition() {
+    QCOMPARE(WindowsUSBCreator::fat32PartitionMb(31'042'043'904LL), 0);
+    QCOMPARE(WindowsUSBCreator::fat32PartitionMb(32'768LL * 1024 * 1024), 0);
+    QCOMPARE(WindowsUSBCreator::fat32PartitionMb(64'023'257'088LL), 32'768);
+    QCOMPARE(WindowsUSBCreator::partitionScript(QStringLiteral("3"), 0),
+             QStringLiteral("select disk 3\nclean\nconvert mbr\ncreate partition primary\n"
+                            "select partition 1\nactive\nexit\n"));
+    QVERIFY(WindowsUSBCreator::partitionScript(QStringLiteral("3"), 32'768)
+                .contains(QStringLiteral("create partition primary size=32768\n")));
+    QVERIFY(WindowsUSBCreator::formatFat32Script(QStringLiteral("3"), QStringLiteral("WINDOWS"))
+                .contains(QStringLiteral("format FS=FAT32 QUICK label=\"WINDOWS\"")));
+    // FAT32 holds a file of 4 GiB less one byte, and no more: a larger install.wim is split.
+    QVERIFY(!WindowsUSBCreator::installImageNeedsSplit(4'294'967'295LL));
+    QVERIFY(WindowsUSBCreator::installImageNeedsSplit(4'294'967'296LL));
+    QVERIFY(WindowsUSBCreator::installImageNeedsSplit(6'868'632'137LL));  // Win11 25H2's
+    const QStringList args = WindowsUSBCreator::splitImageArguments(
+        QStringLiteral("C:/work/install.wim"), QStringLiteral("C:/work/parts/install.swm"));
+    QCOMPARE(args,
+             QStringList({QStringLiteral("/Split-Image"),
+                          QStringLiteral("/ImageFile:C:\\work\\install.wim"),
+                          QStringLiteral("/SWMFile:C:\\work\\parts\\install.swm"),
+                          QStringLiteral("/FileSize:3800"),
+                          QStringLiteral("/CheckIntegrity")}));
+}
+
+// The split is DISM's; here a stand-in writes three parts. Each is copied to the drive with its
+// hash, read back at the end, and a part that changed on the drive fails the verification.
+void WindowsUSBCreatorTests::aSplitInstallImageIsCopiedAndReadBack() {
+    QTemporaryDir work;
+    QTemporaryDir drive;
+    QVERIFY(work.isValid() && drive.isValid());
+    const QString wim = work.filePath(QStringLiteral("install.wim"));
+    QFile image(wim);
+    QVERIFY(image.open(QIODevice::WriteOnly));
+    image.write(QByteArray(1024, 'w'));
+    image.close();
+    QVERIFY(QDir(drive.path()).mkpath(QStringLiteral("sources")));
+    const QString sources = drive.filePath(QStringLiteral("sources"));
+    QStringList asked;
+    const sak::ScopedProcessFaultInjector dism(
+        [&asked](const QString& program,
+                 const QStringList& args) -> std::optional<sak::ProcessResult> {
+            asked << program + QLatin1Char(' ') + args.join(QLatin1Char(' '));
+            QString swm;
+            for (const QString& arg : args) {
+                if (arg.startsWith(QStringLiteral("/SWMFile:"))) {
+                    swm = arg.mid(9);
+                }
+            }
+            const QFileInfo first(swm);
+            for (const QString& name : {QStringLiteral("install.swm"),
+                                        QStringLiteral("install2.swm"),
+                                        QStringLiteral("install10.swm")}) {
+                QFile part(first.absoluteDir().filePath(name));
+                if (!part.open(QIODevice::WriteOnly)) {
+                    return std::nullopt;
+                }
+                part.write(name.toUtf8().repeated(100));
+            }
+            sak::ProcessResult done;
+            done.exit_code = 0;
+            return done;
+        });
+    WindowsUSBCreator creator;
+    QVERIFY2(creator.splitInstallImageInto(QStringLiteral("C:/fake/dism.exe"), wim, sources),
+             qPrintable(creator.lastError()));
+    QCOMPARE(asked.size(), 1);
+    QVERIFY(asked.first().contains(QStringLiteral("/Split-Image")));
+    QVERIFY(!QFileInfo::exists(wim));
+    QStringList names;
+    for (const auto& part : creator.splitParts()) {
+        names << part.name;
+        QCOMPARE(part.sha256.size(), 32);
+    }
+    QCOMPARE(names,
+             QStringList({QStringLiteral("install.swm"),
+                          QStringLiteral("install2.swm"),
+                          QStringLiteral("install10.swm")}));
+    QVERIFY2(creator.verifySplitParts(sources), qPrintable(creator.lastError()));
+
+    // One byte changed on the drive, same size.
+    QFile changed(QDir(sources).filePath(QStringLiteral("install2.swm")));
+    QVERIFY(changed.open(QIODevice::ReadWrite));
+    changed.seek(10);
+    changed.write("X");
+    changed.close();
+    QVERIFY(!creator.verifySplitParts(sources));
+    QVERIFY2(creator.lastError().contains(QStringLiteral("install2.swm")),
+             qPrintable(creator.lastError()));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

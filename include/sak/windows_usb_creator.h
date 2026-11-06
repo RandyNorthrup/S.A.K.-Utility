@@ -3,10 +3,13 @@
 
 #pragma once
 
+#include <QByteArray>
+#include <QList>
 #include <QMutex>
 #include <QObject>
 #include <QPair>
 #include <QString>
+#include <QStringList>
 
 #include <atomic>
 #include <functional>
@@ -100,9 +103,48 @@ public:
     /// @brief Whether a 7z listing names a Windows install image. Pure; unit-testable.
     [[nodiscard]] static bool listingHasInstallImage(const QString& listing);
 
-    /// @brief What the status line says when the media has passed its final checks. It says what
-    ///        was checked: the files are on the drive and the partition is active. Whether a given
-    ///        PC boots it is another matter, since the media is NTFS with no FAT32 EFI partition.
+    // ---- FAT32 layout ----
+    // Windows 11 needs UEFI with Secure Boot, and UEFI firmware reads FAT32, not NTFS: the media
+    // was one NTFS partition, which a typical UEFI PC does not boot. It is one FAT32 partition, and
+    // an install.wim too large for FAT32 is split by Windows' own DISM into .swm parts, which
+    // Windows Setup reads as they are.
+    /// The largest file FAT32 holds.
+    static constexpr qint64 kFat32MaxFileBytes = 4'294'967'295;
+    /// The largest FAT32 volume diskpart formats; a larger stick gets a partition this size.
+    static constexpr int kFat32MaxPartitionMb = 32'768;
+    /// The size DISM splits a large install.wim into, under FAT32's limit with room to spare.
+    static constexpr int kInstallSplitPartMb = 3800;
+    /// @brief The FAT32 partition for a disk of @p disk_bytes: 0 for the whole disk, else its cap.
+    [[nodiscard]] static int fat32PartitionMb(qint64 disk_bytes);
+    /// @brief The diskpart script that empties disk @p disk and makes its one active partition.
+    [[nodiscard]] static QString partitionScript(const QString& disk, int partition_mb);
+    /// @brief The diskpart script that formats that partition FAT32 with @p label.
+    [[nodiscard]] static QString formatFat32Script(const QString& disk, const QString& label);
+    /// @brief Whether an install image of @p bytes is too large for FAT32 and must be split.
+    [[nodiscard]] static bool installImageNeedsSplit(qint64 bytes) {
+        return bytes > kFat32MaxFileBytes;
+    }
+    /// @brief DISM's arguments to split @p wim into @p swm (install.swm, install2.swm, ...).
+    [[nodiscard]] static QStringList splitImageArguments(const QString& wim, const QString& swm);
+    /// @brief One part of a split install image: its name and the SHA-256 it was written with.
+    struct SplitPart {
+        QString name;
+        QByteArray sha256;
+        qint64 bytes{0};
+    };
+    /// @brief Split @p wim (in a work folder) with @p dism into parts, copy each part into
+    ///        @p sources_dir and record its hash. False, with lastError set, on any failure.
+    [[nodiscard]] bool splitInstallImageInto(const QString& dism,
+                                             const QString& wim,
+                                             const QString& sources_dir);
+    /// @brief Read every recorded part back from @p sources_dir and compare its hash. False, with
+    ///        lastError naming the part, on a missing or changed one.
+    [[nodiscard]] bool verifySplitParts(const QString& sources_dir);
+    /// @brief The parts the last split wrote, in order.
+    [[nodiscard]] const QList<SplitPart>& splitParts() const { return m_split_parts; }
+
+    /// @brief What the status line says when the media has passed its final checks: what was
+    ///        checked, a FAT32 volume with the UEFI boot file and the install image read back.
     [[nodiscard]] static QString finalVerificationStatus();
 
     /// @brief True iff @p path names a file whose presence and size decide whether
@@ -213,7 +255,7 @@ private:
     QString formatAndVerifyDrive(const QString& diskNumber);
 
     /// @brief Verify formatted drive is NTFS filesystem
-    bool verifyNtfsFilesystem(const QString& driveLetter);
+    bool verifyFat32Filesystem(const QString& driveLetter);
 
     /// @brief Validate and normalize raw drive letter from PowerShell
     QString validateDriveLetter(const QString& rawLetter);
@@ -246,12 +288,12 @@ private:
      * @param diskNumber Disk number (hardware ID) to format
      * @return true if successful
      */
-    bool formatDriveNTFS(const QString& diskNumber);
+    bool formatDriveFat32(const QString& diskNumber);
 
     /// @brief Clean disk and create MBR partition using diskpart
     bool cleanAndPartitionDisk(const QString& diskNumber);
     /// @brief Format the partition as NTFS using diskpart
-    bool formatPartitionNTFS(const QString& diskNumber);
+    bool formatPartitionFat32(const QString& diskNumber);
 
     /**
      * @brief Extract ISO contents directly to USB drive using 7z
@@ -302,6 +344,14 @@ private:
      * @param cleanDest Normalized destination path
      * @return true if extraction succeeded
      */
+    /// The extracted tree's own checks: destination, setup.exe and the boot files.
+    bool copyISO_verifyExtracted(const QString& cleanDest);
+    /// Lists the ISO and decides whether its install.wim must be split for FAT32.
+    bool copyISO_planInstallImage(const QString& sevenZipPath, const QString& sourcePath);
+    /// Takes install.wim out of the ISO and splits it onto the drive.
+    bool copyISO_splitInstallImage(const QString& sevenZipPath,
+                                   const QString& sourcePath,
+                                   const QString& cleanDest);
     bool copyISO_runExtraction(const QString& sevenZipPath,
                                const QString& sourcePath,
                                const QString& cleanDest);
@@ -431,7 +481,9 @@ private:
     QString m_diskNumber;          // Hardware disk number (e.g., "1" for PhysicalDrive1)
     QString m_targetDiskUniqueId;  ///< Get-Disk UniqueId pinned by guardTargetDiskSafe()
     qint64 m_targetDiskSizeBytes{
-        -1};                     ///< Target disk capacity from guardTargetDiskSafe(); -1 = unknown
-    qint64 m_isoSizeBytes{-1};   ///< ISO size pinned at validation for TOCTOU immutability check
-    qint64 m_isoModifiedMs{-1};  ///< ISO mtime (ms since epoch) pinned for immutability check
+        -1};                      ///< Target disk capacity from guardTargetDiskSafe(); -1 = unknown
+    qint64 m_isoSizeBytes{-1};    ///< ISO size pinned at validation for TOCTOU immutability check
+    qint64 m_isoModifiedMs{-1};   ///< ISO mtime (ms since epoch) pinned for immutability check
+    bool m_install_split{false};  ///< install.wim is too large for FAT32 and was split
+    QList<SplitPart> m_split_parts;  ///< the parts written, with the hashes they were written with
 };
