@@ -85,9 +85,9 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_job_table->setColumnWidth(ColDuration, kDurationColumnWidth);
     layout->addWidget(m_job_table, 1);
 
-    // Close button
+    // Close button: secondary, as Close is in every dialog (UI review F27); Enter still closes.
     m_close_button = new QPushButton(tr("Close"), this);
-    m_close_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_close_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_close_button->setDefault(true);
     connect(m_close_button, &QPushButton::clicked, this, &QDialog::accept);
 

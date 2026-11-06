@@ -18,6 +18,8 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFrame>
 #include <QGraphicsEffect>
@@ -29,18 +31,23 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSet>
 #include <QStatusBar>
 #include <QStyleHints>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBrowser>
 #include <QtTest/QtTest>
 #include <QVBoxLayout>
+#include <QWizard>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 namespace {
@@ -236,6 +243,10 @@ private Q_SLOTS:
     void everyToolTabHasOneLogSwitchInOnePlace();
     void windowTextUsesOneDashStyle();
     void selectedTabIconsAreWhite();
+    void dialogButtonsTakeTheToneOfTheirRole();
+    void everyActionCardHasOneLayout();
+    void tabIconsReadOnTheirTabsInBothThemes();
+    void theLinuxCardsPenguinReadsInDark();
     void aTabsStatusMessageLeavesWithIt();
     void aRunningJobsMessageStaysUntilItEnds();
     void aiWorkspaceLabelsTakeTheirPanesFill();
@@ -899,6 +910,261 @@ void AppThemeTests::selectedTabIconsAreWhite() {
                                 .arg(white)
                                 .arg(ink)));
     }
+}
+
+// UI review F27: Close was secondary in Contacts, Calendar and Metadata and primary in Run
+// Details, Installation Summary and Space Analyzer; Cancel was primary in the backup wizard and
+// secondary in the file scan. The theme made every push button primary, so a button box's Close
+// and Cancel took the colour of the action beside them. A button that only leaves is secondary.
+void AppThemeTests::dialogButtonsTakeTheToneOfTheirRole() {
+    const auto polished = [](QWidget* window) {
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+    };
+    QDialog dialog;
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* ok_cancel = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                           &dialog);
+    auto* close_only = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    auto* stop = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    stop->button(QDialogButtonBox::Cancel)->setStyleSheet(sak::ui::kDangerButtonStyle);
+    layout->addWidget(ok_cancel);
+    layout->addWidget(close_only);
+    layout->addWidget(stop);
+    polished(&dialog);
+    QCOMPARE(ok_cancel->button(QDialogButtonBox::Cancel)->styleSheet(),
+             sak::ui::kSecondaryButtonStyle);
+    QCOMPARE(close_only->button(QDialogButtonBox::Close)->styleSheet(),
+             sak::ui::kSecondaryButtonStyle);
+    QVERIFY(ok_cancel->button(QDialogButtonBox::Ok)->styleSheet().isEmpty());
+    // A Cancel that stops running work keeps the danger tone it was given.
+    QCOMPARE(stop->button(QDialogButtonBox::Cancel)->styleSheet(), sak::ui::kDangerButtonStyle);
+
+    QMessageBox question(QMessageBox::Question,
+                         QStringLiteral("Overwrite"),
+                         QStringLiteral("Replace the file?"),
+                         QMessageBox::Yes | QMessageBox::No);
+    polished(&question);
+    QCOMPARE(question.button(QMessageBox::No)->styleSheet(), sak::ui::kSecondaryButtonStyle);
+    QVERIFY(question.button(QMessageBox::Yes)->styleSheet().isEmpty());
+    question.close();
+
+    QWizard wizard;
+    sak::useAppWizardStyle(&wizard);
+    QCOMPARE(wizard.button(QWizard::BackButton)->styleSheet(), sak::ui::kSecondaryButtonStyle);
+    QCOMPARE(wizard.button(QWizard::CancelButton)->styleSheet(), sak::ui::kSecondaryButtonStyle);
+    QVERIFY(wizard.button(QWizard::NextButton)->styleSheet().isEmpty());
+    QVERIFY(wizard.button(QWizard::FinishButton)->styleSheet().isEmpty());
+}
+
+namespace {
+
+double relativeLuminance(const QColor& color) {
+    const auto linear = [](double c) {
+        return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    return (0.2126 * linear(color.redF())) + (0.7152 * linear(color.greenF())) +
+           (0.0722 * linear(color.blueF()));
+}
+
+double contrastRatio(const QColor& a, const QColor& b) {
+    const double la = relativeLuminance(a);
+    const double lb = relativeLuminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+/// The share of @p icon's ink that, drawn on @p background, stands 3:1 or more from it. A
+/// line a quarter of a pixel wide is drawn at a quarter of its colour and counts for little.
+double inkAtThreeToOne(const QImage& icon, const QColor& background) {
+    constexpr double kNonTextContrast = 3.0;
+    double ink = 0.0;
+    double legible = 0.0;
+    for (int y = 0; y < icon.height(); ++y) {
+        for (int x = 0; x < icon.width(); ++x) {
+            const QColor pixel = icon.pixelColor(x, y);
+            const double alpha = pixel.alphaF();
+            if (alpha <= 0.0) {
+                continue;
+            }
+            const QColor drawn = QColor::fromRgbF(
+                static_cast<float>((pixel.redF() * alpha) + (background.redF() * (1 - alpha))),
+                static_cast<float>((pixel.greenF() * alpha) + (background.greenF() * (1 - alpha))),
+                static_cast<float>((pixel.blueF() * alpha) + (background.blueF() * (1 - alpha))));
+            ink += alpha;
+            legible += contrastRatio(drawn, background) >= kNonTextContrast ? alpha : 0.0;
+        }
+    }
+    return ink > 0.0 ? legible / ink : 0.0;
+}
+
+}  // namespace
+
+namespace {
+
+int opaquePixels(const QImage& image) {
+    constexpr int kOpaque = 200;
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            count += image.pixelColor(x, y).alpha() > kOpaque ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+/// What is wrong with @p tabs' icons in the theme showing now; each one's reading goes to @p
+/// report.
+QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
+    constexpr double kLegibleShare = 0.5;
+    constexpr int kGlyphPixels = 10;
+    tabs->setCurrentIndex(0);
+    QCoreApplication::processEvents();
+    QTabBar* bar = tabs->tabBar();
+    const QRect second = bar->tabRect(1);
+    // An unselected tab's colour, at its right end, clear of its icon and text.
+    const QColor tab_colour = bar->grab().toImage().pixelColor(second.right() - 3,
+                                                               second.center().y());
+    const QString theme = dark ? QStringLiteral("dark") : QStringLiteral("light");
+    QStringList wrong;
+    for (int index = 0; index < tabs->count(); ++index) {
+        const QIcon icon = tabs->tabIcon(index);
+        const QString name = tabs->tabText(index);
+        if (icon.isNull()) {
+            continue;
+        }
+        const QImage drawn = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::Off).toImage();
+        const double share = inkAtThreeToOne(drawn, tab_colour);
+        const QString line = QStringLiteral("%1 %2: %3 on %4")
+                                 .arg(theme, name)
+                                 .arg(share, 0, 'f', 2)
+                                 .arg(tab_colour.name());
+        *report << line;
+        // Every icon on the dark tab. On the light tab, the two the review found faint: the others
+        // are drawn in mid tones that read as shapes beside their tab's name, and are reported, not
+        // held.
+        const bool faint_before = QSet<QString>{QStringLiteral("File Management"),
+                                                QStringLiteral("Email Tools")}
+                                      .contains(name);
+        if ((dark || faint_before) && share < kLegibleShare) {
+            wrong << line;
+        }
+        // Selected, Help's question mark and About's "i", drawn in white, are left out of the white
+        // drawing, so they show in the tab's blue.
+        const bool glyph_inside =
+            QSet<QString>{QStringLiteral("Help and Support"), QStringLiteral("About")}.contains(
+                name);
+        const QImage on = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::On).toImage();
+        if (glyph_inside && opaquePixels(drawn) - opaquePixels(on) < kGlyphPixels) {
+            wrong << QStringLiteral("%1 %2 selected: a blank disc").arg(theme, name);
+        }
+    }
+    return wrong;
+}
+
+}  // namespace
+
+// UI review S25 and DN4: the File Management tab's icon drew its lines a quarter of a pixel wide,
+// #344152 on the dark tab (1.41:1), so only its bullets showed, and it and Email Tools' were faint
+// on the light tab; selected, Help's and About's became blank white discs. Every tab icon is read
+// on its own tab's colour in both themes.
+void AppThemeTests::tabIconsReadOnTheirTabsInBothThemes() {
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr && tabs->count() > 2);
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    QStringList report;
+    QStringList wrong;
+    for (const ThemePreference theme : {ThemePreference::Light, ThemePreference::Dark}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        wrong << tabIconProblems(tabs, theme == ThemePreference::Dark, &report);
+    }
+    qInfo().noquote() << report.join(QStringLiteral("\n"));
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+// UI review DN5: the Linux ISO card's penguin is black, and its body and outline all but vanished
+// on the dark card. In dark it is drawn in a light grey, switched with the theme.
+void AppThemeTests::theLinuxCardsPenguinReadsInDark() {
+    constexpr double kLegibleShare = 0.5;
+    const auto penguin = [this]() -> QLabel* {
+        for (auto* card : m_window->findChildren<QFrame*>()) {
+            if (!card->property("sakCard").toBool()) {
+                continue;
+            }
+            QLabel* logo = nullptr;
+            bool linux_card = false;
+            for (auto* label : card->findChildren<QLabel*>(Qt::FindDirectChildrenOnly)) {
+                linux_card = linux_card || label->text() == QStringLiteral("Linux ISO");
+                logo = label->pixmap().isNull() ? logo : label;
+            }
+            if (linux_card) {
+                return logo;
+            }
+        }
+        return nullptr;
+    };
+    QLabel* logo = penguin();
+    QVERIFY(logo != nullptr);
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    QStringList shares;
+    for (const ThemePreference theme : {ThemePreference::Dark, ThemePreference::Light}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        const QColor card_colour = sak::ui::themedColor(sak::ui::kColorBgSurface);
+        const double share = inkAtThreeToOne(logo->pixmap().toImage(), card_colour);
+        shares << QString::number(share, 'f', 2);
+        QVERIFY2(share >= kLegibleShare,
+                 qPrintable(QStringLiteral("%1: %2 of the penguin reads on %3")
+                                .arg(theme == ThemePreference::Dark ? "dark" : "light")
+                                .arg(share, 0, 'f', 2)
+                                .arg(card_colour.name())));
+    }
+    qInfo().noquote() << "penguin dark, light:" << shares.join(QStringLiteral(", "));
+}
+
+// UI review F41: Help's and the Image Flasher's cards centred their titles under a 48 px logo;
+// Backup and Restore's left-aligned them under a 96 px one. Every card is built one way.
+void AppThemeTests::everyActionCardHasOneLayout() {
+    constexpr int kCardLogo = 48;
+    QStringList cards;
+    QStringList wrong;
+    for (auto* card : m_window->findChildren<QFrame*>()) {
+        if (!card->property("sakCard").toBool()) {
+            continue;
+        }
+        const auto labels = card->findChildren<QLabel*>(Qt::FindDirectChildrenOnly);
+        const auto logo = std::ranges::find_if(labels, [](const QLabel* label) {
+            return !label->pixmap().isNull();
+        });
+        const auto title = std::ranges::find_if(labels, [](const QLabel* label) {
+            return label->styleSheet() == sak::ui::cardTitleTextStyle();
+        });
+        if (logo == labels.end() || title == labels.end()) {
+            wrong << QStringLiteral("a card with no logo or title");
+            continue;
+        }
+        cards << (*title)->text();
+        if ((*logo)->pixmap().deviceIndependentSize().toSize() != QSize(kCardLogo, kCardLogo)) {
+            wrong << QStringLiteral("%1: logo %2 px")
+                         .arg((*title)->text())
+                         .arg((*logo)->pixmap().deviceIndependentSize().width());
+        }
+        if (((*title)->alignment() & Qt::AlignHCenter) == 0) {
+            wrong << QStringLiteral("%1: title not centred").arg((*title)->text());
+        }
+    }
+    // Two on Backup and Restore, three on the Image Flasher, four on Help.
+    for (const char* expected :
+         {"Backup User Profiles", "Restore User Profiles", "Linux ISO", "Report a Bug"}) {
+        QVERIFY2(cards.contains(QString::fromLatin1(expected)),
+                 qPrintable(expected + QStringLiteral(" not among ") + cards.join(", ")));
+    }
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
 }
 
 // UI review S22: "Explorer loaded 6 item(s)" stayed in the status bar on File Organizer and Help.

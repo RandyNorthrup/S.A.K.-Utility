@@ -268,6 +268,8 @@ private:
 
     /// @brief Apply chevron icons to the tab bar scroll buttons
     void applyTabBarChevrons();
+    /// @brief Draws every tab's icon again in the current theme's drawing of it.
+    void refreshTabIcons();
 
 protected:
     void closeEvent(QCloseEvent* event) override;

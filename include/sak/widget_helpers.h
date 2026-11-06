@@ -13,12 +13,15 @@
 
 #include <QAbstractItemView>
 #include <QDate>
+#include <QEvent>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QList>
 #include <QPainter>
@@ -36,6 +39,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <utility>
 
 namespace sak {
 
@@ -147,25 +151,88 @@ inline QIcon themedGlyphIcon(const QString& path) {
     return tinted;
 }
 
-/// @brief @p path as a tab icon: as drawn on unselected tabs, and in white when its tab is selected
-///        (QIcon::On), where the coloured artwork lost against the blue gradient.
+/// @brief @p path, or its dark-theme drawing ("panel_email-dark.svg" beside "panel_email.svg")
+///        while the dark theme shows and the drawing exists. Artwork drawn for a light surface
+///        loses its lines on a dark one: the Linux card's black penguin, the File Management tab's
+///        grey lines at 1.41:1 (UI review DN4, DN5).
+inline QString themedIconPath(const QString& path) {
+    const QString suffix = QStringLiteral(".svg");
+    if (!ui::usingDarkUiTheme() || !path.endsWith(suffix)) {
+        return path;
+    }
+    QString dark = path;
+    dark.insert(dark.size() - suffix.size(), QStringLiteral("-dark"));
+    return QFileInfo::exists(dark) ? dark : path;
+}
+
+/// @brief A tab's icon when its tab is selected: the artwork in white on the blue gradient, where
+///        its colours lost. A part drawn in white (Help's question mark, About's "i") is left out,
+///        so it shows in the tab's blue; a plain white silhouette made those two blank discs.
+inline QPixmap selectedTabPixmap(const QPixmap& drawn) {
+    // A channel floor, not pure white: at 20 px a 1 px white stroke is blended with what is
+    // around it, and About's "i" came out near (197, 219, 248) on its (139, 183, 240) bubble.
+    constexpr int kNearWhite = 185;
+    QImage image = drawn.toImage().convertToFormat(QImage::Format_ARGB32);
+    const QRgb left_out = QColor(Qt::transparent).rgba();
+    QColor on_tone(QString::fromLatin1(ui::kColorButtonTextOnTone));
+    for (int y = 0; y < image.height(); ++y) {
+        auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = line[x];
+            const bool white = std::min({qRed(pixel), qGreen(pixel), qBlue(pixel)}) >= kNearWhite;
+            on_tone.setAlpha(qAlpha(pixel));
+            line[x] = white ? left_out : on_tone.rgba();
+        }
+    }
+    QPixmap selected = QPixmap::fromImage(image);
+    selected.setDevicePixelRatio(drawn.devicePixelRatio());
+    return selected;
+}
+
+/// @brief @p path as a tab icon: on unselected tabs the theme's drawing of it, and in white when
+/// its
+///        tab is selected (QIcon::On). The selected tab is the same blue in both themes, so its
+///        white drawing comes from the light-theme artwork, whose light fills are its holes.
 inline QIcon tabIcon(const QString& path, int size) {
     QIcon icon;
-    const QIcon source(path);
+    const QIcon drawn(themedIconPath(path));
+    const QIcon light(path);
     constexpr int kTabIconScales[] = {1, 2};  // normal and high-DPI pixmaps
     for (const int scale : kTabIconScales) {
         const int side = size * scale;
-        QPixmap normal = source.pixmap(side, side);
-        icon.addPixmap(normal, QIcon::Normal, QIcon::Off);
-        QPixmap selected = normal;
-        QPainter painter(&selected);
-        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        painter.fillRect(selected.rect(), QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
-        painter.end();
-        icon.addPixmap(selected, QIcon::Normal, QIcon::On);
+        icon.addPixmap(drawn.pixmap(side, side), QIcon::Normal, QIcon::Off);
+        icon.addPixmap(selectedTabPixmap(light.pixmap(side, side)), QIcon::Normal, QIcon::On);
     }
     return icon;
 }
+
+/// @brief Keeps a label's icon pixmap in the theme's drawing when the theme changes while the
+///        label is up.
+class ThemedIconLabelRefresher final : public QObject {
+public:
+    ThemedIconLabelRefresher(QLabel* label, QString path, int size)
+        : QObject(label), m_label(label), m_path(std::move(path)), m_size(size) {
+        label->installEventFilter(this);
+        refresh();
+    }
+
+    void refresh() const {
+        m_label->setPixmap(QIcon(themedIconPath(m_path)).pixmap(m_size, m_size));
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (watched == m_label && event->type() == QEvent::PaletteChange) {
+            refresh();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QLabel* m_label;
+    QString m_path;
+    int m_size;
+};
 
 /// @brief Keeps the back arrow Qt makes for the Aero wizard frame hidden. Qt creates it with every
 ///        wizard; under ModernStyle it still came up, greyed, in the top-left corner of the page,
@@ -197,6 +264,11 @@ inline void useAppWizardStyle(QWizard* wizard) {
             child->hide();
             child->installEventFilter(new AeroBackArrowHider(child));
         }
+    }
+    // One tone per role, as in every dialog (UI review F27): Next and Finish go on with the work
+    // and are primary; Back and Cancel only go back or leave.
+    for (const QWizard::WizardButton which : {QWizard::BackButton, QWizard::CancelButton}) {
+        wizard->button(which)->setStyleSheet(ui::kSecondaryButtonStyle);
     }
 }
 
@@ -389,7 +461,7 @@ struct ActionCardWidgets {
 };
 
 inline QString actionCardStyle() {
-    return ui::cardFrameStyle(ui::kCssRadiusLargePx, ui::kMarginMedium);
+    return ui::cardFrameStyle(ui::kCssRadiusXLargePx, ui::kMarginMedium);
 }
 
 inline QString actionCardTitleStyle() {
@@ -400,6 +472,9 @@ inline QString actionCardDescriptionStyle() {
     return ui::cardDescriptionTextStyle();
 }
 
+/// @brief The app's one action card: a 48 px logo, the title and description centred under it,
+///        and @p button at the foot. Help, Backup and Restore and the Image Flasher build their
+///        cards with it (UI review F41).
 [[nodiscard]] inline ActionCardWidgets createActionCard(QWidget* parent,
                                                         const QString& iconPath,
                                                         const QString& title,
@@ -419,7 +494,7 @@ inline QString actionCardDescriptionStyle() {
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(iconPath).pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
+    new ThemedIconLabelRefresher(logo, iconPath, detail::kPanelIconSize);
     logo->setAlignment(Qt::AlignCenter);
     logo->setStyleSheet(ui::kTransparentWidgetStyle);
     logo->setAccessibleName(title + QStringLiteral(" icon"));

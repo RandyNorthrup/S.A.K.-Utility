@@ -537,7 +537,7 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     layout->addWidget(text_browser);
 
     auto* close_button = new QPushButton(tr("Close"), dialog);
-    close_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    close_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);  // Close's tone (UI review F27)
     connect(close_button, &QPushButton::clicked, dialog, &QDialog::accept);
     layout->addWidget(close_button, 0, Qt::AlignRight);
 

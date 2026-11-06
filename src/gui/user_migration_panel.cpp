@@ -127,38 +127,14 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
 QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
                                                 const MigrationCardConfig& config,
                                                 QPushButton*& btn) {
-    constexpr int kLogoSize = 96;
-    auto* card = new QFrame(parent);
-    card->setProperty("sakCard", true);
-    card->setStyleSheet(sak::ui::cardFrameStyle(sak::ui::kCssRadiusXLargePx));
-    auto* lay = new QVBoxLayout(card);
-    lay->setSpacing(sak::ui::kSpacingMedium);
-    lay->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-
-    auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(config.icon).pixmap(kLogoSize, kLogoSize));
-    logo->setAlignment(Qt::AlignCenter);
-    logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
-    lay->addWidget(logo);
-
-    auto* title_label = new QLabel(config.title, card);
-    title_label->setStyleSheet(sak::ui::cardTitleTextStyle());
-    lay->addWidget(title_label);
-
-    auto* desc_label = new QLabel(config.desc, card);
-    desc_label->setWordWrap(true);
-    desc_label->setStyleSheet(sak::ui::cardDescriptionTextStyle());
-    lay->addWidget(desc_label);
-
-    lay->addStretch();
-    btn = new QPushButton(config.btn_text, card);
+    // The one card layout (UI review F41: these cards left-aligned their titles under a 96 px
+    // logo, Help's and the Image Flasher's centred them under a 48 px one).
+    btn = new QPushButton(config.btn_text, parent);
     btn->setMinimumHeight(sak::kButtonHeightTall);
     btn->setStyleSheet(config.btn_style);
     btn->setToolTip(config.tip);
     btn->setAccessibleName(config.acc);
-    lay->addWidget(btn);
-    return card;
+    return sak::createActionCard(parent, config.icon, config.title, config.desc, btn).card;
 }
 
 void UserMigrationPanel::setupConnections() {

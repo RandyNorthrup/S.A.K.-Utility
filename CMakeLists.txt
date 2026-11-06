@@ -848,6 +848,8 @@ set(SAK_GUI_SOURCES
     include/sak/windows11_theme.h
     src/gui/wheel_policy.cpp
     include/sak/wheel_policy.h
+    src/gui/dialog_button_tones.cpp
+    include/sak/dialog_button_tones.h
     src/gui/single_instance_guard.cpp
     include/sak/single_instance_guard.h
     src/gui/splash_screen.cpp

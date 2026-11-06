@@ -8,6 +8,7 @@
         <file>icons/microsoft_logo.svg</file>
         <file>icons/uup_logo.svg</file>
         <file>icons/tux_logo.svg</file>
+        <file>icons/tux_logo-dark.svg</file>
         <file>icons/backup.svg</file>
         <file>icons/restore.svg</file>
         <file>icons/features.svg</file>
@@ -21,11 +22,13 @@
         <file>icons/panel_image_flasher.svg</file>
         <file>icons/panel_network.svg</file>
         <file>icons/panel_organizer.svg</file>
+        <file>icons/panel_organizer-dark.svg</file>
         <file>icons/panel_search.svg</file>
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
         <file>icons/panel_about.svg</file>
         <file>icons/panel_email.svg</file>
+        <file>icons/panel_email-dark.svg</file>
         <file>icons/panel_ai.svg</file>
         <file>icons/icons8-benchmark.svg</file>
         <file>icons/icons8-duplicate.svg</file>

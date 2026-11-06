@@ -307,6 +307,8 @@ constexpr char kTooltipAiAssistant[] =
 #endif
 
 constexpr int kTabIconSize = 20;
+/// The resource path of a tab's icon, kept on the tab's page.
+constexpr char kTabIconPathProperty[] = "sakTabIconPath";
 
 bool isAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
@@ -348,6 +350,8 @@ void addTabWithTooltip(QTabWidget* tab_widget,
                                   : tab_widget->addTab(panel, icon, QString::fromUtf8(tab_title));
     if (!icon.isNull()) {
         tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
+        // Drawn again in the other theme's drawing when the theme changes (refreshTabIcons).
+        panel->setProperty(kTabIconPathProperty, QString::fromUtf8(icon_path));
     }
     tab_widget->setTabToolTip(idx, QString::fromUtf8(tooltip));
     // Base tooltip without the shortcut hint; UpdateTabShortcutHints rebuilds
@@ -1321,9 +1325,10 @@ void MainWindow::createAboutPanel() {
                        QStringLiteral("Credits"));
 
     about_layout->addWidget(about_tabs);
+    const QString about_icon = QStringLiteral(":/icons/icons/panel_about.svg");
+    about_panel->setProperty(kTabIconPathProperty, about_icon);
     m_tab_widget->addTab(about_panel,
-                         sak::tabIcon(QStringLiteral(":/icons/icons/panel_about.svg"),
-                                      kTabIconSize),
+                         sak::tabIcon(about_icon, kTabIconSize),
                          QStringLiteral("About"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
 }
@@ -1356,8 +1361,10 @@ void MainWindow::createHelpPanel() {
 
     help_layout->addStretch();
 
+    const QString help_icon = QStringLiteral(":/icons/icons/panel_help.svg");
+    help_panel->setProperty(kTabIconPathProperty, help_icon);
     m_tab_widget->addTab(help_panel,
-                         sak::tabIcon(QStringLiteral(":/icons/icons/panel_help.svg"), kTabIconSize),
+                         sak::tabIcon(help_icon, kTabIconSize),
                          QStringLiteral("Help and Support"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
 }
@@ -2077,7 +2084,22 @@ void MainWindow::changeEvent(QEvent* event) {
     if (event->type() == QEvent::PaletteChange) {
         applyThemedHtmlBrowsers(this);
         applyTabBarChevrons();
+        refreshTabIcons();
         refreshThemeButton();
+    }
+}
+
+void MainWindow::refreshTabIcons() {
+    if (m_tab_widget == nullptr) {
+        return;
+    }
+    for (int index = 0; index < m_tab_widget->count(); ++index) {
+        const QWidget* page = m_tab_widget->widget(index);
+        const QString path = page != nullptr ? page->property(kTabIconPathProperty).toString()
+                                             : QString();
+        if (!path.isEmpty()) {
+            m_tab_widget->setTabIcon(index, sak::tabIcon(path, kTabIconSize));
+        }
     }
 }
 

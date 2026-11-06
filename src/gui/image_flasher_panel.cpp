@@ -416,7 +416,6 @@ void ImageFlasherPanel::createImageSelectionPage() {
 
 namespace {
 
-constexpr int kCardLogoSize = 48;
 constexpr int kSelectImageButtonWidth = 260;
 
 }  // anonymous namespace
@@ -424,41 +423,16 @@ constexpr int kSelectImageButtonWidth = 260;
 QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
                                                 const IsoCardConfig& config,
                                                 QPushButton*& button_out) {
-    auto* card = new QFrame(parent);
-    card->setProperty("sakCard", true);
-    card->setStyleSheet(sak::ui::cardFrameStyle(sak::ui::kCssRadiusXLargePx));
-    card->setCursor(Qt::PointingHandCursor);
-    auto* layout = new QVBoxLayout(card);
-    layout->setSpacing(sak::ui::kSpacingMedium);
-    layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-
-    auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(config.icon_path).pixmap(kCardLogoSize, kCardLogoSize));
-    logo->setAlignment(Qt::AlignCenter);
-    logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
-    layout->addWidget(logo, 0, Qt::AlignHCenter);
-
-    auto* title_label = new QLabel(config.title, card);
-    title_label->setAlignment(Qt::AlignCenter);
-    title_label->setStyleSheet(sak::ui::cardTitleTextStyle());
-    layout->addWidget(title_label);
-
-    auto* desc_label = new QLabel(config.description, card);
-    desc_label->setWordWrap(true);
-    desc_label->setAlignment(Qt::AlignCenter);
-    desc_label->setStyleSheet(sak::ui::cardDescriptionTextStyle());
-    layout->addWidget(desc_label);
-
-    layout->addStretch();
-
-    button_out = new QPushButton(config.button_text, card);
+    button_out = new QPushButton(config.button_text, parent);
     button_out->setMinimumHeight(sak::kButtonHeightTall);
     button_out->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_out->setAccessibleName(config.access_name);
     button_out->setToolTip(config.tip);
-    layout->addWidget(button_out);
-
+    // The one card layout, as on Backup and Restore and Help (UI review F41).
+    QFrame* card = sak::createActionCard(
+                       parent, config.icon_path, config.title, config.description, button_out)
+                       .card;
+    card->setCursor(Qt::PointingHandCursor);
     return card;
 }
 

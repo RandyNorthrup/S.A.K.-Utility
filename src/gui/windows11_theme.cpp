@@ -4,6 +4,7 @@
 #include "sak/windows11_theme.h"
 
 #include "sak/config_manager.h"
+#include "sak/dialog_button_tones.h"
 #include "sak/style_constants.h"
 
 #include <QMenu>
@@ -441,6 +442,9 @@ ThemePreference savedThemePreference() {
 }
 
 void initializeAppTheme(QApplication& app) {
+    // The theme makes every push button primary; a dialog's Close, Cancel and No take the
+    // secondary tone instead.
+    installDialogButtonTones(app);
     const ThemePreference preference = savedThemePreference();
     requestFrameScheme(preference);
     showThemeMode(app, themeModeFor(preference, QGuiApplication::styleHints()->colorScheme()));
