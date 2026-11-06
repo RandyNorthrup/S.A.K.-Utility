@@ -40,6 +40,7 @@ private Q_SLOTS:
     void theMediaIsOneFat32Partition();
     void aSplitInstallImageIsCopiedAndReadBack();
     void theExtractionCheckWaitsForASplitImage();
+    void extractionProgressIsOnTheStreamItIsReadFrom();
     void initTestCase();
     void cleanupTestCase();
 
@@ -773,6 +774,34 @@ void WindowsUSBCreatorTests::theMediaIsOneFat32Partition() {
                           QStringLiteral("/CheckIntegrity")}));
 }
 
+namespace {
+// A stand-in for DISM /Split-Image: three parts beside the /SWMFile it is given.
+std::optional<sak::ProcessResult> fakeDismSplit(QStringList* asked,
+                                                const QString& program,
+                                                const QStringList& args) {
+    *asked << program + QLatin1Char(' ') + args.join(QLatin1Char(' '));
+    QString swm;
+    for (const QString& arg : args) {
+        if (arg.startsWith(QStringLiteral("/SWMFile:"))) {
+            swm = arg.mid(9);
+        }
+    }
+    const QFileInfo first(swm);
+    for (const QString& name : {QStringLiteral("install.swm"),
+                                QStringLiteral("install2.swm"),
+                                QStringLiteral("install10.swm")}) {
+        QFile part(first.absoluteDir().filePath(name));
+        if (!part.open(QIODevice::WriteOnly)) {
+            return std::nullopt;
+        }
+        part.write(name.toUtf8().repeated(100));
+    }
+    sak::ProcessResult done;
+    done.exit_code = 0;
+    return done;
+}
+}  // namespace
+
 // The split is DISM's; here a stand-in writes three parts. Each is copied to the drive with its
 // hash, read back at the end, and a part that changed on the drive fails the verification.
 void WindowsUSBCreatorTests::aSplitInstallImageIsCopiedAndReadBack() {
@@ -788,32 +817,20 @@ void WindowsUSBCreatorTests::aSplitInstallImageIsCopiedAndReadBack() {
     const QString sources = drive.filePath(QStringLiteral("sources"));
     QStringList asked;
     const sak::ScopedProcessFaultInjector dism(
-        [&asked](const QString& program,
-                 const QStringList& args) -> std::optional<sak::ProcessResult> {
-            asked << program + QLatin1Char(' ') + args.join(QLatin1Char(' '));
-            QString swm;
-            for (const QString& arg : args) {
-                if (arg.startsWith(QStringLiteral("/SWMFile:"))) {
-                    swm = arg.mid(9);
-                }
-            }
-            const QFileInfo first(swm);
-            for (const QString& name : {QStringLiteral("install.swm"),
-                                        QStringLiteral("install2.swm"),
-                                        QStringLiteral("install10.swm")}) {
-                QFile part(first.absoluteDir().filePath(name));
-                if (!part.open(QIODevice::WriteOnly)) {
-                    return std::nullopt;
-                }
-                part.write(name.toUtf8().repeated(100));
-            }
-            sak::ProcessResult done;
-            done.exit_code = 0;
-            return done;
+        [&asked](const QString& program, const QStringList& args) {
+            return fakeDismSplit(&asked, program, args);
         });
     WindowsUSBCreator creator;
+    QSignalSpy progress(&creator, &WindowsUSBCreator::progressUpdated);
     QVERIFY2(creator.splitInstallImageInto(QStringLiteral("C:/fake/dism.exe"), wim, sources),
              qPrintable(creator.lastError()));
+    // testpc1: the bar waited at 13% through 12 minutes of split and copy. It moves with each
+    // part, and stays under the 60% of a verified extraction.
+    QList<int> seen;
+    for (const QList<QVariant>& emitted : progress) {
+        seen << emitted.first().toInt();
+    }
+    QCOMPARE(seen, QList<int>({52, 54, 56, 59}));
     QCOMPARE(asked.size(), 1);
     QVERIFY(asked.first().contains(QStringLiteral("/Split-Image")));
     QVERIFY(!QFileInfo::exists(wim));
@@ -857,6 +874,28 @@ void WindowsUSBCreatorTests::theExtractionCheckWaitsForASplitImage() {
     QVERIFY(QFile::remove(drive.filePath(QStringLiteral("sources/boot.wim"))));
     QVERIFY(WindowsUSBCreator::extractedBootFilesProblem(root, true)
                 .contains(QStringLiteral("sources/boot.wim")));
+}
+
+// testpc1: the build read 7-Zip's progress from stdout, and -bsp2 sends it to stderr, so the bar
+// sat at 13% for the whole extraction. Measured there with the bundled 7-Zip 26.05: with -bsp2 the
+// line " 20% - sources\boot.wim" came on stderr and none on stdout; with -bsp1, on stdout.
+void WindowsUSBCreatorTests::extractionProgressIsOnTheStreamItIsReadFrom() {
+    const QString iso = QStringLiteral("C:\\SAK-Samples\\windows.iso");
+    const QStringList split =
+        WindowsUSBCreator::extractionArguments(iso, QStringLiteral("E:\\"), true);
+    QVERIFY2(split.contains(QStringLiteral("-bsp1")), qPrintable(split.join(QLatin1Char(' '))));
+    QVERIFY(!split.contains(QStringLiteral("-bsp2")));
+    QVERIFY(split.contains(QStringLiteral("-x!sources\\install.wim")));
+    QVERIFY(!WindowsUSBCreator::extractionArguments(iso, QStringLiteral("E:\\"), false)
+                 .contains(QStringLiteral("-x!sources\\install.wim")));
+    // Those bytes, as 7-Zip rewrites its line in place; the newest percentage counts.
+    const QString chunk = QStringLiteral(
+        "  0% 100 Open\r             \r--\r\n 20% - sources\\boot.wim\r                       \r"
+        " 46% - sources\\boot.wim\r");
+    QCOMPARE(WindowsUSBCreator::extractionPercentIn(chunk), 46);
+    QCOMPARE(WindowsUSBCreator::extractionPercentIn(
+                 QStringLiteral("Path = C:\\w.iso\r\nType = Udf\r\n")),
+             -1);
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

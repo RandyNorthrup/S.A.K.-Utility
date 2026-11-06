@@ -147,6 +147,13 @@ public:
     ///        and its parts are written and read back after this check.
     [[nodiscard]] static QString extractedBootFilesProblem(const QString& cleanDest,
                                                            bool install_split);
+    /// @brief 7-Zip's arguments to extract @p iso into @p dest, its progress on stdout, which
+    ///        the build reads. With @p install_split, install.wim is left out to be split.
+    [[nodiscard]] static QStringList extractionArguments(const QString& iso,
+                                                         const QString& dest,
+                                                         bool install_split);
+    /// @brief The newest percentage in a chunk of 7-Zip's progress output, or -1 for none.
+    [[nodiscard]] static int extractionPercentIn(const QString& chunk);
 
     /// @brief What the status line says when the media has passed its final checks: what was
     ///        checked, a FAT32 volume with the UEFI boot file and the install image read back.

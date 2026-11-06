@@ -35,6 +35,11 @@ constexpr int kCapacityDisplayPrecision = 2;
 constexpr int kProgressDisplayPrecision = 1;
 constexpr int kExtractProgressStart = 15;
 constexpr int kExtractProgressSpan = 35;
+// The split, after the extraction and before the 60% of a verified extraction: taking the image
+// out, DISM, then one step per part copied (testpc1: about 12 minutes on a USB 2 link in all).
+constexpr int kSplitProgressStart = 50;
+constexpr int kSplitProgressDismDone = 52;
+constexpr int kSplitProgressCopySpan = 7;
 constexpr int kSevenZipTotalBytesCaptureGroup = 2;
 constexpr int kExtractionSummaryLineCount = 5;
 constexpr int kMinimumVerifiedCriticalFiles = 3;
@@ -213,6 +218,7 @@ bool WindowsUSBCreator::copyISO_splitInstallImage(const QString& sevenZipPath,
         sak::logError(m_lastError.toStdString());
         return false;
     }
+    Q_EMIT progressUpdated(kSplitProgressStart);
     Q_EMIT statusChanged("Step 2/3: Taking install.wim out of the ISO to split it...");
     const auto extracted =
         sak::runProcess(sevenZipPath,
@@ -284,6 +290,7 @@ bool WindowsUSBCreator::splitInstallImageInto(const QString& dism,
         return false;
     }
     QFile::remove(wim);  // the parts hold it now, and the work folder needs the room
+    Q_EMIT progressUpdated(kSplitProgressDismDone);
     for (int i = 0; i < parts.size(); ++i) {
         Q_EMIT statusChanged(QString("Step 2/3: Copying install image part %1 of %2...")
                                  .arg(i + 1)
@@ -299,6 +306,8 @@ bool WindowsUSBCreator::splitInstallImageInto(const QString& dism,
             return false;
         }
         m_split_parts.append(part);
+        Q_EMIT progressUpdated(kSplitProgressDismDone +
+                               static_cast<int>((i + 1) * kSplitProgressCopySpan / parts.size()));
     }
     sak::logInfo(QString("install.wim split into %1 part(s) on the USB drive")
                      .arg(m_split_parts.size())
@@ -471,17 +480,7 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
         QString("Using 7z.exe to extract ISO directly to %1").arg(cleanDest).toStdString());
     Q_EMIT statusChanged("Extracting Windows installation files...");
 
-    // 7z x = extract with full paths, -aoa = overwrite all, -bsp2 = detailed progress to stdout
-    QStringList args;
-    args << "x";                             // Extract with full paths
-    args << "-aoa";                          // Overwrite all existing files
-    args << "-bsp2";                         // Detailed progress (bytes) redirected to stdout
-    args << "-y";                            // Assume Yes on all queries
-    args << sourcePath;
-    args << QString("-o%1").arg(cleanDest);  // Output directory
-    if (m_install_split) {
-        args << QStringLiteral("-x!sources\\install.wim");  // too large for FAT32: split below
-    }
+    const QStringList args = extractionArguments(sourcePath, cleanDest, m_install_split);
 
     sak::logInfo(QString("7z command: %1 %2").arg(sevenZipPath, args.join(" ")).toStdString());
     sak::logInfo(QString("Extracting to absolute path: %1").arg(cleanDest).toStdString());
@@ -534,24 +533,49 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
     return copyISO_logExtractionResult(result);
 }
 
+QStringList WindowsUSBCreator::extractionArguments(const QString& iso,
+                                                   const QString& dest,
+                                                   bool install_split) {
+    // 7z x = extract with full paths, -aoa = overwrite all. -bsp1 sends the progress line to
+    // stdout, which the build reads; -bsp2, used before, sends it to stderr, so on testpc1 the bar
+    // sat at 13% for the whole extraction and the MB count never showed.
+    QStringList args{QStringLiteral("x"),
+                     QStringLiteral("-aoa"),
+                     QStringLiteral("-bsp1"),
+                     QStringLiteral("-y"),
+                     iso,
+                     QStringLiteral("-o%1").arg(dest)};
+    if (install_split) {
+        args << QStringLiteral("-x!sources\\install.wim");  // too large for FAT32: split later
+    }
+    return args;
+}
+
+int WindowsUSBCreator::extractionPercentIn(const QString& chunk) {
+    // 7-Zip rewrites its progress line in place: " 20% - sources\boot.wim" then CR, spaces, CR,
+    // " 46% - ...". A chunk can hold several; the last is the newest.
+    static const QRegularExpression kPercent(QStringLiteral(R"((?:^|\s)(\d{1,3})%)"));
+    int percent = -1;
+    for (auto it = kPercent.globalMatch(chunk); it.hasNext();) {
+        percent = it.next().captured(1).toInt();
+    }
+    return percent <= sak::kPercentMax ? percent : -1;
+}
+
 void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
                                                         qint64& totalBytes,
                                                         qint64& processedBytes,
                                                         int& lastProgressPercent) {
-    // Parse 7z -bsp2 output format: "bytes_processed + bytes_total"
-    // Format example: "123456789 + 987654321" or percentage "12%"
+    // 7z's progress: a percentage ("12%"), or "bytes_processed + bytes_total" in some builds.
     const QRegularExpression bytesRegex(R"((\d+)\s*\+\s*(\d+))");
     const QRegularExpressionMatch bytesMatch = bytesRegex.match(output);
 
     if (!bytesMatch.hasMatch()) {
-        // Fallback: Try to parse percentage if bytes format not found
-        const QRegularExpression percentRegex(R"(\s+(\d+)%)");
-        const QRegularExpressionMatch percentMatch = percentRegex.match(output);
-        if (!percentMatch.hasMatch()) {
+        const int extractPercent = extractionPercentIn(output);
+        if (extractPercent < 0) {
             return;
         }
 
-        const int extractPercent = percentMatch.captured(1).toInt();
         const int totalProgress = kExtractProgressStart +
                                   (extractPercent * kExtractProgressSpan / sak::kPercentMax);
         if (totalProgress <= lastProgressPercent) {
