@@ -128,8 +128,44 @@ void VerifySystemFilesAction::noteStepOutcome(const ProcessResult& proc,
     }
 }
 
-ProcessResult VerifySystemFilesAction::runStep(const QString& script, int timeout_ms) {
-    return runPowerShell(script, timeout_ms, true, true, [this]() { return isCancelled(); });
+ProcessResult VerifySystemFilesAction::runStep(const QString& script,
+                                               int timeout_ms,
+                                               const ProcessOutputCallback& on_output) {
+    const CancelCheck cancelled = [this]() {
+        return isCancelled();
+    };
+    if (!on_output) {
+        return runPowerShell(script, timeout_ms, true, true, cancelled);
+    }
+    const QString powershell = systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        ProcessResult refused;
+        refused.std_err = QStringLiteral(
+            "Cannot resolve the System32 PowerShell path; refusing to launch a bare "
+            "powershell.exe");
+        return refused;
+    }
+    PowerShellInvocation invocation = powerShellInvocation(script, true, true);
+    return runProcessStreaming({.program = powershell,
+                                .args = std::move(invocation.args),
+                                .timeout_ms = timeout_ms,
+                                .on_output = on_output,
+                                .should_cancel = cancelled,
+                                .std_in = std::move(invocation.std_in)});
+}
+
+std::optional<double> VerifySystemFilesAction::lastDismProgressPercent(const QString& chunk) {
+    static const QRegularExpression kPercent(QStringLiteral("(\\d{1,3}(?:\\.\\d+)?)%"));
+    std::optional<double> last;
+    auto matches = kPercent.globalMatch(chunk);
+    while (matches.hasNext()) {
+        bool ok = false;
+        const double value = matches.next().captured(1).toDouble(&ok);
+        if (ok && value >= 0.0 && value <= static_cast<double>(sak::kPercentMax)) {
+            last = value;
+        }
+    }
+    return last;
 }
 
 void VerifySystemFilesAction::runSFC() {
@@ -167,7 +203,7 @@ void VerifySystemFilesAction::runSFC() {
     if (granted_ms == 0) {
         return;
     }
-    const ProcessResult proc = runStep(ps_script, granted_ms);
+    const ProcessResult proc = runStep(ps_script, granted_ms, {});
     noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
@@ -205,7 +241,7 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     if (granted_ms == 0) {
         return false;  // no budget left: not assessed, so the run cannot claim a clean store
     }
-    const ProcessResult proc = runStep(script, granted_ms);
+    const ProcessResult proc = runStep(script, granted_ms, {});
     noteStepOutcome(proc, granted_ms, sak::kTimeoutDismCheckMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
@@ -222,7 +258,13 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
 }
 
 bool VerifySystemFilesAction::runDismScanHealth() {
-    Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
+    // ScanHealth reads the whole component store, which takes a long time on a slow disk. In a
+    // busy VM it ran out the 10 minutes it had, after SFC had passed, and the run said it failed.
+    // It has 30 minutes now, and says how far it has got.
+    Q_EMIT executionProgress(
+        QStringLiteral("DISM: Scanning component store (up to %1 min on a slow disk)...")
+            .arg(sak::kTimeoutDismScanMs / (sak::kMillisecondsPerSecond * sak::kSecondsPerMinute)),
+        progress::kStep50);
     const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
         "/Online /Cleanup-Image /ScanHealth /English";
@@ -231,8 +273,22 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     if (granted_ms == 0) {
         return false;  // no budget left: not assessed, so the run cannot claim a clean store
     }
-    const ProcessResult proc = runStep(script, granted_ms);
+    double shown = -1.0;
+    const auto report_progress = [this, &shown](const QString& chunk, bool is_stderr) {
+        const auto percent = is_stderr ? std::nullopt : lastDismProgressPercent(chunk);
+        if (!percent || *percent < shown + 1.0) {
+            return;  // whole steps only: DISM redraws its bar many times a second
+        }
+        shown = *percent;
+        Q_EMIT executionProgress(
+            QStringLiteral("DISM: Scanning component store... %1%").arg(*percent, 0, 'f', 1),
+            progress::kStep50 + static_cast<int>((progress::kStep65 - progress::kStep50) *
+                                                 *percent / static_cast<double>(sak::kPercentMax)));
+    };
+    const ProcessResult proc = runStep(script, granted_ms, report_progress);
     noteStepOutcome(proc, granted_ms, sak::kTimeoutDismScanMs);
+    m_dism_scan_timed_out = proc.timed_out;
+    m_dism_scan_granted_ms = granted_ms;
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM ScanHealth warning: " + proc.std_err.trimmed());
     }
@@ -258,7 +314,7 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
     if (granted_ms == 0) {
         return;
     }
-    const ProcessResult proc = runStep(script, granted_ms);
+    const ProcessResult proc = runStep(script, granted_ms, {});
     noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM RestoreHealth warning: " + proc.std_err.trimmed());
@@ -343,6 +399,8 @@ void VerifySystemFilesAction::execute() {
     m_dism_repaired_issues = false;
     m_dism_check_assessed = false;
     m_dism_scan_assessed = false;
+    m_dism_scan_timed_out = false;
+    m_dism_scan_granted_ms = 0;
     m_time_limit_reached = false;
     m_run_deadline = QDeadlineTimer(kVerifySystemFilesTimeoutMs);
     m_cbs_log_path.clear();  // never carry a prior run's CBS log path into this run
@@ -366,19 +424,40 @@ bool VerifySystemFilesAction::verificationSucceeded() const {
     return m_sfc_ran && m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
 }
 
+QString VerifySystemFilesAction::buildDismSummary() const {
+    if (m_dism_repaired_issues) {
+        return QStringLiteral("DISM repaired component store issues.");
+    }
+    if (m_dism_successful) {
+        return QStringLiteral("DISM found no issues.");
+    }
+    if (m_dism_scan_timed_out) {
+        // Ran out of time, which says nothing about the store either way: not a failure.
+        return QStringLiteral(
+                   "DISM did not finish its component store scan in %1 min, so this check is "
+                   "incomplete. Run it again when the PC can be left longer.")
+            .arg(std::max(1,
+                          m_dism_scan_granted_ms /
+                              (sak::kMillisecondsPerSecond * sak::kSecondsPerMinute)));
+    }
+    // DISM did not reach an authoritative verdict (launch/elevation failure, timeout, an
+    // incomplete probe, or a failed repair). Do NOT claim health -- fail closed in the
+    // human-facing message, matching result.success == false.
+    return QStringLiteral("DISM did not complete a component store assessment.");
+}
+
+bool VerifySystemFilesAction::resultIsInconclusive() const {
+    // A healthy PC on non-English Windows lands here, so it must not be told it failed. With DISM
+    // also unable to answer there is nothing good to report, and that stays a failure. So does a
+    // DISM scan that ran out of time after SFC passed: nothing was found, and nothing was proved.
+    const bool sfc_passed = m_sfc_ran && (!m_sfc_found_issues || m_sfc_repaired);
+    const bool dism_unfinished = m_dism_scan_timed_out && !m_dism_successful;
+    return (m_sfc_unreadable && m_dism_successful) || (sfc_passed && dism_unfinished);
+}
+
 VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificationResult(
     const QDateTime& start_time) const {
-    QString message = buildSfcSummary();
-    if (m_dism_repaired_issues) {
-        message += QStringLiteral("DISM repaired component store issues.");
-    } else if (m_dism_successful) {
-        message += QStringLiteral("DISM found no issues.");
-    } else {
-        // DISM did not reach an authoritative verdict (launch/elevation failure, timeout, an
-        // incomplete probe, or a failed repair). Do NOT claim health -- fail closed in the
-        // human-facing message, matching result.success == false.
-        message += QStringLiteral("DISM did not complete a component store assessment.");
-    }
+    QString message = buildSfcSummary() + buildDismSummary();
     if (m_time_limit_reached) {
         message += QStringLiteral(" Stopped at the %1-minute limit for one verification run.")
                        .arg(kVerifySystemFilesTimeoutMs /
@@ -387,9 +466,7 @@ VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificat
 
     ExecutionResult result;
     result.success = verificationSucceeded();
-    // A healthy PC on non-English Windows lands here, so it must not be told it failed. With DISM
-    // also unable to answer there is nothing good to report, and that stays a failure.
-    result.inconclusive = m_sfc_unreadable && m_dism_successful;
+    result.inconclusive = resultIsInconclusive();
     result.message = message;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.log = QString(

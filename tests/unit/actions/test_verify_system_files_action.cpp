@@ -33,6 +33,8 @@ private Q_SLOTS:
     void unreadableSfcWithDismFailingIsStillAFailure();
     void englishRefusalIsStillAFailure();
     void cleanEnglishRunStillPasses();
+    void dismScanThatRunsOutOfTimeIsIncompleteNotFailed();
+    void lastDismProgressPercent_readsTheBar();
     // One 60-minute bound for the whole run, and the registry waits exactly that long.
     void runIsBoundByOneSixtyMinuteTimeout();
     void stepTimeoutIsCutToTheRemainingBudget();
@@ -194,12 +196,32 @@ class ScriptedVerifyAction : public VerifySystemFilesAction {
 public:
     QString sfc_output;
     QString dism_output;
+    // ScanHealth runs out of time after writing these pieces of its progress bar.
+    bool scan_health_times_out = false;
+    QStringList scan_health_progress;
+    int scan_health_granted_ms = 0;
 
 protected:
-    sak::ProcessResult runStep(const QString& script, int) override {
+    sak::ProcessResult runStep(const QString& script,
+                               int timeout_ms,
+                               const sak::ProcessOutputCallback& on_output) override {
         sak::ProcessResult proc;
         proc.exit_code = 0;
         proc.std_out = script.contains(QStringLiteral("sfc.exe")) ? sfc_output : dism_output;
+        if (script.contains(QStringLiteral("/ScanHealth"))) {
+            scan_health_granted_ms = timeout_ms;
+            for (const QString& piece : scan_health_progress) {
+                if (on_output) {
+                    on_output(piece, false);
+                }
+            }
+            if (scan_health_times_out) {
+                proc.exit_code = -1;
+                proc.timed_out = true;
+                proc.std_out = scan_health_progress.join(QString());
+                proc.std_err = QStringLiteral("Process timed out");
+            }
+        }
         return proc;
     }
 };
@@ -288,6 +310,61 @@ void VerifySystemFilesActionTests::cleanEnglishRunStillPasses() {
 
     QVERIFY(action.lastExecutionResult().success);
     QVERIFY(!action.lastExecutionResult().inconclusive);
+}
+
+// Review 2, dark pass in the VM: SFC found no violations, then ScanHealth ran out the 10 minutes
+// it had, and the run ended "Execution failed". A technician must not be told it failed, nor
+// that it passed.
+void VerifySystemFilesActionTests::dismScanThatRunsOutOfTimeIsIncompleteNotFailed() {
+    ScriptedVerifyAction action;
+    action.sfc_output =
+        QStringLiteral("Windows Resource Protection did not find any integrity violations.");
+    action.dism_output = kDismHealthy;
+    action.scan_health_times_out = true;
+    action.scan_health_progress = {QStringLiteral("\r[==                         10.0%       "
+                                                  "                   ]"),
+                                   QStringLiteral("\r[=====                      37.5%       "
+                                                  "                   ]")};
+    QSignalSpy progress(&action, &sak::QuickAction::executionProgress);
+
+    action.execute();
+
+    const auto& result = action.lastExecutionResult();
+    QCOMPARE(action.scan_health_granted_ms, 30 * 60 * 1000);
+    QVERIFY(!result.success);
+    QVERIFY2(result.inconclusive, qPrintable(result.message));
+    QCOMPARE(result.message,
+             QStringLiteral("SFC found no integrity violations. DISM did not finish its component "
+                            "store scan in 30 min, so this check is incomplete. Run it again when "
+                            "the PC can be left longer."));
+    QStringList shown;
+    for (const auto& signal : progress) {
+        shown << signal.at(0).toString();
+    }
+    QVERIFY2(shown.contains(QStringLiteral("DISM: Scanning component store... 10.0%")),
+             qPrintable(shown.join(QStringLiteral(" | "))));
+    QVERIFY2(shown.contains(QStringLiteral("DISM: Scanning component store... 37.5%")),
+             qPrintable(shown.join(QStringLiteral(" | "))));
+
+    // SFC finding files it could not repair stays a failure, whatever DISM did.
+    ScriptedVerifyAction broken;
+    broken.sfc_output = QStringLiteral(
+        "Windows Resource Protection found corrupt files but was unable to fix some of them.");
+    broken.dism_output = kDismHealthy;
+    broken.scan_health_times_out = true;
+    broken.execute();
+    QVERIFY(!broken.lastExecutionResult().success);
+    QVERIFY(!broken.lastExecutionResult().inconclusive);
+}
+
+void VerifySystemFilesActionTests::lastDismProgressPercent_readsTheBar() {
+    QCOMPARE(Action::lastDismProgressPercent(QStringLiteral("[==   10.0%   ]\r[===  12.3%  ]")),
+             std::optional<double>(12.3));
+    QCOMPARE(Action::lastDismProgressPercent(QStringLiteral("[=====100.0%=====]")),
+             std::optional<double>(100.0));
+    QCOMPARE(Action::lastDismProgressPercent(QStringLiteral("Image Version: 10.0.26200.1")),
+             std::optional<double>());
+    QCOMPARE(Action::lastDismProgressPercent(QStringLiteral("250%")), std::optional<double>());
 }
 
 void VerifySystemFilesActionTests::parseSfcOutput_readsEachVerdict() {

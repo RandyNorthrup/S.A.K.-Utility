@@ -10,6 +10,8 @@
 #include <QDeadlineTimer>
 #include <QString>
 
+#include <optional>
+
 namespace sak {
 
 struct ProcessResult;
@@ -81,9 +83,16 @@ public:
     /// guarantees two runs in the same millisecond never collide.
     static QString makeUniqueSfcOutputName(qint64 entropy, qint64 msecs, unsigned counter);
 
+    /// @brief The last progress percentage in a piece of DISM's output ("[==  37.5%  ]"), or
+    ///        nothing when it holds none. Pure; unit-testable.
+    [[nodiscard]] static std::optional<double> lastDismProgressPercent(const QString& chunk);
+
 protected:
-    /// @brief Run one step's PowerShell, stopped by cancel().
-    [[nodiscard]] virtual ProcessResult runStep(const QString& script, int timeout_ms);
+    /// @brief Run one step's PowerShell, stopped by cancel(). @p on_output, when set, sees its
+    ///        output as it arrives.
+    [[nodiscard]] virtual ProcessResult runStep(const QString& script,
+                                                int timeout_ms,
+                                                const ProcessOutputCallback& on_output);
 
 private:
     bool m_sfc_found_issues{false};
@@ -99,6 +108,9 @@ private:
     // ScanHealth and report full health after only a partial verification.
     bool m_dism_check_assessed{false};
     bool m_dism_scan_assessed{false};
+    // ScanHealth ran out of time; how long it had. Not a failure: nothing was found or refused.
+    bool m_dism_scan_timed_out{false};
+    int m_dism_scan_granted_ms{0};
     // Set when a step was skipped or cut short because the run's single time budget ran out.
     bool m_time_limit_reached{false};
     QDeadlineTimer m_run_deadline;
@@ -115,6 +127,8 @@ private:
     void runSFC();
     void parseResults(const QString& output);
     [[nodiscard]] QString buildSfcSummary() const;
+    [[nodiscard]] QString buildDismSummary() const;
+    [[nodiscard]] bool resultIsInconclusive() const;
     [[nodiscard]] bool verificationSucceeded() const;
     [[nodiscard]] ExecutionResult buildVerificationResult(const QDateTime& start_time) const;
 };
