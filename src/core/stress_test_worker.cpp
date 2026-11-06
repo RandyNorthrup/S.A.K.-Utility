@@ -687,10 +687,14 @@ StressTestWorker::MemoryPassOutcome StressTestWorker::memoryPatternPass(
 }
 
 void StressTestWorker::runAtStressPriority(const std::function<void()>& work) {
-    // Below normal: the stress threads still take every cycle nothing else wants, but the window,
-    // the run's own clock and the Stop button keep answering. At normal priority, one thread per
-    // logical CPU left the window and the monitor waiting behind them.
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    // Idle priority, never boosted: the stress threads take every cycle nothing else wants, as
+    // burn-in tools do, and everything else on the PC runs first. Below normal was not low enough.
+    // On testpc1 Windows ran those threads at 7 (base 5, boosted by 2 while the app had the
+    // foreground), above every below-normal process: a scheduled task, a UI Automation client, the
+    // thermal reading's own PowerShell. Starting cmd.exe from one took 19 to 35 s while the run
+    // went on; from a normal process it took 37 ms.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+    SetThreadPriorityBoost(GetCurrentThread(), TRUE);
     work();
 }
 

@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <thread>
 #include <vector>
@@ -94,7 +95,8 @@ private Q_SLOTS:
     // run, and the stress threads crowded out the window and the run's clock.
     void memoryPassStopsWithinOneChunk();
     void memoryPassCountsAMismatch();
-    void stressThreadsRunBelowNormalPriority();
+    void stressThreadsRunAtIdlePriority();
+    void aBelowNormalThreadKeepsRunningWhileTheStressRuns();
     // Round 1's fix was not enough: a 1-minute run took 266 s to stop, and a Full Suite run never
     // did. The spinning children filled Windows' shared thread pool, and the temperature read --
     // a process the run's clock waited for -- could not return until they stopped.
@@ -454,14 +456,77 @@ void TestStressTestWorker::memoryPassCountsAMismatch() {
     QCOMPARE(outcome.errors, size_t{1});
 }
 
-void TestStressTestWorker::stressThreadsRunBelowNormalPriority() {
+void TestStressTestWorker::stressThreadsRunAtIdlePriority() {
     int priority = THREAD_PRIORITY_ERROR_RETURN;
-    std::thread child([&priority]() {
-        StressTestWorker::runAtStressPriority(
-            [&priority]() { priority = GetThreadPriority(GetCurrentThread()); });
+    BOOL boost_disabled = FALSE;
+    std::thread child([&priority, &boost_disabled]() {
+        StressTestWorker::runAtStressPriority([&priority, &boost_disabled]() {
+            priority = GetThreadPriority(GetCurrentThread());
+            (void)GetThreadPriorityBoost(GetCurrentThread(), &boost_disabled);
+        });
     });
     child.join();
-    QCOMPARE(priority, THREAD_PRIORITY_BELOW_NORMAL);
+    QCOMPARE(priority, THREAD_PRIORITY_IDLE);
+    QVERIFY2(boost_disabled != FALSE, "Windows must not boost a stress thread");
+}
+
+// testpc1: below-normal stress threads, boosted while the app had the foreground, ran above every
+// below-normal process, and a UI Automation client and the app's own PowerShell waited 20 to 35 s
+// for the CPU. Here a thread one step below normal (where a below-normal process's threads run)
+// stands for them. With both of the test's cores held by the stress, it still gets its work done
+// at once.
+void TestStressTestWorker::aBelowNormalThreadKeepsRunningWhileTheStressRuns() {
+    const sak::test::TwoCoreAffinity two_cores;
+    // About 150 ms of work on this machine, measured before the stress starts: several of
+    // Windows' time slices, so the work cannot finish inside the one it starts with.
+    const auto spin = [](std::uint64_t rounds) {
+        volatile std::uint64_t sink = 0;
+        for (std::uint64_t i = 0; i < rounds; ++i) {
+            sink = sink + i;
+        }
+    };
+    std::uint64_t rounds = 1'000'000;
+    for (;;) {
+        QElapsedTimer calibrate;
+        calibrate.start();
+        spin(rounds);
+        if (calibrate.elapsed() >= 150 || rounds > (std::uint64_t{1} << 40)) {
+            break;
+        }
+        rounds *= 2;
+    }
+
+    StressTestWorker worker;
+    worker.setConfig(cpuOnlyConfig(static_cast<int>(std::thread::hardware_concurrency()) + 1));
+    std::atomic<bool> reader_started{false};
+    const auto note_reader_started = [&reader_started](const std::function<bool()>&) {
+        reader_started.store(true);
+        return -1.0;
+    };
+    std::thread run([&worker, &note_reader_started]() {
+        (void)worker.executeForTesting(std::chrono::seconds(8), note_reader_started);
+    });
+    const auto end_run = qScopeGuard([&worker, &run]() {
+        worker.requestStop();
+        run.join();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(reader_started.load(), 5000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    qint64 took_ms = -1;
+    std::thread below_normal([&spin, rounds, &took_ms]() {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+        Sleep(20);  // give up the slice it started with: from here it runs at its own priority
+        QElapsedTimer took;
+        took.start();
+        spin(rounds);
+        took_ms = took.elapsed();
+    });
+    below_normal.join();
+    QVERIFY2(took_ms >= 0 && took_ms < 1500,
+             qPrintable(
+                 QStringLiteral("150 ms of below-normal work took %1 ms while the stress ran")
+                     .arg(took_ms)));
 }
 
 // A process started while the stress runs comes back at once. The run starts one spinning thread
