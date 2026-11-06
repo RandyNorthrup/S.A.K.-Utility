@@ -43,10 +43,16 @@ namespace sak {
 /// The lower-case executable name of every process running now.
 [[nodiscard]] QStringList runningProcessNames();
 
-/// The display names of the selected @p sources whose program is in @p running_processes, one each.
-/// Pure, so the decision can be tested without starting a browser.
+/// The lower-case executable name of every process that has a window showing.
+[[nodiscard]] QStringList windowedProcessNames();
+
+/// One line per program in @p running_processes that holds a selected source open: the program's
+/// name, which sources it holds, and, when none of its processes is in @p windowed_processes, that
+/// it runs in the background with no window, where a person looking for its window would not find
+/// it. Pure, so the decision can be tested without starting a browser.
 [[nodiscard]] QStringList appDataSourcesHeldOpen(const QVector<AppDataSourceInfo>& sources,
-                                                 const QStringList& running_processes);
+                                                 const QStringList& running_processes,
+                                                 const QStringList& windowed_processes);
 
 /// What a source holds once @p filter has left out what it would not copy.
 struct AppDataMeasure {

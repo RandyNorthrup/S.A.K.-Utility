@@ -19,6 +19,7 @@
 #include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QWizard>
 
 #include <memory>
 
@@ -312,7 +313,12 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
         m_logText->append(tr("[ERROR] Restore failed"));
     }
 
+    // The header and the wizard's own Cancel said the restore was still running after it ended.
+    setTitle(success ? tr("Restore Complete") : tr("Restore Stopped"));
     m_cancelButton->setEnabled(false);
+    if (wizard() != nullptr && wizard()->button(QWizard::CancelButton) != nullptr) {
+        wizard()->button(QWizard::CancelButton)->setEnabled(false);
+    }
     m_viewLogButton->setEnabled(true);
 
     Q_EMIT completeChanged();

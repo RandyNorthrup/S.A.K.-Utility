@@ -9,11 +9,14 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 
 #include <algorithm>
 #include <array>
 #include <span>
+
+#include <windows.h>
 
 namespace sak {
 
@@ -191,22 +194,114 @@ QStringList runningProcessNames() {
     return QStringList(names.cbegin(), names.cend());
 }
 
-QStringList appDataSourcesHeldOpen(const QVector<AppDataSourceInfo>& sources,
-                                   const QStringList& running_processes) {
-    QStringList held;
-    for (const AppDataSourceInfo& source : sources) {
-        if (!source.selected || held.contains(source.name)) {
-            continue;
-        }
-        const QStringList processes = appDataSourceProcessNames(source.relative_path);
-        const bool running = std::ranges::any_of(processes, [&](const QString& process) {
-            return running_processes.contains(process, Qt::CaseInsensitive);
-        });
-        if (running) {
-            held.append(source.name);
+namespace {
+struct ProgramName {
+    const char* exe{};
+    const char* name{};
+};
+
+// The program a person closes, for each executable a source names.
+constexpr auto kProgramNames = std::to_array<ProgramName>({
+    {"chrome.exe", "Google Chrome"},
+    {"firefox.exe", "Mozilla Firefox"},
+    {"msedge.exe", "Microsoft Edge"},
+    {"brave.exe", "Brave"},
+    {"opera.exe", "Opera"},
+    {"vivaldi.exe", "Vivaldi"},
+    {"thunderbird.exe", "Thunderbird"},
+    {"outlook.exe", "Microsoft Outlook"},
+    {"olk.exe", "the new Outlook"},
+    {"code.exe", "Visual Studio Code"},
+    {"sublime_text.exe", "Sublime Text"},
+    {"notepad++.exe", "Notepad++"},
+    {"discord.exe", "Discord"},
+    {"telegram.exe", "Telegram"},
+    {"signal.exe", "Signal"},
+    {"slack.exe", "Slack"},
+    {"steam.exe", "Steam"},
+    {"epicgameslauncher.exe", "Epic Games Launcher"},
+    {"onenote.exe", "OneNote"},
+    {"microsoft.notes.exe", "Sticky Notes"},
+    {"spotify.exe", "Spotify"},
+    {"vlc.exe", "VLC"},
+    {"obs64.exe", "OBS Studio"},
+    {"winscp.exe", "WinSCP"},
+    {"filezilla.exe", "FileZilla"},
+    {"windowsterminal.exe", "Windows Terminal"},
+});
+
+QString programNameFor(const QString& exe) {
+    for (const ProgramName& program : kProgramNames) {
+        if (exe.compare(QLatin1String(program.exe), Qt::CaseInsensitive) == 0) {
+            return QString::fromLatin1(program.name);
         }
     }
-    return held;
+    return exe;
+}
+
+BOOL CALLBACK collectWindowedProcess(HWND window, LPARAM names) {
+    if (IsWindowVisible(window) == 0 || GetWindow(window, GW_OWNER) != nullptr) {
+        return TRUE;
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process == nullptr) {
+        return TRUE;
+    }
+    std::array<wchar_t, MAX_PATH> path{};
+    auto length = static_cast<DWORD>(path.size());
+    if (QueryFullProcessImageNameW(process, 0, path.data(), &length) != 0) {
+        reinterpret_cast<QSet<QString>*>(names)->insert(
+            QFileInfo(QString::fromWCharArray(path.data(), static_cast<qsizetype>(length)))
+                .fileName()
+                .toLower());
+    }
+    CloseHandle(process);
+    return TRUE;
+}
+}  // namespace
+
+QStringList windowedProcessNames() {
+    QSet<QString> names;
+    EnumWindows(&collectWindowedProcess, reinterpret_cast<LPARAM>(&names));
+    return QStringList(names.cbegin(), names.cend());
+}
+
+QStringList appDataSourcesHeldOpen(const QVector<AppDataSourceInfo>& sources,
+                                   const QStringList& running_processes,
+                                   const QStringList& windowed_processes) {
+    // Named by program, which is what a person closes: "Edge Profiles" named a data source, and in
+    // the capture VM Edge's background processes held it with no Edge window to close.
+    QStringList programs;
+    QHash<QString, QStringList> held_sources;
+    for (const AppDataSourceInfo& source : sources) {
+        if (!source.selected) {
+            continue;
+        }
+        for (const QString& process : appDataSourceProcessNames(source.relative_path)) {
+            if (!running_processes.contains(process, Qt::CaseInsensitive)) {
+                continue;
+            }
+            if (!programs.contains(process)) {
+                programs.append(process);
+            }
+            QStringList& names = held_sources[process];
+            if (!names.contains(source.name)) {
+                names.append(source.name);
+            }
+        }
+    }
+    QStringList lines;
+    for (const QString& process : programs) {
+        const QString held = held_sources.value(process).join(QStringLiteral(", "));
+        lines.append(windowed_processes.contains(process, Qt::CaseInsensitive)
+                         ? QStringLiteral("%1 (holds %2)").arg(programNameFor(process), held)
+                         : QStringLiteral("%1, running in the background with no window open "
+                                          "(holds %2): end it in Task Manager")
+                               .arg(programNameFor(process), held));
+    }
+    return lines;
 }
 
 AppDataMeasure measureAppDataSource(const AppDataSourceInfo& source,

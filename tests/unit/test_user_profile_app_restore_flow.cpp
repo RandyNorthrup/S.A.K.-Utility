@@ -980,6 +980,10 @@ void UserProfileAppRestoreFlowTests::wholeRestoreWizardRunsOnARealBackup() {
     QVERIFY(execute->m_currentProgressBar->maximum() > 0);
     QCOMPARE(execute->m_currentOperationLabel->text(), QStringLiteral("Current: done"));
     QCOMPARE(execute->subTitle(), QStringLiteral("The restore finished."));
+    // Review 2: the header still read "Restore in Progress", and both Cancel buttons were live.
+    QCOMPARE(execute->title(), QStringLiteral("Restore Complete"));
+    QVERIFY(!execute->m_cancelButton->isEnabled());
+    QVERIFY(!wizard.button(QWizard::CancelButton)->isEnabled());
 
     const QDir landed(system_drive.filePath(QStringLiteral("Users/sakwizardwalkuser")));
     QVERIFY(QFile::exists(landed.filePath(QStringLiteral("Documents/report.txt"))));

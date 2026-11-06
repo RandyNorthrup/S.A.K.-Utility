@@ -394,6 +394,34 @@ void UserMigrationPanel::onQuickActionFinished(const QuickActionRun& run,
                       run.action_name.toStdString(),
                       result.message.toStdString());
     }
+    showQuickToolResult(run, result, status);
+}
+
+void UserMigrationPanel::showQuickToolResult(const QuickActionRun& run,
+                                             const QuickAction::ExecutionResult& result,
+                                             QuickAction::ActionStatus status) {
+    if (status == QuickAction::ActionStatus::Cancelled) {
+        return;
+    }
+    // Review 2: a key backup wrote its folder in 3 s and the window said "Ready"; the result was
+    // only in the log. What was saved, and where, or what failed, is told to the person who
+    // asked. The box does not block the window.
+    QString text = result.message.isEmpty() ? quickActionOutcomeText(run, result, status)
+                                            : result.message;
+    if (!result.output_path.isEmpty()) {
+        text += tr("\n\nSaved to: %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
+    if (!result.warning.isEmpty()) {
+        text += QStringLiteral("\n\n%1").arg(result.warning);
+    }
+    auto* box = new QMessageBox(result.success ? QMessageBox::Information : QMessageBox::Warning,
+                                run.action_name,
+                                text,
+                                QMessageBox::Ok,
+                                this);
+    box->setObjectName(QStringLiteral("quickToolResultBox"));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 
 }  // namespace sak

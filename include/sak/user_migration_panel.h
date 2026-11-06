@@ -97,6 +97,10 @@ private:
     void onQuickActionFinished(const QuickActionRun& run,
                                const QuickAction::ExecutionResult& result,
                                QuickAction::ActionStatus status);
+    /// Tells what a Quick Tool saved and where, or what failed, in a box that does not block.
+    void showQuickToolResult(const QuickActionRun& run,
+                             const QuickAction::ExecutionResult& result,
+                             QuickAction::ActionStatus status);
     /// Asks where @p action_name saves this run; empty (and logged) when the user cancels.
     [[nodiscard]] QString chooseQuickActionOutputFolder(const QString& action_name);
     /// Shows @p warning about the folder chosen for @p action_name. Cancel is the default button,

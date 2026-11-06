@@ -18,6 +18,7 @@
 #include "sak/windows_user_scanner.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFile>
 #include <QFutureWatcher>
 #include <QGridLayout>
@@ -71,6 +72,9 @@ constexpr int kTreePackageColumn = 2;
 constexpr int kTreeDetailColumn = 2;
 constexpr int kAppDataIncludeRole = Qt::UserRole + 1;
 constexpr int kAppDataExcludeRole = Qt::UserRole + 2;
+// The source's own path, with forward slashes, as the manifest spells it; the row shows it with
+// Windows separators (review 2: "AppData/Local/Microsoft/Edge/User Data").
+constexpr int kAppDataPathRole = Qt::UserRole + 3;
 constexpr int kSizeDisplayPrecision = 2;
 constexpr int kMegabyteDisplayPrecision = 1;
 
@@ -804,7 +808,7 @@ bool UserProfileRestoreAppDataPage::validatePage() {
             auto* leaf = category->child(i);
             AppDataSourceInfo info;
             info.name = leaf->text(0);
-            info.relative_path = leaf->text(1);
+            info.relative_path = leaf->data(0, kAppDataPathRole).toString();
             info.category = category->text(0);
             info.include_patterns = leaf->data(0, kAppDataIncludeRole).toStringList();
             info.exclude_patterns = leaf->data(0, kAppDataExcludeRole).toStringList();
@@ -840,7 +844,8 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
         for (const auto* source : it.value()) {
             auto* item = new QTreeWidgetItem(category_item);
             item->setText(0, source->name);
-            item->setText(1, source->relative_path);
+            item->setText(1, QDir::toNativeSeparators(source->relative_path));
+            item->setData(0, kAppDataPathRole, source->relative_path);
             item->setText(kTreeDetailColumn, formatBytes(source->size_bytes));
             item->setData(0, kAppDataIncludeRole, source->include_patterns);
             item->setData(0, kAppDataExcludeRole, source->exclude_patterns);

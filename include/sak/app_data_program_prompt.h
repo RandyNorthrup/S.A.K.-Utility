@@ -23,7 +23,8 @@ namespace sak {
 [[nodiscard]] inline bool askToCloseProgramsHolding(QWidget* parent,
                                                     const QVector<AppDataSourceInfo>& sources) {
     for (;;) {
-        const QStringList held = appDataSourcesHeldOpen(sources, runningProcessNames());
+        const QStringList held =
+            appDataSourcesHeldOpen(sources, runningProcessNames(), windowedProcessNames());
         if (held.isEmpty()) {
             return true;
         }

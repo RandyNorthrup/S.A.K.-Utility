@@ -198,18 +198,30 @@ void AppDataSourcesTests::splitRowsAreToldApartInABackup() {
 void AppDataSourcesTests::runningProgramsNameTheirSources() {
     auto sources = sak::commonAppDataSources();
     const QStringList running = {QStringLiteral("explorer.exe"), QStringLiteral("CHROME.EXE")};
-    const QStringList held = sak::appDataSourcesHeldOpen(sources, running);
-    QCOMPARE(held, QStringList({QStringLiteral("Chrome Profiles")}));
+    const QStringList held =
+        sak::appDataSourcesHeldOpen(sources, running, {QStringLiteral("chrome.exe")});
+    // Review 2: the box named the data source ("Edge Profiles"), not the program to close.
+    QCOMPARE(held, QStringList({QStringLiteral("Google Chrome (holds Chrome Profiles)")}));
 
-    // Outlook holds two sources, and the new Outlook runs under a different name.
+    // Outlook holds several sources, named once under its program; the new Outlook runs under a
+    // different name.
     for (auto& source : sources) {
         source.selected = true;
     }
-    const QStringList outlook = sak::appDataSourcesHeldOpen(sources, {QStringLiteral("olk.exe")});
+    const QStringList outlook = sak::appDataSourcesHeldOpen(sources,
+                                                            {QStringLiteral("olk.exe")},
+                                                            {QStringLiteral("olk.exe")});
     QCOMPARE(outlook,
-             QStringList({QStringLiteral("Outlook Archives (PST)"),
-                          QStringLiteral("Outlook Cache (OST)"),
-                          QStringLiteral("Outlook Signatures")}));
+             QStringList({QStringLiteral("the new Outlook (holds Outlook Archives (PST), Outlook "
+                                         "Cache (OST), Outlook Signatures)")}));
+
+    // In the capture VM Edge's background processes held its profiles with no window to close.
+    const QStringList background =
+        sak::appDataSourcesHeldOpen(sources, {QStringLiteral("msedge.exe")}, {});
+    QCOMPARE(background,
+             QStringList({QStringLiteral("Microsoft Edge, running in the background with no "
+                                         "window open (holds Edge Profiles): end it in Task "
+                                         "Manager")}));
 
     // Two rows share a folder, and so a program, which is still named once.
     QCOMPARE(sak::appDataSourceProcessNames(kOutlook).size(), 2);
@@ -218,7 +230,7 @@ void AppDataSourcesTests::runningProgramsNameTheirSources() {
     for (auto& source : sources) {
         source.selected = false;
     }
-    QVERIFY(sak::appDataSourcesHeldOpen(sources, running).isEmpty());
+    QVERIFY(sak::appDataSourcesHeldOpen(sources, running, running).isEmpty());
 }
 
 void AppDataSourcesTests::scanAddsUpSizesAndLeavesCachesOut() {

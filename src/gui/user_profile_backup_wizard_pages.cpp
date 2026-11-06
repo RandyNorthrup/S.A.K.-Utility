@@ -78,6 +78,9 @@ constexpr int kAppDataColumnSize = 2;
 constexpr int kAppDataSizeRole = Qt::UserRole;
 constexpr int kAppDataIncludeRole = Qt::UserRole + 1;
 constexpr int kAppDataExcludeRole = Qt::UserRole + 2;
+// The source's own path, with forward slashes, as the manifest and the program table spell it; the
+// row shows it with Windows separators (review 2: "AppData/Local/Microsoft/Edge/User Data").
+constexpr int kAppDataPathRole = Qt::UserRole + 3;
 constexpr int kEthernetColumnSelect = 0;
 constexpr int kEthernetColumnAdapter = 1;
 constexpr int kEthernetColumnDhcp = 2;
@@ -1591,7 +1594,8 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
         for (const auto* source : it.value()) {
             auto* item = new QTreeWidgetItem(category_item);
             item->setText(kAppDataColumnName, source->name);
-            item->setText(kAppDataColumnPath, source->relative_path);
+            item->setText(kAppDataColumnPath, QDir::toNativeSeparators(source->relative_path));
+            item->setData(kAppDataColumnName, kAppDataPathRole, source->relative_path);
             item->setText(kAppDataColumnSize, formatBytes(source->size_bytes));
             item->setData(kAppDataColumnSize, kAppDataSizeRole, source->size_bytes);
             item->setData(kAppDataColumnName, kAppDataIncludeRole, source->include_patterns);
@@ -1636,7 +1640,7 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
             AppDataSourceInfo info;
             info.name = app_item->text(0);
             info.category = category->text(0);
-            info.relative_path = app_item->text(1);
+            info.relative_path = app_item->data(kAppDataColumnName, kAppDataPathRole).toString();
             info.size_bytes = app_item->data(kAppDataColumnSize, kAppDataSizeRole).toLongLong();
             info.include_patterns =
                 app_item->data(kAppDataColumnName, kAppDataIncludeRole).toStringList();

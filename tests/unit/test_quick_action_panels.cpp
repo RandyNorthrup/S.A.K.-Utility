@@ -316,6 +316,17 @@ void QuickActionPanelTests::userMigrationBitLockerAsksForAFolderAndHandsItToTheH
     // No warning was shown, so no one agreed to anything.
     QVERIFY(!m_system->elevatedPayloads().constFirst().contains(
         QString::fromLatin1(sak::quick_action_elevation::kOutputFolderWarningAcceptedKey)));
+    // Review 2: the folder was written and the window only said "Ready". The result is told in a
+    // box that does not block the window.
+    QMessageBox* result_box = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((result_box = panel.findChild<QMessageBox*>(
+                                  QStringLiteral("quickToolResultBox"))) != nullptr,
+                             kRunTimeoutMs);
+    QCOMPARE(result_box->windowTitle(), kBitLocker);
+    QVERIFY2(result_box->text().contains(QStringLiteral("fake elevated ok")),
+             qPrintable(result_box->text()));
+    QCOMPARE(result_box->icon(), QMessageBox::Information);
+    result_box->close();
 }
 
 void QuickActionPanelTests::userMigrationBitLockerWarningDefaultsToCancelAndCancelRunsNothing() {
