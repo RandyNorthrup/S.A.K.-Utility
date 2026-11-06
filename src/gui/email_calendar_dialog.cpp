@@ -401,13 +401,7 @@ private:
     }
 
     static QString buildBarLabel(const CalendarEvent* evt) {
-        QString label;
-        if (evt->start_time.isValid() && !evt->is_all_day) {
-            label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
-                    QStringLiteral(" ");
-        }
-        label += repeatMark(*evt) + evt->subject;
-        return label;
+        return EmailCalendarDialog::eventChipLabel(*evt);
     }
 
     void drawMoreLabel(QPainter& painter, int count, int left, int top, int width) {
@@ -798,12 +792,7 @@ private:
                          1,
                          -kBarTextRightInsetPx,
                          -1);
-        QString label;
-        if (!evt->is_all_day && evt->start_time.isValid()) {
-            label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
-                    QStringLiteral(" ");
-        }
-        label += repeatMark(*evt) + evt->subject;
+        const QString label = EmailCalendarDialog::eventChipLabel(*evt);
         const QString elided =
             painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
@@ -2109,6 +2098,17 @@ bool EmailCalendarDialog::matchesFilter(const CalendarEvent& evt) const {
 // ============================================================================
 // Color helpers
 // ============================================================================
+
+QString EmailCalendarDialog::eventChipLabel(const CalendarEvent& event) {
+    const QString subject = repeatMark(event) + event.subject.trimmed();
+    const QString time = event.start_time.isValid() && !event.is_all_day
+                             ? event.start_time.time().toString(QStringLiteral("h:mm AP"))
+                             : QString();
+    if (subject.trimmed().isEmpty() || time.isEmpty()) {
+        return subject.trimmed().isEmpty() ? time : subject;
+    }
+    return subject + QStringLiteral(", ") + time;
+}
 
 QColor EmailCalendarDialog::fillColorForStatus(int busy_status, EmailItemType type) {
     // The dark theme tints its own surface with the status colour: the light pastel fills under

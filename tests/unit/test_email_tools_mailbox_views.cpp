@@ -1347,6 +1347,33 @@ private Q_SLOTS:
         QVERIFY2(blue < 2000, qPrintable(QStringLiteral("%1 px of the month are blue").arg(blue)));
     }
 
+    // UI re-check N16: the month view's ~75 px chips showed "8:00 AM Ov..." and the week view's
+    // "8:00 AM ...", the time and no subject. Both views draw this label, subject first.
+    void calendarChipsShowTheSubjectFirst() {
+        sak::CalendarEvent event;
+        event.subject = QStringLiteral("Oven repair visit");
+        event.start_time = QDateTime(QDate(2026, 11, 4), QTime(8, 0));
+        QCOMPARE(sak::EmailCalendarDialog::eventChipLabel(event),
+                 QStringLiteral("Oven repair visit, 8:00 AM"));
+        const QFontMetrics metrics(QApplication::font());
+        constexpr int kMonthChipTextWidth = 70;
+        const QString shown = metrics.elidedText(sak::EmailCalendarDialog::eventChipLabel(event),
+                                                 Qt::ElideRight,
+                                                 kMonthChipTextWidth);
+        QVERIFY2(shown.startsWith(QStringLiteral("Ov")), qPrintable(shown));
+        event.is_all_day = true;
+        QCOMPARE(sak::EmailCalendarDialog::eventChipLabel(event),
+                 QStringLiteral("Oven repair visit"));
+        event.is_all_day = false;
+        event.subject.clear();
+        QCOMPARE(sak::EmailCalendarDialog::eventChipLabel(event), QStringLiteral("8:00 AM"));
+        event.subject = QStringLiteral("Saturday staff schedule");
+        event.recurrence.state = sak::RecurrenceState::Readable;
+        QVERIFY2(sak::EmailCalendarDialog::eventChipLabel(event).startsWith(
+                     QStringLiteral("\u21BB Saturday staff schedule")),
+                 qPrintable(sak::EmailCalendarDialog::eventChipLabel(event)));
+    }
+
     // UI re-check S12: the status filters were named in the events' border shades, "Free" at
     // 3.24:1 and "Tentative" at 3.13:1 on the light page. Each reads at 4.5:1 in both themes.
     void calendarStatusFiltersReadInBothThemes() {

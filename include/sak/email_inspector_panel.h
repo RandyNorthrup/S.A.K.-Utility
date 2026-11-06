@@ -156,7 +156,7 @@ private:
     QWidget* createFolderTreePanel();
     QWidget* createContentArea();
     QWidget* createItemListPanel();
-    QHBoxLayout* createItemPagingRow(QWidget* group);
+    QVBoxLayout* createItemPagingRow(QWidget* group);
     void configureItemListTable(QWidget* group);
     QWidget* createDetailPanel();
     QWidget* createContentTab();

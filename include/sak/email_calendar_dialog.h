@@ -186,6 +186,11 @@ public:
     // Color helpers (public for use by view widgets)
     [[nodiscard]] static QColor fillColorForStatus(int busy_status, EmailItemType type);
     [[nodiscard]] static QColor borderColorForStatus(int busy_status, EmailItemType type);
+    /// @brief What an event's chip in the month and week views says: its subject first, then its
+    ///        start time. A chip is ~75 px wide in the month view, and with the time first it
+    ///        showed "8:00 AM Ov..." and no subject (UI review N16); the time is in the day's list
+    ///        and, in the week view, in where the chip sits.
+    [[nodiscard]] static QString eventChipLabel(const CalendarEvent& event);
 
 private:
     static void appendHtmlField(QString& html, const QString& label, const QString& value);

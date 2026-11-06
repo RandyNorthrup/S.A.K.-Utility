@@ -682,9 +682,13 @@ QWidget* EmailInspectorPanel::createContentArea() {
     return m_content_splitter;
 }
 
-QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
+QVBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     m_item_count_label = new QLabel(group);
     m_item_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    // On a line of its own, wrapping: beside the paging controls its text set the Items pane's
+    // narrowest width, so "4 search result(s) (filtered)" pushed the Folders pane from 293 to
+    // 240 px and back again with "6 items" (UI review F46).
+    m_item_count_label->setWordWrap(true);
 
     m_page_size_combo = new QComboBox(group);
     m_page_size_combo->addItems(
@@ -729,15 +733,19 @@ QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
         }
     });
 
-    auto* filter_row = new QHBoxLayout();
-    filter_row->addWidget(m_item_count_label, 1);
-    filter_row->addWidget(m_prev_page_button);
-    filter_row->addWidget(m_page_label);
-    filter_row->addWidget(m_next_page_button);
-    filter_row->addSpacing(sak::ui::kSpacingMedium);
-    filter_row->addWidget(new QLabel(tr("Per page:"), group));
-    filter_row->addWidget(m_page_size_combo);
-    return filter_row;
+    auto* paging_row = new QHBoxLayout();
+    paging_row->addWidget(m_prev_page_button);
+    paging_row->addWidget(m_page_label);
+    paging_row->addWidget(m_next_page_button);
+    paging_row->addStretch(1);
+    paging_row->addWidget(new QLabel(tr("Per page:"), group));
+    paging_row->addWidget(m_page_size_combo);
+
+    auto* rows = new QVBoxLayout();
+    rows->setSpacing(sak::ui::kSpacingTight);
+    rows->addWidget(m_item_count_label);
+    rows->addLayout(paging_row);
+    return rows;
 }
 
 void EmailInspectorPanel::configureItemListTable(QWidget* group) {

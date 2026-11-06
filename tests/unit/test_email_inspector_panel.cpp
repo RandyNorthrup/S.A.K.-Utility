@@ -21,6 +21,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -149,6 +150,9 @@ private Q_SLOTS:
     // Capture notes item 16: the ribbon's Attachments button and the detail pane's Attachments tab
     // had one accessible name.
     void noButtonSharesItsNameWithATab();
+    // UI review F46: the Folders pane's right edge was at 267 px with search results listed and at
+    // 321 px with a message open, because the Items pane's count text set its narrowest width.
+    void theFoldersPaneKeepsItsWidthWhateverTheCountSays();
 
 private:
     void openMailbox();
@@ -418,6 +422,27 @@ void EmailInspectorPanelTests::noButtonSharesItsNameWithATab() {
         QVERIFY2(!tabs.contains(button->accessibleName()),
                  qPrintable(QStringLiteral("a button and a tab are both named \"%1\"")
                                 .arg(button->accessibleName())));
+    }
+}
+
+void EmailInspectorPanelTests::theFoldersPaneKeepsItsWidthWhateverTheCountSays() {
+    // The capture's window size, where the review measured the two edges.
+    constexpr int kWindowWidth = 1280;
+    constexpr int kWindowHeight = 860;
+    m_panel->resize(kWindowWidth, kWindowHeight);
+    m_panel->show();
+    QVERIFY(QTest::qWaitForWindowExposed(m_panel.get()));
+    m_panel->m_item_count_label->setText(QStringLiteral("6 items"));
+    QApplication::processEvents();
+    const QList<int> short_count = m_panel->m_main_splitter->sizes();
+    const QList<int> short_items = m_panel->m_content_splitter->sizes();
+    for (const QString& text : {QStringLiteral("4 search result(s) (filtered)"),
+                                QStringLiteral("125 search result(s) in Deleted Items (filtered)"),
+                                QStringLiteral("Showing 1\u2013100 of 25000")}) {
+        m_panel->m_item_count_label->setText(text);
+        QApplication::processEvents();
+        QCOMPARE(m_panel->m_main_splitter->sizes(), short_count);
+        QCOMPARE(m_panel->m_content_splitter->sizes(), short_items);
     }
 }
 
