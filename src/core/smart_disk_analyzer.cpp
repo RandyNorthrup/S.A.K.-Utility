@@ -176,6 +176,15 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     Q_EMIT driveAnalyzed(report);
 }
 
+QString SmartDiskAnalyzer::driveName(const QString& device_path, const QString& model) {
+    const QString drive = device_path.section(QLatin1Char('\\'), -1);
+    const QString known = model.trimmed();
+    if (drive.isEmpty() || known.isEmpty() || known == drive) {
+        return drive.isEmpty() ? known : drive;
+    }
+    return QStringLiteral("%1 (%2)").arg(drive, known);
+}
+
 SmartReport SmartDiskAnalyzer::parseAndAssessForTesting(const QByteArray& json_data,
                                                         uint32_t disk_number) {
     SmartReport report = parseSmartctlOutput(json_data, disk_number);
@@ -706,10 +715,7 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     if (report.overall_health == SmartHealthStatus::Unknown) {
         // Named, because the panel lists every drive's warnings together: five drives gave five
         // identical lines and no way to tell which drive each one was about.
-        const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
-        const QString name = report.model.trimmed().isEmpty() || report.model == drive
-                                 ? drive
-                                 : QStringLiteral("%1 (%2)").arg(drive, report.model.trimmed());
+        const QString name = driveName(report.device_path, report.model);
         report.warnings.append(
             QStringLiteral("%1: SMART health could not be determined. It reported no SMART health "
                            "data.")

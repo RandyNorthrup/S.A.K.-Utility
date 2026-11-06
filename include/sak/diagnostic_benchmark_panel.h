@@ -69,6 +69,25 @@ public:
     [[nodiscard]] static QString benchmarkDriveText(const StorageDeviceInfo& disk,
                                                     const PartitionInfo& volume);
 
+    /// @brief The Battery row: the battery's name when it has one, its health, and the power
+    ///        state. VirtualBox's battery names itself "1", which read as "1 - health unknown".
+    [[nodiscard]] static QString batteryText(const BatteryInfo& battery);
+
+    /// @brief What the SMART table shows for @p report, with what the hardware scan knows of the
+    ///        same disk (@p disk, null when it has not run): the drive's number and model, so four
+    ///        "VBOX HARDDISK" rows can be told apart and matched to the messages under them, and
+    ///        its bus as the inventory names it.
+    struct SmartRowIdentity {
+        QString drive;
+        QString type;
+    };
+    [[nodiscard]] static SmartRowIdentity smartRowIdentity(const SmartReport& report,
+                                                           const StorageDeviceInfo* disk);
+
+    /// @brief @p warning as the SMART list shows it: every drive's warnings are listed together,
+    ///        so each starts with the drive it is about.
+    [[nodiscard]] static QString smartWarningText(const QString& drive, const QString& warning);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -124,7 +143,9 @@ private Q_SLOTS:
     void onErrorOccurred(const QString& message);
 
 private:
-    void fillSmartRow(int row, const sak::SmartReport& report);
+    void fillSmartRow(int row, const sak::SmartReport& report, const SmartRowIdentity& identity);
+    /// The hardware scan's entry for @p report's disk, or null.
+    [[nodiscard]] const StorageDeviceInfo* inventoryDiskFor(const sak::SmartReport& report) const;
     static constexpr int kSuiteStepCount = 7;
     /// A suite step's marks. Pending is the idle circle; the hourglass means running elsewhere.
     static constexpr char16_t kSuitePendingMark = u'\u25CB';

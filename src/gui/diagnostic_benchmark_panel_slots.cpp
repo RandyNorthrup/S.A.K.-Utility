@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/smart_disk_analyzer.h"
 #include "sak/style_constants.h"
 #include "sak/thermal_monitor.h"
 #include "sak/view_empty_state.h"
@@ -136,18 +137,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
 
     m_hw_uptime_label->setText(formatUptime(inventory.uptime_seconds));
 
-    if (inventory.battery.present) {
-        // A battery that reports no capacities has no health to show, not 0%.
-        const QString health =
-            inventory.battery.health_known
-                ? QString("%1% health").arg(inventory.battery.health_percent, 0, 'f', 1)
-                : QString("health unknown");
-        m_hw_battery_label->setText(QString("%1 - %2, %3")
-                                        .arg(inventory.battery.name, health)
-                                        .arg(inventory.battery.status));
-    } else {
-        m_hw_battery_label->setText("Not present (desktop)");
-    }
+    m_hw_battery_label->setText(batteryText(inventory.battery));
 
     // Populate disk drive combo for disk benchmark
     populateDiskDriveCombo(inventory);
@@ -171,6 +161,29 @@ void DiagnosticBenchmarkPanel::populateDiskDriveCombo(const HardwareInventory& i
     if (m_disk_drive_combo->count() > 0) {
         m_disk_drive_combo->setCurrentIndex(0);
     }
+}
+
+QString DiagnosticBenchmarkPanel::batteryText(const BatteryInfo& battery) {
+    if (!battery.present) {
+        return QStringLiteral("Not present (desktop)");
+    }
+    // A battery that reports no capacities has no health to show, not 0%.
+    QString text = battery.health_known
+                       ? QStringLiteral("%1% health").arg(battery.health_percent, 0, 'f', 1)
+                       : QStringLiteral("Health not reported");
+    if (!battery.status.isEmpty()) {
+        text += QStringLiteral(", ") + battery.status;
+    }
+    // A name with no letter in it ("1", VirtualBox's) is an index, not a name.
+    const QString name = battery.name.trimmed();
+    const bool named = std::ranges::any_of(name, [](QChar c) { return c.isLetter(); });
+    if (!named) {
+        return text;
+    }
+    if (!battery.health_known) {
+        text[0] = text[0].toLower();
+    }
+    return QStringLiteral("%1 - %2").arg(name, text);
 }
 
 QString DiagnosticBenchmarkPanel::benchmarkDriveText(const StorageDeviceInfo& disk,
@@ -206,19 +219,57 @@ void DiagnosticBenchmarkPanel::onRescanSmartClicked() {
     m_controller->runSmartAnalysis();
 }
 
-void DiagnosticBenchmarkPanel::fillSmartRow(int row, const SmartReport& report) {
+DiagnosticBenchmarkPanel::SmartRowIdentity DiagnosticBenchmarkPanel::smartRowIdentity(
+    const SmartReport& report, const StorageDeviceInfo* disk) {
+    // An unreadable drive's report carries no model ("PhysicalDrive1"); the scan knows it.
+    const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
+    QString model = report.model.trimmed();
+    if ((model.isEmpty() || model == drive) && disk != nullptr) {
+        model = disk->model.trimmed();
+    }
+    // The bus as the hardware inventory names it, so the two views agree (UI review F39: Type
+    // read N/A here while the inventory said ATA); smartctl's device type only without a scan.
+    QString type = disk != nullptr ? disk->interface_type.trimmed() : QString();
+    if (type.isEmpty()) {
+        type = report.interface_type.trimmed();
+    }
+    return {.drive = SmartDiskAnalyzer::driveName(report.device_path, model), .type = type};
+}
+
+QString DiagnosticBenchmarkPanel::smartWarningText(const QString& drive, const QString& warning) {
+    // "PhysicalDrive0 (VBOX HARDDISK)" names the drive in the warnings that already carry it as
+    // "PhysicalDrive0: ..." or "PhysicalDrive0 (VBOX HARDDISK): ...".
+    const QString number = drive.section(QLatin1Char(' '), 0, 0);
+    if (warning.startsWith(number + QLatin1Char(':')) ||
+        warning.startsWith(number + QStringLiteral(" ("))) {
+        return warning;
+    }
+    return QStringLiteral("%1: %2").arg(drive, warning);
+}
+
+const StorageDeviceInfo* DiagnosticBenchmarkPanel::inventoryDiskFor(
+    const SmartReport& report) const {
+    const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
+    const auto& storage = m_controller->reportData().inventory.storage;
+    const auto found = std::ranges::find_if(storage, [&drive](const StorageDeviceInfo& disk) {
+        return drive == QStringLiteral("PhysicalDrive%1").arg(disk.disk_number);
+    });
+    return found == storage.end() ? nullptr : &*found;
+}
+
+void DiagnosticBenchmarkPanel::fillSmartRow(int row,
+                                            const SmartReport& report,
+                                            const SmartRowIdentity& identity) {
     // A drive that could not be read has no temperature or hours to show: zeros would read as
     // measurements.
     const bool read = report.overall_health != SmartHealthStatus::Unknown;
 
-    m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
+    m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(identity.drive));
     // One marker for "not known" across the table: N/A, as Health and Thermal use.
     const QString missing = tr("N/A");
     m_smart_table->setItem(row,
                            SmartColType,
-                           new QTableWidgetItem(report.interface_type.trimmed().isEmpty()
-                                                    ? missing
-                                                    : report.interface_type));
+                           new QTableWidgetItem(identity.type.isEmpty() ? missing : identity.type));
 
     // Health with icon
     auto* health_item = new QTableWidgetItem();
@@ -273,13 +324,14 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
 
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
-        fillSmartRow(row, report);
+        const SmartRowIdentity identity = smartRowIdentity(report, inventoryDiskFor(report));
+        fillSmartRow(row, report, identity);
         if (report.overall_health != SmartHealthStatus::Unknown) {
             m_smart_hottest_drive_celsius = std::max(m_smart_hottest_drive_celsius,
                                                      report.temperature_celsius);
         }
         for (const auto& warning : report.warnings) {
-            warnings_list.append(warning);
+            warnings_list.append(smartWarningText(identity.drive, warning));
         }
     }
 

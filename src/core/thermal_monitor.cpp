@@ -252,7 +252,11 @@ void ThermalMonitor::stop() {
 }
 
 bool ThermalMonitor::isRunning() const {
-    return m_timer.isActive() || m_poll_watcher.isRunning();
+    // Started and not stopped, or stopped with its last poll still landing. The timer alone is
+    // not enough: it is idle while a poll is out, and between the poll finishing on the pool and
+    // its result reaching this thread neither it nor the watcher is running, so a started monitor
+    // read as stopped (the round 4 flake under load).
+    return m_active || m_poll_watcher.isRunning();
 }
 
 QVector<ThermalReading> ThermalMonitor::pollOnce() {

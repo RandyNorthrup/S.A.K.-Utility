@@ -91,7 +91,7 @@ public:
     void stop();
 
     /// @brief Check if monitoring is active
-    /// @return true if the timer is running
+    /// @return true from start() until stop(), and after stop() until its last poll has landed
     [[nodiscard]] bool isRunning() const;
 
     /// @brief Perform a single synchronous poll and return current readings

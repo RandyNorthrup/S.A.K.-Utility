@@ -30,6 +30,7 @@
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QThreadPool>
 #include <QTimer>
 #include <QtTest/QtTest>
 
@@ -206,6 +207,115 @@ private Q_SLOTS:
             QCOMPARE(table->item(0, column)->text(), QStringLiteral("N/A"));
         }
     }
+    // UI review N14: in the capture VM the Battery row read "1 - health unknown, On AC power";
+    // VirtualBox's battery calls itself "1".
+    void batteryRowIsPlainWords() {
+        using Panel = sak::DiagnosticBenchmarkPanel;
+        sak::BatteryInfo battery;
+        QCOMPARE(Panel::batteryText(battery), QStringLiteral("Not present (desktop)"));
+        battery.present = true;
+        battery.name = QStringLiteral("1");
+        battery.status = QStringLiteral("On AC power");
+        QCOMPARE(Panel::batteryText(battery), QStringLiteral("Health not reported, On AC power"));
+        battery.name = QStringLiteral("DELL MXV9V95");
+        QCOMPARE(Panel::batteryText(battery),
+                 QStringLiteral("DELL MXV9V95 - health not reported, On AC power"));
+        battery.health_known = true;
+        battery.health_percent = 87.25;
+        battery.status = QStringLiteral("Charging");
+        QCOMPARE(Panel::batteryText(battery),
+                 QStringLiteral("DELL MXV9V95 - 87.3% health, Charging"));
+    }
+    // UI review N14 and F39: the VM's SMART table listed "VBOX HARDDISK" four times with no drive
+    // number while the messages under it named PhysicalDrive0 to 4, the testpc1 table's
+    // unreadable drives were bare "PhysicalDrive1" rows with Type N/A, and "High number of unsafe
+    // shutdowns: 630" did not say which drive it was about.
+    void smartRowsNameTheirDriveAndBus() {
+        using Panel = sak::DiagnosticBenchmarkPanel;
+        sak::SmartReport vbox;
+        vbox.device_path = QStringLiteral("\\\\.\\PhysicalDrive3");
+        vbox.model = QStringLiteral("VBOX HARDDISK");
+        sak::StorageDeviceInfo inventory_vbox;
+        inventory_vbox.disk_number = 3;
+        inventory_vbox.model = QStringLiteral("VBOX HARDDISK");
+        inventory_vbox.interface_type = QStringLiteral("SATA");
+        auto identity = Panel::smartRowIdentity(vbox, &inventory_vbox);
+        QCOMPARE(identity.drive, QStringLiteral("PhysicalDrive3 (VBOX HARDDISK)"));
+        QCOMPARE(identity.type, QStringLiteral("SATA"));
+        identity = Panel::smartRowIdentity(vbox, nullptr);
+        QCOMPARE(identity.drive, QStringLiteral("PhysicalDrive3 (VBOX HARDDISK)"));
+        QCOMPARE(identity.type, QString());
+
+        // An unreadable drive: smartctl gave no model and no type; the hardware scan has both.
+        sak::SmartReport unreadable;
+        unreadable.device_path = QStringLiteral("\\\\.\\PhysicalDrive1");
+        unreadable.model = QStringLiteral("PhysicalDrive1");
+        sak::StorageDeviceInfo enclosure;
+        enclosure.disk_number = 1;
+        enclosure.model = QStringLiteral("NS-PCNVMEHDE(-C)");
+        enclosure.interface_type = QStringLiteral("USB");
+        identity = Panel::smartRowIdentity(unreadable, &enclosure);
+        QCOMPARE(identity.drive, QStringLiteral("PhysicalDrive1 (NS-PCNVMEHDE(-C))"));
+        QCOMPARE(identity.type, QStringLiteral("USB"));
+        // The inventory's bus wins over smartctl's protocol, so both views say the same.
+        unreadable.interface_type = QStringLiteral("SATA");
+        QCOMPARE(Panel::smartRowIdentity(unreadable, &enclosure).type, QStringLiteral("USB"));
+    }
+    void smartWarningsStartWithTheirDrive() {
+        using Panel = sak::DiagnosticBenchmarkPanel;
+        const QString hynix = QStringLiteral("PhysicalDrive0 (SK hynix BC501)");
+        QCOMPARE(Panel::smartWarningText(hynix,
+                                         QStringLiteral("High number of unsafe shutdowns: 630")),
+                 QStringLiteral(
+                     "PhysicalDrive0 (SK hynix BC501): High number of unsafe shutdowns: 630"));
+        for (const QString& named :
+             {QStringLiteral(
+                  "PhysicalDrive0: SMART cannot be read through this drive's USB adapter"),
+              QStringLiteral(
+                  "PhysicalDrive0 (SK hynix BC501): SMART health could not be determined.")}) {
+            QCOMPARE(Panel::smartWarningText(hynix, named), named);
+        }
+        QCOMPARE(Panel::smartWarningText(QStringLiteral("PhysicalDrive1"),
+                                         QStringLiteral("PhysicalDrive10: no answer")),
+                 QStringLiteral("PhysicalDrive1: PhysicalDrive10: no answer"));
+    }
+    // Through the panel: the rows carry their numbers and the warnings their drive.
+    void smartTableNamesEveryRowAndWarning() {
+        sak::SmartReport vbox;
+        vbox.model = QStringLiteral("VBOX HARDDISK");
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        using Reports = QVector<sak::SmartReport>;
+        Reports reports;
+        for (int index = 0; index < 4; ++index) {
+            sak::SmartReport report = vbox;
+            report.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(index);
+            report.warnings = {QStringLiteral("High number of unsafe shutdowns: 630")};
+            reports.append(report);
+        }
+        QVERIFY(QMetaObject::invokeMethod(
+            &panel, "onSmartAnalysisComplete", Qt::DirectConnection, Q_ARG(Reports, reports)));
+        QTableWidget* table = nullptr;
+        for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+            if (candidate->columnCount() >= 6 && candidate->rowCount() == 4) {
+                table = candidate;
+            }
+        }
+        QVERIFY(table != nullptr);
+        QLabel* warnings = nullptr;
+        for (auto* label : panel.findChildren<QLabel*>()) {
+            if (label->text().contains(QStringLiteral("unsafe shutdowns"))) {
+                warnings = label;
+            }
+        }
+        QVERIFY(warnings != nullptr);
+        for (int row = 0; row < 4; ++row) {
+            const QString drive = QStringLiteral("PhysicalDrive%1 (VBOX HARDDISK)").arg(row);
+            QCOMPARE(table->item(row, 0)->text(), drive);
+            QVERIFY2(warnings->text().contains(drive + QStringLiteral(": High number of unsafe")),
+                     qPrintable(warnings->text()));
+        }
+    }
     // UI review F16: steps not yet run showed the hourglass that means "running".
     void pendingSuiteStepsShowTheIdleMark() {
         constexpr qsizetype kSuiteSteps = 7;
@@ -336,8 +446,13 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
 
     const int answered_before = m_processes_answered.load();
     panel.show();
+    // The first poll runs on the thread pool and can finish before its result reaches this thread.
+    // Round 4's flake was that moment under load: with the poll done and its completion not yet
+    // delivered, a started monitor read as stopped. Wait for the pool without the event loop, so
+    // the moment is always the one checked.
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(kPollSettleTimeoutMs));
+    QVERIFY2(m_processes_answered.load() > answered_before, "a shown readout asks the sensors");
     QVERIFY2(monitor->isRunning(), "a shown readout polls");
-    QTRY_VERIFY2(m_processes_answered.load() > answered_before, "a shown readout asks the sensors");
 
     panel.hide();
     QTRY_VERIFY_WITH_TIMEOUT(!monitor->isRunning(), kPollSettleTimeoutMs);
@@ -346,6 +461,7 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
     QVERIFY(!monitor->isRunning());
 
     panel.show();
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(kPollSettleTimeoutMs));
     QVERIFY2(monitor->isRunning(), "showing the readout again resumes polling");
     panel.hide();
     QTRY_VERIFY_WITH_TIMEOUT(!monitor->isRunning(), kPollSettleTimeoutMs);

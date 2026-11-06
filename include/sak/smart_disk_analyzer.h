@@ -70,6 +70,11 @@ public:
     ///       malformed/empty smartctl payload reads as a clean drive.
     [[nodiscard]] static bool reportHasAssessableData(const SmartReport& report);
 
+    /// @brief How a drive is named wherever several are listed together: "PhysicalDrive0 (VBOX
+    ///        HARDDISK)", or "PhysicalDrive1" when the model is not known. Its number tells four
+    ///        drives of one model apart.
+    [[nodiscard]] static QString driveName(const QString& device_path, const QString& model);
+
     /// @brief Parse raw smartctl JSON and run the full assessment pipeline.
     /// @param json_data Raw smartctl JSON bytes.
     /// @param disk_number The drive number being parsed.
