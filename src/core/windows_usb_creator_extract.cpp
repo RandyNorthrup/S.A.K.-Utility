@@ -3,6 +3,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/media_read_back.h"
 #include "sak/process_runner.h"
 #include "sak/windows_usb_creator.h"
 
@@ -330,7 +331,10 @@ bool WindowsUSBCreator::verifySplitParts(const QString& sources_dir) {
                                  .arg(i + 1)
                                  .arg(m_split_parts.size()));
         const QString path = QDir(sources_dir).filePath(part.name);
-        if (QFileInfo(path).size() != part.bytes || fileSha256(path) != part.sha256) {
+        // From the stick itself: a part just copied is still in Windows' file cache, and a read
+        // the cache answers proves only what was written (testpc1: 17.5 s for 2.8 GB).
+        if (QFileInfo(path).size() != part.bytes ||
+            sak::sha256FromMedia(path, [this]() { return m_cancelled.load(); }) != part.sha256) {
             setError(QStringLiteral("FINAL VERIFICATION FAILED: %1 on the drive does not match "
                                     "what was written")
                          .arg(part.name));

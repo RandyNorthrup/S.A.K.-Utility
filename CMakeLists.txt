@@ -372,6 +372,7 @@ set(SAK_FOUNDATION_SOURCES
     src/core/app_paths.cpp
     src/core/path_utils.cpp
     src/core/file_hash.cpp
+    src/core/media_read_back.cpp
     src/core/process_runner.cpp
     src/core/contained_process_quarantine.cpp
     src/core/elevation_manager.cpp
@@ -385,6 +386,7 @@ set(SAK_FOUNDATION_SOURCES
     include/sak/path_utils.h
     include/sak/secure_memory.h
     include/sak/file_hash.h
+    include/sak/media_read_back.h
     include/sak/process_runner.h
     include/sak/process_runner_containment.h
     include/sak/windows_process_job.h

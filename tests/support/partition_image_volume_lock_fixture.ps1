@@ -186,6 +186,101 @@ function Test-ImageComparerDrills([string]$Command, [string]$Text) {
     }
 }
 
+# The verification reads the target back through Sak.MediaReadStream, which must go to the drive:
+# a FileStream on an image just written is answered from Windows' file cache. The mode Windows
+# keeps for the handle says whether it is unbuffered, so the fixture asks for it.
+function Get-ImageHandleMode($Stream) {
+    if (-not ('ImageFixtureFileMode' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ImageFixtureFileMode {
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoStatus { public IntPtr Status; public UIntPtr Information; }
+    [DllImport("ntdll.dll")]
+    static extern int NtQueryInformationFile(SafeHandle handle, out IoStatus io, out uint mode, uint length, int infoClass);
+    public static uint Mode(SafeHandle handle) {
+        IoStatus io;
+        uint mode;
+        int status = NtQueryInformationFile(handle, out io, out mode, 4, 16);
+        if (status != 0) throw new InvalidOperationException("NtQueryInformationFile failed: " + status);
+        return mode;
+    }
+}
+'@
+    }
+    $field = $Stream.GetType().GetField('handle', [Reflection.BindingFlags]'NonPublic,Instance')
+    Assert-ImageFixture ($null -ne $field) 'MediaReadStream has no handle to ask about'
+    return [ImageFixtureFileMode]::Mode($field.GetValue($Stream))
+}
+
+function Test-ImageMediaReadStream([string]$Namespace, [string]$Text) {
+    $type = ($Namespace + '.MediaReadStream') -as [type]
+    Assert-ImageFixture ($null -ne $type) 'Emitted MediaReadStream type was not compiled'
+    $chunk = [int]$type.GetField('ChunkBytes').GetValue($null)
+    $length = 2 * $chunk + 1234
+    $bytes = [byte[]]::new($length)
+    [Random]::new(20261106).NextBytes($bytes)
+    $path = Join-Path $evidenceRoot ('media-read-' + $Namespace + '.img')
+    [IO.File]::WriteAllBytes($path, $bytes)
+    $stream = $type::new($path, $false)
+    try {
+        $noIntermediateBuffering = 0x8
+        Assert-ImageFixture (((Get-ImageHandleMode $stream) -band $noIntermediateBuffering) -ne 0) (
+            'MediaRead handle is buffered: the check would read Windows'' file cache')
+        Assert-ImageFixture ($stream.Length -eq $length) "MediaRead length $($stream.Length), expected $length"
+        foreach ($place in @(0, 1, ($chunk - 3), $chunk, (2 * $chunk + 1000), ($length - 1))) {
+            $want = [Math]::Min(700, $length - $place)
+            $stream.Position = $place
+            $got = [byte[]]::new($want)
+            $off = 0
+            while ($off -lt $want) {
+                $read = $stream.Read($got, $off, $want - $off)
+                Assert-ImageFixture ($read -gt 0) "MediaRead ended early at byte $($place + $off)"
+                $off += $read
+            }
+            for ($index = 0; $index -lt $want; $index++) {
+                Assert-ImageFixture ($got[$index] -eq $bytes[$place + $index]) (
+                    "MediaRead returned the wrong byte at $($place + $index)")
+            }
+        }
+        $stream.Position = $length
+        Assert-ImageFixture ($stream.Read([byte[]]::new(16), 0, 16) -eq 0) 'MediaRead read past the end'
+    } finally { $stream.Dispose() }
+    Assert-ImageFixture ($Text.Contains('$dstVerify = Open-SakVerifyRead $dst')) (
+        'The clone verification no longer reads the target through Open-SakVerifyRead')
+    . ([scriptblock]::Create((Get-ImageFunctionText $Text 'Open-SakVerifyRead')))
+    if ($Namespace -ceq 'Sak') {
+        $opened = Open-SakVerifyRead $path
+        try {
+            Assert-ImageFixture ($opened -is [Sak.MediaReadStream]) 'Open-SakVerifyRead did not open a MediaReadStream'
+            Assert-ImageFixture ($opened.Length -eq $length) 'Open-SakVerifyRead took a file for a disk'
+        } finally { $opened.Dispose() }
+    }
+    Remove-Item -LiteralPath $path -Force
+    Write-Host "PASS MediaReadStream ($Namespace): unbuffered handle, six places across chunk edges, end"
+}
+
+function Test-ImageMediaReadStreamDrills([string]$Command, [string]$Text) {
+    $drills = @(
+        @{ name = 'buffered-open'; from = 'NoBuffering | SequentialScan'; to = 'SequentialScan'; failure = 'handle is buffered' },
+        @{ name = 'unaligned-start'; from = 'long start = position - position % ChunkBytes;'; to = 'long start = position;'; failure = 'Verification could not reach byte 1:' },
+        @{ name = 'file-tail-length'; from = 'disk ? (int)Math.Min((long)ChunkBytes, length - start) : ChunkBytes'; to = '(int)Math.Min((long)ChunkBytes, length - start)'; failure = 'Verification could not read byte' }
+    )
+    for ($index = 0; $index -lt $drills.Count; $index++) {
+        $drill = $drills[$index]
+        Assert-ImageFixture ($Command.Contains($drill.from)) "MediaRead mutation anchor absent: $($drill.name)"
+        $namespace = 'SakMediaReadDrill' + $index
+        $changed = $Command.Replace($drill.from, $drill.to).Replace('namespace Sak {', "namespace $namespace {").Replace("'Sak.CloneByteComparer' -as [type]", "'$namespace.CloneByteComparer' -as [type]")
+        & ([scriptblock]::Create($changed)) | Out-Null
+        $caught = ''
+        try { Test-ImageMediaReadStream $namespace $Text }
+        catch { $caught = $_.Exception.Message }
+        Assert-ImageFixture ($caught.Contains($drill.failure)) "MediaRead guard survived: $($drill.name) ($caught)"
+        Write-Host "KILLED media-read-$($drill.name)"
+    }
+}
+
 function Get-ImageFunctionText([string]$Text, [string]$Name) {
     if ($null -eq $script:ImageFunctionCache) {
         $script:ImageFunctionCache = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -702,6 +797,13 @@ function Test-ImageRuntimeCase([string]$Text, [string]$Case, [string]$ExpectedFa
             $stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
             $state.Streams.Add($stream)
             return $stream
+        }
+        # The script reads the target back through MediaReadStream; here the verification's open
+        # stands in for it, so the cases below see which file was verified. The stream itself is
+        # run on a real file by Test-ImageMediaReadStream.
+        function Open-SakVerifyRead([string]$Path) {
+            Assert-ImageFixture ($Path -ceq $dst) 'Verification read something other than the target'
+            return Open-SakRead $Path
         }
         function Open-SakImageLockedRead($Handle) {
             Assert-ImageFixture (-not $offline) 'OfflineDisk capture opened a locked-volume stream'
@@ -1259,6 +1361,8 @@ $comparisonCommand = Get-ImageNativeCommand $production 'CloneByteComparer'
 Test-ImageComparerContract ('Sak.CloneByteComparer' -as [type])
 Test-ImageVerificationFunctions $production
 if ($RunGuardDrills) { Test-ImageComparerDrills $comparisonCommand $production }
+Test-ImageMediaReadStream 'Sak' $production
+if ($RunGuardDrills) { Test-ImageMediaReadStreamDrills $comparisonCommand $production }
 & ([scriptblock]::Create($nativeCommand)) | Out-Null
 $nativeType = 'Sak.ImageVolumeLock' -as [type]
 Assert-ImageNativeContract $nativeType

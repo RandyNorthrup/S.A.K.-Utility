@@ -8,6 +8,7 @@
 #include "sak/elevation_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/media_read_back.h"
 #include "sak/thread_custody.h"
 
 #include <QCryptographicHash>
@@ -887,7 +888,9 @@ bool UserProfileBackupWorker::storedFileMatches(const QString& source_path,
                                                                        : QByteArray();
     };
     const QByteArray source_digest = digest(source_path);
-    return !source_digest.isEmpty() && source_digest == digest(stored_path);
+    // The copy is read from the backup drive itself: just written, it is still in Windows' file
+    // cache, and a read the cache answers proves nothing about the drive.
+    return !source_digest.isEmpty() && source_digest == sak::sha256FromMedia(stored_path);
 }
 
 bool UserProfileBackupWorker::verifyStoredFile(const QString& sourcePath,

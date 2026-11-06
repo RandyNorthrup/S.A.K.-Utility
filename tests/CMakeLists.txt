@@ -1203,6 +1203,26 @@ add_test(NAME test_file_hash COMMAND test_file_hash
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_file_hash")
 
+# test_media_read_back - a file read back from its drive, with Windows' file cache bypassed
+add_executable(test_media_read_back
+    unit/test_media_read_back.cpp
+)
+set_target_properties(test_media_read_back PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_media_read_back PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_media_read_back PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_media_read_back COMMAND test_media_read_back
+         -o "${TEST_OUTPUT_DIR}/test_media_read_back.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_media_read_back")
+
 # test_path_utils - safe path, traversal, pattern matching, directory size
 add_executable(test_path_utils
     unit/test_path_utils.cpp

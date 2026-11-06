@@ -12,6 +12,8 @@
 #include "sak/user_profile_restore_worker.h"
 #include "sak/user_profile_types.h"
 
+#include "../support/create_file_recorder.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -309,6 +311,7 @@ private Q_SLOTS:
     void verifyAfterBackupChecksEveryStoredFile();
     void verifyOffChecksNothing();
     void storedFileCheckCatchesADamagedCopy();
+    void bothChecksReadTheDriveNotTheCache();
     void folderOverTheLimitIsWarnedAboutAndStillCopied();
     void excludeBoxesKeepOrDropTheirFiles_data();
     void excludeBoxesKeepOrDropTheirFiles();
@@ -1211,6 +1214,41 @@ void UserProfileRoundTripTests::storedFileCheckCatchesADamagedCopy() {
     QVERIFY(writeFile(container, damaged));
     QVERIFY(!UserProfileBackupWorker::storedFileMatches(
         original, container, written->plain_sha256, {}));
+}
+
+// Checked straight after it was written, a file is still in Windows' file cache, and a read the
+// cache answers proves nothing about the drive (testpc1: 2.8 GB in 17.5 s). The backup's check of a
+// stored copy and of a container, and the restore's check of a restored file, each open the file
+// they check with FILE_FLAG_NO_BUFFERING.
+void UserProfileRoundTripTests::bothChecksReadTheDriveNotTheCache() {
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    const QByteArray content = documentContent();
+    const QString original = work.filePath(QStringLiteral("original.txt"));
+    const QString stored = work.filePath(QStringLiteral("stored.txt"));
+    QVERIFY(writeFile(original, content));
+    QVERIFY(writeFile(stored, content));
+    sak::BackupCodecOptions codec;
+    codec.compress = true;
+    const QString container = work.filePath(QStringLiteral("container.sak"));
+    const auto written = sak::writeBackupFile(original, container, codec);
+    QVERIFY(written.has_value());
+    const QString restored = work.filePath(QStringLiteral("restored.txt"));
+    QVERIFY(writeFile(restored, content));
+
+    const sak::test::CreateFileRecorder recorder;
+    QVERIFY(UserProfileBackupWorker::storedFileMatches(original, stored, {}, {}));
+    QVERIFY2(sak::test::CreateFileRecorder::readOnlyUnbuffered(stored),
+             "the backup's check of a stored copy read it through the file cache");
+    QVERIFY(
+        UserProfileBackupWorker::storedFileMatches(original, container, written->plain_sha256, {}));
+    QVERIFY2(sak::test::CreateFileRecorder::readOnlyUnbuffered(container),
+             "the backup's check of a container read it through the file cache");
+    QCOMPARE(
+        UserProfileRestoreWorker::verifyRestoredFile(container, restored, written->plain_sha256),
+        UserProfileRestoreWorker::RestoredFileCheck::Matches);
+    QVERIFY2(sak::test::CreateFileRecorder::readOnlyUnbuffered(restored),
+             "the restore's check of a restored file read it through the file cache");
 }
 
 void UserProfileRoundTripTests::folderOverTheLimitIsWarnedAboutAndStillCopied() {

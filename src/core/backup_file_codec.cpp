@@ -9,6 +9,7 @@
 
 #include "sak/encryption.h"
 #include "sak/logger.h"
+#include "sak/media_read_back.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -411,7 +412,7 @@ namespace {
 
 /// @brief Decoding state shared by the two read paths.
 struct ReadContext {
-    QFile* source{nullptr};
+    QIODevice* source{nullptr};
     QFile* staged{nullptr};  // null when only the digest is wanted
     std::unique_ptr<StreamDecryptor> decryptor;
     std::unique_ptr<ZlibStream> inflater;
@@ -666,11 +667,12 @@ auto decodeBackupFileDigest(const QString& source_path,
                  source_path.toStdString());
         return std::unexpected(error_code::invalid_format);
     }
-    QFile source(source_path);
-    if (!source.open(QIODevice::ReadOnly)) {
+    // This is the check that a stored file holds what was backed up, made straight after it was
+    // written, so it reads the drive and not the pages Windows still holds from the write.
+    MediaReadBackFile source(source_path);
+    if (!source.open(QIODevice::ReadOnly) || !source.seek(kMagicBytes)) {
         return std::unexpected(error_code::read_error);
     }
-    source.seek(kMagicBytes);
 
     ReadContext ctx;
     ctx.source = &source;

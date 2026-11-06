@@ -100,7 +100,9 @@ struct BackupCodecResult {
     -> std::expected<BackupCodecResult, error_code>;
 
 /// @brief Decode a container all the way through without writing anything, so a stored file can
-/// be checked against the original right after it is written.
+/// be checked against the original right after it is written. The container is read from its
+/// drive with Windows' file cache bypassed (MediaReadBackFile), so the check is of what the drive
+/// holds and not of the pages left over from the write.
 [[nodiscard]] auto decodeBackupFileDigest(const QString& source_path,
                                           const QString& password,
                                           const std::function<bool()>& cancelled = {})

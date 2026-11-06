@@ -11,6 +11,7 @@
 #include "sak/backup_file_codec.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/media_read_back.h"
 #include "sak/path_utils.h"
 #include "sak/permission_manager.h"
 #include "sak/process_runner.h"
@@ -1208,8 +1209,13 @@ UserProfileRestoreWorker::RestoredFileCheck UserProfileRestoreWorker::verifyRest
     // the container's own tag or checksum has already tied to the original. A verbatim copy has no
     // decoder, and its source really is the same bytes.
     QByteArray expected = plainDigest;
-    QByteArray actual;
-    if ((expected.isEmpty() && !hashFile(sourcePath, expected)) || !hashFile(filePath, actual)) {
+    if (expected.isEmpty() && !hashFile(sourcePath, expected)) {
+        return RestoredFileCheck::Unreadable;
+    }
+    // The restored file is read from the disk it went to: just written, it is still in Windows'
+    // file cache, and a read the cache answers proves only what was written.
+    const QByteArray actual = sak::sha256FromMedia(filePath);
+    if (actual.isEmpty()) {
         return RestoredFileCheck::Unreadable;
     }
     return expected == actual ? RestoredFileCheck::Matches : RestoredFileCheck::Differs;

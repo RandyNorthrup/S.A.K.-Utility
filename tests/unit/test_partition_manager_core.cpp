@@ -18634,6 +18634,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
         script.script.indexOf(QStringLiteral("finally { Restore-SakRawWriteTarget"));
     QVERIFY(verifyAt >= 0);
     QVERIFY(restoreAt > verifyAt);
+    // The target is read back past Windows' file cache: an image file just written is still in
+    // it. test_partition_image_volume_lock runs the stream itself on a real file.
+    QVERIFY(script.script.contains(QStringLiteral("$dstVerify = Open-SakVerifyRead $dst")));
+    QVERIFY(script.script.contains(QStringLiteral("OpenExisting, NoBuffering | SequentialScan")));
     // The unbounded zero-length CopyTo fallback is removed; unknown size fails closed.
     QVERIFY(!script.script.contains(QStringLiteral("$from.CopyTo(")));
     QVERIFY(script.script.contains(QStringLiteral("source size could not be established")));

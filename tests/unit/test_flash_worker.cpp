@@ -17,7 +17,11 @@
 
 #include "sak/flash_worker.h"
 
+#include "../support/create_file_recorder.h"
+
+#include <QDir>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -161,6 +165,7 @@ private Q_SLOTS:
 
     // ---- Early failure: device open fails (non-admin) ----
     void executeFailsWhenDeviceInvalid();
+    void theDeviceIsOpenedUnbuffered();
 
     // ---- P07-54: sector-size-aware write padding (512e vs 4Kn) ----
     void padToSectorSizeAlreadyAligned512();
@@ -429,6 +434,25 @@ void FlashWorkerTests::executeFailsWhenDeviceInvalid() {
     // what distinguishes this test from executeFailsWhenImageOpenFails, which shares the code.
     QCOMPARE(errorSpy.count(), 1);
     QCOMPARE(errorSpy.first().at(0).toString(), QStringLiteral("Failed to open target device"));
+}
+
+// The verification reads the drive back through the handle the write used, so that handle has to
+// bypass Windows' cache or the check proves only what was written. Every image the flasher
+// writes, Linux, Clonezilla and Ventoy media included, goes through this one open. A file stands
+// in for the drive: it opens, and the sector-size query a file cannot answer ends the run.
+void FlashWorkerTests::theDeviceIsOpenedUnbuffered() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = QDir::toNativeSeparators(dir.filePath(QStringLiteral("drive.img")));
+    QFile file(target);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+    const sak::test::CreateFileRecorder recorder;
+    FlashWorker worker(std::make_unique<MockImageSource>(true), target);
+    worker.start();
+    QVERIFY2(worker.wait(5000), "Worker thread did not stop within 5 seconds");
+    QVERIFY2(sak::test::CreateFileRecorder::readOnlyUnbuffered(target),
+             "the flasher opened its target without FILE_FLAG_NO_BUFFERING");
 }
 
 // ===========================================================================

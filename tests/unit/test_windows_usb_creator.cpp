@@ -16,6 +16,7 @@
 #include "sak/process_runner.h"
 #include "sak/windows_usb_creator.h"
 
+#include "../support/create_file_recorder.h"
 #include "../support/iso_fixture.h"
 
 #include <QDir>
@@ -843,7 +844,17 @@ void WindowsUSBCreatorTests::aSplitInstallImageIsCopiedAndReadBack() {
              QStringList({QStringLiteral("install.swm"),
                           QStringLiteral("install2.swm"),
                           QStringLiteral("install10.swm")}));
-    QVERIFY2(creator.verifySplitParts(sources), qPrintable(creator.lastError()));
+    {
+        // testpc1: the second part read back in 17.5 s against 101 s for the first, from
+        // Windows' file cache. Each part is read from a handle that bypasses it.
+        const sak::test::CreateFileRecorder recorder;
+        QVERIFY2(creator.verifySplitParts(sources), qPrintable(creator.lastError()));
+        for (const QString& name : names) {
+            QVERIFY2(sak::test::CreateFileRecorder::readOnlyUnbuffered(
+                         QDir(sources).filePath(name)),
+                     qPrintable(name + QStringLiteral(" was not read back unbuffered")));
+        }
+    }
 
     // One byte changed on the drive, same size.
     QFile changed(QDir(sources).filePath(QStringLiteral("install2.swm")));

@@ -2599,6 +2599,8 @@ QString cloneTransferOpenFunctionsScript() {
         "function Open-SakRead([string]$p) { return [System.IO.File]::Open($p, "
         "[System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, "
         "[System.IO.FileShare]::Read) }\n"
+        "function Open-SakVerifyRead([string]$p) { return New-Object Sak.MediaReadStream "
+        "-ArgumentList $p, $p.StartsWith('\\\\.\\') }\n"
         "function Open-SakWrite([string]$p) { if ($p.StartsWith('\\\\.\\')) { return "
         "[System.IO.File]::Open($p, [System.IO.FileMode]::Open, "
         "[System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }; return "
@@ -2617,14 +2619,125 @@ QString cloneTransferOpenFunctionsScript() {
         "$to.Write($buf, 0, $read); $left -= [uint64]$read } }\n");
 }
 
+// MediaReadStream is what the clone and image verification reads the target through. A FileStream
+// on an image file the copy has just written is answered from Windows' file cache, which proves
+// what was written and not what the drive holds; this one opens the target with
+// FILE_FLAG_NO_BUFFERING. Such reads start on a sector boundary, run a whole number of sectors and
+// land in a sector-aligned buffer, so it reads whole 4 MiB chunks from a chunk boundary into a
+// VirtualAlloc buffer: a file asks for the whole chunk (the read past its end comes back short), a
+// disk only as far as its end, which is a whole number of its sectors. Its fields, the open and the
+// size come first.
+QString mediaReadStreamOpenSource() {
+    return QStringLiteral(R"CS(public sealed class MediaReadStream : Stream {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool ReadFile(SafeFileHandle h, IntPtr buffer, int count, out int read, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFilePointerEx(SafeFileHandle h, long distance, out long position, uint method);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileSizeEx(SafeFileHandle h, out long size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle h, uint code, IntPtr input, int inputLength, out long output, int outputLength, out int returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint type, uint protect);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool VirtualFree(IntPtr address, UIntPtr size, uint type);
+    const uint GenericRead = 0x80000000, ShareRead = 1, OpenExisting = 3;
+    public const uint NoBuffering = 0x20000000;
+    const uint SequentialScan = 0x08000000, DiskGetLengthInfo = 0x7405C;
+    const uint MemCommitReserve = 0x3000, PageReadWrite = 0x04, MemRelease = 0x8000;
+    public const int ChunkBytes = 4 * 1024 * 1024;
+    readonly SafeFileHandle handle;
+    readonly long length;
+    readonly bool disk;
+    IntPtr chunk;
+    long chunkStart = -1;
+    int chunkFill;
+    long position;
+    public MediaReadStream(string path, bool isDisk) {
+        disk = isDisk;
+        handle = CreateFileW(path, GenericRead, ShareRead, IntPtr.Zero, OpenExisting, NoBuffering | SequentialScan, IntPtr.Zero);
+        if (handle.IsInvalid) throw new IOException("Could not open " + path + " to verify it: Windows error " + Marshal.GetLastWin32Error());
+        long size;
+        int returned;
+        if (!(disk ? DeviceIoControl(handle, DiskGetLengthInfo, IntPtr.Zero, 0, out size, 8, out returned, IntPtr.Zero) : GetFileSizeEx(handle, out size))) {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new IOException("Could not read the size of " + path + " to verify it: Windows error " + error);
+        }
+        length = size;
+        chunk = VirtualAlloc(IntPtr.Zero, (UIntPtr)ChunkBytes, MemCommitReserve, PageReadWrite);
+        if (chunk == IntPtr.Zero) {
+            handle.Dispose();
+            throw new IOException("No memory to verify " + path);
+        }
+    }
+)CS");
+}
+
+// The rest of MediaReadStream: the Stream members the verification calls, and the chunked read.
+QString mediaReadStreamReadSource() {
+    return QStringLiteral(R"CS(    public override bool CanRead { get { return true; } }
+    public override bool CanSeek { get { return true; } }
+    public override bool CanWrite { get { return false; } }
+    public override long Length { get { return length; } }
+    public override long Position {
+        get { return position; }
+        set { if (value < 0) throw new ArgumentOutOfRangeException("value"); position = value; }
+    }
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) {
+        long start = origin == SeekOrigin.Begin ? 0 : origin == SeekOrigin.Current ? position : length;
+        Position = start + offset;
+        return position;
+    }
+    public override void SetLength(long value) { throw new NotSupportedException(); }
+    public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+    public override int Read(byte[] buffer, int offset, int count) {
+        if (position >= length || count <= 0) return 0;
+        long start = position - position % ChunkBytes;
+        if (start != chunkStart) Load(start);
+        int at = (int)(position - chunkStart);
+        int take = Math.Min(count, chunkFill - at);
+        if (take <= 0) return 0;
+        Marshal.Copy(new IntPtr(chunk.ToInt64() + at), buffer, offset, take);
+        position += take;
+        return take;
+    }
+    void Load(long start) {
+        chunkStart = -1;
+        long moved;
+        if (!SetFilePointerEx(handle, start, out moved, 0)) throw new IOException("Verification could not reach byte " + start + ": Windows error " + Marshal.GetLastWin32Error());
+        int want = disk ? (int)Math.Min((long)ChunkBytes, length - start) : ChunkBytes;
+        int read;
+        if (!ReadFile(handle, chunk, want, out read, IntPtr.Zero)) throw new IOException("Verification could not read byte " + start + ": Windows error " + Marshal.GetLastWin32Error());
+        chunkFill = (int)Math.Min((long)read, length - start);
+        chunkStart = start;
+    }
+    protected override void Dispose(bool disposing) {
+        if (chunk != IntPtr.Zero) { VirtualFree(chunk, UIntPtr.Zero, MemRelease); chunk = IntPtr.Zero; }
+        if (disposing) handle.Dispose();
+        base.Dispose(disposing);
+    }
+}
+)CS");
+}
+
 QString cloneByteComparerScript() {
     // Keep exact first-mismatch reporting without enumerating hundreds of millions of
-    // individual bytes through PowerShell. The buffer remains one byte[] pipeline value.
+    // individual bytes through PowerShell. The buffer remains one byte[] pipeline value. One
+    // Add-Type carries it and MediaReadStream, which the same verification uses.
     return QStringLiteral(R"PS(if (-not ('Sak.CloneByteComparer' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 namespace Sak {
-public static class CloneByteComparer {
+)PS") + mediaReadStreamOpenSource() +
+           mediaReadStreamReadSource() +
+           QStringLiteral(R"PS(public static class CloneByteComparer {
     public static int FirstMismatch(byte[] left, byte[] right, int count) {
         if (left == null || right == null || count < 0 ||
             count > left.Length || count > right.Length) {
@@ -2641,7 +2754,6 @@ public static class CloneByteComparer {
 }
 )PS");
 }
-
 QString cloneTransferVerificationFunctionsScript() {
     return cloneByteComparerScript() +
            QStringLiteral(
@@ -2733,7 +2845,7 @@ QString cloneTransferCopyBodyScript() {
 QString cloneTransferVerifyBodyScript() {
     return QStringLiteral(
         "if (-not [string]::IsNullOrWhiteSpace($verifyMode)) { if ($expectedBytes -eq 0) { "
-        "throw 'Verification requires known source size' }; $dstVerify = Open-SakRead $dst; "
+        "throw 'Verification requires known source size' }; $dstVerify = Open-SakVerifyRead $dst; "
         "try { if ($verifyMode -like 'Full*') { "
         "Write-Output 'Running full clone verification'; Assert-SakFullCopy $in "
         "$dstVerify $expectedBytes $sourceOffset $targetOffset } else { Write-Output "
