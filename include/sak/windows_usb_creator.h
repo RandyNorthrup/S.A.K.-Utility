@@ -131,6 +131,15 @@ public:
      */
     QString lastError() const;
 
+    /// @brief Whether this run has started writing to the target disk (its diskpart clean).
+    ///        A failure before that leaves the drive as it was, and the panel says so.
+    [[nodiscard]] bool targetWasWritten() const { return m_target_written.load(); }
+
+    /// @brief How long the disk-safety check waits for Windows to describe the target. A cold
+    ///        PowerShell with the Storage module took 3.2 s on an idle physical PC; 5 s ran out
+    ///        in a busy VM and failed every Windows USB job at once.
+    static constexpr int kDiskSafetyProbeTimeoutMs = 30'000;
+
 Q_SIGNALS:
     /**
      * @brief Emitted when status changes (e.g., "Formatting...", "Copying files...")
@@ -415,9 +424,10 @@ private:
     /// instance so its per-run QString/qint64 state (disk/ISO identity, label) cannot be
     /// raced across threads. Set on entry, cleared on every exit path.
     std::atomic<bool> m_running{false};
-    mutable QMutex m_errorMutex;   ///< Guards m_lastError for cross-thread access
-    QString m_lastError;           ///< Protected by m_errorMutex
-    QString m_volumeLabel;         // Volume label extracted from ISO
+    std::atomic<bool> m_target_written{false};  ///< Set just before the diskpart clean
+    mutable QMutex m_errorMutex;                ///< Guards m_lastError for cross-thread access
+    QString m_lastError;                        ///< Protected by m_errorMutex
+    QString m_volumeLabel;                      // Volume label extracted from ISO
     QString m_diskNumber;          // Hardware disk number (e.g., "1" for PhysicalDrive1)
     QString m_targetDiskUniqueId;  ///< Get-Disk UniqueId pinned by guardTargetDiskSafe()
     qint64 m_targetDiskSizeBytes{

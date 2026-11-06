@@ -13,6 +13,7 @@
  * validation that fires before formatDriveNTFS/QProcess calls.
  */
 
+#include "sak/process_runner.h"
 #include "sak/windows_usb_creator.h"
 
 #include "../support/iso_fixture.h"
@@ -60,6 +61,10 @@ private Q_SLOTS:
 
     // ---- Combined multi-validation ----
     void diskValidationFiresBeforeIsoCheck();
+
+    // ---- The disk-safety check says why it could not answer ----
+    void diskSafetyCheckThatCannotAnswerSaysWhyAndWritesNothing();
+    void aFailureAfterTheCleanSaysTheDriveWasWritten();
 
     // ---- Volume label sanitization (P07-52) ----
     void sanitizeVolumeLabel_stripsPowerShellMetacharacters();
@@ -280,6 +285,94 @@ void WindowsUSBCreatorTests::diskValidationFiresBeforeIsoCheck() {
     QCOMPARE(failedSpy.count(), 1);
     QVERIFY2(creator.lastError().contains(QStringLiteral("Invalid disk number")),
              qPrintable("Disk validation should fire before ISO check: " + creator.lastError()));
+}
+
+// Review 2: in a busy VM every Windows USB job failed at once with "Could not verify target disk
+// 5 is safe to erase", naming no cause, and the panel added that the drive "may be left
+// unusable" although nothing had touched it. The check had 5 s for a cold PowerShell and the
+// Storage module, which took 3.2 s on an idle physical PC.
+void WindowsUSBCreatorTests::diskSafetyCheckThatCannotAnswerSaysWhyAndWritesNothing() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString iso = dir.filePath(QStringLiteral("windows.iso"));
+    QFile file(iso);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(4096, 'x'));
+    file.close();
+
+    // The timed-out message names the limit, so it pins it at 30 s.
+    const struct {
+        sak::ProcessResult answer;
+        QString expected;
+    } cases[] = {
+        {[] {
+             sak::ProcessResult timed_out;
+             timed_out.timed_out = true;
+             return timed_out;
+         }(),
+         QStringLiteral("Could not verify target disk 5 is safe to erase: Windows did not "
+                        "describe the disk within 30 s. Nothing was written to it.")},
+        {[] {
+             sak::ProcessResult missing;
+             missing.exit_code = 0;
+             missing.std_out = QStringLiteral(
+                 "ERROR|No MSFT_Disk objects found with property 'Number' equal to '5'.\r\n");
+             return missing;
+         }(),
+         QStringLiteral("Could not verify target disk 5 is safe to erase: Windows reports \"No "
+                        "MSFT_Disk objects found with property 'Number' equal to '5'.\". Nothing "
+                        "was written to it. The drive may have been unplugged or renumbered: "
+                        "refresh the drive list and choose it again.")},
+    };
+    for (const auto& probe : cases) {
+        QStringList asked;
+        const sak::ScopedProcessFaultInjector injector(
+            [&](const QString& program,
+                const QStringList& args) -> std::optional<sak::ProcessResult> {
+                asked << args.join(QLatin1Char(' '));
+                if (program.contains(QStringLiteral("powershell"), Qt::CaseInsensitive)) {
+                    return probe.answer;
+                }
+                return std::nullopt;
+            });
+        WindowsUSBCreator creator;
+        QSignalSpy failedSpy(&creator, &WindowsUSBCreator::failed);
+        QVERIFY(!creator.createBootableUSB(iso, QStringLiteral("5")));
+        QCOMPARE(failedSpy.count(), 1);
+        const QString error = failedSpy.first().at(0).toString();
+        QVERIFY2(error.startsWith(probe.expected), qPrintable(error));
+        QVERIFY(!creator.targetWasWritten());
+        QCOMPARE(asked.size(), 1);
+        // Windows' own reason is what reaches the message.
+        QVERIFY2(asked.first().contains(QStringLiteral("'ERROR|' + $_.Exception.Message")),
+                 qPrintable(asked.first()));
+    }
+}
+
+// Once the clean has been started the drive may be left with nothing on it, and the panel says so.
+void WindowsUSBCreatorTests::aFailureAfterTheCleanSaysTheDriveWasWritten() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString iso = dir.filePath(QStringLiteral("windows.iso"));
+    QFile file(iso);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(4096, 'x'));
+    file.close();
+    const sak::ScopedProcessFaultInjector injector(
+        [](const QString& program, const QStringList&) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult answer;
+            answer.exit_code = 0;
+            if (program.contains(QStringLiteral("powershell"), Qt::CaseInsensitive)) {
+                answer.std_out = QStringLiteral("False|False|False|31042043904|USBSTOR\\DISK\r\n");
+            } else {
+                answer.exit_code = 1;
+                answer.std_out = QStringLiteral("DiskPart has encountered an error.");
+            }
+            return answer;
+        });
+    WindowsUSBCreator creator;
+    QVERIFY(!creator.createBootableUSB(iso, QStringLiteral("5")));
+    QVERIFY2(creator.targetWasWritten(), qPrintable(creator.lastError()));
 }
 
 // ===========================================================================

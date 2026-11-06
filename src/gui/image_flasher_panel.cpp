@@ -42,6 +42,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QMessageBox>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QSystemTrayIcon>
@@ -663,8 +664,8 @@ void ImageFlasherPanel::createCompletionPage() {
     m_completionDetailsLabel->setWordWrap(true);
     group_layout->addWidget(m_completionDetailsLabel);
 
-    group_layout->addStretch();
-
+    // Under the details, not at the foot of a page as tall as the tallest page: there the fixed
+    // footer cut it to a 9 px strip (dark re-check DN3, both themes).
     m_flashAnotherButton = new QPushButton("Flash Another", group_box);
     m_flashAnotherButton->setAccessibleName(QStringLiteral("Flash Another Drive"));
     m_flashAnotherButton->setToolTip(QStringLiteral("Start over and flash another drive"));
@@ -677,6 +678,7 @@ void ImageFlasherPanel::createCompletionPage() {
     });
 
     layout->addWidget(group_box);
+    layout->addStretch();
     m_stackedWidget->addWidget(m_completionPage);
 }
 
@@ -1477,15 +1479,21 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
         onFlashCompleted(result);
     });
 
-    connect(creator, &WindowsUSBCreator::failed, this, [this](const QString& error) {
+    const QPointer<WindowsUSBCreator> tracked(creator);
+    connect(creator, &WindowsUSBCreator::failed, this, [this, tracked](const QString& error) {
         m_isFlashing = false;
         m_flashButton->setEnabled(true);
         m_flashButton->setVisible(true);
         updateNavigationButtons();
-        // This writer erases the drive first, so a failure may leave it with nothing usable on it.
+        // This writer erases the drive first, so a failure after that may leave it with nothing
+        // usable on it. One before it, a safety check that could not answer, left it as it was,
+        // and the warning had a technician reformat a stick that was fine. With the creator
+        // gone, nothing says which, so the warning stays.
         showFlashFailure(error,
-                         QStringLiteral("The target drive may be left unusable. You may need to "
-                                        "reformat it before it can be used again."));
+                         tracked.isNull() || tracked->targetWasWritten()
+                             ? QStringLiteral("The target drive may be left unusable. You may "
+                                              "need to reformat it before it can be used again.")
+                             : QStringLiteral("The target drive was not changed."));
     });
 
     // Clean up thread and creator when thread finishes

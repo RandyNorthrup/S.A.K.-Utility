@@ -884,11 +884,18 @@ bool nativePathExists(const QString& root, const char* rel) {
     // UNKNOWN. hasWindowsIndicators/hasBootManagerIndicators gate erasure of a boot/system disk, so
     // fail closed: report an uninspectable path as present rather than let an unreadable
     // system/boot volume be classified "safe".
-    const DWORD err = GetLastError();
-    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
+    return !DriveScanner::indicatorAbsentFor(GetLastError());
 }
 
 }  // namespace
+
+bool DriveScanner::indicatorAbsentFor(DWORD error) {
+    // A volume with no file system Windows can read (ERROR_UNRECOGNIZED_VOLUME) holds no Windows:
+    // testpc1's stick, raw-written by an image, was listed as "[SYSTEM DRIVE]" and could not be
+    // flashed again. Anything else unknown (access denied, not ready, locked) still fails closed.
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+           error == ERROR_UNRECOGNIZED_VOLUME;
+}
 
 bool DriveScanner::hasWindowsIndicators(const QString& root) {
     if (nativePathExists(root, "Windows/System32") &&

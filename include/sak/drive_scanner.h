@@ -271,6 +271,9 @@ private:
     static bool hasBootManagerIndicators(const QString& root);
 
 public:
+    /// @brief Whether the error a path query gave proves the path is not there: not found, or a
+    ///        volume with no file system Windows can read. Any other error leaves it unknown.
+    [[nodiscard]] static bool indicatorAbsentFor(DWORD error);
     /// @brief Fail-closed engine guard: is physical drive @p driveNumber boot-critical?
     ///        DiskProbe::Yes when a NON-removable volume on it carries boot-loader files;
     ///        No when it provably does not (or is removable -- a bootable USB re-flash

@@ -112,6 +112,30 @@ private Q_SLOTS:
         QVERIFY2(text.contains(QStringLiteral("online disk")), qPrintable(text));
         QVERIFY2(text.contains(QStringLiteral("PhysicalDrive5")), qPrintable(text));
     }
+    // Dark re-check DN3, both themes: "Flash Another" sat at the foot of a page as tall as the
+    // tallest page, and the fixed footer cut it to a 9 px strip.
+    void flashAnotherIsWholeAboveTheFooter() {
+        // Shorter than the pages' content, as the capture's window was: the page then scrolls,
+        // and a button at the foot of the tallest page's height is below the fold.
+        sak::ImageFlasherPanel panel;
+        panel.resize(1240, 520);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        sak::FlashResult result;
+        result.success = true;
+        result.successfulDrives = {QStringLiteral("\\\\.\\PhysicalDrive5")};
+        panel.onFlashCompleted(result);
+        QCoreApplication::processEvents();
+        QPushButton* button = panel.m_flashAnotherButton;
+        QVERIFY(button->isVisible());
+        const int bottom = button->mapTo(&panel, QPoint(0, button->height())).y();
+        const int footer_top = panel.m_settingsButton->mapTo(&panel, QPoint(0, 0)).y();
+        QVERIFY2(bottom <= footer_top,
+                 qPrintable(QStringLiteral("button ends at %1, footer starts at %2")
+                                .arg(bottom)
+                                .arg(footer_top)));
+        QCOMPARE(button->visibleRegion().boundingRect().height(), button->height());
+    }
     void aSuccessfulFlashSaysSoWithATick() {
         sak::ImageFlasherPanel panel;
         sak::FlashResult result;

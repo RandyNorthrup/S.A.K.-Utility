@@ -114,6 +114,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
 
 void WindowsUSBCreator::resetPerRunState(const QString& diskNumber) {
     m_cancelled = false;
+    m_target_written = false;
     setError({});
     m_diskNumber = diskNumber;
     // Reset per-run state so a prior run's volume label / pinned identity can
@@ -352,6 +353,44 @@ bool parseDiskSafetyRow(const QString& out, DiskSafetyRow& row) {
 // Run the Get-Disk safety probe for @p diskNumber. Returns true and fills @p row
 // ONLY on a clean exit with parseable output for a disk that is NOT boot/system/
 // read-only. On any failure writes a human message to *err and returns false.
+// Why the check could not answer, and what the technician can do. Every one of these is before
+// the clean, so the drive is as it was. It used to be one sentence for all of them, which
+// named no cause and no next step.
+QString diskSafetyProbeFailure(const QString& diskNumber,
+                               const sak::ProcessResult& result,
+                               const QString& out) {
+    const QString lead =
+        QString("Could not verify target disk %1 is safe to erase: ").arg(diskNumber);
+    const QString untouched = QStringLiteral(" Nothing was written to it.");
+    if (result.cancelled) {
+        return QStringLiteral("Operation cancelled");
+    }
+    if (result.timed_out) {
+        return lead +
+               QString("Windows did not describe the disk within %1 s.")
+                   .arg(WindowsUSBCreator::kDiskSafetyProbeTimeoutMs /
+                        sak::kMillisecondsPerSecond) +
+               untouched +
+               QStringLiteral(
+                   " Try again when the PC is less busy; if it repeats, unplug the "
+                   "drive, plug it back in and refresh the drive list.");
+    }
+    static const QString kErrorPrefix = QStringLiteral("ERROR|");
+    if (out.startsWith(kErrorPrefix)) {
+        const QString reason = out.mid(kErrorPrefix.size()).trimmed();
+        return lead +
+               QString("Windows reports \"%1\".")
+                   .arg(reason.isEmpty() ? QStringLiteral("no such disk") : reason) +
+               untouched +
+               QStringLiteral(
+                   " The drive may have been unplugged or renumbered: refresh the "
+                   "drive list and choose it again.");
+    }
+    return lead +
+           QString("PowerShell ended with exit code %1 and no answer.").arg(result.exit_code) +
+           untouched + QStringLiteral(" Try again; if it repeats, see the log for its output.");
+}
+
 bool probeDiskSafety(const QString& diskNumber,
                      const sak::CancelCheck& cancel,
                      DiskSafetyRow& row,
@@ -360,12 +399,19 @@ bool probeDiskSafety(const QString& diskNumber,
                               "try { $d = Get-Disk -Number %1 -ErrorAction Stop; "
                               "Write-Output ('{0}|{1}|{2}|{3}|{4}' -f "
                               "$d.IsBoot, $d.IsSystem, $d.IsReadOnly, $d.Size, $d.UniqueId) } "
-                              "catch { Write-Output 'ERROR' }")
+                              "catch { Write-Output ('ERROR|' + $_.Exception.Message) }")
                               .arg(diskNumber);
-    const auto result = sak::runPowerShell(query, sak::kTimeoutProcessShortMs, true, false, cancel);
+    const auto result = sak::runPowerShell(
+        query, WindowsUSBCreator::kDiskSafetyProbeTimeoutMs, true, false, cancel);
     const QString out = result.std_out.trimmed();
-    if (!result.completedSuccessfully() || out.isEmpty() || out == QStringLiteral("ERROR")) {
-        *err = QString("Could not verify target disk %1 is safe to erase").arg(diskNumber);
+    if (!result.completedSuccessfully() || out.isEmpty() ||
+        out.startsWith(QStringLiteral("ERROR"))) {
+        *err = diskSafetyProbeFailure(diskNumber, result, out);
+        if (!result.std_err.trimmed().isEmpty()) {
+            sak::logWarning(QString("Disk-safety check for disk %1 wrote: %2")
+                                .arg(diskNumber, result.std_err.trimmed())
+                                .toStdString());
+        }
         return false;
     }
     if (!parseDiskSafetyRow(out, row)) {
@@ -747,6 +793,7 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 
     sak::logInfo(QString("Running diskpart script:\n%1").arg(diskpartScript).toStdString());
 
+    m_target_written = true;
     QString output;
     if (!runDiskpartScript(diskpartScript, sak::kTimeoutProcessLongMs, output)) {
         return false;

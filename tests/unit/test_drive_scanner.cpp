@@ -79,6 +79,7 @@ private Q_SLOTS:
     // --- B6-26: Windows indicators detected on a volume root ---
     void hasWindowsIndicators_detectsSystem32();
     void hasWindowsIndicators_emptyRootIsNotSystem();
+    void aVolumeWithNoFileSystemHoldsNoWindows();
 
     // --- C3-09: boot-loader (ESP/boot) indicators + fail-closed engine boot probe ---
     void hasBootManagerIndicators_detectsBootmgr();
@@ -621,6 +622,18 @@ void DriveScannerTests::hasWindowsIndicators_detectsSystem32() {
     kernel.close();
 
     QVERIFY(DriveScanner::hasWindowsIndicators(temp.path()));
+}
+
+// testpc1: a stick an image had been written to raw read "[SYSTEM DRIVE]" and could not be flashed
+// again. Every path on its volume answered ERROR_UNRECOGNIZED_VOLUME (1005), measured there.
+void DriveScannerTests::aVolumeWithNoFileSystemHoldsNoWindows() {
+    QVERIFY(DriveScanner::indicatorAbsentFor(ERROR_UNRECOGNIZED_VOLUME));
+    QVERIFY(DriveScanner::indicatorAbsentFor(ERROR_FILE_NOT_FOUND));
+    QVERIFY(DriveScanner::indicatorAbsentFor(ERROR_PATH_NOT_FOUND));
+    // Unknown is not absent: a volume that refuses or is not ready may still hold Windows.
+    QVERIFY(!DriveScanner::indicatorAbsentFor(ERROR_ACCESS_DENIED));
+    QVERIFY(!DriveScanner::indicatorAbsentFor(ERROR_NOT_READY));
+    QVERIFY(!DriveScanner::indicatorAbsentFor(ERROR_SHARING_VIOLATION));
 }
 
 void DriveScannerTests::hasWindowsIndicators_emptyRootIsNotSystem() {
