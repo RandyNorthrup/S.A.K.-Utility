@@ -23,6 +23,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
+#include <QTimer>
 #include <QUrlQuery>
 
 #include <algorithm>
@@ -33,6 +35,8 @@ constexpr int kGbDisplayPrecision = 2;
 // The UUP dump JSON endpoints return small documents; a peer that streams past this
 // ceiling is aborted rather than buffered into memory by readAll().
 constexpr qint64 kMaxApiResponseBytes = 32LL * 1024 * 1024;
+// How long to wait before asking UUP dump for a file list a second time.
+constexpr int kFilesRetryDelayMs = 3000;
 
 // --- Construction / Destruction ----------------------------------------------
 
@@ -60,6 +64,7 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
 
     // Use listid.php to search for builds matching architecture and channel
     const QString searchQuery = buildSearchQuery(arch, channel);
+    m_buildsChannel = channel;
 
     QMap<QString, QString> params;
     params["search"] = searchQuery;
@@ -125,6 +130,12 @@ void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QS
     params["id"] = updateId;
     params["lang"] = lang;
     params["edition"] = edition;
+    const bool same_request = m_filesRequest.update_id == updateId && m_filesRequest.lang == lang &&
+                              m_filesRequest.edition == edition;
+    m_filesRequest = {.update_id = updateId,
+                      .lang = lang,
+                      .edition = edition,
+                      .retried = same_request && m_filesRequest.retried};
 
     const QNetworkReply* reply = sendApiRequest("/get.php", params);
     if (reply != nullptr) {
@@ -137,6 +148,8 @@ void UupDumpApi::cancelAll() {
     // m_pendingReplies.removeOne(reply) -- mutating the very list we would be
     // range-iterating (iterator invalidation / UB). Snapshot and clear FIRST, then
     // abort from the copy; the slot's removeOne then no-ops on the empty list.
+    ++m_cancelGeneration;
+    m_filesRequest.retried = false;
     const QList<QNetworkReply*> pending = m_pendingReplies;
     m_pendingReplies.clear();
     for (QNetworkReply* reply : pending) {
@@ -179,6 +192,25 @@ QString UupDumpApi::channelToDisplayName(ReleaseChannel channel) {
         return "Canary Channel";
     }
     return "Public Release";
+}
+
+bool UupDumpApi::isPassingServiceError(int http_status) {
+    constexpr int kBadRequest = 400;
+    constexpr int kTooManyRequests = 429;
+    constexpr int kServerErrorFirst = 500;
+    constexpr int kServerErrorLast = 599;
+    return http_status == kBadRequest || http_status == kTooManyRequests ||
+           (http_status >= kServerErrorFirst && http_status <= kServerErrorLast);
+}
+
+bool UupDumpApi::buildBelongsToChannel(const BuildInfo& build, ReleaseChannel channel) {
+    if (channel != ReleaseChannel::Retail) {
+        return true;
+    }
+    static const QRegularExpression kPublicRelease(QStringLiteral(
+                                                       "^Windows 1[01], version \\d{2}H\\d \\("),
+                                                   QRegularExpression::CaseInsensitiveOption);
+    return kPublicRelease.match(build.title.trimmed()).hasMatch();
 }
 
 QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
@@ -259,7 +291,8 @@ void UupDumpApi::onBuildsFetchReply() {
     QList<BuildInfo> builds;
 
     for (auto it = buildsObj.begin(); it != buildsObj.end(); ++it) {
-        if (auto info = parseBuildEntry(it.key(), it.value().toObject())) {
+        if (auto info = parseBuildEntry(it.key(), it.value().toObject());
+            info && buildBelongsToChannel(*info, m_buildsChannel)) {
             builds.append(*info);
         }
     }
@@ -401,6 +434,24 @@ void UupDumpApi::onEditionsReply() {
     Q_EMIT editionsFetched(editions, editionNames);
 }
 
+bool UupDumpApi::askFilesOnceMore(const sak::NetworkTransferResult& transfer) {
+    if (transfer.success || transfer.cancelled || m_filesRequest.retried ||
+        !isPassingServiceError(transfer.http_status)) {
+        return false;
+    }
+    m_filesRequest.retried = true;
+    sak::logWarning("UUP dump answered the file list with HTTP {}; asking once more",
+                    transfer.http_status);
+    const FilesRequest again = m_filesRequest;
+    const quint64 generation = m_cancelGeneration;
+    QTimer::singleShot(kFilesRetryDelayMs, this, [this, again, generation]() {
+        if (generation == m_cancelGeneration) {
+            getFiles(again.update_id, again.lang, again.edition);
+        }
+    });
+    return true;
+}
+
 void UupDumpApi::onFilesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (reply == nullptr) {
@@ -412,6 +463,10 @@ void UupDumpApi::onFilesReply() {
     reply->deleteLater();
 
     const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (askFilesOnceMore(transfer)) {
+        return;
+    }
+    m_filesRequest.retried = false;
     if (!transfer.success) {
         const QString errorMsg =
             QString("Network error fetching files: %1").arg(transfer.error_message);

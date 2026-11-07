@@ -153,6 +153,9 @@ private Q_SLOTS:
     void metadataFetch_offlineFailsClosed();
     void metadataFetch_malformedFailsClosed();
     void metadataFetch_positiveControl();
+    void publicReleaseListsOnlyPublicReleases();
+    void aPassingServiceErrorIsAskedOnceMore();
+    void aCancelDuringTheWaitAsksNothingMore();
     void metadataFetch_isCentralizedAndBounded();
     void metadataSeam_rejectsInvalidSchemeTimeoutAndCap();
     void metadataSeam_acceptsOnly2xxStatus();
@@ -279,7 +282,7 @@ void TestUupDumpApi::metadataFetch_positiveControl() {
         result.success = true;
         result.http_status = 200;
         result.body = QByteArrayLiteral(
-            R"({"response":{"builds":{"uuid-1":{"uuid":"uuid-1","title":"Windows 11","build":"26100","arch":"amd64","created":1}}}})");
+            R"json({"response":{"builds":{"uuid-1":{"uuid":"uuid-1","title":"Windows 11, version 24H2 (26100.1742)","build":"26100.1742","arch":"amd64","created":1}}}})json");
         return std::optional{result};
     });
     UupDumpApi api;
@@ -290,6 +293,119 @@ void TestUupDumpApi::metadataFetch_positiveControl() {
     api.fetchAvailableBuilds();
 
     QTRY_VERIFY(succeeded);
+    QCOMPARE(error_spy.count(), 0);
+}
+
+// Review 3: "Public Release" listed only "Windows 11 Insider Preview Feature Update (26320.9876)"
+// and "(28020.3445)". listid.php is a text search sorted by date, so Insider, preview, cumulative
+// and .NET updates come back with the public builds; the titles are the ones it returned that day.
+void TestUupDumpApi::publicReleaseListsOnlyPublicReleases() {
+    using Channel = UupDumpApi::ReleaseChannel;
+    const auto build = [](const QString& title) {
+        UupDumpApi::BuildInfo info;
+        info.title = title;
+        return info;
+    };
+    QVERIFY(UupDumpApi::buildBelongsToChannel(
+        build(QStringLiteral("Windows 11, version 25H2 (26200.9818)")), Channel::Retail));
+    QVERIFY(UupDumpApi::buildBelongsToChannel(
+        build(QStringLiteral("Windows 11, version 26H1 (28000.3365)")), Channel::Retail));
+    for (const QString& other :
+         {QStringLiteral("Windows 11 Insider Preview Feature Update (26320.9876)"),
+          QStringLiteral("Windows 11 Insider Preview 29704.1000 (rs_prerelease)"),
+          QStringLiteral("Preview Update for Windows 11 (26200.9818)"),
+          QStringLiteral("Cumulative Update for Windows 11, version 23H2 (22631.7654)"),
+          QStringLiteral(
+              ".NET Framework Security Update for Windows 11 - KB5127690 (26200.9363) (4)")}) {
+        QVERIFY2(!UupDumpApi::buildBelongsToChannel(build(other), Channel::Retail),
+                 qPrintable(other));
+        QVERIFY(UupDumpApi::buildBelongsToChannel(build(other), Channel::Dev));
+    }
+
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral(
+            R"json({"response":{"builds":{)json"
+            R"json("0":{"uuid":"insider","title":"Windows 11 Insider Preview Feature Update (26320.9876)","build":"26320.9876","arch":"amd64","created":30},)json"
+            R"json("1":{"uuid":"preview","title":"Preview Update for Windows 11 (26200.9818)","build":"26200.9818","arch":"amd64","created":20},)json"
+            R"json("2":{"uuid":"public","title":"Windows 11, version 25H2 (26200.9818)","build":"26200.9818","arch":"amd64","created":10})json"
+            R"json(}}})json");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QList<UupDumpApi::BuildInfo> fetched;
+    connect(&api, &UupDumpApi::buildsFetched, &api, [&](const auto& builds) { fetched = builds; });
+    api.fetchAvailableBuilds(QStringLiteral("amd64"), Channel::Retail);
+    QTRY_COMPARE(fetched.size(), 1);
+    QCOMPARE(fetched.first().uuid, QStringLiteral("public"));
+}
+
+// Review 3 (testpc1): Download & Build ISO failed at once with "Network metadata request returned
+// HTTP 400", and the next try downloaded. The file list is asked for once more after a passing
+// service error, and a second failure is reported.
+void TestUupDumpApi::aPassingServiceErrorIsAskedOnceMore() {
+    QVERIFY(UupDumpApi::isPassingServiceError(400));
+    QVERIFY(UupDumpApi::isPassingServiceError(503));
+    QVERIFY(!UupDumpApi::isPassingServiceError(404));
+    QVERIFY(!UupDumpApi::isPassingServiceError(0));
+
+    for (const bool second_fails : {false, true}) {
+        int calls = 0;
+        sak::ScopedNetworkMetadataFaultInjector inject([&calls, second_fails](const auto&) {
+            ++calls;
+            sak::NetworkTransferResult result;
+            if (calls == 1 || second_fails) {
+                result.success = false;
+                result.http_status = 400;
+                result.error_message = QStringLiteral("Network metadata request returned HTTP 400");
+                return std::optional{result};
+            }
+            result.success = true;
+            result.http_status = 200;
+            result.body = QByteArrayLiteral(
+                R"json({"response":{"updateName":"Windows 11","files":{"a.cab":{"sha1":"0123456789abcdef0123456789abcdef01234567","size":"1","url":"https://example.test/a.cab"}}}})json");
+            return std::optional{result};
+        });
+        UupDumpApi api;
+        QSignalSpy error_spy(&api, &UupDumpApi::apiError);
+        QSignalSpy files_spy(&api, &UupDumpApi::filesFetched);
+        api.getFiles(QStringLiteral("uuid-1"),
+                     QStringLiteral("en-us"),
+                     QStringLiteral("PROFESSIONAL"));
+        QTRY_VERIFY_WITH_TIMEOUT(error_spy.count() + files_spy.count() > 0, 15'000);
+        QCOMPARE(calls, 2);
+        if (second_fails) {
+            QCOMPARE(error_spy.count(), 1);
+            QCOMPARE(files_spy.count(), 0);
+        } else {
+            QCOMPARE(error_spy.count(), 0);
+            QCOMPARE(files_spy.count(), 1);
+        }
+    }
+}
+
+// The once-more request waits 3 s. A cancel in that wait sends nothing more, so no late
+// "Network error fetching files" reaches a download the user has already cancelled.
+void TestUupDumpApi::aCancelDuringTheWaitAsksNothingMore() {
+    int calls = 0;
+    sak::ScopedNetworkMetadataFaultInjector inject([&calls](const auto&) {
+        ++calls;
+        sak::NetworkTransferResult result;
+        result.success = false;
+        result.http_status = 400;
+        result.error_message = QStringLiteral("Network metadata request returned HTTP 400");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QSignalSpy error_spy(&api, &UupDumpApi::apiError);
+    api.getFiles(QStringLiteral("uuid-1"), QStringLiteral("en-us"), QStringLiteral("PROFESSIONAL"));
+    QTRY_COMPARE(calls, 1);
+    QTest::qWait(500);  // the failed reply is read and the once-more wait begins
+    api.cancelAll();
+    QTest::qWait(4500);
+    QCOMPARE(calls, 1);
     QCOMPARE(error_spy.count(), 0);
 }
 

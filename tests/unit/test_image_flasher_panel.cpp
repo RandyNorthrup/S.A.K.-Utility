@@ -194,6 +194,7 @@ private Q_SLOTS:
     void initTestCase();
     void init();
     void cleanup();
+    void windowsIsoEditionStartsOnAnEdition();
 
     void smokeAndAuditModesRunTheStartupScanUsersGet();
     void flashIsDisabledWithNothingSelected();
@@ -750,6 +751,19 @@ void ImageFlasherPanelTests::loadImageFileRefusesAnUnknownFormatWhenDeclined() {
     QVERIFY2(!next->isEnabled(), "a declined unknown-format image must not open drive selection");
 }
 
+
+// Review 3 (X18): with the first build picked, Edition started on "Microsoft Store Inbox Apps",
+// which is not an edition. The list starts on Pro, else Home, else on nothing.
+void ImageFlasherPanelTests::windowsIsoEditionStartsOnAnEdition() {
+    QCOMPARE(WindowsISODownloadDialog::defaultEditionIndex(
+                 {QStringLiteral("APP"), QStringLiteral("CORE"), QStringLiteral("PROFESSIONAL")}),
+             2);
+    QCOMPARE(WindowsISODownloadDialog::defaultEditionIndex(
+                 {QStringLiteral("APP"), QStringLiteral("CORE")}),
+             1);
+    QCOMPARE(WindowsISODownloadDialog::defaultEditionIndex({QStringLiteral("APP")}), -1);
+    QCOMPARE(WindowsISODownloadDialog::defaultEditionIndex({}), -1);
+}
 
 QTEST_MAIN(ImageFlasherPanelTests)
 #include "test_image_flasher_panel.moc"

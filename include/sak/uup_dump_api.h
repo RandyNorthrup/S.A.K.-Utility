@@ -16,6 +16,10 @@
 
 #include <optional>
 
+namespace sak {
+struct NetworkTransferResult;
+}  // namespace sak
+
 /**
  * @brief REST API client for the UUP dump service (uupdump.net)
  *
@@ -160,6 +164,22 @@ public:
      */
     static QList<ReleaseChannel> allChannels();
 
+    /**
+     * @brief Whether a listed build belongs in @p channel's list. listid.php is a text search, so
+     *        "windows 11 amd64" also returns Insider Preview, preview, cumulative and .NET updates,
+     *        newest first; review 3's Public Release list held only Insider builds. A public
+     *        release is the build UUP dump titles "Windows 11, version 25H2 (26200.9818)". Other
+     *        channels are kept as the search returns them. Pure; unit-testable.
+     */
+    [[nodiscard]] static bool buildBelongsToChannel(const BuildInfo& build, ReleaseChannel channel);
+
+    /**
+     * @brief Whether a failed metadata answer is worth asking for once more. UUP dump answers
+     *        get.php with HTTP 400 now and then under load: review 3's Download & Build failed
+     *        at once with it, and the next try downloaded. Pure; unit-testable.
+     */
+    [[nodiscard]] static bool isPassingServiceError(int http_status);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when builds are fetched from the database
@@ -232,9 +252,25 @@ private:
     ///        entry is rejected (unsafe/bad-URL/bad-SHA-1), emits apiError and
     ///        returns false -- an incomplete set must not be built (B10-20).
     [[nodiscard]] bool collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>& out);
+    /// Asks for the file list once more, after a short wait, when the service answered with a
+    /// passing error and this request has not been asked again yet; true when it will be.
+    [[nodiscard]] bool askFilesOnceMore(const sak::NetworkTransferResult& transfer);
 
     QNetworkAccessManager* m_networkManager;
     QList<QNetworkReply*> m_pendingReplies;
+    /// The channel the last build list was asked for; its reply is filtered to it.
+    ReleaseChannel m_buildsChannel{ReleaseChannel::Retail};
+    /// The last get.php request, asked once more when the service answers it with a passing error.
+    struct FilesRequest {
+        QString update_id;
+        QString lang;
+        QString edition;
+        bool retried{false};
+    };
+    FilesRequest m_filesRequest;
+    /// Counts cancelAll() calls, so a once-more request still waiting when the user cancels is
+    /// not sent.
+    quint64 m_cancelGeneration{0};
 
     static constexpr const char* API_BASE_URL = "https://api.uupdump.net";
 };

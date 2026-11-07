@@ -457,6 +457,16 @@ void WindowsISODownloadDialog::onLanguageSelected(int index) {
     m_downloader->fetchEditions(m_selectedUpdateId, lang_code);
 }
 
+int WindowsISODownloadDialog::defaultEditionIndex(const QStringList& edition_codes) {
+    for (const QString& preferred : {QStringLiteral("PROFESSIONAL"), QStringLiteral("CORE")}) {
+        const qsizetype at = edition_codes.indexOf(preferred);
+        if (at >= 0) {
+            return static_cast<int>(at);
+        }
+    }
+    return -1;
+}
+
 void WindowsISODownloadDialog::onEditionsFetched(const QStringList& editions,
                                                  const QMap<QString, QString>& edition_names) {
     m_editionNames = edition_names;
@@ -467,13 +477,9 @@ void WindowsISODownloadDialog::onEditionsFetched(const QStringList& editions,
         m_editionCombo->addItem(display, code);
     }
 
-    // Default to Professional if available
-    for (int i = 0; i < m_editionCombo->count(); ++i) {
-        if (m_editionCombo->itemData(i).toString() == "PROFESSIONAL") {
-            m_editionCombo->setCurrentIndex(i);
-            break;
-        }
-    }
+    // Pro, else Home; with neither, nothing is chosen for the person. Review 3's build offered
+    // "Microsoft Store Inbox Apps" first, which is not an edition, and the list started on it.
+    m_editionCombo->setCurrentIndex(defaultEditionIndex(editions));
 
     m_editionCombo->setEnabled(true);
     m_statusLabel->setText("Ready to download. Choose edition and save location.");

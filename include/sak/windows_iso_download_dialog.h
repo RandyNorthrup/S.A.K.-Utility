@@ -46,6 +46,10 @@ public:
      */
     QString downloadedFilePath() const { return m_downloadedFilePath; }
 
+    /// The edition the list starts on: Pro, else Home, else none (-1), so a list whose first entry
+    /// is not an edition ("Microsoft Store Inbox Apps") is not chosen for the person.
+    [[nodiscard]] static int defaultEditionIndex(const QStringList& edition_codes);
+
 Q_SIGNALS:
     void downloadCompleted(const QString& filePath);
 
