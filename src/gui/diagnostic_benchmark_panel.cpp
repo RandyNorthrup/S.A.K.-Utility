@@ -405,21 +405,23 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
     auto* cpu_scores = new QHBoxLayout();
-    // Each group shows its measurements in the body weight and its score in the score style:
-    // Disk's Sequential and Memory's Bandwidth were bold and their other lines not, and CPU's
-    // scores did not look like scores (review 2, F40).
-    const QString score_style = sak::ui::fontWeightAndColorStyle(kFontWeightSemibold,
-                                                                 sak::ui::kColorPrimaryDark);
+    // Each group shows its measurements in the body weight and one "Score:" line in the score
+    // style, as Disk and Memory do: CPU's two thread results were drawn as scores and it had no
+    // Score line (reviews 2 and 3, F40). The CPU score is the multi-thread result, which the bar
+    // below measures against the baseline.
     m_cpu_single_score_label = new QLabel("Single-Thread: --", this);
-    m_cpu_single_score_label->setStyleSheet(score_style);
     cpu_scores->addWidget(m_cpu_single_score_label);
 
     m_cpu_multi_score_label = new QLabel("Multi-Thread: --", this);
-    m_cpu_multi_score_label->setStyleSheet(score_style);
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
     cpu_scores->addStretch();
     cpu_layout->addLayout(cpu_scores);
+
+    m_cpu_score_label = new QLabel("Score: --", this);
+    m_cpu_score_label->setStyleSheet(
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorPrimaryDark));
+    cpu_layout->addWidget(m_cpu_score_label);
 
     m_cpu_score_bar = new QProgressBar(this);
     m_cpu_score_bar->setRange(0, kCpuScoreMax);
@@ -466,6 +468,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     m_disk_drive_combo->setMinimumWidth(kBenchmarkDriveComboMinWidth);
     m_disk_drive_combo->setAccessibleName(QStringLiteral("Benchmark Drive"));
     m_disk_drive_combo->setToolTip(QStringLiteral("Select a drive to benchmark"));
+    // The list comes from Scan Hardware; before one has run the box was simply empty (X15).
+    m_disk_drive_combo->setPlaceholderText(tr("Run Scan Hardware first"));
     drive_row->addWidget(m_disk_drive_combo);
     drive_row->addStretch();
     disk_layout->addLayout(drive_row);

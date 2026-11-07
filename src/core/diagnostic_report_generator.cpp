@@ -608,7 +608,7 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
         html += QString(
                     "<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td>"
                     "<td><span class=\"%5\">%6</span></td>"
-                    "<td>%7 degC</td><td>%8 hrs</td><td>%9</td></tr>\n")
+                    "<td>%7 \u00B0C</td><td>%8 hrs</td><td>%9</td></tr>\n")
                     .arg(report.device_path.toHtmlEscaped())
                     .arg(report.model.toHtmlEscaped())
                     .arg(report.serial_number.toHtmlEscaped())
@@ -723,7 +723,7 @@ QString DiagnosticReportGenerator::buildStressTestSection() const {
     html += "<table>\n";
     html += QString("<tr><td>Duration</td><td>%1 seconds</td></tr>\n").arg(st.duration_seconds);
     html += QString("<tr><td>Errors Detected</td><td>%1</td></tr>\n").arg(st.errors_detected);
-    html += QString("<tr><td>Max CPU Temperature</td><td>%1 degC</td></tr>\n")
+    html += QString("<tr><td>Max CPU Temperature</td><td>%1 \u00B0C</td></tr>\n")
                 .arg(st.max_cpu_temp, 0, 'f', 1);
     html += QString("<tr><td>Thermal Throttle Events</td><td>%1</td></tr>\n")
                 .arg(st.thermal_throttle_events);

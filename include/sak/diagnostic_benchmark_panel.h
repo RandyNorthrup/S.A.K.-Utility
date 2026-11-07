@@ -90,6 +90,8 @@ public:
 
     /// @brief "Elapsed: MM:SS" for the stress test's line.
     [[nodiscard]] static QString stressElapsedText(int elapsed_seconds);
+    /// "Stress test running, 00:16 of 1 min": the status bar's message while a run goes on.
+    [[nodiscard]] static QString stressRunningText(int elapsed_seconds, int duration_minutes);
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -268,6 +270,7 @@ private:
     QLabel* m_cpu_single_score_label{nullptr};
     QLabel* m_cpu_multi_score_label{nullptr};
     QLabel* m_cpu_details_label{nullptr};
+    QLabel* m_cpu_score_label{nullptr};
     QProgressBar* m_cpu_score_bar{nullptr};
     QPushButton* m_cpu_benchmark_button{nullptr};
 

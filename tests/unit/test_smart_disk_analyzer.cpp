@@ -56,6 +56,8 @@ private Q_SLOTS:
     void unreadableDrive_keepsARowAndSaysWhy();
     void unreadableDrive_withNoReasonStillSaysSo();
     void readableDrive_isNotMarkedUnreadable();
+    void unreadableDrive_isNamedByWindowsModelAndBus();
+    void readableDrive_takesWindowsBusAndKeepsSmartctlModel();
 };
 
 namespace {
@@ -502,11 +504,17 @@ class ScriptedSmartAnalyzer : public sak::SmartDiskAnalyzer {
 public:
     QString failure;
     QByteArray output;
+    QHash<uint32_t, DriveIdentity> identities;
+    int identity_reads = 0;
 
 protected:
     QByteArray runSmartctl(uint32_t) override {
         m_last_read_failure = failure;
         return output;
+    }
+    QHash<uint32_t, DriveIdentity> queryDriveIdentities() override {
+        ++identity_reads;
+        return identities;
     }
 };
 }  // namespace
@@ -547,6 +555,37 @@ void SmartDiskAnalyzerTests::readableDrive_isNotMarkedUnreadable() {
     QCOMPARE(analyzer.reports().size(), 1);
     QCOMPARE(analyzer.reports().first().model, QStringLiteral("Disk"));
     QVERIFY(analyzer.reports().first().overall_health != sak::SmartHealthStatus::Unknown);
+}
+
+// testpc1 with no hardware scan run: the USB-bridged NVMe smartctl cannot read was listed only as
+// "PhysicalDrive1" with Type N/A. Windows knows its model and bus, and the run reads them itself.
+void SmartDiskAnalyzerTests::unreadableDrive_isNamedByWindowsModelAndBus() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.identities.insert(
+        1, {.model = QStringLiteral("NS-PCNVMEHDE"), .bus = QStringLiteral("USB")});
+    analyzer.analyzeDrive(1);
+    analyzer.analyzeDrive(4);  // one Windows does not list keeps its number
+    QCOMPARE(analyzer.reports().size(), 2);
+    QCOMPARE(analyzer.reports().at(0).model, QStringLiteral("NS-PCNVMEHDE"));
+    QCOMPARE(analyzer.reports().at(0).interface_type, QStringLiteral("USB"));
+    QCOMPARE(sak::SmartDiskAnalyzer::driveName(analyzer.reports().at(0).device_path,
+                                               analyzer.reports().at(0).model),
+             QStringLiteral("PhysicalDrive1 (NS-PCNVMEHDE)"));
+    QCOMPARE(analyzer.reports().at(1).model, QStringLiteral("PhysicalDrive4"));
+    QCOMPARE(analyzer.identity_reads, 1);  // once per run, not per drive
+}
+
+// smartctl says "nvme" (shown "NVME") and "sat" for a USB enclosure; the views say Windows' bus.
+void SmartDiskAnalyzerTests::readableDrive_takesWindowsBusAndKeepsSmartctlModel() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.identities.insert(
+        3, {.model = QStringLiteral("Windows name"), .bus = QStringLiteral("NVMe")});
+    analyzer.output = QByteArrayLiteral(
+        R"({"device":{"type":"nvme"},"model_name":"SK hynix BC501","smart_status":{"passed":true}})");
+    analyzer.analyzeDrive(3);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().model, QStringLiteral("SK hynix BC501"));
+    QCOMPARE(analyzer.reports().first().interface_type, QStringLiteral("NVMe"));
 }
 
 QTEST_GUILESS_MAIN(SmartDiskAnalyzerTests)

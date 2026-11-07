@@ -7,6 +7,8 @@
 #include "sak/smart_disk_analyzer.h"
 
 #include "sak/bundled_tools_manager.h"
+#include "sak/format_utils.h"
+#include "sak/hardware_inventory_scanner.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -89,6 +91,8 @@ void SmartDiskAnalyzer::analyzeAll() {
     // standalone analyzer ran (e.g. the headless diagnostics.smart_scan op).
     m_cancelled.store(false, std::memory_order_relaxed);
     m_reports.clear();
+    m_identities.clear();
+    m_identities_read = false;
 
     Q_EMIT analysisStarted();
 
@@ -141,6 +145,7 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
         SmartReport unreadable;
         unreadable.device_path = QString("\\\\.\\PhysicalDrive%1").arg(disk_number);
         unreadable.model = QString("PhysicalDrive%1").arg(disk_number);
+        applyDriveIdentity(unreadable, disk_number);
         unreadable.overall_health = SmartHealthStatus::Unknown;
         // One wording for every drive with no verdict, then why: a drive smartctl could not read
         // and one it read with nothing to judge by said it two ways (review 2, observation 31).
@@ -157,6 +162,7 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     }
 
     SmartReport report = parseSmartctlOutput(json_data, disk_number);
+    applyDriveIdentity(report, disk_number);
 
     assessHealth(report);
     generateRecommendations(report);
@@ -174,6 +180,31 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     m_reports.append(report);
 
     Q_EMIT driveAnalyzed(report);
+}
+
+QHash<uint32_t, SmartDiskAnalyzer::DriveIdentity> SmartDiskAnalyzer::queryDriveIdentities() {
+    QHash<uint32_t, DriveIdentity> identities;
+    HardwareInventoryScanner scanner;
+    for (const StorageDeviceInfo& disk : scanner.queryPhysicalDisks()) {
+        identities.insert(disk.disk_number, {.model = disk.model, .bus = disk.interface_type});
+    }
+    return identities;
+}
+
+void SmartDiskAnalyzer::applyDriveIdentity(SmartReport& report, uint32_t disk_number) {
+    if (!m_identities_read) {
+        m_identities = queryDriveIdentities();
+        m_identities_read = true;
+    }
+    const DriveIdentity identity = m_identities.value(disk_number);
+    const QString placeholder = QString("PhysicalDrive%1").arg(disk_number);
+    const QString model = report.model.trimmed();
+    if ((model.isEmpty() || model == placeholder) && !identity.model.trimmed().isEmpty()) {
+        report.model = identity.model.trimmed();
+    }
+    if (!identity.bus.trimmed().isEmpty()) {
+        report.interface_type = identity.bus.trimmed();
+    }
 }
 
 QString SmartDiskAnalyzer::driveName(const QString& device_path, const QString& model) {
@@ -673,8 +704,8 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
 
     // -- Temperature warnings ------------------------------------
     if (report.temperature_celsius > kElevatedTemperatureCelsius) {
-        report.warnings.append(QString("Drive temperature is elevated (%1 degC)")
-                                   .arg(report.temperature_celsius, 0, 'f', 0));
+        report.warnings.append(QString("Drive temperature is elevated (%1)")
+                                   .arg(formatCelsius(report.temperature_celsius, 0)));
         report.recommendations.append("Check case airflow and ensure drive has adequate cooling");
     }
 

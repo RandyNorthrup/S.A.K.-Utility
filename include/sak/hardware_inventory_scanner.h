@@ -112,6 +112,12 @@ public:
     [[nodiscard]] static QString storageInterfaceName(const QString& bus_name,
                                                       const QString& wmi_interface);
 
+    /// @brief Every physical disk Windows lists, with its number, model, serial, size, bus and
+    /// media
+    ///        type, without the volumes on it. The SMART run reads its drives' names from this when
+    ///        no hardware scan has run. Runs PowerShell queries; call it off the GUI thread.
+    [[nodiscard]] QVector<StorageDeviceInfo> queryPhysicalDisks();
+
 Q_SIGNALS:
     void scanStarted();
     void scanProgress(int percent, const QString& component);

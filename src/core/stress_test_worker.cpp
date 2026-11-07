@@ -7,6 +7,7 @@
 #include "sak/stress_test_worker.h"
 
 #include "sak/dedicated_threads.h"
+#include "sak/format_utils.h"
 #include "sak/keep_awake.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -516,7 +517,7 @@ bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
         logWarning("Thermal limit reached: {:.1f} degC >= {:.1f} degC -- aborting",
                    temp,
                    m_config.thermal_limit_celsius);
-        m_result.abort_reason = QString("Thermal limit exceeded (%1 degC)").arg(temp, 0, 'f', 1);
+        m_result.abort_reason = QString("Thermal limit exceeded (%1)").arg(formatCelsius(temp, 1));
         m_result.thermal_throttle_events++;
         m_stop_children.store(true, std::memory_order_release);
         return true;

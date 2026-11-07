@@ -15,6 +15,7 @@
 #include "../support/test_hardware_guard.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -137,22 +138,30 @@ private Q_SLOTS:
     }
 
     // Review 2 (F40): Disk's "Sequential:" and Memory's "Bandwidth:" were bold and their other
-    // measurements not, and CPU's scores did not look like the other groups' scores.
+    // measurements not. Review 3: CPU drew its two thread results as scores and had no "Score:"
+    // line; now every group has its measurements in one style and one Score line in another.
     void benchmarkGroupsShareOneLayout() {
         sak::QuickActionController quick_actions;
         sak::DiagnosticBenchmarkPanel panel(quick_actions);
         QHash<QString, QString> style_of;
+        QStringList score_styles;
         for (auto* label : panel.findChildren<QLabel*>()) {
             style_of.insert(label->text(), label->styleSheet());
+            if (label->text() == QStringLiteral("Score: --")) {
+                score_styles.append(label->styleSheet());
+            }
         }
-        const QString score = style_of.value(QStringLiteral("Score: --"));
-        QVERIFY(!score.isEmpty());
-        for (const char* text : {"Single-Thread: --", "Multi-Thread: --"}) {
-            QCOMPARE(style_of.value(QString::fromLatin1(text)), score);
-        }
+        QCOMPARE(score_styles.size(), 3);  // CPU, Disk, Memory
+        QVERIFY(!score_styles.first().isEmpty());
+        QCOMPARE(score_styles.count(score_styles.first()), 3);
         const QString measurement = style_of.value(QStringLiteral("Random 4K: --"));
-        for (const char* text :
-             {"Sequential: --", "Latency: --", "Bandwidth: --", "Random Latency: --"}) {
+        QVERIFY(measurement != score_styles.first());
+        for (const char* text : {"Single-Thread: --",
+                                 "Multi-Thread: --",
+                                 "Sequential: --",
+                                 "Latency: --",
+                                 "Bandwidth: --",
+                                 "Random Latency: --"}) {
             QVERIFY2(style_of.contains(QString::fromLatin1(text)), text);
             QCOMPARE(style_of.value(QString::fromLatin1(text)), measurement);
         }
@@ -206,6 +215,67 @@ private Q_SLOTS:
         for (int column = 1; column < table->columnCount(); ++column) {
             QCOMPARE(table->item(0, column)->text(), QStringLiteral("N/A"));
         }
+    }
+    // Review 3 (X17): the SMART table said "40 degC" where the Thermal row uses the degree sign.
+    void smartTemperatureUsesTheDegreeSign() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        sak::SmartReport drive;
+        drive.model = QStringLiteral("ST8000DM004-2CX188");
+        drive.overall_health = sak::SmartHealthStatus::Healthy;
+        drive.temperature_celsius = 40.0;
+        using Reports = QVector<sak::SmartReport>;
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onSmartAnalysisComplete",
+                                          Qt::DirectConnection,
+                                          Q_ARG(Reports, Reports{drive})));
+        QTableWidget* table = nullptr;
+        for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+            if (candidate->columnCount() >= 6 && candidate->rowCount() == 1) {
+                table = candidate;
+            }
+        }
+        QVERIFY(table != nullptr);
+        const int temp_column = 3;
+        QCOMPARE(table->horizontalHeaderItem(temp_column)->text(), QStringLiteral("Temp"));
+        QCOMPARE(table->item(0, temp_column)->text(), QStringLiteral("40 \u00B0C"));
+    }
+    // Review 3 (X15): before Scan Hardware the Disk I/O "Drive:" box was empty, saying nothing.
+    void benchmarkDriveBoxSaysToScanFirst() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        QComboBox* drive = nullptr;
+        for (auto* combo : panel.findChildren<QComboBox*>()) {
+            if (combo->accessibleName() == QStringLiteral("Benchmark Drive")) {
+                drive = combo;
+            }
+        }
+        QVERIFY(drive != nullptr);
+        QCOMPARE(drive->count(), 0);
+        QCOMPARE(drive->currentIndex(), -1);
+        QCOMPARE(drive->placeholderText(), QStringLiteral("Run Scan Hardware first"));
+    }
+    // Review 3 (X3): the status bar read "Ready" beside a stress run's bar at 16%.
+    void aRunningStressTestSaysSoBesideItsBar() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        auto* controller = panel.findChild<sak::DiagnosticController*>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+        QSignalSpy progress(&panel, &sak::DiagnosticBenchmarkPanel::progressUpdate);
+        QSpinBox* duration = nullptr;
+        for (auto* spin : panel.findChildren<QSpinBox*>()) {
+            if (spin->accessibleName() == QStringLiteral("Stress Duration")) {
+                duration = spin;
+            }
+        }
+        QVERIFY(duration != nullptr);
+        duration->setValue(1);
+        Q_EMIT controller->stressTestStatus(16, 50.0, 0);
+        QVERIFY(!progress.isEmpty());
+        QVERIFY(!status.isEmpty());
+        QCOMPARE(status.last().at(0).toString(),
+                 QStringLiteral("Stress test running, 00:16 of 1 min"));
     }
     // UI review N14: in the capture VM the Battery row read "1 - health unknown, On AC power";
     // VirtualBox's battery calls itself "1".
@@ -718,7 +788,7 @@ void DiagnosticBenchmarkPanelTests::stressStatusSaysWhenThereIsNoSensor() {
     QVERIFY2(!temperatureText().contains(QStringLiteral("-1")), qPrintable(temperatureText()));
 
     Q_EMIT controller->stressTestStatus(6, 71.5, 0);
-    QCOMPARE(temperatureText(), QStringLiteral("CPU Temp: 71.5 degC"));
+    QCOMPARE(temperatureText(), QStringLiteral("CPU Temp: 71.5 \u00B0C"));
 }
 
 // Review 3 (testpc1): closing the app 13 s into a run was logged "Stress test FAILED", and a 60.6 s

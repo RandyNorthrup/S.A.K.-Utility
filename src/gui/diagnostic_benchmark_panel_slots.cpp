@@ -296,9 +296,8 @@ void DiagnosticBenchmarkPanel::fillSmartRow(int row,
 
     m_smart_table->setItem(row,
                            SmartColTemperature,
-                           new QTableWidgetItem(
-                               read ? QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)
-                                    : missing));
+                           new QTableWidgetItem(read ? formatCelsius(report.temperature_celsius, 0)
+                                                     : missing));
 
     m_smart_table->setItem(row,
                            SmartColPowerOnHours,
@@ -362,6 +361,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
 
     m_cpu_single_score_label->setText(QString("Single-Thread: %1").arg(result.single_thread_score));
     m_cpu_multi_score_label->setText(QString("Multi-Thread: %1").arg(result.multi_thread_score));
+    m_cpu_score_label->setText(QString("Score: %1").arg(result.multi_thread_score));
 
     m_cpu_score_bar->setValue(result.multi_thread_score);
 
@@ -562,6 +562,10 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
     m_stress_status_label->setText("Status: Running");
     m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
         sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+    // The bar first, so the message counts as the running work's and stays beside it: the status
+    // bar read "Ready" beside a stress run at 16% (review 3, X3).
+    Q_EMIT progressUpdate(0, sak::kPercentMax);
+    Q_EMIT statusMessage(stressRunningText(0, config.duration_minutes), sak::kTimerStatusMessageMs);
 
     m_controller->runStressTest(config);
 }
@@ -603,12 +607,18 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
                    .arg(result.cpuTemperatureRead()
-                            ? QString("%1 degC").arg(result.max_cpu_temp, 0, 'f', 1)
+                            ? formatCelsius(result.max_cpu_temp, 1)
                             : QStringLiteral("no reading, thermal limit not enforced")));
     Q_EMIT statusMessage(result.passed    ? QStringLiteral("Stress test passed")
                          : result.stopped ? QStringLiteral("Stress test stopped")
                                           : QStringLiteral("Stress test FAILED"),
                          sak::kTimerStatusDefaultMs);
+}
+
+QString DiagnosticBenchmarkPanel::stressRunningText(int elapsed_seconds, int duration_minutes) {
+    // "Elapsed: 00:16" without its label.
+    const QString clock = stressElapsedText(elapsed_seconds).section(QLatin1Char(' '), 1);
+    return QStringLiteral("Stress test running, %1 of %2 min").arg(clock).arg(duration_minutes);
 }
 
 QString DiagnosticBenchmarkPanel::stressElapsedText(int elapsed_seconds) {
@@ -638,13 +648,16 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
     const int duration_sec = m_stress_duration_spin->value() * sak::kSecondsPerMinute;
     const int percent = duration_sec > 0 ? (elapsed_seconds * sak::kPercentMax / duration_sec) : 0;
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
+    Q_EMIT statusMessage(stressRunningText(elapsed_seconds, m_stress_duration_spin->value()),
+                         sak::kTimerStatusMessageMs);
 
     m_stress_elapsed_label->setText(stressElapsedText(elapsed_seconds));
 
     // ThermalMonitor::queryCpuTemperature answers -1.0 for "no reading". A number here would read
     // as a measurement, and it would hide that the thermal limit is doing nothing.
     if (cpu_temp > 0.0) {
-        m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
+        m_stress_temp_label->setText(
+            QStringLiteral("CPU Temp: %1").arg(formatCelsius(cpu_temp, 1)));
         m_stress_temp_label->setStyleSheet({});
     } else {
         m_stress_temp_label->setText(
@@ -854,7 +867,7 @@ QString temperatureHtml(int temp) {
     return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
         .arg(sak::ui::htmlColor(color))
         .arg(sak::ui::kFontWeightSemibold)
-        .arg(QStringLiteral("%1 \u00B0C").arg(temp));
+        .arg(formatCelsius(temp, 0));
 }
 }  // namespace
 

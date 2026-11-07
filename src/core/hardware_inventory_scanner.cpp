@@ -633,6 +633,14 @@ QString HardwareInventoryScanner::storageInterfaceName(const QString& bus_name,
 }
 
 QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
+    QVector<StorageDeviceInfo> devices = queryPhysicalDisks();
+    // Enrich with partition/volume info from Qt
+    enrichStorageWithVolumeInfo(devices);
+    logInfo("Storage: {} device(s) detected", devices.size());
+    return devices;
+}
+
+QVector<StorageDeviceInfo> HardwareInventoryScanner::queryPhysicalDisks() {
     // The bus and media as Windows' storage stack knows them, by disk number. A standard user may
     // read MSFT_PhysicalDisk; a disk missing from it keeps Win32_DiskDrive's own words.
     QHash<uint32_t, QPair<int, int>> physical;
@@ -679,11 +687,6 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
 
         devices.append(dev);
     }
-
-    // Enrich with partition/volume info from Qt
-    enrichStorageWithVolumeInfo(devices);
-
-    logInfo("Storage: {} device(s) detected", devices.size());
     return devices;
 }
 

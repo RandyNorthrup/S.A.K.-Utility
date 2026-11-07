@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -127,7 +128,22 @@ protected:
     /// Why the last runSmartctl on this drive returned nothing, for the drive's report.
     QString m_last_read_failure;
 
+    /// The model and bus Windows gives a physical disk.
+    struct DriveIdentity {
+        QString model;
+        QString bus;
+    };
+    /// @brief Windows' model and bus for each physical disk number, read once per run: a drive
+    ///        smartctl cannot read (a USB bridge, a standard user) is named by its model rather
+    ///        than "PhysicalDriveN" even when no hardware scan has run, and every drive's bus is
+    ///        spelled as the hardware inventory spells it ("NVMe", not smartctl's "NVME").
+    [[nodiscard]] virtual QHash<uint32_t, DriveIdentity> queryDriveIdentities();
+
 private:
+    void applyDriveIdentity(SmartReport& report, uint32_t disk_number);
+    QHash<uint32_t, DriveIdentity> m_identities;
+    bool m_identities_read{false};
+
     /// @brief Resolve the path to the bundled smartctl executable
     /// @return Absolute path to smartctl.exe, or empty string if not found
     [[nodiscard]] static QString resolveSmartctlPath();

@@ -14,6 +14,13 @@
 
 namespace sak {
 
+/// @brief A temperature as every view shows one: "43 degrees C", "71.5 degrees C" (UI review X17:
+/// the SMART
+///        table said "40 degC" beside the Thermal row's degree sign).
+[[nodiscard]] inline QString formatCelsius(double celsius, int decimals) {
+    return QStringLiteral("%1 \u00B0C").arg(celsius, 0, 'f', decimals);
+}
+
 /// @brief Format a byte count into a human-readable string (B, KB, MB, GB, TB)
 /// @param bytes Number of bytes to format
 /// @return Formatted string (e.g., "1.50 GB", "256 KB", "0 bytes")
