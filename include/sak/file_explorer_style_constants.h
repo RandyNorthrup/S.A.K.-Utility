@@ -16,6 +16,7 @@
 
 #include "sak/color_constants.h"
 #include "sak/style_constants.h"
+#include "sak/windows11_theme.h"
 
 #include <QString>
 
@@ -140,14 +141,16 @@ inline QString sidebarStyles() {
                "QListWidget#fileExplorerTargetList::item:disabled { "
                "color: palette(dark); }")
         .arg(kExplorerControlRadiusPx)
-        .arg(colorWithAlpha(kColorPrimary, kExplorerHoverAlpha),
-             colorWithAlpha(kColorPrimary, kExplorerSelectionAlpha));
+        // The sidebar selects in the theme's colour too (review 3, DN8: #1a3054 against #243247).
+        .arg(colorWithAlpha(kColorPrimary, kExplorerHoverAlpha), itemSelectionColor());
 }
 
 inline QString itemViewStyles() {
     return QStringLiteral(
-               // The selected item's tint is the only selection paint: the theme's own
-               // selection colour under it made the file list's selection darker than the rest.
+               // The selected item is the theme's selection colour and the only selection paint:
+               // a translucent accent over the theme's own made the file list's selection darker
+               // than every other view's (review 3, S7/DN8: #b2cffb and #214278 against #d4e4fd
+               // and #243247).
                "#fileExplorerRoot QTableView, #fileExplorerRoot QListView { "
                "background: palette(base); alternate-background-color: palette(base); "
                "border: none; selection-background-color: transparent; }"
@@ -162,8 +165,7 @@ inline QString itemViewStyles() {
                "#fileExplorerRoot QHeaderView::section { background: transparent; "
                "border: none; border-bottom: 1px solid palette(mid); padding: 6px 8px; "
                "color: palette(text); font-weight: 400; }")
-        .arg(colorWithAlpha(kColorPrimary, kExplorerSelectionHoverAlpha),
-             colorWithAlpha(kColorPrimary, kExplorerSelectionAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kExplorerSelectionHoverAlpha), itemSelectionColor());
 }
 
 inline QString statusAndSplitterStyles() {

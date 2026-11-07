@@ -1636,7 +1636,9 @@ SpaceAnalyzerResult analyzeVolumeSpace(const QString& root_path,
         SpaceAnalyzerEntry row;
         row.name = it.key();
         row.type = QObject::tr("File type");
-        row.path = QObject::tr("%1 file(s)").arg(scan_state.file_type_counts.value(it.key()));
+        row.path = sak::countOf(scan_state.file_type_counts.value(it.key()),
+                                QObject::tr("file"),
+                                QObject::tr("files"));
         row.bytes = it.value();
         result.file_types.append(row);
     }
@@ -5341,7 +5343,7 @@ void addQuickPartitionFormRows(const PartitionOperationDialog& dialog,
                                const QuickPartitionWidgets& widgets,
                                QWidget* preset_row) {
     dialog.formLayout()->addRow(QObject::tr("Preset:"), preset_row);
-    dialog.formLayout()->addRow(QObject::tr("Partitions:"), widgets.partition_count);
+    dialog.formLayout()->addRow(QObject::tr("Partition count:"), widgets.partition_count);
     dialog.formLayout()->addRow(QObject::tr("Partition style:"), widgets.partition_style);
     dialog.formLayout()->addRow(QObject::tr("Size mode:"), widgets.size_mode);
     dialog.formLayout()->addRow(QObject::tr("Partitions:"), widgets.partition_table);
@@ -7298,6 +7300,10 @@ void connectBitLockerUtilityButtons(QDialog* dialog,
                                     QPushButton* copy_button,
                                     QPushButton* open_button,
                                     const QStringList& command_lines) {
+    // Copy and Open only help: the secondary tone, so the Queue action is the one primary button
+    // (review 3, X10: three or four primary buttons in a row).
+    copy_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    open_button->setStyleSheet(ui::kSecondaryButtonStyle);
     QObject::connect(copy_button, &QPushButton::clicked, [command_lines]() {
         QApplication::clipboard()->setText(command_lines.join('\n'));
     });
@@ -7456,7 +7462,7 @@ QVector<PropertyRow> optimizeRows(const PartitionDiskInfo* disk, const Partition
     addProperty(&rows, QObject::tr("Media type"), (disk != nullptr) ? disk->media_type : QString());
     addProperty(&rows, QObject::tr("Optimization mode"), optimizeModeText(disk));
     addProperty(&rows,
-                QObject::tr("In-app HDD defrag execution"),
+                QObject::tr("In-app optimization"),
                 (volume == nullptr) || optimizeMountPoint(volume).isEmpty()
                     ? QObject::tr("Select a mounted volume before queueing optimization")
                 : diskLooksHdd(disk)
@@ -7511,6 +7517,8 @@ OptimizeDialogAction showOptimizeDrivesDialog(QWidget* parent, const OptimizeDia
     auto* open_button = buttons->addButton(QObject::tr("Open Windows Optimize Drives"),
                                            QDialogButtonBox::ActionRole);
     open_button->setAccessibleName(QObject::tr("Open Windows Optimize Drives"));
+    copy_button->setStyleSheet(ui::kSecondaryButtonStyle);  // as BitLocker's (X10)
+    open_button->setStyleSheet(ui::kSecondaryButtonStyle);
     QObject::connect(copy_button, &QPushButton::clicked, [commands = spec.command_lines]() {
         QApplication::clipboard()->setText(commands.join('\n'));
     });
@@ -9703,6 +9711,9 @@ void PartitionManagerPanel::addSidebarSection(QVBoxLayout* layout,
         auto* scroll = new QScrollArea(group);
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
+        // The buttons take the list's width, so it scrolls down only: a horizontal bar appeared
+        // for a pixel or two and covered the last row, "Initialize Disk" (review 3, R1).
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setAccessible(scroll, tr("Partition operations"), tr("Scroll partition operation buttons"));
         auto* button_host = new QWidget(scroll);
         button_layout = new QVBoxLayout(button_host);
@@ -12299,9 +12310,20 @@ void PartitionManagerPanel::onConvertStyle() {
     const PartitionDiskInfo disk = *disk_ptr;
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
     QStringList styles{QStringLiteral("GPT"), QStringLiteral("MBR")};
+    // The disk by number and its present style, and the other style chosen to start: the prompt
+    // named no disk and said "partition type" for a partition style (review 3, X21).
+    const int other =
+        disk.partition_style.compare(QStringLiteral("GPT"), Qt::CaseInsensitive) == 0 ? 1 : 0;
     bool ok = false;
     const QString target_scheme = QInputDialog::getItem(
-        this, tr("Convert MBR/GPT"), tr("Target partition type:"), styles, 0, false, &ok);
+        this,
+        tr("Convert Disk %1").arg(disk.disk_number.value()),
+        tr("Partition style (now %1):")
+            .arg(disk.partition_style.isEmpty() ? tr("unknown") : disk.partition_style),
+        styles,
+        other,
+        false,
+        &ok);
     if (ok) {
         queueOperation(PartitionOperationType::ConvertPartitionStyle,
                        *target,

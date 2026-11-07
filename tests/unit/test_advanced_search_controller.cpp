@@ -60,6 +60,7 @@ private Q_SLOTS:
     void searchFinished_carriesCompleteness();
 
 private:
+    static void verifyIncompleteStatusFits(const QSignalSpy& status);
     static void verifyIncompleteSearchNamesTheFile(const AdvancedSearchController& incomplete,
                                                    const AdvancedSearchController& complete);
 
@@ -460,6 +461,7 @@ void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
     AdvancedSearchController ctrl;
     ctrl.setPreferences(prefs);
     QSignalSpy finished(&ctrl, &AdvancedSearchController::searchFinished);
+    QSignalSpy status(&ctrl, &AdvancedSearchController::statusMessage);
 
     SearchConfig config;
     config.root_path = dir.path();
@@ -476,7 +478,16 @@ void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
     QVERIFY(emitted);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(finished[0][2].toBool(), false);
+    verifyIncompleteStatusFits(status);
     verifyIncompleteSearchNamesTheFile(ctrl, clean_ctrl);
+}
+
+// Review 3 (N6): the status line ran past the progress bar ("may be missing matc").
+void AdvancedSearchControllerTests::verifyIncompleteStatusFits(const QSignalSpy& status) {
+    QVERIFY(!status.isEmpty());
+    const QString said = status.last().at(0).toString();
+    QVERIFY2(said.startsWith(QStringLiteral("Search incomplete: ")) && said.size() <= 80,
+             qPrintable(said));
 }
 
 // ...and names the file it could not search: the message alone said only "some files".

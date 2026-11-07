@@ -217,8 +217,10 @@ void AdvancedSearchController::onWorkerFinished() {
             logWarning("AdvancedSearchController: search incomplete -- {}",
                        m_worker->incompleteReasons().join(QStringLiteral("; ")).toStdString());
         }
-        Q_EMIT statusMessage(tr("Search INCOMPLETE: %1 matches in %2 files; %3 could not be "
-                                "searched, listed in the log, so results may be missing matches")
+        // Short enough to read whole beside the progress bar; the log names what was missed
+        // (review 3, N6: cut at "may be missing matc").
+        Q_EMIT statusMessage(tr("Search incomplete: %1 matches in %2 files, %3 not searched "
+                                "(see the log)")
                                  .arg(m_total_matches)
                                  .arg(m_total_files)
                                  .arg(m_incomplete_reasons.size()),

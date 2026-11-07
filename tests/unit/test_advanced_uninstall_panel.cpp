@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFormLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -48,6 +49,7 @@ class AdvancedUninstallPanelTests : public QObject {
 
 private Q_SLOTS:
     void installFolderIsMeasuredOnDemandAndCached();
+    void versionSizeAndDateColumnsFitWhatTheyHold();
     void remoteInstallFolderOffersNoMeasurement();
     void addToBatchTicksTheProgramsRow();
     void ticksSurviveTheSearchText();
@@ -271,6 +273,24 @@ void AdvancedUninstallPanelTests::theNameColoursHaveAKey() {
     QVERIFY(bloat_key != nullptr && orphan_key != nullptr);
     QCOMPARE(bloat_key->text(), bloat_name->toolTip());
     QCOMPARE(orphan_key->text(), orphan_name->toolTip());
+}
+
+// Review 3 (S15): a fixed Version column cut "10.0.19640...." beside half-empty Size and Install
+// Date columns.
+void AdvancedUninstallPanelTests::versionSizeAndDateColumnsFitWhatTheyHold() {
+    sak::AdvancedUninstallPanel panel;
+    QTableWidget* programs = panel.m_program_table;
+    QVERIFY(programs != nullptr);
+    for (int column = 0; column < programs->columnCount(); ++column) {
+        const QString label = programs->horizontalHeaderItem(column) != nullptr
+                                  ? programs->horizontalHeaderItem(column)->text()
+                                  : QString();
+        if (label == QStringLiteral("Version") || label == QStringLiteral("Size") ||
+            label == QStringLiteral("Install Date")) {
+            QCOMPARE(programs->horizontalHeader()->sectionResizeMode(column),
+                     QHeaderView::ResizeToContents);
+        }
+    }
 }
 
 QTEST_MAIN(AdvancedUninstallPanelTests)

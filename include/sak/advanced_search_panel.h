@@ -15,6 +15,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -141,6 +142,13 @@ private:
     void showMetadataTreeDialog(const QString& title, const QMap<QString, QString>& metadata);
     [[nodiscard]] QMap<QString, QString> collectRemoteMetadata(const QString& file_path) const;
     [[nodiscard]] QMap<QString, QString> collectLocalMetadata(const QString& file_path) const;
+
+public:
+    /// @brief A file time in the metadata view: as File Explorer's lists show one
+    ///        ("2026-11-06 18:02"), not ISO 8601 (review 3, X16); empty for an invalid time.
+    [[nodiscard]] static QString metadataTimeText(const QDateTime& time);
+
+private:
     void highlightMatches();
     void highlightMetadataMatches();
     void navigateToMatch(int match_index);

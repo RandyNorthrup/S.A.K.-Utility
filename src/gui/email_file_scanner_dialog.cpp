@@ -7,6 +7,7 @@
 #include "sak/email_file_scanner_dialog.h"
 
 #include "sak/email_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/style_constants.h"
@@ -48,7 +49,6 @@ enum FileScanColumn {
 };
 
 constexpr qsizetype kExpectedEmailFileScanResults = 64;
-constexpr int kEmailFileSizeGigabytePrecision = 2;
 
 QString classifySuffix(const QString& suffix) {
     if (suffix == QLatin1String("pst")) {
@@ -114,20 +114,11 @@ void populateResultsTable(QTableWidget* table, const QVector<ScannedFile>& resul
                        FileScanColPath,
                        new QTableWidgetItem(QDir::toNativeSeparators(r.path)));
         table->setItem(row, FileScanColType, new QTableWidgetItem(r.type));
-        QString size_str;
-        if (r.size_bytes >= kBytesPerGB) {
-            size_str = QStringLiteral("%1 GB").arg(static_cast<double>(r.size_bytes) / kBytesPerGBf,
-                                                   0,
-                                                   'f',
-                                                   kEmailFileSizeGigabytePrecision);
-        } else if (r.size_bytes >= kBytesPerMB) {
-            size_str = QStringLiteral("%1 MB").arg(
-                static_cast<double>(r.size_bytes) / kBytesPerMBf, 0, 'f', 1);
-        } else {
-            size_str = QStringLiteral("%1 KB").arg(
-                static_cast<double>(r.size_bytes) / kBytesPerKBf, 0, 'f', 0);
-        }
-        table->setItem(row, FileScanColSize, new QTableWidgetItem(size_str));
+        // The app's one byte format: "60 KB" here against "60.0 KB" in Email Inspector (F38).
+        table->setItem(row,
+                       FileScanColSize,
+                       new QTableWidgetItem(
+                           EmailFileScannerDialog::sizeText(static_cast<qint64>(r.size_bytes))));
     }
     table->setSortingEnabled(true);
     table->setUpdatesEnabled(true);
@@ -354,6 +345,10 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
 // ============================================================================
 
 // static
+QString EmailFileScannerDialog::sizeText(qint64 bytes) {
+    return sak::formatBytes(bytes);
+}
+
 QStringList EmailFileScannerDialog::mailFilePatterns() {
     return {QStringLiteral("*.pst"),
             QStringLiteral("*.ost"),

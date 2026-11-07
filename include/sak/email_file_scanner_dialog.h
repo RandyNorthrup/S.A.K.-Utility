@@ -39,6 +39,10 @@ public:
     /// The file patterns a scan lists, besides Thunderbird's mailboxes with no extension.
     [[nodiscard]] static QStringList mailFilePatterns();
 
+    /// @brief A found file's size as the results table shows it: the app's one byte format
+    ///        ("60.0 KB", as Email Inspector and the OST converter show it; review 3, F38).
+    [[nodiscard]] static QString sizeText(qint64 bytes);
+
 private Q_SLOTS:
     void onScanClicked();
     void onOpenClicked();

@@ -14,6 +14,7 @@
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
 #include "sak/view_empty_state.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QFile>
@@ -104,12 +105,13 @@ constexpr int kMaxReviewNamesShown = 40;
         overflow = QObject::tr("\n... and %1 more").arg(shown.size() - kMaxReviewNamesShown);
         shown = shown.mid(0, kMaxReviewNamesShown);
     }
-    const QString body = QObject::tr(
-                             "Install the following %1 package(s) from the deployment bundle?\n\n"
-                             "%2%3\n\n"
-                             "This may take several minutes depending on package sizes.")
-                             .arg(labels.size())
-                             .arg(shown.join(QStringLiteral("\n")), overflow);
+    const QString body =
+        QObject::tr(
+            "Install the following %1 from the deployment bundle?\n\n"
+            "%2%3\n\n"
+            "This may take several minutes depending on package sizes.")
+            .arg(sak::countOf(labels.size(), QObject::tr("package"), QObject::tr("packages")))
+            .arg(shown.join(QStringLiteral("\n")), overflow);
     const auto reply = sak::showQuestionLogged(parent,
                                                QObject::tr("Confirm Bundle Installation"),
                                                body,
@@ -378,10 +380,9 @@ void AppInstallationPanel::onInstallAll() {
     }
 
     // Tier 2: Chocolatey installation modifies system directories
-    auto gate = sak::showElevationGate(
-        this,
-        tr("Package Installation"),
-        tr("Installing packages via Chocolatey requires administrator privileges."));
+    auto gate = sak::showElevationGate(this,
+                                       tr("Package Installation"),
+                                       tr("Chocolatey installs into system folders."));
     if (gate != sak::ElevationGateResult::AlreadyElevated) {
         return;
     }
@@ -394,13 +395,13 @@ void AppInstallationPanel::onInstallAll() {
         return;
     }
 
-    auto reply =
-        sak::showQuestionLogged(this,
-                                tr("Confirm Installation"),
-                                tr("Install %1 package(s) via Chocolatey?\n\n"
-                                   "This may take several minutes depending on package sizes.")
-                                    .arg(m_installQueue.size()),
-                                QMessageBox::Yes | QMessageBox::No);
+    auto reply = sak::showQuestionLogged(
+        this,
+        tr("Confirm Installation"),
+        tr("Install %1 via Chocolatey?\n\n"
+           "This may take several minutes depending on package sizes.")
+            .arg(sak::countOf(m_installQueue.size(), tr("package"), tr("packages"))),
+        QMessageBox::Yes | QMessageBox::No);
 
     if (reply != QMessageBox::Yes) {
         return;
@@ -712,10 +713,9 @@ void AppInstallationPanel::onInstallFromBundle() {
     // Installing packages via choco writes machine locations -> require elevation
     // (parity with onInstallAll), so a non-elevated run does not silently stall or
     // half-install.
-    auto gate = sak::showElevationGate(
-        this,
-        tr("Install from Bundle"),
-        tr("Installing packages from a deployment payload requires administrator privileges."));
+    auto gate = sak::showElevationGate(this,
+                                       tr("Install from Bundle"),
+                                       tr("A deployment bundle installs into system folders."));
     if (gate != sak::ElevationGateResult::AlreadyElevated) {
         return;
     }

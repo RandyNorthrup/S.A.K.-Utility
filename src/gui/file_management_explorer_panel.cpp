@@ -7280,12 +7280,15 @@ void FileManagementExplorerPanel::renderPreviewForEntry(const FileManagementEntr
     // FileManagementReadResult::truncated), so its own verdict counts too.
     const bool capped = reader_truncated || bytes.size() >= kExplorerPreviewMaxBytes;
     const auto preview = FileManagementFileSystemBridge::renderPreview(bytes, capped);
-    QString caption = tr("%1 - %2 bytes - %3")
+    // Sizes as the file list shows them ("242 B", review 3, X6: "242 bytes").
+    QString caption = tr("%1 - %2 - %3")
                           .arg(entry.name,
-                               QString::number(entry.size_bytes),
+                               FileExplorerItemModel::sizeText(entry.size_bytes),
                                preview.is_binary ? tr("binary (hex)") : tr("text"));
     if (preview.truncated) {
-        caption += tr(" - showing %1 bytes").arg(preview.shown_bytes);
+        caption += tr(" - showing %1")
+                       .arg(FileExplorerItemModel::sizeText(
+                           static_cast<uint64_t>(std::max<qint64>(preview.shown_bytes, 0))));
     }
     m_details_pane->showImagePreview(false);
     if (auto* label = m_details_pane->previewCaption()) {
@@ -7304,11 +7307,11 @@ void FileManagementExplorerPanel::showImagePreviewForEntry(const FileManagementE
                                        Qt::SmoothTransformation));
     }
     if (auto* caption = m_details_pane->previewCaption()) {
-        caption->setText(tr("%1 - %2 x %3 image - %4 bytes")
+        caption->setText(tr("%1 - %2 x %3 image - %4")
                              .arg(entry.name)
                              .arg(image.width())
                              .arg(image.height())
-                             .arg(entry.size_bytes));
+                             .arg(FileExplorerItemModel::sizeText(entry.size_bytes)));
     }
     m_details_pane->showImagePreview(true);
 }

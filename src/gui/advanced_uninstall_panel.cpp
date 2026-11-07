@@ -53,9 +53,6 @@ constexpr int kLeftoverSizeColumnWidth = 80;
 constexpr int kProgramCheckColumnWidth = sak::kCheckboxColumnW;
 constexpr int kProgramIconColumnWidth = sak::ui::kUiButtonSizeInline;
 constexpr int kProgramPublisherColumnWidth = 160;
-constexpr int kProgramVersionColumnWidth = sak::ui::kUiWideColumnWidth;
-constexpr int kProgramSizeColumnWidth = sak::ui::kUiMediumColumnWidth;
-constexpr int kProgramInstallDateColumnWidth = sak::ui::kUiWideColumnWidth;
 constexpr int kProgramTableStretch = 3;
 constexpr int kLeftoverSectionStretch = 2;
 constexpr qint64 kEstimatedSizeBytesPerKb = sak::kBytesPerKB;
@@ -229,12 +226,11 @@ ProgramTableUi buildProgramTableUi(AdvancedUninstallPanel* panel,
     header->setSectionResizeMode(cols.name, QHeaderView::Stretch);
     header->setSectionResizeMode(cols.publisher, QHeaderView::Interactive);
     header->resizeSection(cols.publisher, kProgramPublisherColumnWidth);
-    header->setSectionResizeMode(cols.version, QHeaderView::Interactive);
-    header->resizeSection(cols.version, kProgramVersionColumnWidth);
-    header->setSectionResizeMode(cols.size, QHeaderView::Interactive);
-    header->resizeSection(cols.size, kProgramSizeColumnWidth);
-    header->setSectionResizeMode(cols.date, QHeaderView::Interactive);
-    header->resizeSection(cols.date, kProgramInstallDateColumnWidth);
+    // Version, Size and Install Date as wide as what they hold, the name taking the rest: a fixed
+    // Version cut "10.0.19640...." beside half-empty Size and Install Date (review 3, S15).
+    for (const int column : {cols.version, cols.size, cols.date}) {
+        header->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    }
 
     setAccessible(ui.program_table,
                   QObject::tr("Program list"),

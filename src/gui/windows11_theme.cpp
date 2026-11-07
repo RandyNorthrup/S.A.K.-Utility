@@ -368,6 +368,11 @@ QPalette themePalette(AppThemeMode mode) {
 
 }  // namespace
 
+QString itemSelectionColor() {
+    return usingDarkUiTheme() ? QString::fromLatin1(kColorDarkBgHover)
+                              : blendedOver(kColorPrimary, kSelectionStrongAlpha, kColorBgWhite);
+}
+
 QString windows11ThemeStyleSheet() {
     return windows11ThemeStyleSheet(AppThemeMode::Light);
 }

@@ -93,6 +93,9 @@ private Q_SLOTS:
     void wizardReviewTextIsNotCutOff();
     void manageBitLockerOffersOnlyTheActionThatApplies();
     void resizePreviewShowsEveryRow();
+    void convertStylePromptNamesTheDiskAndItsStyle();
+    void optimizeDialogHasOnePrimaryButtonAndOneLabel();
+    void operationsListScrollsDownOnly();
     void wipeAcknowledgementsShareOneIndent();
     void wizardsTitleEveryPageInTheHeader();
     void diskMapLegendContainsCommercialColorRoles();
@@ -3627,6 +3630,91 @@ void PartitionManagerPanelTests::wizardReviewTextIsNotCutOff() {
     QVERIFY2(problem.isEmpty(), qPrintable(problem));
 }
 
+// Review 3 (X21): the prompt named no disk and said "partition type" for a partition style.
+void PartitionManagerPanelTests::convertStylePromptNamesTheDiskAndItsStyle() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(metadataRebuildInventoryFixture(false));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    QApplication::processEvents();
+    QString title;
+    QString label;
+    QString chosen;
+    const ScopedModalInspection inspection([&]() {
+        auto* prompt = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (prompt == nullptr) {
+            return;
+        }
+        title = prompt->windowTitle();
+        label = prompt->labelText();
+        chosen = prompt->textValue();
+        prompt->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onConvertStyle", Qt::DirectConnection));
+    QApplication::processEvents();
+    QCOMPARE(title, QStringLiteral("Convert Disk 0"));
+    QCOMPARE(label, QStringLiteral("Partition style (now MBR):"));
+    QCOMPARE(chosen, QStringLiteral("GPT"));
+}
+
+// Review 3 (X10, X9): the optimize dialog had four primary buttons in a row, and its "In-app HDD
+// defrag execution" row held "Queue SSD ReTrim" on an SSD.
+void PartitionManagerPanelTests::optimizeDialogHasOnePrimaryButtonAndOneLabel() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    QApplication::processEvents();
+    QStringList secondary;
+    QStringList rows;
+    bool seen = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        seen = true;
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            if (button->styleSheet() == sak::ui::kSecondaryButtonStyle) {
+                secondary.append(button->text());
+            }
+        }
+        for (auto* cells : dialog->findChildren<QTableWidget*>()) {
+            for (int row = 0; row < cells->rowCount(); ++row) {
+                if (cells->item(row, 0) != nullptr) {
+                    rows.append(cells->item(row, 0)->text());
+                }
+            }
+        }
+        dialog->reject();
+    });
+    auto* optimize = findToolButtonByName(&panel, QStringLiteral("Disk Defrag"));
+    QVERIFY(optimize != nullptr);
+    pressAction(optimize);
+    QVERIFY(seen);
+    QVERIFY2(secondary.contains(QStringLiteral("Copy Optimize Commands")) &&
+                 secondary.contains(QStringLiteral("Open Windows Optimize Drives")),
+             qPrintable(secondary.join(QStringLiteral(", "))));
+    QVERIFY2(rows.contains(QStringLiteral("In-app optimization")),
+             qPrintable(rows.join(QStringLiteral(", "))));
+}
+
+// Review 3 (R1): a horizontal scroll bar covered the operations list's last row.
+void PartitionManagerPanelTests::operationsListScrollsDownOnly() {
+    sak::PartitionManagerPanel panel;
+    QScrollArea* list = nullptr;
+    for (auto* scroll : panel.findChildren<QScrollArea*>()) {
+        if (scroll->accessibleName() == QStringLiteral("Partition operations")) {
+            list = scroll;
+        }
+    }
+    QVERIFY(list != nullptr);
+    QCOMPARE(list->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+}
+
 // UI review F7: the resize preview's third row, "Max online", ran past the preview's 82 px.
 void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
     sak::PartitionManagerPanel panel;
@@ -5036,7 +5124,7 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
         QCOMPARE(propertyTableValue(status, QStringLiteral("Safe commands")),
                  QStringLiteral("Optimize-Volume -DriveLetter T -Analyze -Verbose\n"
                                 "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
-        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app HDD defrag execution")),
+        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app optimization")),
                  QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
         const QString cut = propertyTableCut(status);
         QVERIFY2(cut.isEmpty(), qPrintable(cut));
@@ -5318,11 +5406,11 @@ void PartitionManagerPanelTests::spaceAnalyzerExposesCommercialViews() {
     const QJsonObject binRow = typeRows.at(0).toObject();
     QCOMPARE(binRow.value(QStringLiteral("name")).toString(), QStringLiteral(".bin"));
     QCOMPARE(binRow.value(QStringLiteral("bytes")).toString(), QStringLiteral("64"));
-    QCOMPARE(binRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file(s)"));
+    QCOMPARE(binRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file"));
     const QJsonObject logRow = typeRows.at(1).toObject();
     QCOMPARE(logRow.value(QStringLiteral("name")).toString(), QStringLiteral(".log"));
     QCOMPARE(logRow.value(QStringLiteral("bytes")).toString(), QStringLiteral("32"));
-    QCOMPARE(logRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file(s)"));
+    QCOMPARE(logRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file"));
     QCOMPARE(result.value(QStringLiteral("total_bytes")).toString(), QStringLiteral("96"));
 }
 

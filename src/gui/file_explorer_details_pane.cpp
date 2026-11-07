@@ -103,6 +103,9 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     m_preview_caption->setWordWrap(true);
     m_preview_caption->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_preview_caption->setAccessibleDescription(tr("Explorer preview caption"));
+    // In from the edge as the preview's text is; flush left, it began 25 px left of it (X6).
+    m_preview_caption->setContentsMargins(
+        ui::kMarginMedium, ui::kMarginNone, ui::kMarginMedium, ui::kMarginNone);
     layout->addWidget(m_preview_caption);
 
     m_preview_stack = new QStackedWidget(container);

@@ -348,7 +348,7 @@ bool configurePortableRuntimeDirs(const RuntimeOptions& options) {
     const auto data_root = sak::app_paths::initializeDataRoot();
     if (!data_root) {
         reportStartupRefusal(options,
-                             QStringLiteral("S.A.K. Utility -- data folder"),
+                             QStringLiteral("S.A.K. Utility: data folder"),
                              data_root.error());
         return false;
     }

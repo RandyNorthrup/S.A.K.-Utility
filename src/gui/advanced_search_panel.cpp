@@ -1743,14 +1743,19 @@ QMap<QString, QString> AdvancedSearchPanel::collectRemoteMetadata(const QString&
     return metadata;
 }
 
+QString AdvancedSearchPanel::metadataTimeText(const QDateTime& time) {
+    return time.isValid() ? time.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                          : QString();
+}
+
 QMap<QString, QString> AdvancedSearchPanel::collectLocalMetadata(const QString& file_path) const {
     const QFileInfo fi(file_path);
     QMap<QString, QString> metadata;
     metadata[QStringLiteral("FileName")] = fi.fileName();
     metadata[QStringLiteral("FileSize")] = formatMetadataSize(fi.size());
     metadata[QStringLiteral("FileType")] = fi.suffix().toUpper();
-    metadata[QStringLiteral("Created")] = fi.birthTime().toString(Qt::ISODate);
-    metadata[QStringLiteral("LastModified")] = fi.lastModified().toString(Qt::ISODate);
+    metadata[QStringLiteral("Created")] = metadataTimeText(fi.birthTime());
+    metadata[QStringLiteral("LastModified")] = metadataTimeText(fi.lastModified());
 
     const QImageReader reader(file_path);
     if (reader.canRead()) {

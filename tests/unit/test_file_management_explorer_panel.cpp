@@ -18,12 +18,14 @@
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_sidebar.h"
 #include "sak/file_explorer_sort_filter_model.h"
+#include "sak/file_explorer_style_constants.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_explorer_panel.h"
 #include "sak/portable_settings.h"
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
+#include "sak/windows11_theme.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -1597,6 +1599,58 @@ private Q_SLOTS:
                      ->findChildren<QMenu*>(QStringLiteral("fileExplorerGroupBySubmenu"))
                      .size(),
                  static_cast<qsizetype>(1));
+    }
+
+    // Review 3 (S7/DN8): the file list selected in its own shade, #b2cffb light and #214278 dark,
+    // where every other view uses the theme's selection colour.
+    void theFileListSelectsInTheThemesColour() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            const QString sheet = sak::ui::fileExplorerShellStyleSheetText();
+            const QString rule = QStringLiteral("QListView::item:selected { background: %1;")
+                                     .arg(sak::ui::itemSelectionColor());
+            QVERIFY2(sheet.contains(rule), qPrintable(rule));
+        }
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Dark);
+        QCOMPARE(sak::ui::itemSelectionColor(), QString::fromLatin1(sak::ui::kColorDarkBgHover));
+    }
+
+    // Review 3 (X16): Advanced Search's metadata showed raw ISO dates ("2026-11-06T18:02:11").
+    void searchMetadataDatesReadAsTheListsDo() {
+        const QDateTime time(QDate(2026, 11, 6), QTime(18, 2, 11));
+        QCOMPARE(sak::AdvancedSearchPanel::metadataTimeText(time),
+                 time.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        QVERIFY(!sak::AdvancedSearchPanel::metadataTimeText(time).contains(QLatin1Char('T')));
+        QVERIFY(sak::AdvancedSearchPanel::metadataTimeText(QDateTime()).isEmpty());
+    }
+
+    // Review 3 (X6): the preview caption said "242 bytes" where the list says "242 B".
+    void previewCaptionCountsBytesAsTheListDoes() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("notes.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(QByteArray(242, 'a')), 242);
+        }
+        DeterministicExplorerPanel panel(localTargets(dir.path()));
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(table != nullptr);
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QVERIFY(waitForListingQuiescence(table));
+        QVERIFY(selectRowStable(table, QStringLiteral("notes")));
+        auto* caption = panel.findChild<QLabel*>(QStringLiteral("fileExplorerPreviewCaption"));
+        QVERIFY(caption != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(caption->text().contains(QStringLiteral("notes")), 5000);
+        QVERIFY2(caption->text().contains(QStringLiteral("242 B")) &&
+                     !caption->text().contains(QStringLiteral("bytes")),
+                 qPrintable(caption->text()));
+        QVERIFY(caption->contentsMargins().left() > 0);
     }
 
     void zoomStepsSizeKindsAndCyclesLayoutRing() {

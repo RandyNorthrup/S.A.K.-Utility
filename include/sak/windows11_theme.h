@@ -12,6 +12,10 @@
 
 namespace sak::ui {
 
+/// @brief The colour a selected row takes in every item view of the current theme: the accent
+///        at 22% over white in light, the dark hover surface in dark.
+[[nodiscard]] QString itemSelectionColor();
+
 /// @brief Supported app color themes.
 enum class AppThemeMode {
     Light,

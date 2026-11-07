@@ -6,6 +6,7 @@
 ///        system drive included.
 
 #include "sak/email_file_scanner_dialog.h"
+#include "sak/format_utils.h"
 
 #include <QDir>
 #include <QStorageInfo>
@@ -17,7 +18,14 @@ class EmailFileScannerDialogTests : public QObject {
 private Q_SLOTS:
     void commonScanPathsIncludeTheSystemDrivesBackups();
     void aScanListsEveryKindOfMailFileTheAppOpens();
+    void sizesMatchTheRestOfEmailTools();
 };
+
+// Review 3 (F38): the scan read "60 KB" where Email Inspector and the OST converter say "60.0 KB".
+void EmailFileScannerDialogTests::sizesMatchTheRestOfEmailTools() {
+    QCOMPARE(sak::EmailFileScannerDialog::sizeText(61'440), QStringLiteral("60.0 KB"));
+    QCOMPARE(sak::EmailFileScannerDialog::sizeText(61'440), sak::formatBytes(qint64{61'440}));
+}
 
 void EmailFileScannerDialogTests::aScanListsEveryKindOfMailFileTheAppOpens() {
     const QStringList patterns = sak::EmailFileScannerDialog::mailFilePatterns();
