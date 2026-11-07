@@ -50,6 +50,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -361,49 +362,61 @@ constexpr int kFileRecoveryDialogMinHeight = 420;
 /// 256 GB disk is still seen (review 3: on testpc1 the 3 GB E: and 2 GB F: were not, and a queued
 /// delete of F: did not show).
 constexpr int kMinimumSegmentPixels = 24;
+/// What a segment's label keeps clear of the segment's two edges.
+constexpr int kSegmentLabelInsetPx = ui::kSpacingTight * 2;
+/// The room around Copy Disk's "Copy of Disk N" beyond its own width: the inset, and a little air.
+constexpr int kCopySegmentLabelRoomPx = kSegmentLabelInsetPx + (ui::kSpacingSmall * 2);
 
-/// Each of @p sizes' share of @p width, none under @p floor_px.
-QVector<double> flooredShares(const QVector<uint64_t>& sizes, int width, int floor_px) {
+/// Each of @p sizes' share of @p width, none under its floor in @p floors.
+QVector<double> flooredShares(const QVector<uint64_t>& sizes,
+                              int width,
+                              const QVector<int>& floors) {
     const uint64_t total = std::accumulate(sizes.cbegin(), sizes.cend(), uint64_t{0});
     QVector<double> widths;
     widths.reserve(sizes.size());
-    for (const uint64_t bytes : sizes) {
-        const double share = total == 0 ? 0.0
-                                        : static_cast<double>(width) * static_cast<double>(bytes) /
-                                              static_cast<double>(total);
-        widths.append(std::max<double>(share, floor_px));
+    for (qsizetype i = 0; i < sizes.size(); ++i) {
+        const double share = total == 0
+                                 ? 0.0
+                                 : static_cast<double>(width) * static_cast<double>(sizes.at(i)) /
+                                       static_cast<double>(total);
+        widths.append(std::max<double>(share, floors.at(i)));
     }
     return widths;
 }
 
-/// Takes what @p widths have over @p width back from the ones above @p floor_px, in proportion to
-/// what each has over it.
-void squeezeToWidth(QVector<double>* widths, int width, int floor_px) {
+/// Takes what @p widths have over @p width back from the ones above their floors, in proportion to
+/// what each has over its floor.
+void squeezeToWidth(QVector<double>* widths, int width, const QVector<int>& floors) {
     const double used = std::accumulate(widths->cbegin(), widths->cend(), 0.0);
     double spare = 0.0;
-    for (const double w : *widths) {
-        spare += std::max(0.0, w - floor_px);
+    for (qsizetype i = 0; i < widths->size(); ++i) {
+        spare += std::max(0.0, widths->at(i) - floors.at(i));
     }
     const double excess = used - width;
     if (excess <= 0.0 || spare <= 0.0) {
         return;
     }
-    for (double& w : *widths) {
-        w -= excess * std::max(0.0, w - floor_px) / spare;
+    for (qsizetype i = 0; i < widths->size(); ++i) {
+        double& w = (*widths)[i];
+        w -= excess * std::max(0.0, w - floors.at(i)) / spare;
     }
 }
 
 /// Left edge and width of each of @p sizes, in disk order, across a bar @p width wide: in
-/// proportion to its bytes, but none narrower than @p min_px while the bar has room for that; the
-/// width the small ones take comes from the large ones, in proportion to what they have over it.
-QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width, int min_px) {
+/// proportion to its bytes, but none narrower than its floor in @p min_px while the bar has room
+/// for every floor; the width the small ones take comes from the large ones, in proportion to what
+/// they have over their floors.
+QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes,
+                                      int width,
+                                      const QVector<int>& min_px) {
     QVector<QPair<int, int>> spans;
-    if (sizes.isEmpty() || width <= 0) {
+    if (sizes.isEmpty() || width <= 0 || min_px.size() != sizes.size()) {
         return spans;
     }
-    const int floor_px = static_cast<qsizetype>(min_px) * sizes.size() <= width ? min_px : 1;
-    QVector<double> widths = flooredShares(sizes, width, floor_px);
-    squeezeToWidth(&widths, width, floor_px);
+    const int floors_total = std::accumulate(min_px.cbegin(), min_px.cend(), 0);
+    const QVector<int> floors = floors_total <= width ? min_px : QVector<int>(sizes.size(), 1);
+    QVector<double> widths = flooredShares(sizes, width, floors);
+    squeezeToWidth(&widths, width, floors);
     double x = 0.0;
     for (const double w : widths) {
         const int left = static_cast<int>(std::lround(x));
@@ -413,12 +426,17 @@ QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width,
     return spans;
 }
 
+/// segmentSpans with one floor, @p min_px, for every segment.
+QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width, int min_px) {
+    return segmentSpans(sizes, width, QVector<int>(sizes.size(), min_px));
+}
+
 /// segmentSpans for segments drawn on a bar that stands for @p total_bytes: what the segments do
 /// not cover (a disk's tail past its last region) keeps its share of the bar, undrawn.
 QVector<QPair<int, int>> segmentSpansOver(QVector<uint64_t> sizes,
                                           uint64_t total_bytes,
                                           int width,
-                                          int min_px) {
+                                          QVector<int> min_px) {
     const uint64_t covered = std::accumulate(sizes.cbegin(), sizes.cend(), uint64_t{0});
     // A remainder under a hundredth of the disk (partition-table space, alignment) is not given a
     // place of its own, which the minimum width would make 24 px of nothing.
@@ -427,12 +445,21 @@ QVector<QPair<int, int>> segmentSpansOver(QVector<uint64_t> sizes,
                         (total_bytes - covered) > total_bytes / kVisibleRemainderDivisor;
     if (padded) {
         sizes.append(total_bytes - covered);
+        min_px.append(kMinimumSegmentPixels);
     }
     QVector<QPair<int, int>> spans = segmentSpans(sizes, width, min_px);
     if (padded && !spans.isEmpty()) {
         spans.removeLast();
     }
     return spans;
+}
+
+/// segmentSpansOver with one floor, @p min_px, for every segment.
+QVector<QPair<int, int>> segmentSpansOver(const QVector<uint64_t>& sizes,
+                                          uint64_t total_bytes,
+                                          int width,
+                                          int min_px) {
+    return segmentSpansOver(sizes, total_bytes, width, QVector<int>(sizes.size(), min_px));
 }
 
 [[nodiscard]] int scaledExtent(int extent, uint64_t numerator, uint64_t denominator) noexcept {
@@ -2184,7 +2211,28 @@ struct ClonePreviewSegment {
     uint64_t bytes{0};
     QColor color;
     int used_percent{0};
+    /// The narrowest it is drawn, when wider than the bar's own minimum: room for its label.
+    int min_px{0};
 };
+
+/// What a copy puts on a much larger target, as the Target bar draws it: one segment, wide enough
+/// to name the disk it copies, then the space left. Each copied partition at the target's scale was
+/// a 24 px sliver too narrow for any name (review 3, Copy Disk).
+[[nodiscard]] QVector<ClonePreviewSegment> labelledCopySegments(const QFontMetrics& metrics,
+                                                                const QString& label,
+                                                                uint64_t source_bytes,
+                                                                uint64_t target_bytes) {
+    return {{.label = label,
+             .bytes = source_bytes,
+             .color = kPartitionColorGptPrimary,
+             .used_percent = 0,
+             .min_px = metrics.horizontalAdvance(label) + kCopySegmentLabelRoomPx},
+            {.label = QObject::tr("Unallocated"),
+             .bytes = target_bytes - source_bytes,
+             .color = kPartitionColorUnallocated,
+             .used_percent = 0,
+             .min_px = 0}};
+}
 
 class CloneLayoutPreviewWidget : public QWidget {
 public:
@@ -2218,10 +2266,75 @@ protected:
                                source_row.width(),
                                kClonePreviewRowHeight);
         drawPreviewRow(&painter, source_row, tr("Source"), sourceSegments(), sourceTotalBytes());
-        drawPreviewRow(&painter, target_row, tr("Target"), targetSegments(), targetTotalBytes());
+        drawPreviewRow(&painter,
+                       target_row,
+                       tr("Target"),
+                       targetSegmentsFor(painter.fontMetrics(), barRect(target_row).width()),
+                       targetTotalBytes());
+    }
+
+public:
+    /// The Target bar's segments as drawn on a bar @p bar_width wide in @p metrics' font.
+    [[nodiscard]] QVector<ClonePreviewSegment> targetSegmentsFor(const QFontMetrics& metrics,
+                                                                 int bar_width) const {
+        QVector<ClonePreviewSegment> segments = targetSegments();
+        const uint64_t source_bytes = sourceTotalBytes();
+        const uint64_t target_bytes = targetTotalBytes();
+        if (m_plan || (m_source_disk == nullptr) || target_bytes <= source_bytes) {
+            return segments;
+        }
+        QStringList names;
+        for (const auto& segment : segments) {
+            names.append(segment.label);
+        }
+        // Every copied partition can be named where it lands: draw them one by one.
+        if (shownLabels(metrics, segments, target_bytes, bar_width) == names) {
+            return segments;
+        }
+        return labelledCopySegments(metrics,
+                                    tr("Copy of Disk %1").arg(m_source_disk->disk_number.value()),
+                                    source_bytes,
+                                    target_bytes);
+    }
+
+    /// Where a row's bar is drawn.
+    [[nodiscard]] static QRect barRect(const QRect& row) {
+        const QRect bar(row.left() + kClonePreviewLabelWidth + kClonePreviewTitleGap,
+                        row.top() + ((row.height() - kClonePreviewBarHeight) / 2),
+                        row.width() - kClonePreviewLabelWidth - kClonePreviewTitleGap,
+                        kClonePreviewBarHeight);
+        return bar;
+    }
+
+    /// The labels the segments of @p segments show on a bar @p bar_width wide, in order: empty
+    /// where a segment has no room for its name.
+    [[nodiscard]] static QStringList shownLabels(const QFontMetrics& metrics,
+                                                 const QVector<ClonePreviewSegment>& segments,
+                                                 uint64_t total_bytes,
+                                                 int bar_width) {
+        QStringList labels;
+        const auto spans = segmentTrackSpans(segments, total_bytes, bar_width);
+        for (qsizetype i = 0; i < segments.size() && i < spans.size(); ++i) {
+            labels.append(labelThatFits(
+                metrics, segments.at(i).label, spans.at(i).second - kSegmentLabelInsetPx));
+        }
+        return labels;
     }
 
 private:
+    [[nodiscard]] static QVector<QPair<int, int>> segmentTrackSpans(
+        const QVector<ClonePreviewSegment>& segments, uint64_t total_bytes, int bar_width) {
+        QVector<uint64_t> sizes;
+        QVector<int> floors;
+        sizes.reserve(segments.size());
+        floors.reserve(segments.size());
+        for (const auto& segment : segments) {
+            sizes.append(segment.bytes);
+            floors.append(std::max(kMinimumSegmentPixels, segment.min_px));
+        }
+        return segmentSpansOver(sizes, total_bytes, bar_width, floors);
+    }
+
     [[nodiscard]] uint64_t sourceTotalBytes() const {
         return (m_source_disk != nullptr) ? m_source_disk->size_bytes : 0;
     }
@@ -2320,11 +2433,7 @@ private:
         painter->setPen(palette().color(QPalette::Text));
         painter->drawText(
             row.left(), row.top(), kClonePreviewLabelWidth, row.height(), Qt::AlignVCenter, title);
-        const QRect bar(row.left() + kClonePreviewLabelWidth + kClonePreviewTitleGap,
-                        row.top() + ((row.height() - kClonePreviewBarHeight) / 2),
-                        row.width() - kClonePreviewLabelWidth - kClonePreviewTitleGap,
-                        kClonePreviewBarHeight);
-        drawSegmentTrack(painter, bar, segments, total_bytes);
+        drawSegmentTrack(painter, barRect(row), segments, total_bytes);
     }
 
     void drawSegmentTrack(QPainter* painter,
@@ -2336,13 +2445,8 @@ private:
         painter->fillPath(track_path, palette().color(QPalette::AlternateBase));
         // None too narrow to see, as in the Apply review's bars: on a 256 GB disk the 3 GB and
         // 2 GB partitions were slivers (review 3).
-        QVector<uint64_t> sizes;
-        sizes.reserve(segments.size());
-        for (const auto& segment : segments) {
-            sizes.append(segment.bytes);
-        }
-        const auto spans = segmentSpansOver(sizes, total_bytes, bar.width(), kMinimumSegmentPixels);
-        for (qsizetype i = 0; i < segments.size(); ++i) {
+        const auto spans = segmentTrackSpans(segments, total_bytes, bar.width());
+        for (qsizetype i = 0; i < segments.size() && i < spans.size(); ++i) {
             const QRect segment_rect(
                 bar.left() + spans.at(i).first, bar.top(), spans.at(i).second, bar.height());
             drawSegment(painter, segment_rect, segments.at(i));
@@ -3554,7 +3658,33 @@ public:
         }
     }
 
+protected:
+    bool event(QEvent* event) override {
+        const bool handled = QDialog::event(event);
+        if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize) {
+            fitWrappedLabels();
+        }
+        return handled;
+    }
+
 private:
+    // A form row does not take the height a wrapped label needs at the width the row gives it:
+    // Resize/Move's Support line had room for one line when "Move partition start" made it two,
+    // and was cut at its descenders (review 3, X4). Each wrapped label asks, as its minimum,
+    // for the height its text needs at its width, which every layout honours; the window's own
+    // minimum follows from its layout's, so the dialog grows with it.
+    void fitWrappedLabels() {
+        for (QLabel* label : findChildren<QLabel*>()) {
+            if (!label->wordWrap() || !label->isVisibleTo(this) || label->width() <= 0) {
+                continue;
+            }
+            const int needed = label->heightForWidth(label->width());
+            if (needed > 0 && label->minimumHeight() != needed) {
+                label->setMinimumHeight(needed);
+            }
+        }
+    }
+
     QFormLayout* m_form{nullptr};
     QVBoxLayout* m_visual_layout{nullptr};
     QLabel* m_preview{nullptr};
@@ -8947,6 +9077,16 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes, int width) {
     return segmentSpans(sizes, width, kMinimumSegmentPixels);
+}
+
+QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
+                                             uint64_t target_bytes,
+                                             int bar_width) {
+    CloneLayoutPreviewWidget preview;
+    preview.configure(&source, target_bytes);
+    const QFontMetrics metrics(preview.font());
+    return CloneLayoutPreviewWidget::shownLabels(
+        metrics, preview.targetSegmentsFor(metrics, bar_width), target_bytes, bar_width);
 }
 
 QStringList partitionSpaceAnalyzerTableOrderForTest(const QVector<QPair<QString, uint64_t>>& rows) {

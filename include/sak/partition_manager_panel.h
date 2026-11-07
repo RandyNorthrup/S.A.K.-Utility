@@ -338,6 +338,11 @@ private:
 /// Left edge and width of each segment of @p sizes across a before/after bar @p width wide.
 [[nodiscard]] QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes,
                                                                     int width);
+/// The labels Copy Disk's Target bar shows, in order, for a copy of @p source onto a disk of
+/// @p target_bytes, drawn @p bar_width wide in the application font.
+[[nodiscard]] QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
+                                                           uint64_t target_bytes,
+                                                           int bar_width);
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
 /// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
 [[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(

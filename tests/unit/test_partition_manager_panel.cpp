@@ -43,6 +43,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QScrollArea>
 #include <QSignalSpy>
 #include <QSlider>
@@ -93,6 +94,8 @@ private Q_SLOTS:
     void wizardReviewTextIsNotCutOff();
     void manageBitLockerOffersOnlyTheActionThatApplies();
     void resizePreviewShowsEveryRow();
+    void resizeSupportLineStaysWholeWhenItWraps();
+    void copyDiskTargetBarNamesTheCopy();
     void convertStylePromptNamesTheDiskAndItsStyle();
     void optimizeDialogHasOnePrimaryButtonAndOneLabel();
     void operationsListScrollsDownOnly();
@@ -2632,6 +2635,51 @@ void PartitionManagerPanelTests::smallPartitionsStayVisibleInTheBars() {
     QCOMPARE(narrow.last().first + narrow.last().second, 60);
 }
 
+// Review 3 (Copy Disk): copying an 8 GB disk to an 8 TB one, the Target bar drew the copy as a
+// 24 px sliver per partition with no name, then "Unallocated". It names the copy as one segment.
+// A target near the source's size still shows the copied partitions one by one.
+void PartitionManagerPanelTests::copyDiskTargetBarNamesTheCopy() {
+    constexpr uint64_t kGiB = 1024ULL * 1024ULL * 1024ULL;
+    sak::PartitionDiskInfo source;
+    source.disk_number = sak::DiskNumber{1};
+    source.partition_style = QStringLiteral("GPT");
+    uint64_t offset = kTestMegabyteBytes;
+    for (const auto& [letter, bytes] :
+         {std::pair{QStringLiteral("E"), 3 * kGiB}, std::pair{QStringLiteral("F"), 2 * kGiB}}) {
+        sak::PartitionVolumeInfo volume;
+        volume.drive_letter = letter;
+        volume.file_system = QStringLiteral("NTFS");
+        volume.total_bytes = bytes;
+        sak::PartitionInfoEx partition;
+        partition.disk_number = source.disk_number;
+        partition.partition_number =
+            sak::PartitionNumber{static_cast<uint32_t>(source.partitions.size() + 1)};
+        partition.offset_bytes = offset;
+        partition.size_bytes = bytes;
+        partition.volume = volume;
+        source.partitions.append(partition);
+        offset += bytes;
+    }
+    // The rig's free space after F:, as on the capture VM.
+    sak::UnallocatedRegion free_space;
+    free_space.offset_bytes = offset;
+    free_space.size_bytes = 3 * kGiB;
+    source.unallocated_regions.append(free_space);
+    source.size_bytes = 8 * kGiB;
+    constexpr int kBarWidth = 480;
+
+    const QStringList onto_8tb =
+        sak::partitionCopyTargetLabelsForTest(source, 8000ULL * kGiB, kBarWidth);
+    QCOMPARE(onto_8tb,
+             (QStringList{QStringLiteral("Copy of Disk 1"), QStringLiteral("Unallocated")}));
+
+    const QStringList onto_same_size =
+        sak::partitionCopyTargetLabelsForTest(source, 8 * kGiB, kBarWidth);
+    QCOMPARE(
+        onto_same_size,
+        (QStringList{QStringLiteral("E:"), QStringLiteral("F:"), QStringLiteral("Unallocated")}));
+}
+
 void PartitionManagerPanelTests::diskMapSegmentsSelectMatchingTableRows() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
@@ -3750,6 +3798,58 @@ void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
     constexpr int kThreeRows = (3 * kOperationSizePreviewRowHeight) + (2 * 6) + (2 * 8);
     QVERIFY2(height >= kThreeRows, qPrintable(QStringLiteral("preview %1 px").arg(height)));
     QVERIFY2(!bare_status_row, "Resize/Move shows an empty Status row");
+}
+
+// Review 3 (X4): picking "Move partition start" after the dialog opened turned the Support line
+// into two lines, and the dialog kept its height, so the layout cut the second line at its
+// descenders. Every wrapped line is as tall as its text at its width.
+void PartitionManagerPanelTests::resizeSupportLineStaysWholeWhenItWraps() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    QStringList cut;
+    bool seen = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QComboBox* mode = nullptr;
+        for (auto* combo : dialog->findChildren<QComboBox*>()) {
+            if (combo->accessibleName() == QStringLiteral("Move resize mode")) {
+                mode = combo;
+            }
+        }
+        if (mode == nullptr) {
+            return;
+        }
+        seen = true;
+        mode->setCurrentIndex(mode->findText(QStringLiteral("Move partition start")));
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        for (const auto* label : dialog->findChildren<QLabel*>()) {
+            if (label->isVisible() && label->wordWrap() && !label->text().isEmpty() &&
+                label->height() < label->heightForWidth(label->width())) {
+                cut.append(QStringLiteral("%1 (%2 < %3; dialog %4x%5, needs %6, screen %7)")
+                               .arg(label->text())
+                               .arg(label->height())
+                               .arg(label->heightForWidth(label->width()))
+                               .arg(dialog->width())
+                               .arg(dialog->height())
+                               .arg(dialog->layout()->totalHeightForWidth(dialog->width()))
+                               .arg(dialog->screen()->availableGeometry().height()));
+            }
+        }
+        dialog->reject();
+    });
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    QVERIFY(resize != nullptr);
+    pressAction(resize);
+    QVERIFY(seen);
+    QVERIFY2(cut.isEmpty(), qPrintable(cut.join(u'\n')));
 }
 
 // UI review F43: the wipe dialogs' acknowledgements started 60 px and 21 px from the edge.
