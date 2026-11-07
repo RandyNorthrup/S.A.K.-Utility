@@ -245,6 +245,14 @@ private:
     LeftoverItem::RiskLevel classifyFileRisk(const QString& path_lower) const;
     static LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type);
     void extractInstallDirNames();
+
+public:
+    /// The lower-case name of the folder the program's uninstaller (or icon) sits in, when that
+    /// folder is named for the program; empty otherwise. For a program that records no
+    /// InstallLocation.
+    [[nodiscard]] static QString uninstallerFolderName(const ProgramInfo& program);
+
+private:
     [[nodiscard]] bool isProtectedPath(const QString& path) const;
     [[nodiscard]] bool matchesProgramExact(const QString& nameLower) const;
     [[nodiscard]] bool matchesProgramStrict(const QString& text) const;

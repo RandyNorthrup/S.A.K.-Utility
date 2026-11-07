@@ -347,6 +347,41 @@ QString LeftoverScanner::provenInstallLocation(const QString& screenedLocation,
     return canonical;
 }
 
+namespace {
+
+/// The program file a registry command or icon value names: a quoted path, or the text up to and
+/// including ".exe". Empty when it names none.
+QString registryProgramPath(const QString& value) {
+    const QString text = value.trimmed();
+    if (text.startsWith(QLatin1Char('"'))) {
+        const qsizetype close = text.indexOf(QLatin1Char('"'), 1);
+        return close > 1 ? text.mid(1, close - 1) : QString();
+    }
+    const QString exe = QStringLiteral(".exe");
+    const qsizetype at = text.indexOf(exe, 0, Qt::CaseInsensitive);
+    return at > 0 ? text.left(at + exe.size()) : QString();
+}
+
+}  // namespace
+
+QString LeftoverScanner::uninstallerFolderName(const ProgramInfo& program) {
+    for (const QString& value : {program.uninstallString, program.displayIcon}) {
+        const QString path = registryProgramPath(value);
+        if (path.isEmpty()) {
+            continue;
+        }
+        const QString folder = QFileInfo(QDir::fromNativeSeparators(path)).dir().dirName();
+        const QString lower = folder.toLower();
+        // Only a folder named for the program: an uninstaller kept in a shared or vendor folder
+        // ("Common Files", "Uninstall Information") names nothing of this program's.
+        if (!lower.isEmpty() && !kGenericDirNames.contains(lower) &&
+            foldedNamesMatch(foldedName(folder), foldedName(program.displayName))) {
+            return lower;
+        }
+    }
+    return {};
+}
+
 void LeftoverScanner::extractInstallDirNames() {
     // Names are derived from the SYNTACTICALLY screened value, not the raw registry
     // string: a "%VAR%"/UNC/volume-root value must not seed the exact-name set that
@@ -354,6 +389,16 @@ void LeftoverScanner::extractInstallDirNames() {
     // deliberately NOT required here -- after an uninstall the directory is usually gone,
     // and its name is still the best signal for finding what it left behind.
     if (m_screenedInstallLocation.isEmpty()) {
+        // Many installers record no InstallLocation. Notepad++ records none, and its display name
+        // is "Notepad++ (64-bit x64)", so "%APPDATA%\Notepad++", which its uninstaller keeps when
+        // asked to keep settings, matched no name and the scan found nothing (review 3). The
+        // folder its own uninstaller sits in names it, when that folder is named for the program.
+        // A name only: it never becomes a deletion target by itself.
+        const QString folder = uninstallerFolderName(m_program);
+        if (!folder.isEmpty() && !m_exactNames.contains(folder)) {
+            m_installDirName = folder;
+            m_exactNames.append(folder);
+        }
         return;
     }
     QDir install_dir(m_screenedInstallLocation);

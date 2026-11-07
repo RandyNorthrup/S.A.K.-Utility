@@ -46,6 +46,7 @@ private Q_SLOTS:
 
     // -- File System Scanning --
     void scan_findsMatchingFolder();
+    void scan_namesAProgramWithNoInstallLocationByItsUninstallerFolder();
     void scan_findsMatchingFile();
     void scan_ignoresNonMatchingFolder();
     void scan_safeLevelSkipsRegistry();
@@ -347,6 +348,45 @@ void LeftoverScannerTests::construction_notCopyable() {
 }
 
 // -- File System Scanning ----------------------------------------------------
+
+// Review 3 (testpc1): Notepad++ records no InstallLocation and calls itself "Notepad++ (64-bit
+// x64)", so the %APPDATA%\Notepad++ its uninstaller keeps with "keep your custom settings" matched
+// no name, the scan found nothing, and no Leftover Items list appeared.
+void LeftoverScannerTests::scan_namesAProgramWithNoInstallLocationByItsUninstallerFolder() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    QVERIFY(QDir(root).mkpath(QStringLiteral("Notepad++")));
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", root);
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    ProgramInfo prog = makeTestProgram(QStringLiteral("Notepad++ (64-bit x64)"),
+                                       QStringLiteral("Notepad++ Team"));
+    prog.uninstallString = QStringLiteral("\"C:\\Program Files\\Notepad++\\uninstall.exe\"");
+    prog.displayIcon = QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(prog), QStringLiteral("notepad++"));
+
+    LeftoverScanner scanner(prog, ScanLevel::Safe, {});
+    std::atomic<bool> stop{false};
+    const QString folder =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++")));
+    QVERIFY2(findByPath(scanner.scan(stop), folder) != nullptr, qPrintable(folder));
+
+    // The icon names it too, unquoted and with an index.
+    ProgramInfo by_icon = prog;
+    by_icon.uninstallString.clear();
+    by_icon.displayIcon = QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe,0");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(by_icon), QStringLiteral("notepad++"));
+
+    // An uninstaller in a folder not named for the program names nothing.
+    ProgramInfo shared = prog;
+    shared.uninstallString = QStringLiteral("C:\\Windows\\Installer\\setup.exe /x");
+    shared.displayIcon = QStringLiteral("\"C:\\Program Files\\Common Files\\icons\\app.ico\"");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(shared), QString());
+}
 
 void LeftoverScannerTests::scan_findsMatchingFolder() {
     QTemporaryDir tempDir;
