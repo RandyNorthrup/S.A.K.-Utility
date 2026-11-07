@@ -130,7 +130,9 @@ private Q_SLOTS:
     // The page said only that the stick "could NOT be ejected"; it was still offline and showed
     // up with no drive letter afterwards.
     void aStickLeftOfflineIsNamedWithTheWayBack() {
-        sak::ImageFlasherPanel panel;
+        // The fixture's panel: init() makes one for every test, and a second panel beside it is a
+        // second DriveScanner, which the scanner's one-instance assertion stops in Debug.
+        sak::ImageFlasherPanel& panel = *m_panel;
         sak::FlashResult result;
         result.success = true;
         result.successfulDrives = {QStringLiteral("\\\\.\\PhysicalDrive5")};
@@ -146,7 +148,9 @@ private Q_SLOTS:
     void flashAnotherIsWholeAboveTheFooter() {
         // Shorter than the pages' content, as the capture's window was: the page then scrolls,
         // and a button at the foot of the tallest page's height is below the fold.
-        sak::ImageFlasherPanel panel;
+        // The fixture's panel: init() makes one for every test, and a second panel beside it is a
+        // second DriveScanner, which the scanner's one-instance assertion stops in Debug.
+        sak::ImageFlasherPanel& panel = *m_panel;
         panel.resize(1240, 520);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -166,7 +170,9 @@ private Q_SLOTS:
         QCOMPARE(button->visibleRegion().boundingRect().height(), button->height());
     }
     void aSuccessfulFlashSaysSoWithATick() {
-        sak::ImageFlasherPanel panel;
+        // The fixture's panel: init() makes one for every test, and a second panel beside it is a
+        // second DriveScanner, which the scanner's one-instance assertion stops in Debug.
+        sak::ImageFlasherPanel& panel = *m_panel;
         sak::FlashResult result;
         result.success = true;
         panel.onFlashCompleted(result);
@@ -178,7 +184,9 @@ private Q_SLOTS:
     // UI review F19: Image Details' values started half way across the group, ~590 px from
     // their labels.
     void imageDetailsValuesSitNextToTheirLabels() {
-        sak::ImageFlasherPanel panel;
+        // The fixture's panel: init() makes one for every test, and a second panel beside it is a
+        // second DriveScanner, which the scanner's one-instance assertion stops in Debug.
+        sak::ImageFlasherPanel& panel = *m_panel;
         panel.resize(1280, 800);
         panel.m_isoInfoGroup->setVisible(true);
         panel.m_isoInfoGroup->resize(1200, 300);
