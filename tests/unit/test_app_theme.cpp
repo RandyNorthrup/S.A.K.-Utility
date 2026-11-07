@@ -37,6 +37,7 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QStatusBar>
+#include <QStyleFactory>
 #include <QStyleHints>
 #include <QTabBar>
 #include <QTableWidget>
@@ -255,6 +256,7 @@ private Q_SLOTS:
     void promptsAreWideEnoughAndWrapTheirQuestion();
     void aSubTabsStatusMessageLeavesWithIt();
     void cellWidgetsFillTheirCells();
+    void wizardsDrawNoAeroBackArrowOverTheTitle();
 
 private:
     std::unique_ptr<sak::MainWindow> m_window;
@@ -1282,6 +1284,42 @@ void AppThemeTests::cellWidgetsFillTheirCells() {
     QCoreApplication::processEvents();
     const QRect cell = table.visualRect(table.model()->index(0, 0));
     QCOMPARE(editor->geometry(), cell);
+}
+
+
+void AppThemeTests::wizardsDrawNoAeroBackArrowOverTheTitle() {
+    // In light Windows, Qt starts a wizard in AeroStyle (QWindowsStyle's SH_WizardStyle) and marks
+    // its private QVistaBackButton to be shown before the app picks ModernStyle, so the arrow came
+    // up over every page title (review 3, testpc1). The Windows style gives AeroStyle here too.
+    QStyle* const previous_style = QApplication::style();
+    const QString previous_name = previous_style->name();
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Windows")));
+    const auto restore_style = qScopeGuard(
+        [&previous_name]() { QApplication::setStyle(QStyleFactory::create(previous_name)); });
+    QVERIFY2(
+        QWizard::WizardStyle(QApplication::style()->styleHint(QStyle::SH_WizardStyle)) ==
+            QWizard::AeroStyle,
+        "Precondition: Qt's Windows style starts a wizard in AeroStyle, as light Windows does");
+
+    QWizard wizard;
+    QAbstractButton* const arrow = sak::aeroBackArrowOf(&wizard);
+    QVERIFY2(arrow != nullptr, "Qt's Aero back arrow was not found among the wizard's children");
+    QVERIFY2(!arrow->isHidden(),
+             "Precondition: Qt has marked the Aero back arrow to be shown with the wizard");
+
+    sak::useAppWizardStyle(&wizard);
+    // Under ModernStyle the wizard's Back is its own push button, not the arrow.
+    QVERIFY(arrow != wizard.button(QWizard::BackButton));
+    auto* page = new QWizardPage(&wizard);
+    page->setTitle(QStringLiteral("Review"));
+    page->setSubTitle(QStringLiteral("Check the plan before it is queued."));
+    wizard.addPage(page);
+    wizard.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&wizard));
+    QCoreApplication::processEvents();
+    QCOMPARE(wizard.wizardStyle(), QWizard::ModernStyle);
+    QVERIFY2(!arrow->isVisible(), "The Aero back arrow is drawn over the page title");
+    wizard.close();
 }
 
 QTEST_MAIN(AppThemeTests)

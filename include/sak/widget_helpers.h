@@ -11,6 +11,7 @@
 
 #include "style_constants.h"
 
+#include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QDate>
 #include <QEvent>
@@ -253,17 +254,33 @@ protected:
     }
 };
 
+/// @brief The Aero frame's back arrow (Qt's private QVistaBackButton), or null.
+///        That class has no Q_OBJECT of its own, so its meta-object is QAbstractButton's and asking
+///        whether it inherits "QVistaBackButton" is always false: the first hider matched nothing.
+///        It is the one button QWizard parents to itself; every wizard button and a side widget
+///        live in the wizard's inner frame.
+inline QAbstractButton* aeroBackArrowOf(QWizard* wizard) {
+    for (QObject* child : wizard->children()) {
+        auto* button = qobject_cast<QAbstractButton*>(child);
+        if (button != nullptr && button->metaObject() == &QAbstractButton::staticMetaObject) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
 /// @brief One look for every wizard, in both themes. Left to the platform, a wizard took Windows'
 ///        Aero frame in light and fell back to the classic one, with "< Back" and "Next >", in
 ///        dark; the backup and restore wizards chose ModernStyle, so the Partition Manager wizards
 ///        looked different from them in light and from themselves in dark.
+///        In light, Qt starts a wizard in AeroStyle and marks the Aero back arrow to be shown
+///        before this runs; changing the style before the window exists does not take that back,
+///        so the arrow came up at the page's top-left over the title (testpc1, 2026-11-06).
 inline void useAppWizardStyle(QWizard* wizard) {
     wizard->setWizardStyle(QWizard::ModernStyle);
-    for (QWidget* child : wizard->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-        if (child->inherits("QVistaBackButton")) {
-            child->hide();
-            child->installEventFilter(new AeroBackArrowHider(child));
-        }
+    if (QAbstractButton* arrow = aeroBackArrowOf(wizard)) {
+        arrow->hide();
+        arrow->installEventFilter(new AeroBackArrowHider(arrow));
     }
     // One tone per role, as in every dialog (UI review F27): Next and Finish go on with the work
     // and are primary; Back and Cancel only go back or leave.
