@@ -12339,7 +12339,9 @@ QStringList AiAssistantPanel::runDetailsToolHealthLines() const {
         const QJsonArray records =
             m_toolHealthLedger->snapshot().value(QStringLiteral("records")).toArray();
         if (records.isEmpty()) {
-            lines << tr("_no tool/provider health records_");
+            // The providers' own lines follow, so only the tools have nothing yet. The old wording
+            // said "no tool/provider health records" above six "provider ...: available" lines.
+            lines << tr("_no tool health records yet_");
         } else {
             QVector<QJsonObject> objects;
             objects.reserve(records.size());

@@ -436,6 +436,9 @@ void EmailInspectorPanelTests::theFoldersPaneKeepsItsWidthWhateverTheCountSays()
     QApplication::processEvents();
     const QList<int> short_count = m_panel->m_main_splitter->sizes();
     const QList<int> short_items = m_panel->m_content_splitter->sizes();
+    // Review 3 (RG2): with the count on a line of its own the Items pane fell from 447 px to 399,
+    // and senders were cut ("Marisc", "Theo B").
+    QVERIFY2(short_items.at(0) >= 447, qPrintable(QString::number(short_items.at(0))));
     for (const QString& text : {QStringLiteral("4 search result(s) (filtered)"),
                                 QStringLiteral("125 search result(s) in Deleted Items (filtered)"),
                                 QStringLiteral("Showing 1\u2013100 of 25000")}) {

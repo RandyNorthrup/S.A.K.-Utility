@@ -495,6 +495,19 @@ void QuickActionController::joinCurrentThread() {
     thread->deleteLater();
 }
 
+QString QuickActionController::completionLine(const QuickAction::ExecutionResult& result) {
+    const qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
+    // An action that moves no bytes (Check Disk Errors, Optimize Power) ended "(0 bytes in 169s)",
+    // a count of nothing (review 3).
+    if (result.bytes_processed <= 0) {
+        return QStringLiteral("Execution complete: %1 (%2s)").arg(result.message).arg(duration_sec);
+    }
+    return QStringLiteral("Execution complete: %1 (%2 bytes in %3s)")
+        .arg(result.message)
+        .arg(result.bytes_processed)
+        .arg(duration_sec);
+}
+
 void QuickActionController::finishCurrent(const QuickAction::ExecutionResult& result,
                                           QuickAction::ActionStatus status) {
     if (!m_current.has_value()) {
@@ -507,13 +520,8 @@ void QuickActionController::finishCurrent(const QuickAction::ExecutionResult& re
     // run's fresh thread must not be the one torn down here.
     joinCurrentThread();
 
-    const qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
     if (result.success) {
-        logRun(run,
-               QStringLiteral("Execution complete: %1 (%2 bytes in %3s)")
-                   .arg(result.message)
-                   .arg(result.bytes_processed)
-                   .arg(duration_sec));
+        logRun(run, completionLine(result));
     } else if (result.inconclusive) {
         logRun(run, QStringLiteral("Execution finished, result unknown: %1").arg(result.message));
     } else {

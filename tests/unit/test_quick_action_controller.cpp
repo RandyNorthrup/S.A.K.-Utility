@@ -155,6 +155,7 @@ private Q_SLOTS:
 
     // -- Teardown --------------------------------------------
     void testDestroyDuringStuckRunRetainsActionInsteadOfBlocking();
+    void completionLineCountsBytesOnlyWhenThereAreSome();
 
 private:
     std::unique_ptr<QuickActionController> m_ctrl;
@@ -629,6 +630,19 @@ void TestQuickActionController::testDestroyDuringStuckRunRetainsActionInsteadOfB
     QTRY_VERIFY_WITH_TIMEOUT(facts->destroyed.load(std::memory_order_acquire), kReapTimeoutMs);
     QVERIFY(facts->completed.load(std::memory_order_acquire));
     QCOMPARE(ThreadCustody::retainedCount(), custody_before);
+}
+
+// Review 3: Check Disk Errors and Optimize Power ended "(0 bytes in 169s)" / "(0 bytes in 5s)".
+void TestQuickActionController::completionLineCountsBytesOnlyWhenThereAreSome() {
+    sak::QuickAction::ExecutionResult none;
+    none.message = QStringLiteral("Checked 2 drives");
+    none.duration_ms = 169'400;
+    QCOMPARE(sak::QuickActionController::completionLine(none),
+             QStringLiteral("Execution complete: Checked 2 drives (169s)"));
+    sak::QuickAction::ExecutionResult some = none;
+    some.bytes_processed = 4096;
+    QCOMPARE(sak::QuickActionController::completionLine(some),
+             QStringLiteral("Execution complete: Checked 2 drives (4096 bytes in 169s)"));
 }
 
 QTEST_MAIN(TestQuickActionController)

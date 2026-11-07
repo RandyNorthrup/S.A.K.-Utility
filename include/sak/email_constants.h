@@ -137,11 +137,13 @@ constexpr int kDetailPanelMinHeight = 200;
 /// Minimum width for detail/preview panel
 constexpr int kDetailPanelMinWidth = 400;
 
-/// Default width for item-list pane
-constexpr int kItemListDefaultWidth = 400;
+/// Default width for item-list pane. 480: at 400 the pane lost the 48 px the old count label had
+/// held open for it once that label wrapped (F46), and senders were cut to "Marisc" (review 3,
+/// RG2).
+constexpr int kItemListDefaultWidth = 480;
 
 /// Default width for message preview pane
-constexpr int kPreviewPaneDefaultWidth = 500;
+constexpr int kPreviewPaneDefaultWidth = 460;
 
 /// Default content pane width beside the folder tree
 constexpr int kContentPaneDefaultWidth = 700;

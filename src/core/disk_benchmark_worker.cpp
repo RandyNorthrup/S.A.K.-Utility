@@ -678,7 +678,9 @@ bool DiskBenchmarkWorker::createTestFile() {
     }
 
     CloseHandle(h);
-    logInfo("Test file created: {} ({} MB)", path.toStdString(), m_config.test_file_size_mb);
+    logInfo("Test file created: {} ({} MB)",
+            QDir::toNativeSeparators(path).toStdString(),
+            m_config.test_file_size_mb);
     return true;
 }
 
@@ -777,7 +779,7 @@ void DiskBenchmarkWorker::cleanupTestFile() {
     }
     if (QFile::exists(path)) {
         if (QFile::remove(path)) {
-            logInfo("Test file removed: {}", path.toStdString());
+            logInfo("Test file removed: {}", QDir::toNativeSeparators(path).toStdString());
         } else {
             // Do not claim success we did not achieve: a locked/permission-denied
             // delete leaves the temp file behind and the caller/log must reflect that.

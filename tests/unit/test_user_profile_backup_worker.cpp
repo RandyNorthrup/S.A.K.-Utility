@@ -219,8 +219,8 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
     // !run.success misses.
     QCOMPARE(run.message,
              QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
-                            "Files skipped: 0\nSkipped (elevation required): 0\nErrors: 1\nTotal "
-                            "size: 0.0 MB"));
+                            "Items skipped (filters and Windows links): 0\nSkipped (elevation "
+                            "required): 0\nErrors: 1\nTotal size: 0.0 MB"));
 }
 
 // Windows makes Documents\My Music, My Pictures and My Videos in every profile: hidden, system
@@ -240,7 +240,9 @@ void TestUserProfileBackupWorker::windowsCompatibilityLinkIsSkippedNotCounted() 
         worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
     QVERIFY2(run.completed, "backup never emitted backupComplete");
     QVERIFY2(run.success, qPrintable(run.message));
-    QVERIFY(run.message.contains(QStringLiteral("Files copied: 1\nFiles skipped: 1\n")));
+    // Review 3: "Files skipped" also counted skipped folders and Windows' compatibility links.
+    QVERIFY(run.message.contains(
+        QStringLiteral("Files copied: 1\nItems skipped (filters and Windows links): 1\n")));
     QVERIFY(run.message.contains(QStringLiteral("Errors: 0")));
     bool said = false;
     for (const auto& entry : log) {

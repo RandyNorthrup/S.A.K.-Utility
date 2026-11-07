@@ -525,7 +525,10 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
     // Complete
     const QString summary =
-        tr("%1\nFiles copied: %2\nFiles skipped: %3\n"
+        // The skip count holds folders the filters left out and Windows' compatibility links as
+        // well as files, so "Files skipped: 16" beside "Files copied: 16" read as half the files
+        // (review 3).
+        tr("%1\nFiles copied: %2\nItems skipped (filters and Windows links): %3\n"
            "Skipped (elevation required): %4\nErrors: %5\nTotal "
            "size: %6 MB")
             .arg(headline)

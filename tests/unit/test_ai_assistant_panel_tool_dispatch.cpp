@@ -133,6 +133,14 @@ private Q_SLOTS:
         QVERIFY2(!text.contains(QStringLiteral("Run Details")), qPrintable(text));
         QVERIFY2(!panel.runDetailsHtml().contains(QStringLiteral("Courier")),
                  "the body is set in a code font");
+        // Review 3: "no tool/provider health records" stood above the providers' own lines.
+        QVERIFY2(!text.contains(QStringLiteral("no tool/provider health records")),
+                 qPrintable(text));
+        if (text.contains(QStringLiteral("provider "))) {
+            QVERIFY2(text.contains(QStringLiteral("no tool health records yet")) ||
+                         !text.contains(QStringLiteral("health records")),
+                     qPrintable(text));
+        }
     }
     void initTestCase() {
         // Keep the panel's stores out of the real user data directory.

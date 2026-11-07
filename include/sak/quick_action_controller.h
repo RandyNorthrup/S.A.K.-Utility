@@ -115,6 +115,10 @@ public:
     /// @brief Whether a run @p owner asked for is running or queued.
     [[nodiscard]] bool hasRunsOf(const QString& owner) const;
 
+    /// @brief The log line for a finished run: its message and time, and the bytes it moved when
+    ///        it moved any.
+    [[nodiscard]] static QString completionLine(const QuickAction::ExecutionResult& result);
+
 #ifdef SAK_CORE_TEST_HOOKS
     /// Test-only: what the controller builds its broker with (an empty function restores the
     /// real ElevationBroker). Compiled only into the tests that drive the elevated route
