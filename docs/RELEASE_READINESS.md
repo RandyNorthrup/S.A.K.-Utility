@@ -1781,6 +1781,160 @@ C:\SAK-Samples\Settings removed. The capture VM: powered off and restored to pre
 harness's copy of the package in ~/sak-capture/pkg, as every run leaves it. On the workstation: the package under
 E:\SAK-Utility-Test-Scratch\round5, and the probe timelines and every picture both runs saved in its fix59 folder.
 
+### UI review round 6: the release-candidate capture, its four Highs, and the reviewer's re-check (2026-11-06)
+
+From the release-candidate capture of 090cabe0 (review3 `observations.json`) and the independent re-check of the same
+pictures (`ui-review\recheck3.md`), on dev at 090cabe0. Every fix has a test, and every test was drilled red with
+its fix broken in the source: 45 guards, each planted by a script that restores every byte and touches the file,
+one at a time with a build of the test's own target and the whole test binary run through the no-dialogs wrapper.
+One survived its first run: taking out the Aero arrow's immediate hide() changed nothing a test sees, because the
+event filter installed beside it hides the arrow at every show; it was replaced by putting back round 2's
+inherits("QVistaBackButton") check, which went red. Judgement calls and items that were not defects are named
+below.
+
+**The false "Restore failed" (High).** All 1198 files came back, then "netsh interface ip set address ... failed for
+adapter 'Ethernet': Contained process descendants remained after primary exit", and the page read "Restore failed",
+"Restore Stopped" and "The restore did not finish." Measured on testpc1 with a probe that starts console programs the
+way the app does (no console, so CREATE_NO_WINDOW, in a kill-on-close Job assigned while suspended): the only process
+netsh (and cmd, whoami) leaves in its Job is conhost.exe, the console host Windows starts for it, and it leaves 0 to
+20 ms after the program, unloaded, with every CPU busy, and with the Job capped at 0.5% CPU. The capture VM ran at
+macOS CPU_Speed_Limit 20 with the app at BelowNormal, where round 2 measured a BelowNormal process taking 19 to 35 s
+to exit; a console host that missed the 1 s grace there turned a netsh call that had done its work into a failure
+(the adapter ended as Manual 10.0.2.15/24, as it was asked to be). The starvation itself was not reproduced on
+testpc1, and `netsh interface ip set address` was not run anywhere: changing a live adapter is forbidden on every
+machine. The rule applies to every runProcess and runPowerShell caller that starts a console program, which is all of
+them, so it is fixed in the runner: when a run's grace ends with only System32\conhost.exe left in its Job, the hosts
+are stopped and the run is judged on the program alone (`onlyConsoleHostsRemain`, `WindowsProcessJob::
+memberImagePaths`, which lists only live members). A process Windows is still tearing down stays in the Job's list
+with its exit code and time set before it is signaled, and refuses its image name (measured here on the Job test's
+own family: exit code 0, WAIT_TIMEOUT, ERROR_ACCESS_DENIED); it counts as exited, so a netsh in that state cannot
+turn the console-host rule back into a failure. Any other leftover still fails the run, as before. The restore then
+reports per step: network settings are a line of their own in the summary ("Network settings applied: 0 of 1", "Not
+applied: Ethernet settings for 'Ethernet'") instead of file errors, the summary's first line is "Restore finished, but
+not everything was restored." when anything was not, the log gives netsh's own words from standard output, and a
+restore that ran to its end says "Restore Finished with Problems" with what was not done ("1 network setting was not
+applied"), the bars full; only a cancelled or unreadable restore says "Restore Stopped" (RG3).
+
+**The recovery pre-fill (High).** Not a defect of the app: the Candidate Restore fields start empty, and the
+capture's shot file typed 1048576 and 1073741824 (`wiki/shots/partition-manager.json`), as round 3 found. What was
+wrong is that the wizard took that place to a review saying Apply would create it; only Finish, through the queue's
+validator, refused it. The page now runs the queue's own check (`PartitionSafetyValidator::validate` on the operation
+Finish would queue, against the inventory the wizard opened on) as each field changes, says in red why a place
+cannot be written back, and keeps Next off. Proved on testpc1 with Rig A built on the disposable Seagate (pinned by
+model, serial NAAA3QVK and size 8001563221504): MSR at 17408, E: 3 GB at 16 MiB, F: 2 GB at 3238002688, the VM's
+layout exactly. With this round's package, at 1048576 for 1073741824 the page read "This candidate cannot be written
+back: Recovered partition candidate overlaps an existing partition." in red with Next off, in light and dark; at
+6442450944 for 1073741824, in the free space after F:, it took the place and its Review read "Write-back candidate:
+offset 6442450944, size 1073741824". Only Disk 2 has that place free, so the pictures also show which disk the
+wizard read. Finish was not pressed. The shot files now type a place in Rig A's free space (6442450944, 1 GiB).
+
+**Convert Dynamic Disk to Basic on a basic disk (High).** Offered in the ribbon and the disk menu for any disk, and on
+a basic MBR disk with one volume its window went on as if the volume were dynamic. Had the window been accepted, the
+operation was refused at the queue ("Dynamic-to-basic conversion requires one mounted simple dynamic volume"), and
+had it reached the helper, its script refuses a disk that is not dynamic ("Disk N is not a dynamic disk now") before
+it backs anything up, deletes a volume or runs diskpart; nothing would have changed. The ribbon button and the menu
+entry are grayed out for a basic disk with the reason as their tip, and the action itself warns instead of opening.
+Proved on testpc1 with Rig D, the disposable USB DISK 3.0 stick (pinned by serial 067D19C65080 and size 31042043904)
+as Disk 3, basic MBR with one NTFS volume: with Disk 3 picked, its menu shows Convert Dynamic Disk to Basic grayed
+out. Nothing was converted. Windows does not make a USB disk dynamic, so a dynamic disk's case is the unit test's
+and the capture VM's.
+
+**The light back arrow (High).** Round 2 hid Qt's Aero back arrow by asking each child whether it inherits
+"QVistaBackButton". That class has no Q_OBJECT, so its meta-object is QAbstractButton's and the question is always
+false: the hider never matched anything, in either theme. Light draws the arrow and dark does not because Qt starts
+a wizard in AeroStyle only when Windows is in light mode (QWindowsStyle's SH_WizardStyle), marks the arrow to be shown
+then, and setting ModernStyle before the window exists does not take that back. Proved on testpc1 with a small Qt
+6.12 program in Technician's session (light Windows): the arrow is a direct-child QAbstractButton, not hidden right
+after construction, visible after show with the round 2 code, and gone when the wizard's one direct-child button whose
+meta-object is QAbstractButton's own is hidden. `test_app_theme` reproduces it offscreen with Qt's Windows style.
+With this round's package on testpc1, in light and in dark, the backup wizard's Select Users page, the restore
+wizard's first page and the Partition Recovery pages draw no arrow; the reviewer's measure (pixels within 12 of
+#a3a3a3 in x 0-40, y 25-70) finds 20 in review 3's light pictures of the first two and 0 in these.
+
+**RG1, Offline Deploy 2200 px wide (regression from round 3).** The failure label named the package and its download
+URL unwrapped. It wraps in the width the page has (size policy Ignored), with the whole text as its tooltip.
+**adobereader**: not broken upstream. Its installers, downloaded from the package's own URLs, match the SHA-256 its
+script declares (x64 6FF26E9D..., x86 D5ADBDD1...). The script assigns `$MUIchecksum` and passes `$MUIChecksum`;
+PowerShell ignores the case and the parser did not, so the checksum compared was the text "$MUIChecksum" and every
+bundle refused the installer as altered. Variable lookup ignores case now, and a checksum still naming a variable is
+reported as one S.A.K. could not read, not as the vendor's change. It stays in the default lists.
+
+**Mediums.**
+- Compare Panes in the palette: not as reported. In the failing tries dual pane was off (the probe pictures show one
+  pane and no "Active pane" line): the app reopens its last session's tabs and panes, and the shot's Dual Pane click
+  is a toggle, so on a second run it closed the second pane; Compare Panes is rightly unavailable then. Fixed what was
+  wrong: the palette said "There are no commands containing compare" for a command that exists; a match that cannot
+  run is now listed greyed with what it needs ("Compare Panes - Enable dual pane first."), and Dual Pane shows a check
+  while two panes are open. The shot needs say so.
+- System Inventory Report on the VM: no wait that never ends was found. The window had no quick-action bar and no
+  dialog open, so the run never started: the folder picker returned no folder, and that was said only in the Log. It
+  is said in the status bar too. The collectors keep their own limits (60 s, 10 s, 10 s). The VM case was not run
+  again.
+- A Partition Manager scan that finds no disks and gives warnings says so on the disk map, the table and the status
+  bar ("The disk scan found no disks: Process timed out. Click Scan Disks to try again.").
+- Public Release: filtered to the builds UUP dump titles "Windows 11, version NNHN (build)"; read from listid.php on
+  2026-11-06, the first five entries were Insider Preview builds. Edition starts on Pro, else Home, else on nothing
+  (X18).
+- Notepad++ leftovers: Notepad++ records no InstallLocation and calls itself "Notepad++ (64-bit x64)" (read on
+  testpc1), so `%APPDATA%\Notepad++`, which its uninstaller keeps when settings are kept, matched no name and the
+  list stayed hidden. The folder its uninstaller or icon sits in names the program when that folder's name ties to
+  the display name. Not run again on testpc1.
+- The log: every line is flushed as it is written, not only errors.
+- Bus types (also X1): Storage Health takes the bus from MSFT_PhysicalDisk.BusType by disk number, and
+  Win32_DiskDrive's own InterfaceType only when that has none; the model-name guess that typed the USB enclosure
+  as NVMe is gone, and MediaType comes from the same row. Erase SSD calls an SSD behind USB "SSD behind a USB adapter".
+  The PowerShell queries themselves were not run here (the hardware guard); the mapping is tested.
+- Windows USB: the wait for the new partition is 3 minutes, each look has 10 s, the page shows the time waited, and
+  the error says to replug and try another port or drive. Not run again on the VM.
+- Stress test: a stop reads "STOPPED - Cancelled by user" in the panel, the log and the report (a warning, not a
+  critical issue); every finished run shows its own length ("Elapsed: 01:00") and ends the status-bar bar.
+- The Log switch is a check box named "Log" for screen readers and UI Automation, checked while the log shows.
+
+**Lows and the reviewer's items fixed.** Bars: Apply review and Copy Disk draw no segment narrower than 24 px (X5).
+Backslashes in File Explorer's dual-pane status, Advanced Search's preview and the disk benchmark's log lines. "(0
+bytes in 169s)" reads "(169s)". The backup summary's "Files skipped" was true as a count but counts filtered folders
+and Windows' compatibility links too: it reads "Items skipped (filters and Windows links)". Run Details said "no
+tool/provider health records" above provider lines: "no tool health records yet" (X8). Resize/Move's empty Status row
+is hidden (X4, first half). Email Inspector's Items pane starts at 480 px, not 400 (RG2). Download & Build asks UUP
+dump for the file list once more, 3 s later, after HTTP 400, 429 or 5xx, and not when Cancel comes in that wait.
+
+**Not defects.** The recovery pre-fill (above). Provisioned packages listed twice (labelled on purpose) and VirtualBox's
+"Unspecified" media type stay as decided.
+
+**Not reached this round, with what each needs.** SMART naming a USB-bridged drive only "PhysicalDriveN" when no
+hardware scan has run (the SMART run reading Win32_DiskDrive's models itself). Small cuts: Advanced Search's status
+bar, the AI status "Context: pe", the Address Book's Email column, Map Users' "Merge Into Destinati" (N2), adapter
+Status "Disconnect..." (`network_diagnostic_panel.cpp` measures before its style sheet applies), the vulnerability
+table's last column (F18), long Path lines in File Explorer's Properties (F23: they need to wrap), Resize/Move's
+Support line clipped at its descenders (X4, second half), and Copy Disk's target copy, now 24 px but still without
+room for its label; the Partition Manager table and map fold (R1). The reviewer's X2 (disabled AI icons), X6, X7, X9
+to X17, X19 to X21, S7/DN8 (the file list's own selection shade), S22 (stale status messages, including the raw
+flash's "Ready" beside 95%), S24 plurals, S25's faint light tab icons, F21, F27's AI Close, F36, F38, F40, N6, N9 in the
+backup wizard, N17 and DF11. The help_smartscreen picture shows "Unknown publisher": the capture package was unsigned,
+so the picture is stale once the release is signed (the T3 signing step), not a code defect.
+
+**Seen once, cause not found.** test_file_management_explorer_panel ended once with 0xc0000374 (heap corruption)
+in viewModesSwitchAndPersistExplorerSettings, in a -j 6 run of the 25 suites this round touches with the package
+being staged beside it. It did not fail again in 8 runs on its own, 3 runs at -j 8 beside the heaviest suites, or
+the full suite (312 tests, -j 6) before the push. This round changed nothing that test drives (view modes and the
+listing); it stays open.
+
+**What no test here covers.** The console-host rule's wiring in the runner's settle step: the tests prove the rule,
+the Job listing on a real family, and that a real leftover still fails; a console host that outlives the grace was
+seen nowhere but the VM and was not reproduced, so the path that stops it and passes the run has no test of its own.
+The restore's network step was tested with netsh faked: no adapter was changed anywhere. The bus and media read from
+MSFT_PhysicalDisk (a real PowerShell query) is tested by its mapping, not run. The light arrow's absence in a real DWM
+window, the recovery page's refusal and the grayed Convert Dynamic were proved on testpc1 (above), not by a test here.
+The palette and Dual Pane fixes were checked offscreen, not run through the capture again; Notepad++'s leftover list,
+the System Inventory Report on the VM and the Windows USB 3-minute wait were not run again.
+
+**Left behind.** testpc1: this round's package in C:\SAK, as the capture harness installs it, with its copy in
+C:\SAKCapture\pkg and the runs' output in C:\SAKCapture\out; C:\SakIso and C:\SAKCapture with its two tasks, kept;
+the console back at 1024x768 and Technician's apps theme back at dark; D: BENCH (32 GB NTFS) on the Best Buy NVMe,
+as it was; Rig A stays on the disposable Seagate (MSR, E: SAMPLE, F: DONOR) and Rig D on the disposable USB stick
+(H: BASICMBR); this round's scripts, probes, wizard probe and scheduled tasks removed. The capture VM was not used.
+On the workstation: the package, the probe pictures and every proof picture under E:\SAK-Utility-Test-Scratch\round6.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

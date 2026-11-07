@@ -8,6 +8,46 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **A restore that ran to its end says so, step by step** - A restore that brought back every file and could not
+  apply one network setting read "Restore failed" and "Restore Stopped". It now reads "Restore Finished with
+  Problems", says how many files and network settings were not restored or applied, and its summary lists the
+  network settings on lines of their own instead of counting them as file errors. When netsh refuses a setting,
+  the log gives netsh's own words. A console program the app runs no longer fails because the console host Windows
+  starts for it is still closing (on a slow PC that made netsh fail after doing its work).
+- **The back arrow is gone from every wizard page in the light theme** - Partition Manager, backup and restore
+  wizards drew a grey back arrow over the page title in light. The earlier fix looked for the arrow by a class
+  name it does not carry, so it never found it.
+- **Partition Recovery refuses a place that holds a partition now** - The Candidate Restore page says in red why
+  an offset and size cannot be written back (it overlaps a partition the disk has now, or runs past the disk's
+  end) and keeps Next off, before the queue and the helper check it again.
+- **Convert Dynamic Disk to Basic only for a dynamic disk** - On a basic disk it is grayed out in the ribbon and
+  the disk's menu, and says the disk is basic; its window no longer opens and talks about a dynamic volume.
+- **Offline Deploy fits its window again** - A failed package's reason, with its download address, made the page
+  about 2200 px wide and pushed its buttons off screen; it wraps now. Offline bundles take adobereader again: its
+  script names a checksum variable in another letter case, which PowerShell ignores and S.A.K. did not, so every
+  bundle refused the installer as altered.
+- **Public Release lists public Windows releases** - The Download Windows ISO window's Public Release list showed
+  Insider Preview builds first, and with one picked the Edition list could start on "Microsoft Store Inbox Apps".
+  It lists only the public releases, and Edition starts on Pro, else Home, else on nothing.
+- **Drive types are the bus Windows reports** - Storage Health typed an internal NVMe drive as SATA and an NVMe
+  drive in a USB enclosure as NVMe; Erase SSD called that USB drive "ATA/SATA SSD". They read NVMe, USB and
+  "SSD behind a USB adapter".
+- **Leftovers of programs that record no install folder** - Notepad++ records none, and its uninstaller's kept
+  settings folder was not found, so no Leftover Items list appeared. The folder its own uninstaller sits in now
+  names it.
+- **The log reaches its file as it is written** - The session log stayed at 0 bytes until the app closed, so a
+  crash or a forced close lost it.
+- **Smaller fixes** - A stress test you stop reads "STOPPED", not "FAILED", and every finished run shows its whole
+  length and ends the status-bar bar. A disk scan that found no disks says why on the page and the status bar. The
+  Windows USB waits three minutes for Windows to show its new partition, shows the wait, and says what to do when
+  it never comes. A command-palette match that cannot run yet is listed greyed with what it needs, and Dual Pane
+  shows a check while two panes are open. The Log switch is a named check box for screen readers. System Inventory
+  Report says in the status bar when no folder was chosen. Email Inspector's item list is wider. Advanced Search's
+  preview and File Explorer's dual-pane status use backslashes. Actions that move no bytes no longer end "(0 bytes
+  in 169s)". The backup summary says "Items skipped (filters and Windows links)", which is what it counts. Resize/Move
+  no longer shows an empty Status row. Download & Build asks UUP dump for its file list once more after a passing
+  service error (HTTP 400, 429 or 5xx). The Apply review and Copy Disk bars draw no partition narrower than 24 px.
+
 - **Screenshot Settings saves each page as itself, captures Installed apps and Gaming, and says when a PC has no
   Wi-Fi** - On a slow PC most of its pictures were of the wrong page: a page drawn half way was taken as drawn, and
   the rest of it was saved under the next page's name (in a test virtual machine, 2 of 14 pictures showed their
