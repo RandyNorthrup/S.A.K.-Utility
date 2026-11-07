@@ -64,6 +64,7 @@ private Q_SLOTS:
     // Build progress handlers
     void onPhaseChanged(UupIsoBuilder::Phase phase, const QString& description);
     void onProgressUpdated(int overall_percent, const QString& detail);
+    void onDownloadBytesUpdated(qint64 downloaded, qint64 total);
     void onSpeedUpdated(double download_speed_m_bps);
     void onDownloadComplete(const QString& iso_path, qint64 file_size);
     void onDownloadError(const QString& error);

@@ -178,6 +178,9 @@ Q_SIGNALS:
      */
     void speedUpdated(double downloadSpeedMBps);
 
+    /// Bytes of the build's files on disk, against the total, each time the download is measured.
+    void downloadBytesUpdated(qint64 downloaded, qint64 total);
+
     /**
      * @brief Emitted when the ISO has been successfully created
      * @param isoPath Path to the completed ISO file

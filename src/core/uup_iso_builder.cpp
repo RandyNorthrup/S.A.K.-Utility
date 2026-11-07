@@ -804,6 +804,7 @@ void UupIsoBuilder::pollDownloadProgress() {
 
     const int overall = PHASE_PREPARE_WEIGHT +
                         (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / kPercentComplete);
+    Q_EMIT downloadBytesUpdated(totalDownloaded, m_totalDownloadBytes);
     Q_EMIT progressUpdated(overall, detail);
 }
 

@@ -816,7 +816,8 @@ void ImageFlasherPanel::onDriveListUpdated() {
         }
     }
 
-    m_driveCountLabel->setText(QString("%1 drive(s) available").arg(drives.size()));
+    m_driveCountLabel->setText(
+        tr("%1 available").arg(sak::countOf(drives.size(), tr("drive"), tr("drives"))));
 }
 
 void ImageFlasherPanel::onDriveSelectionChanged() {
@@ -835,8 +836,9 @@ void ImageFlasherPanel::onDriveSelectionChanged() {
 
 void ImageFlasherPanel::onFlashClicked() {
     // Tier 2: raw disk I/O requires administrator privileges
-    auto gate = sak::showElevationGate(
-        this, tr("USB Flash"), tr("Writing to USB drives requires administrator privileges."));
+    auto gate = sak::showElevationGate(this,
+                                       tr("USB Flash"),
+                                       tr("Writing an image goes to the drive's raw sectors."));
     if (gate != sak::ElevationGateResult::AlreadyElevated) {
         return;
     }
@@ -871,6 +873,9 @@ void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
 void ImageFlasherPanel::onFlashStateChanged(FlashState new_state, const QString& message) {
     (void)new_state;
     m_flashStateLabel->setText(message);
+    // In the status bar as well, as the Windows USB steps are: a raw flash read "Ready" beside its
+    // bar at 95% (review 3, S22).
+    Q_EMIT statusMessage(QString("Image Flasher: %1").arg(message), sak::kTimerStatusDefaultMs);
     logInfo(QString("Flash state: %1").arg(message).toStdString());
 }
 
@@ -897,6 +902,8 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
 
     notifyFlashFinished(result);
 
+    // The run is over: its bar ends (a finished flash left it at 95%).
+    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
     Q_EMIT flashCompleted(result.totalDrives(), result.bytesWritten);
     Q_EMIT statusMessage(QString("Image Flasher: Flash %1 - %2 successful, %3 failed")
                              .arg(result.success ? "completed" : "completed with errors")
@@ -999,6 +1006,7 @@ void ImageFlasherPanel::showFlashFailure(const QString& error, const QString& dr
     updateNavigationButtons();
 
     Q_EMIT flashFailed(reported);
+    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
     Q_EMIT statusMessage("Image Flasher: Flash operation failed", sak::kTimerStatusDefaultMs);
 }
 
@@ -1052,6 +1060,7 @@ void ImageFlasherPanel::onCancelClicked() {
         updateNavigationButtons();
 
         Q_EMIT flashCancelled();
+        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
         Q_EMIT statusMessage("Image Flasher: Flash cancelled", sak::kTimerStatusDefaultMs);
     }
 }

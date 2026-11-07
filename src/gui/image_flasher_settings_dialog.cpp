@@ -233,6 +233,9 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* main_layout) {
 
     connect(button_box, &QDialogButtonBox::accepted, this, &ImageFlasherSettingsDialog::onAccept);
     connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    // One primary button, OK: Restore Defaults only resets the form (review 3, X10).
+    button_box->button(QDialogButtonBox::RestoreDefaults)
+        ->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(button_box->button(QDialogButtonBox::RestoreDefaults),
             &QPushButton::clicked,
             this,

@@ -19,8 +19,10 @@
 #include "sak/drive_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
+#include "sak/image_flasher_settings_dialog.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/style_constants.h"
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_usb_creator.h"
@@ -30,6 +32,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -37,7 +40,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -168,6 +173,46 @@ private Q_SLOTS:
                                 .arg(bottom)
                                 .arg(footer_top)));
         QCOMPARE(button->visibleRegion().boundingRect().height(), button->height());
+    }
+    // Review 3 (S22): a raw flash read "Ready" in the status bar beside its bar at 95-100%, and a
+    // finished flash left the bar at 95%.
+    void aRawFlashSaysItsStateAndEndsItsBar() {
+        sak::ImageFlasherPanel& panel = *m_panel;
+        QSignalSpy status(&panel, &sak::ImageFlasherPanel::statusMessage);
+        QSignalSpy progress(&panel, &sak::ImageFlasherPanel::progressUpdate);
+        panel.onFlashStateChanged(sak::FlashState::Flashing, QStringLiteral("Writing image"));
+        QVERIFY(!status.isEmpty());
+        QCOMPARE(status.last().at(0).toString(), QStringLiteral("Image Flasher: Writing image"));
+        sak::FlashResult result;
+        result.success = true;
+        result.successfulDrives = {QStringLiteral("PhysicalDrive5")};
+        panel.onFlashCompleted(result);
+        QVERIFY(!progress.isEmpty());
+        QCOMPARE(progress.last().at(0).toInt(), progress.last().at(1).toInt());
+    }
+    // Review 3 (X10): Restore Defaults was a second primary button beside OK.
+    void flasherSettingsHaveOnePrimaryButton() {
+        ::ImageFlasherSettingsDialog dialog;
+        auto* box = dialog.findChild<QDialogButtonBox*>();
+        QVERIFY(box != nullptr);
+        QCOMPARE(box->button(QDialogButtonBox::RestoreDefaults)->styleSheet(),
+                 sak::ui::kSecondaryButtonStyle);
+    }
+    // Review 3 (X19): the Windows ISO download bar read "0%" with 0.09 of 8.70 GB down.
+    void theWindowsIsoDownloadBarShowsTenthsBelowOnePercent() {
+        WindowsISODownloader downloader;
+        WindowsISODownloadDialog dialog(&downloader);
+        QProgressBar* bar = nullptr;
+        for (auto* candidate : dialog.findChildren<QProgressBar*>()) {
+            if (candidate->accessibleName() == QStringLiteral("Download progress")) {
+                bar = candidate;
+            }
+        }
+        QVERIFY(bar != nullptr);
+        constexpr qint64 kMegabyte = 1024LL * 1024;
+        constexpr qint64 kGigabyte = 1024LL * kMegabyte;
+        Q_EMIT downloader.downloadBytesUpdated(50 * kMegabyte, (87 * kGigabyte) / 10);
+        QCOMPARE(bar->text(), QStringLiteral("0.5%"));
     }
     void aSuccessfulFlashSaysSoWithATick() {
         // The fixture's panel: init() makes one for every test, and a second panel beside it is a

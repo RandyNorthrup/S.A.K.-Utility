@@ -5,6 +5,7 @@
 
 #include "sak/elevation_gate.h"
 #include "sak/layout_constants.h"
+#include "sak/linux_iso_downloader.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
@@ -209,6 +210,7 @@ void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* main_layo
     m_downloadProgressBar->setMinimum(0);
     m_downloadProgressBar->setMaximum(sak::kPercentMax);
     m_downloadProgressBar->setValue(0);
+    m_downloadProgressBar->setAccessibleName(QStringLiteral("Download progress"));
     progress_layout->addWidget(m_downloadProgressBar);
 
     auto* convert_progress_label = new QLabel("Convert & Build Phase", progress_group);
@@ -311,6 +313,10 @@ void WindowsISODownloadDialog::connectDownloaderSignals() {
             &WindowsISODownloader::progressUpdated,
             this,
             &WindowsISODownloadDialog::onProgressUpdated);
+    connect(m_downloader,
+            &WindowsISODownloader::downloadBytesUpdated,
+            this,
+            &WindowsISODownloadDialog::onDownloadBytesUpdated);
     connect(m_downloader,
             &WindowsISODownloader::speedUpdated,
             this,
@@ -538,6 +544,7 @@ void WindowsISODownloadDialog::onStartDownload() {
     m_startButton->setEnabled(false);
     m_cancelButton->setEnabled(true);
     m_downloadProgressBar->setValue(0);
+    m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
     m_convertProgressBar->setValue(0);
 
     m_downloader->startDownload(m_selectedUpdateId, lang_code, edition, save_path);
@@ -583,6 +590,13 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
     }
 }
 
+// The bar's text from the bytes: the overall percent moves in whole steps, so the bar read "0%"
+// with 0.09 of 8.70 GB down (review 3, X19). Tenths below 1%, as the Linux ISO download shows.
+void WindowsISODownloadDialog::onDownloadBytesUpdated(qint64 downloaded, qint64 total) {
+    Q_ASSERT(m_downloadProgressBar);
+    m_downloadProgressBar->setFormat(LinuxISODownloader::percentText(downloaded, total));
+}
+
 void WindowsISODownloadDialog::onProgressUpdated(int overall_percent, const QString& detail) {
     Q_ASSERT(m_downloadProgressBar);
     Q_ASSERT(m_convertProgressBar);
@@ -614,6 +628,9 @@ void WindowsISODownloadDialog::onProgressUpdated(int overall_percent, const QStr
         convert_percent = sak::kPercentMax;
     }
 
+    if (m_currentPhase != UupIsoBuilder::Phase::DownloadingFiles) {
+        m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
+    }
     m_downloadProgressBar->setValue(download_percent);
     m_convertProgressBar->setValue(convert_percent);
     m_detailLabel->setText(detail);

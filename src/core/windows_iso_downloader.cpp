@@ -46,6 +46,10 @@ WindowsISODownloader::WindowsISODownloader(QObject* parent)
     connect(
         m_builder.get(), &UupIsoBuilder::speedUpdated, this, &WindowsISODownloader::speedUpdated);
     connect(m_builder.get(),
+            &UupIsoBuilder::downloadBytesUpdated,
+            this,
+            &WindowsISODownloader::downloadBytesUpdated);
+    connect(m_builder.get(),
             &UupIsoBuilder::buildCompleted,
             this,
             &WindowsISODownloader::downloadComplete);
