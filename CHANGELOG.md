@@ -20,8 +20,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   Browse buttons are secondary, so the action is the one primary button. Batch Uninstall's Remove Selected and
   Clear Queue are secondary beside Start Batch Uninstall, and its header says "1 program".
 - **Lighter tab icons are easier to see** - In the light theme, the Benchmark and Diagnostics, Application
-  Management, Image Flasher and Backup and Restore tab icons are drawn in darker tones so they read on the tab. The
-  dark theme keeps its drawings.
+  Management, Image Flasher and Backup and Restore tab icons are drawn in darker tones so they read on the tab, and
+  Benchmark and Diagnostics' stethoscope and Backup and Restore's arrow are drawn thicker so their lines do not fade
+  at tab size. The dark theme keeps its drawings.
 - **Partition Manager** - Resize/Move grows to fit its Support line when it wraps, so its second line is no longer
   cut. Copy Disk's Target bar names the copy ("Copy of Disk 1") when the target is much larger than the source,
   instead of a sliver with no name.

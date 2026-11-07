@@ -979,6 +979,15 @@ double contrastRatio(const QColor& a, const QColor& b) {
     return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
 }
 
+/// @p pixel, with its own alpha, drawn over the opaque @p background.
+QColor drawnOn(const QColor& pixel, const QColor& background) {
+    const double alpha = pixel.alphaF();
+    return QColor::fromRgbF(
+        static_cast<float>((pixel.redF() * alpha) + (background.redF() * (1 - alpha))),
+        static_cast<float>((pixel.greenF() * alpha) + (background.greenF() * (1 - alpha))),
+        static_cast<float>((pixel.blueF() * alpha) + (background.blueF() * (1 - alpha))));
+}
+
 /// The share of @p icon's ink that, drawn on @p background, stands @p ratio or more from it. A
 /// line a quarter of a pixel wide is drawn at a quarter of its colour and counts for little.
 double inkAtLeast(const QImage& icon, const QColor& background, double ratio) {
@@ -991,12 +1000,8 @@ double inkAtLeast(const QImage& icon, const QColor& background, double ratio) {
             if (alpha <= 0.0) {
                 continue;
             }
-            const QColor drawn = QColor::fromRgbF(
-                static_cast<float>((pixel.redF() * alpha) + (background.redF() * (1 - alpha))),
-                static_cast<float>((pixel.greenF() * alpha) + (background.greenF() * (1 - alpha))),
-                static_cast<float>((pixel.blueF() * alpha) + (background.blueF() * (1 - alpha))));
             ink += alpha;
-            legible += contrastRatio(drawn, background) >= ratio ? alpha : 0.0;
+            legible += contrastRatio(drawnOn(pixel, background), background) >= ratio ? alpha : 0.0;
         }
     }
     return ink > 0.0 ? legible / ink : 0.0;
@@ -1006,6 +1011,29 @@ double inkAtLeast(const QImage& icon, const QColor& background, double ratio) {
 double inkAtThreeToOne(const QImage& icon, const QColor& background) {
     constexpr double kNonTextContrast = 3.0;
     return inkAtLeast(icon, background, kNonTextContrast);
+}
+
+/// The reviewer's reading (review 3, S25, and review 4 on testpc1): every pixel the icon touches
+/// is ink, however little of it the drawing covers, and the share of those pixels that stand 3:1
+/// or more from @p background. More than half means the median pixel does. An anti-aliased edge
+/// counts in full here, so a thin stroke or a pale colour shows.
+double pixelsAtThreeToOne(const QImage& icon, const QColor& background) {
+    constexpr double kNonTextContrast = 3.0;
+    int ink = 0;
+    int legible = 0;
+    for (int y = 0; y < icon.height(); ++y) {
+        for (int x = 0; x < icon.width(); ++x) {
+            const QColor pixel = icon.pixelColor(x, y);
+            if (pixel.alpha() == 0) {
+                continue;
+            }
+            ++ink;
+            const bool stands_out = contrastRatio(drawnOn(pixel, background), background) >=
+                                    kNonTextContrast;
+            legible += stands_out ? 1 : 0;
+        }
+    }
+    return ink > 0 ? static_cast<double>(legible) / ink : 0.0;
 }
 
 }  // namespace
@@ -1021,6 +1049,25 @@ int opaquePixels(const QImage& image) {
         }
     }
     return count;
+}
+
+/// The four tab icons S25 redrew, on the light tab, read as the reviewer reads them, every pixel
+/// they touch in full: most must stand 3:1 from the tab. Review 4 found Benchmark and Diagnostics
+/// at 38% and Backup and Restore at 47% on testpc1's tab, their thin strokes anti-aliased.
+QStringList mostPixelsUnderThreeToOne(bool dark,
+                                      const QString& name,
+                                      double pixel_share,
+                                      const QString& line) {
+    constexpr double kMost = 0.5;
+    const bool redrawn_s25 = QSet<QString>{QStringLiteral("Benchmark and Diagnostics"),
+                                           QStringLiteral("Application Management"),
+                                           QStringLiteral("Image Flasher"),
+                                           QStringLiteral("Backup and Restore")}
+                                 .contains(name);
+    if (dark || !redrawn_s25 || pixel_share > kMost) {
+        return {};
+    }
+    return {QStringLiteral("%1, most of its pixels under 3:1").arg(line)};
 }
 
 /// What is wrong with @p tabs' icons in the theme showing now; each one's reading goes to @p
@@ -1047,9 +1094,11 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
         }
         const QImage drawn = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::Off).toImage();
         const double share = inkAtThreeToOne(drawn, tab_colour);
-        const QString line = QStringLiteral("%1 %2: %3 on %4")
+        const double pixel_share = pixelsAtThreeToOne(drawn, tab_colour);
+        const QString line = QStringLiteral("%1 %2: %3 (pixels %4) on %5")
                                  .arg(theme, name)
                                  .arg(share, 0, 'f', 2)
+                                 .arg(pixel_share, 0, 'f', 2)
                                  .arg(tab_colour.name());
         *report << line;
         // Every icon on the dark tab. On the light tab, the ones the reviews found faint: File
@@ -1069,6 +1118,7 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
         if ((dark || faint_before) && (share < kLegibleShare || faint > kMostlyFaint)) {
             wrong << QStringLiteral("%1, %2 faint").arg(line).arg(faint, 0, 'f', 2);
         }
+        wrong << mostPixelsUnderThreeToOne(dark, name, pixel_share, line);
         // Selected, Help's question mark and About's "i", drawn in white, are left out of the white
         // drawing, so they show in the tab's blue.
         const bool glyph_inside =
