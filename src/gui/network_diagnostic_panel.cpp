@@ -77,7 +77,6 @@ constexpr int kTableColumnWidthMedium = 75;
 constexpr int kTableColumnWidthStandard = 80;
 constexpr int kTableColumnWidthNarrow = 90;
 // A cell's text has the theme's padding on both sides and the grid line beside it.
-constexpr int kAdapterStatusCellPaddingPx = 24;
 constexpr int kTableColumnWidthRemotePort = 95;
 constexpr int kTableColumnWidthWide = 100;
 constexpr int kTableColumnWidthState = 105;
@@ -440,13 +439,10 @@ void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* lay
     header->setSectionResizeMode(KAdapterColumnName, QHeaderView::Stretch);
     header->setSectionResizeMode(KAdapterColumnType, QHeaderView::Interactive);
     header->resizeSection(KAdapterColumnType, kTableColumnWidthNarrow);
-    header->setSectionResizeMode(KAdapterColumnStatus, QHeaderView::Interactive);
-    // As wide as its longest word: 90 px cut "Disconnected" to "Disconnec..." on testpc1.
-    header->resizeSection(
-        KAdapterColumnStatus,
-        std::max(kTableColumnWidthNarrow,
-                 m_adapterTable->fontMetrics().horizontalAdvance(tr("Disconnected")) +
-                     kAdapterStatusCellPaddingPx));
+    // As wide as what it holds. A width measured here came from the font before the theme's style
+    // sheet applied (10 pt, and 6 px of padding each side of an item), so "Disconnected" still read
+    // "Disconnect..." on testpc1 (review 3, S15).
+    header->setSectionResizeMode(KAdapterColumnStatus, QHeaderView::ResizeToContents);
     header->setSectionResizeMode(KAdapterColumnAddress, QHeaderView::Interactive);
     header->resizeSection(KAdapterColumnAddress, kTableColumnWidthName);
     header->setSectionResizeMode(KAdapterColumnMac, QHeaderView::Interactive);
@@ -4011,10 +4007,15 @@ void NetworkDiagnosticPanel::onPortScanComplete(QVector<PortScanResult> results)
         }
     }
 
-    m_portSummaryLabel->setText(QStringLiteral("Complete: %1 open, %2 closed, %3 filtered")
-                                    .arg(open_count)
-                                    .arg(closed_count)
-                                    .arg(filtered_count));
+    const QString summary = QStringLiteral("Complete: %1 open, %2 closed, %3 filtered")
+                                .arg(open_count)
+                                .arg(closed_count)
+                                .arg(filtered_count);
+    m_portSummaryLabel->setText(summary);
+    // The scan's start message ("Scanning ports on 127.0.0.1...") stayed in the status bar after
+    // the scan ended (review 3, S22).
+    Q_EMIT statusMessage(QStringLiteral("Port scan %1").arg(summary.toLower()),
+                         sak::kTimerStatusMessageMs);
 }
 
 // -- Bandwidth --

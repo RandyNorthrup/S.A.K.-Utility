@@ -9,6 +9,7 @@
 #include "sak/network_diagnostic_panel.h"
 #include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
+#include "sak/windows11_theme.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -339,6 +340,7 @@ private Q_SLOTS:
     void aListeningConnectionUsesTheTablesTextColour();
     void everyColumnFitsItsHeaderLabel();
     void aDisconnectedAdapterReadsWhole();
+    void aFinishedPortScanReplacesItsStartMessage();
     void aOneHopTraceSaysHop();
     void adapterScanRunsInEveryMode_data();
     void adapterScanRunsInEveryMode();
@@ -461,6 +463,10 @@ void NetworkDiagnosticPanelTests::aOneHopTraceSaysHop() {
 // testpc1: "Disconnec..." in the Status column, and a speed Windows does not know read as
 // 18446744073709 Mbps.
 void NetworkDiagnosticPanelTests::aDisconnectedAdapterReadsWhole() {
+    // The theme the app runs with: its style sheet sets the 10 pt font and the item padding.
+    const QString previous_style = qApp->styleSheet();
+    const auto restore = qScopeGuard([previous_style]() { qApp->setStyleSheet(previous_style); });
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
     sak::QuickActionController quick_actions;
     sak::NetworkDiagnosticPanel panel(quick_actions);
     QVERIFY(waitForStartupScan(panel));
@@ -478,12 +484,38 @@ void NetworkDiagnosticPanelTests::aDisconnectedAdapterReadsWhole() {
     const int status_column = 2;
     const int speed_column = 5;
     QCOMPARE(table->item(0, status_column)->text(), QStringLiteral("Disconnected"));
-    const int needed = table->fontMetrics().horizontalAdvance(QStringLiteral("Disconnected")) + 12;
+    // Measured as the theme draws it: the cell's own size hint, with the style sheet's font and
+    // item padding. A width taken from the font before the style sheet applied cut it on testpc1.
+    panel.show();
+    panel.adapterWidget()->show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QCoreApplication::processEvents();
+    // QTableView makes its override protected; QAbstractItemView's is public and virtual.
+    const int needed = static_cast<QAbstractItemView*>(table)->sizeHintForColumn(status_column);
     QVERIFY2(table->horizontalHeader()->sectionSize(status_column) >= needed,
              qPrintable(QStringLiteral("%1 px for %2")
                             .arg(table->horizontalHeader()->sectionSize(status_column))
                             .arg(needed)));
     QCOMPARE(table->item(0, speed_column)->text(), QStringLiteral("--"));
+}
+
+// Review 3 (S22): "Scanning ports on 127.0.0.1..." stayed in the status bar beside the finished
+// scan's "Complete: 4 open".
+void NetworkDiagnosticPanelTests::aFinishedPortScanReplacesItsStartMessage() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy status(&panel, &sak::NetworkDiagnosticPanel::statusMessage);
+    QVector<sak::PortScanResult> results(4);
+    for (auto& result : results) {
+        result.state = sak::PortScanResult::State::Open;
+    }
+    Q_EMIT controller->portScanComplete(results);
+    QVERIFY(!status.isEmpty());
+    QCOMPARE(status.last().at(0).toString(),
+             QStringLiteral("Port scan complete: 4 open, 0 closed, 0 filtered"));
 }
 
 // Smoke and audit runs used to skip the adapter scan users get when the panel is created, so the
