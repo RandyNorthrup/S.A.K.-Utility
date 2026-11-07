@@ -99,6 +99,19 @@ public:
     [[nodiscard]] static uint64_t uptimeSecondsSinceBoot(const QString& boot_time,
                                                          const QDateTime& now);
 
+    /// @brief The bus a disk is on, from MSFT_PhysicalDisk.BusType (the STORAGE_BUS_TYPE values):
+    ///        "NVMe", "SATA", "USB", "SAS", "RAID", "SCSI" and the rest; empty for 0 or a value
+    ///        Windows does not define. Pure + static for unit testing.
+    [[nodiscard]] static QString storageBusName(int bus_type);
+
+    /// @brief A disk's interface as the views show it: @p bus_name when Windows' storage stack gave
+    ///        one, else Win32_DiskDrive's own InterfaceType as it is. Win32_DiskDrive reports an
+    ///        NVMe disk as "SCSI", and a USB enclosure's model can contain "NVMe": read as "SATA"
+    ///        and "NVMe", testpc1's internal NVMe and its USB enclosure were typed the wrong way
+    ///        round (review 3). Pure + static for unit testing.
+    [[nodiscard]] static QString storageInterfaceName(const QString& bus_name,
+                                                      const QString& wmi_interface);
+
 Q_SIGNALS:
     void scanStarted();
     void scanProgress(int percent, const QString& component);
@@ -173,7 +186,8 @@ private:
     /// @return Vector of property maps, one per WMI instance
     QVector<QVariantMap> wmiQuery(const QString& wmi_class,
                                   const QStringList& properties,
-                                  int timeout_ms = kDefaultWmiQueryTimeoutMs);
+                                  int timeout_ms = kDefaultWmiQueryTimeoutMs,
+                                  const QString& cim_namespace = {});
 };
 
 }  // namespace sak

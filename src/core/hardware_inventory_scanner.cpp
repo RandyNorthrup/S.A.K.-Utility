@@ -50,23 +50,22 @@ constexpr unsigned int kVendorIdNvidia = 0x10DE;
 constexpr unsigned int kVendorIdAmd = 0x1002;
 constexpr unsigned int kVendorIdIntel = 0x8086;
 
-QString classifyInterfaceType(const QString& iface, const QString& model) {
-    if (iface.contains("NVMe", Qt::CaseInsensitive) ||
-        model.contains("NVMe", Qt::CaseInsensitive)) {
-        return QStringLiteral("NVMe");
-    }
-    if (iface.contains("SCSI", Qt::CaseInsensitive) || iface.contains("IDE", Qt::CaseInsensitive)) {
-        return QStringLiteral("SATA");
-    }
-    if (iface.contains("USB", Qt::CaseInsensitive)) {
-        return QStringLiteral("USB");
-    }
-    return iface;
-}
+// MSFT_PhysicalDisk.MediaType: 3 HDD, 4 SSD, 5 SCM; 0 Unspecified.
+constexpr int kPhysicalDiskMediaHdd = 3;
+constexpr int kPhysicalDiskMediaSsd = 4;
+constexpr int kPhysicalDiskMediaScm = 5;
 
 QString classifyMediaType(const QString& interface_type,
                           const QString& model,
-                          const QString& media) {
+                          const QString& media,
+                          int physical_media_type) {
+    if (physical_media_type == kPhysicalDiskMediaSsd ||
+        physical_media_type == kPhysicalDiskMediaScm) {
+        return QStringLiteral("SSD");
+    }
+    if (physical_media_type == kPhysicalDiskMediaHdd) {
+        return QStringLiteral("HDD");
+    }
     if (interface_type == "NVMe" || model.contains("SSD", Qt::CaseInsensitive) ||
         media.contains("SSD", Qt::CaseInsensitive) ||
         media.contains("Solid", Qt::CaseInsensitive)) {
@@ -337,13 +336,16 @@ uint64_t HardwareInventoryScanner::uptimeSecondsSinceBoot(const QString& boot_ti
 
 QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class,
                                                         const QStringList& properties,
-                                                        int timeout_ms) {
+                                                        int timeout_ms,
+                                                        const QString& cim_namespace) {
     const QString prop_list = properties.join(", ");
+    const QString namespace_arg =
+        cim_namespace.isEmpty() ? QString() : QStringLiteral("-Namespace %1 ").arg(cim_namespace);
     const QString ps_command = QString(
-                                   "Get-CimInstance -ClassName %1 | "
+                                   "Get-CimInstance %3-ClassName %1 | "
                                    "Select-Object %2 | "
                                    "ConvertTo-Json -Compress")
-                                   .arg(wmi_class, prop_list);
+                                   .arg(wmi_class, prop_list, namespace_arg);
 
     // Shared resolver: the System32-qualified interpreter, empty when unresolvable so
     // this query aborts instead of letting CreateProcess search PATH/CWD.
@@ -602,7 +604,52 @@ MemoryModuleInfo HardwareInventoryScanner::parseMemoryModule(const QVariantMap& 
     return module;
 }
 
+QString HardwareInventoryScanner::storageBusName(int bus_type) {
+    // STORAGE_BUS_TYPE (winioctl.h), which MSFT_PhysicalDisk.BusType carries.
+    static const QHash<int, QString> kNames{{1, QStringLiteral("SCSI")},
+                                            {2, QStringLiteral("ATAPI")},
+                                            {3, QStringLiteral("ATA")},
+                                            {4, QStringLiteral("IEEE 1394")},
+                                            {5, QStringLiteral("SSA")},
+                                            {6, QStringLiteral("Fibre Channel")},
+                                            {7, QStringLiteral("USB")},
+                                            {8, QStringLiteral("RAID")},
+                                            {9, QStringLiteral("iSCSI")},
+                                            {10, QStringLiteral("SAS")},
+                                            {11, QStringLiteral("SATA")},
+                                            {12, QStringLiteral("SD")},
+                                            {13, QStringLiteral("MMC")},
+                                            {15, QStringLiteral("Virtual")},
+                                            {16, QStringLiteral("Storage Spaces")},
+                                            {17, QStringLiteral("NVMe")},
+                                            {18, QStringLiteral("SCM")},
+                                            {19, QStringLiteral("UFS")}};
+    return kNames.value(bus_type);
+}
+
+QString HardwareInventoryScanner::storageInterfaceName(const QString& bus_name,
+                                                       const QString& wmi_interface) {
+    return bus_name.isEmpty() ? wmi_interface.trimmed() : bus_name;
+}
+
 QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
+    // The bus and media as Windows' storage stack knows them, by disk number. A standard user may
+    // read MSFT_PhysicalDisk; a disk missing from it keeps Win32_DiskDrive's own words.
+    QHash<uint32_t, QPair<int, int>> physical;
+    for (const auto& disk : wmiQuery(
+             QStringLiteral("MSFT_PhysicalDisk"),
+             {QStringLiteral("DeviceId"), QStringLiteral("BusType"), QStringLiteral("MediaType")},
+             sak::kTimeoutProcessMediumMs,
+             QStringLiteral("root/Microsoft/Windows/Storage"))) {
+        bool numeric = false;
+        const uint32_t number = disk.value(QStringLiteral("DeviceId")).toString().toUInt(&numeric);
+        if (numeric) {
+            physical.insert(number,
+                            {disk.value(QStringLiteral("BusType")).toInt(),
+                             disk.value(QStringLiteral("MediaType")).toInt()});
+        }
+    }
+
     const auto results = wmiQuery("Win32_DiskDrive",
                                   {"Model",
                                    "SerialNumber",
@@ -623,11 +670,12 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
         dev.firmware_version = disk.value("FirmwareRevision").toString().trimmed();
         dev.disk_number = disk.value("Index").toUInt();
 
-        const QString iface = disk.value("InterfaceType").toString().trimmed();
-        dev.interface_type = classifyInterfaceType(iface, dev.model);
+        const auto known = physical.value(dev.disk_number, {0, 0});
+        dev.interface_type = storageInterfaceName(storageBusName(known.first),
+                                                  disk.value("InterfaceType").toString());
 
         const QString media = disk.value("MediaType").toString();
-        dev.media_type = classifyMediaType(dev.interface_type, dev.model, media);
+        dev.media_type = classifyMediaType(dev.interface_type, dev.model, media, known.second);
 
         devices.append(dev);
     }

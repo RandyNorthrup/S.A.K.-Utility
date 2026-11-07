@@ -29,6 +29,7 @@ private Q_SLOTS:
     void motherboardInfo_defaults();
     void batteryInfo_defaults();
     void uptimeReadsTheBootTimeInEitherForm();
+    void storageTypeIsTheBusWindowsReports();
     void cancel_doesNotCrash();
     void scanCpu_returnsRealCpuInfo();
     void volumeDiskMap_parsesArray();
@@ -164,6 +165,30 @@ void TestHardwareInventoryScanner::batteryInfo_defaults() {
 
 // Windows PowerShell's ConvertTo-Json writes LastBootUpTime as "/Date(ms)/", which the CIM-only
 // parse read as nothing, so every PC showed "Uptime: 0 min".
+// Review 3 (testpc1): Storage Health typed the internal SK hynix BC501 NVMe as SATA
+// (Win32_DiskDrive says "SCSI" for NVMe) and the USB enclosure as NVMe (its model carries "NVME").
+// The type is the bus MSFT_PhysicalDisk reports; without one, Win32_DiskDrive's own word, never a
+// guess.
+void TestHardwareInventoryScanner::storageTypeIsTheBusWindowsReports() {
+    using sak::HardwareInventoryScanner;
+    QCOMPARE(HardwareInventoryScanner::storageBusName(17), QStringLiteral("NVMe"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(7), QStringLiteral("USB"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(11), QStringLiteral("SATA"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(10), QStringLiteral("SAS"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(8), QStringLiteral("RAID"));
+    QVERIFY(HardwareInventoryScanner::storageBusName(0).isEmpty());
+    QVERIFY(HardwareInventoryScanner::storageBusName(99).isEmpty());
+
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QStringLiteral("NVMe"),
+                                                            QStringLiteral("SCSI")),
+             QStringLiteral("NVMe"));
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QStringLiteral("USB"),
+                                                            QStringLiteral("SCSI")),
+             QStringLiteral("USB"));
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QString(), QStringLiteral(" SCSI ")),
+             QStringLiteral("SCSI"));
+}
+
 void TestHardwareInventoryScanner::uptimeReadsTheBootTimeInEitherForm() {
     const QDateTime boot = QDateTime::fromMSecsSinceEpoch(1'793'000'000'000, QTimeZone::UTC);
     const QDateTime now = boot.addSecs(3 * 3600 + 120);
