@@ -8,6 +8,8 @@
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 
+#include <QAccessible>
+#include <QAccessibleWidget>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -31,6 +33,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <mutex>
 
 namespace sak {
 
@@ -408,10 +411,55 @@ private:
     LogToggleSwitch* m_target;
 };
 
+/// The Log switch as a screen reader and UI Automation see it: a check box named for its label,
+/// checked while the log window shows. As a plain widget it was an unnamed Group, and its tooltip
+/// was all it said (review 3).
+class LogToggleAccessible final : public QAccessibleWidget {
+public:
+    explicit LogToggleAccessible(QWidget* widget)
+        : QAccessibleWidget(widget, QAccessible::CheckBox) {}
+
+    [[nodiscard]] QAccessible::State state() const override {
+        QAccessible::State state = QAccessibleWidget::state();
+        state.checkable = true;
+        state.checked = toggle()->isChecked();
+        return state;
+    }
+
+    [[nodiscard]] QStringList actionNames() const override {
+        return {QAccessibleActionInterface::toggleAction()};
+    }
+
+    void doAction(const QString& action_name) override {
+        if (action_name == QAccessibleActionInterface::toggleAction() ||
+            action_name == QAccessibleActionInterface::pressAction()) {
+            toggle()->setChecked(!toggle()->isChecked());
+        }
+    }
+
+private:
+    [[nodiscard]] LogToggleSwitch* toggle() const {
+        return static_cast<LogToggleSwitch*>(widget());
+    }
+};
+
+QAccessibleInterface* logToggleAccessibleFactory(const QString& class_name, QObject* object) {
+    if (class_name == QLatin1String(LogToggleSwitch::staticMetaObject.className()) &&
+        object != nullptr && object->isWidgetType()) {
+        return new LogToggleAccessible(static_cast<QWidget*>(object));
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     : QWidget(parent), m_label(label) {
+    static std::once_flag factory_installed;
+    std::call_once(factory_installed,
+                   []() { QAccessible::installFactory(logToggleAccessibleFactory); });
+    setAccessibleName(label);
+    setAccessibleDescription(tr("Shows or hides the log window"));
     setMinimumSize(LogToggleSwitch::minimumSizeHint());
     setMaximumHeight(sak::kSnapButtonH);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -451,6 +499,10 @@ void LogToggleSwitch::setChecked(bool checked) {
     if (m_checked != checked) {
         m_checked = checked;
         update();
+        QAccessible::State changed;
+        changed.checked = true;
+        QAccessibleStateChangeEvent event(this, changed);
+        QAccessible::updateAccessibility(&event);
         Q_EMIT toggled(m_checked);
     }
 }

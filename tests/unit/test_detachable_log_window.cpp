@@ -7,6 +7,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 
+#include <QAccessible>
 #include <QApplication>
 #include <QMainWindow>
 #include <QScreen>
@@ -41,6 +42,7 @@ private Q_SLOTS:
     void hiddenWindowIsNotRebuilt();
     void shownWindowShowsLinesLiterally();
     void aProgramsReportKeepsItsColumns();
+    void theLogSwitchIsANamedCheckBox();
 };
 
 void DetachableLogWindowTests::anchoredGeometry_snapsBesideWindowWithRoom() {
@@ -299,6 +301,24 @@ void DetachableLogWindowTests::aProgramsReportKeepsItsColumns() {
     log.appendLine(report);
     log.appendLine(QStringLiteral("next line"));
     QCOMPARE(describeBlocks(document), expected);
+}
+
+// Review 3: UI Automation showed the Log switch on every panel as an unnamed Group; its tooltip was
+// all it said. A screen reader now reads it as the "Log" check box, checked while the log shows.
+void DetachableLogWindowTests::theLogSwitchIsANamedCheckBox() {
+    sak::LogToggleSwitch toggle(QStringLiteral("Log"));
+    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(&toggle);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->role(), QAccessible::CheckBox);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Log"));
+    QVERIFY(accessible->state().checkable);
+    QVERIFY(!accessible->state().checked);
+    toggle.setChecked(true);
+    QVERIFY(accessible->state().checked);
+    QAccessibleActionInterface* actions = accessible->actionInterface();
+    QVERIFY(actions != nullptr);
+    actions->doAction(QAccessibleActionInterface::toggleAction());
+    QVERIFY(!toggle.isChecked());
 }
 
 QTEST_MAIN(DetachableLogWindowTests)
