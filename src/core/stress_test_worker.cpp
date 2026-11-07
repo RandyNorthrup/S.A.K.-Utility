@@ -331,7 +331,7 @@ std::expected<void, sak::error_code> StressTestWorker::runFor(
     m_result.passed = computeStressPassed(m_result);
 
     logInfo("Stress test {} -- {} seconds, {} errors",
-            m_result.passed ? "PASSED" : "FAILED",
+            stressVerdictWord(m_result),
             m_result.duration_seconds,
             m_result.errors_detected);
 
@@ -446,6 +446,7 @@ void StressTestWorker::monitorStressLoop(std::chrono::milliseconds run_length) {
          elapsed_ms = m_elapsed_timer.elapsed()) {
         if (checkStop()) {
             m_result.abort_reason = "Cancelled by user";
+            m_result.stopped = true;
             return;
         }
 

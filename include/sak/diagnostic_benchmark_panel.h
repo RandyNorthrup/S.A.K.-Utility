@@ -88,6 +88,9 @@ public:
     ///        so each starts with the drive it is about.
     [[nodiscard]] static QString smartWarningText(const QString& drive, const QString& warning);
 
+    /// @brief "Elapsed: MM:SS" for the stress test's line.
+    [[nodiscard]] static QString stressElapsedText(int elapsed_seconds);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);

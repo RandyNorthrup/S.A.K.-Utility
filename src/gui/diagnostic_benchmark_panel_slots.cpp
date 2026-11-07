@@ -583,21 +583,44 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
         m_stress_status_label->setText("Status: PASSED");
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+    } else if (result.stopped) {
+        // A stop is a stop: nothing was found wrong, and nothing was proved either.
+        m_stress_status_label->setText(QString("Status: STOPPED - %1").arg(result.abort_reason));
+        m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
     } else {
         m_stress_status_label->setText(QString("Status: FAILED - %1").arg(result.abort_reason));
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
+    // The run's own length, not the last 5 s tick: a 60.6 s run ended on "Elapsed: 00:55", with the
+    // status bar left at 91% beside "Stress test passed" (review 3).
+    m_stress_elapsed_label->setText(stressElapsedText(result.duration_seconds));
+    Q_EMIT progressUpdate(sak::kPercentMax, sak::kPercentMax);
 
     logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4)")
-                   .arg(result.passed ? "PASSED" : "FAILED")
+                   .arg(QString::fromLatin1(stressVerdictWord(result)))
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
                    .arg(result.cpuTemperatureRead()
                             ? QString("%1 degC").arg(result.max_cpu_temp, 0, 'f', 1)
                             : QStringLiteral("no reading, thermal limit not enforced")));
-    Q_EMIT statusMessage(result.passed ? "Stress test passed" : "Stress test FAILED",
+    Q_EMIT statusMessage(result.passed    ? QStringLiteral("Stress test passed")
+                         : result.stopped ? QStringLiteral("Stress test stopped")
+                                          : QStringLiteral("Stress test FAILED"),
                          sak::kTimerStatusDefaultMs);
+}
+
+QString DiagnosticBenchmarkPanel::stressElapsedText(int elapsed_seconds) {
+    return QString("Elapsed: %1:%2")
+        .arg(elapsed_seconds / sak::kSecondsPerMinute,
+             sak::kTimeFieldWidth,
+             sak::kDecimalBase,
+             QChar('0'))
+        .arg(elapsed_seconds % sak::kSecondsPerMinute,
+             sak::kTimeFieldWidth,
+             sak::kDecimalBase,
+             QChar('0'));
 }
 
 void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
@@ -616,12 +639,7 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
     const int percent = duration_sec > 0 ? (elapsed_seconds * sak::kPercentMax / duration_sec) : 0;
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
 
-    const int min = elapsed_seconds / sak::kSecondsPerMinute;
-    const int sec = elapsed_seconds % sak::kSecondsPerMinute;
-    m_stress_elapsed_label->setText(
-        QString("Elapsed: %1:%2")
-            .arg(min, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0'))
-            .arg(sec, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0')));
+    m_stress_elapsed_label->setText(stressElapsedText(elapsed_seconds));
 
     // ThermalMonitor::queryCpuTemperature answers -1.0 for "no reading". A number here would read
     // as a measurement, and it would hide that the thermal limit is doing nothing.

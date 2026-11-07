@@ -344,6 +344,9 @@ struct StressTestConfig {
 /// @brief Stress test result
 struct StressTestResult {
     bool passed{false};
+    /// Stopped before its time ran out (Stop, or the app closing): not a pass, and not a failure
+    /// either. Closing the app 13 s in was logged "Stress test FAILED" (review 3).
+    bool stopped{false};
     int duration_seconds{0};
     int errors_detected{0};
 
@@ -373,6 +376,14 @@ struct StressTestResult {
     ///        limit could not be enforced, and max_cpu_temp says nothing.
     [[nodiscard]] bool cpuTemperatureRead() const { return max_cpu_temp > 0.0; }
 };
+
+/// @brief PASSED, STOPPED or FAILED, as the log and the stress test's line say it.
+[[nodiscard]] inline const char* stressVerdictWord(const StressTestResult& result) {
+    if (result.passed) {
+        return "PASSED";
+    }
+    return result.stopped ? "STOPPED" : "FAILED";
+}
 
 // ============================================================================
 // Where Disk Tests Write

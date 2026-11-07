@@ -25,6 +25,7 @@ class DiagnosticControllerTests : public QObject {
 private Q_SLOTS:
     void oneScanIsNotAllTestsPassed();
     void drivesThatCouldNotBeReadAreNotAPass();
+    void aStoppedStressTestIsNotAFailure();
     void everyStepPassingIsAllPassed();
     void aStressRunWithNoSensorSaysSo();
     void initialState();
@@ -381,6 +382,26 @@ void DiagnosticControllerTests::oneScanIsNotAllTestsPassed() {
     QVERIFY2(warnings.contains(QStringLiteral("CPU benchmark has no result")),
              qPrintable(warnings));
     QVERIFY2(!warnings.contains(QStringLiteral("Hardware scan")), qPrintable(warnings));
+}
+
+// Review 3: closing the app during a stress run reported "Stress test FAILED". A stop is neither a
+// failure nor a pass.
+void DiagnosticControllerTests::aStoppedStressTestIsNotAFailure() {
+    DiagnosticController controller;
+    controller.m_report_data = everyStepPassed();
+    StressTestResult stopped;
+    stopped.stopped = true;
+    stopped.abort_reason = QStringLiteral("Cancelled by user");
+    stopped.duration_seconds = 13;
+    stopped.max_cpu_temp = 70.0;
+    controller.m_report_data.stress_test = stopped;
+    controller.aggregateResults();
+    QCOMPARE(controller.m_report_data.overall_status, DiagnosticStatus::Warnings);
+    const QString critical = controller.m_report_data.critical_issues.join(QLatin1Char('|'));
+    QVERIFY2(!critical.contains(QStringLiteral("Stress test FAILED")), qPrintable(critical));
+    const QString warnings = controller.m_report_data.warnings.join(QLatin1Char('|'));
+    QVERIFY2(warnings.contains(QStringLiteral("Stress test stopped after 13 s")),
+             qPrintable(warnings));
 }
 
 void DiagnosticControllerTests::drivesThatCouldNotBeReadAreNotAPass() {

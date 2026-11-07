@@ -756,7 +756,15 @@ void DiagnosticController::aggregateStressTest() {
             "CPU temperature could not be read during the stress test, so the thermal limit "
             "was not enforced");
     }
-    if (!stress.passed) {
+    if (stress.stopped) {
+        // Not a failure, and not a pass either: the report must not read as all passed.
+        if (m_report_data.overall_status == DiagnosticStatus::AllPassed) {
+            m_report_data.overall_status = DiagnosticStatus::Warnings;
+        }
+        m_report_data.warnings.append(
+            QString("Stress test stopped after %1 s, before its time ran out: not judged")
+                .arg(stress.duration_seconds));
+    } else if (!stress.passed) {
         m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
         m_report_data.critical_issues.append(
             QString("Stress test FAILED: %1").arg(stress.abort_reason));

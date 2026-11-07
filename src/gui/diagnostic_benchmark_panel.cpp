@@ -1215,7 +1215,11 @@ bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(const QString& acti
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
         QFileDialog::ShowDirsOnly);
     if (folder->isEmpty()) {
-        logMessage(tr("System Inventory Report cancelled: no folder was chosen"));
+        // Said where it is seen too: in the log alone, the capture VM's run looked like one that
+        // never finished, at "Ready" with no progress and no message (review 3).
+        const QString cancelled = tr("System Inventory Report cancelled: no folder was chosen");
+        logMessage(cancelled);
+        Q_EMIT statusMessage(cancelled, sak::kTimerStatusMessageMs);
         return false;
     }
     return true;

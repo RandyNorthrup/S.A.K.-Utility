@@ -381,6 +381,7 @@ private Q_SLOTS:
     void inventoryReportRunsItsRealCollectors();
     void inventoryReportCancelledFolderRunsNothing();
     void stressStatusSaysWhenThereIsNoSensor();
+    void aStoppedStressTestSaysStoppedAndEndsWhereItEnded();
     void thermalLimitTooltipSaysWhatHappens();
     void anUnreadableDriveShowsNoFakeNumbers();
     void thermalDiskRowSaysItIsTheHottestDisk();
@@ -561,6 +562,9 @@ void DiagnosticBenchmarkPanelTests::inventoryReportCancelledFolderRunsNothing() 
     QVERIFY(button->isEnabled());
     QVERIFY(statusTexts(log).contains(
         QStringLiteral("System Inventory Report cancelled: no folder was chosen")));
+    // Review 3: in the log alone, a run with no folder looked like one that never finished.
+    QVERIFY(statusTexts(status).contains(
+        QStringLiteral("System Inventory Report cancelled: no folder was chosen")));
 }
 
 // The row shows the hottest disk in the PC, not disk 0.
@@ -715,6 +719,47 @@ void DiagnosticBenchmarkPanelTests::stressStatusSaysWhenThereIsNoSensor() {
 
     Q_EMIT controller->stressTestStatus(6, 71.5, 0);
     QCOMPARE(temperatureText(), QStringLiteral("CPU Temp: 71.5 degC"));
+}
+
+// Review 3 (testpc1): closing the app 13 s into a run was logged "Stress test FAILED", and a 60.6 s
+// run ended on "Elapsed: 00:55" with the status bar held at 91% beside "Stress test passed".
+void DiagnosticBenchmarkPanelTests::aStoppedStressTestSaysStoppedAndEndsWhereItEnded() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+    QSignalSpy log(&panel, &sak::DiagnosticBenchmarkPanel::logOutput);
+    QSignalSpy progress(&panel, &sak::DiagnosticBenchmarkPanel::progressUpdate);
+    const auto labelStartingWith = [&panel](const QString& prefix) {
+        for (const auto* label : panel.findChildren<QLabel*>()) {
+            if (label->text().startsWith(prefix)) {
+                return label->text();
+            }
+        }
+        return QString();
+    };
+
+    sak::StressTestResult stopped;
+    stopped.stopped = true;
+    stopped.abort_reason = QStringLiteral("Cancelled by user");
+    stopped.duration_seconds = 13;
+    Q_EMIT controller->stressTestComplete(stopped);
+    QCOMPARE(labelStartingWith(QStringLiteral("Status:")),
+             QStringLiteral("Status: STOPPED - Cancelled by user"));
+    QCOMPARE(labelStartingWith(QStringLiteral("Elapsed:")), QStringLiteral("Elapsed: 00:13"));
+    QVERIFY(statusTexts(status).contains(QStringLiteral("Stress test stopped")));
+    for (const QString& line : statusTexts(log)) {
+        QVERIFY2(!line.contains(QStringLiteral("FAILED")), qPrintable(line));
+    }
+
+    sak::StressTestResult passed;
+    passed.passed = true;
+    passed.duration_seconds = 60;
+    Q_EMIT controller->stressTestComplete(passed);
+    QCOMPARE(labelStartingWith(QStringLiteral("Elapsed:")), QStringLiteral("Elapsed: 01:00"));
+    QVERIFY(!progress.isEmpty());
+    QCOMPARE(progress.last().at(0).toInt(), progress.last().at(1).toInt());
 }
 
 void DiagnosticBenchmarkPanelTests::thermalLimitTooltipSaysWhatHappens() {
