@@ -105,6 +105,9 @@ private Q_SLOTS:
     void diskMapContextMenuSelectsMatchingTargets();
     void actionsReturnBeforeTheirDialogsOpen();
     void contextMenuOmitsRibbonAndQueueControls();
+    void convertDynamicToBasicRefusesABasicDisk();
+    void aScanThatFoundNoDisksSaysWhy();
+    void smallPartitionsStayVisibleInTheBars();
     void diskMapSegmentsSelectMatchingTableRows();
     void redoButtonEnablesOnlyAfterUndo();
     void diskMapRendersTypeColorInsideNeutralShell();
@@ -146,6 +149,7 @@ private Q_SLOTS:
     void copyDiskWizardFinishWaitsForTheAcknowledgement();
     void copyPartitionWizardFinishWaitsForTheAcknowledgement();
     void recoveryWizardWriteBackWaitsForTheAcknowledgement();
+    void recoveryWizardRefusesALivePartitionsPlace();
     void bootRepairOnAnAttachedDiskRepairsThatDisk();
     void bootRepairOnTheRunningDiskRepairsTheRunningWindows();
     void createImageOverAnExistingFileCarriesTheDialogsAnswer();
@@ -168,6 +172,7 @@ private Q_SLOTS:
     void manageBitLockerReadsWhatAStandardScanCannot();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
+    void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
     void scanFileSystemsIsDiskLevelOnly();
     void spaceAnalyzerExposesCommercialViews();
@@ -2511,6 +2516,119 @@ void PartitionManagerPanelTests::contextMenuOmitsRibbonAndQueueControls() {
     }
 }
 
+// Review 3 (testpc1): Convert Dynamic Disk to Basic was offered for a basic MBR disk with one
+// volume, and its dialog went on as if the disk were dynamic ("I understand this will delete the
+// dynamic volume and rebuild it as basic"). The ribbon, the disk menu and the action itself refuse
+// a basic disk, and say why; the dynamic disk of the same shape is still offered
+// (queueMetadataActions).
+void PartitionManagerPanelTests::convertDynamicToBasicRefusesABasicDisk() {
+    const QString action = QStringLiteral("Convert Dynamic Disk to Basic");
+    const QString why = QStringLiteral("Disk 0 is a basic disk, so there is nothing to convert.");
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(metadataRebuildInventoryFixture(false));
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(0);
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, action);
+    QVERIFY2(button != nullptr, qPrintable(action));
+    QVERIFY(!button->isEnabled());
+    QVERIFY2(button->toolTip().startsWith(why), qPrintable(button->toolTip()));
+
+    auto* diskTile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY2(diskTile != nullptr, "Disk-map disk tile should exist");
+    const auto states = contextMenuActionStates(diskTile);
+    QVERIFY2(states.contains(action), "The disk menu should still list the action");
+    QVERIFY2(!states.value(action), "The disk menu offered the action for a basic disk");
+
+    // Reached anyway (a stale menu, a shortcut): a warning, never the conversion dialog.
+    QString shown;
+    QString shown_class;
+    const ScopedModalInspection inspection([&]() {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (modal == nullptr) {
+            return;
+        }
+        shown_class = QString::fromLatin1(modal->metaObject()->className());
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            shown = box->text();
+        }
+        modal->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onConvertDynamicDiskToBasic", Qt::DirectConnection));
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    QCOMPARE(shown_class, QStringLiteral("QMessageBox"));
+    QVERIFY2(shown.startsWith(why), qPrintable(shown));
+    auto* queue = panel.findChild<QListWidget*>();
+    QVERIFY2(queue != nullptr, "Pending operation queue should exist");
+    QCOMPARE(queue->count(), 0);
+}
+
+// Review 3: a scan that timed out showed "No disks to map - click Scan Disks" and "Ready", like a
+// PC with no disks; "Process timed out" went only to the Log.
+void PartitionManagerPanelTests::aScanThatFoundNoDisksSaysWhy() {
+    sak::PartitionManagerPanel panel;
+    QSignalSpy status(&panel, &sak::PartitionManagerPanel::statusMessage);
+    sak::PartitionInventory inventory;
+    inventory.layout_hash = QStringLiteral("failed-scan-layout");
+    inventory.warnings = {QStringLiteral("Process timed out")};
+    panel.setTestInventoryForReview(inventory);
+    QApplication::processEvents();
+    const QString why = QStringLiteral(
+        "The disk scan found no disks: Process timed out. Click Scan Disks to try "
+        "again.");
+    int shown = 0;
+    for (const auto* label : panel.findChildren<QLabel*>()) {
+        shown += label->text() == why ? 1 : 0;
+    }
+    QVERIFY2(shown >= 2, "The disk map and the table should both say why");
+    const bool said = std::ranges::any_of(status, [&why](const QList<QVariant>& args) {
+        return args.at(0).toString() == why;
+    });
+    QVERIFY2(said, "The status bar should say why");
+
+    // A PC whose scan finished and found nothing still reads as before.
+    sak::PartitionInventory none;
+    none.layout_hash = QStringLiteral("no-disks-layout");
+    panel.setTestInventoryForReview(none);
+    QApplication::processEvents();
+    // The map's old placeholder goes by deleteLater, which no event loop runs here.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    int plain = 0;
+    for (const auto* label : panel.findChildren<QLabel*>()) {
+        QVERIFY(label->text() != why);
+        plain += label->text() == QStringLiteral("No disks to map - click Scan Disks") ? 1 : 0;
+    }
+    QCOMPARE(plain, 1);
+}
+
+// Review 3 (testpc1): on the 256 GB Disk 1 the Before/After bars showed only D: and the free space;
+// the 3 GB E: and 2 GB F: were too thin to see, so a queued delete of F: did not show.
+void PartitionManagerPanelTests::smallPartitionsStayVisibleInTheBars() {
+    constexpr uint64_t kGiB = 1024ULL * 1024ULL * 1024ULL;
+    const QVector<uint64_t> sizes{
+        16ULL * 1024ULL * 1024ULL, 32 * kGiB, 3 * kGiB, 2 * kGiB, 201 * kGiB};
+    const auto spans = sak::partitionSegmentSpansForTest(sizes, 600);
+    QCOMPARE(spans.size(), sizes.size());
+    int previous_end = 0;
+    for (const auto& [left, width] : spans) {
+        QVERIFY2(width >= 24, qPrintable(QStringLiteral("a segment %1 px wide").arg(width)));
+        QCOMPARE(left, previous_end);
+        previous_end = left + width;
+    }
+    QVERIFY2(std::abs(previous_end - 600) <= 1, qPrintable(QString::number(previous_end)));
+    // The big ones keep their order of size.
+    QVERIFY(spans.at(4).second > spans.at(1).second);
+    // A bar too narrow for every minimum still fits its segments.
+    const auto narrow = sak::partitionSegmentSpansForTest(sizes, 60);
+    QCOMPARE(narrow.last().first + narrow.last().second, 60);
+}
+
 void PartitionManagerPanelTests::diskMapSegmentsSelectMatchingTableRows() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
@@ -3517,6 +3635,7 @@ void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
     QVERIFY(table != nullptr);
     table->selectRow(1);
     int height = -1;
+    bool bare_status_row = true;
     const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         const auto reject_on_return = rejectDialogOnReturn(dialog);
@@ -3528,6 +3647,12 @@ void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
                 dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
             height = preview->height();
         }
+        // Review 3 (X4): a "Status:" label stood alone; this dialog never sets that row.
+        bare_status_row = false;
+        for (const auto* label : dialog->findChildren<QLabel*>()) {
+            bare_status_row = bare_status_row ||
+                              (label->text() == QStringLiteral("Status:") && label->isVisible());
+        }
         dialog->reject();
     });
     auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
@@ -3536,6 +3661,7 @@ void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
     // Three rows of 24 px, 6 px between them, 8 px above and below.
     constexpr int kThreeRows = (3 * kOperationSizePreviewRowHeight) + (2 * 6) + (2 * 8);
     QVERIFY2(height >= kThreeRows, qPrintable(QStringLiteral("preview %1 px").arg(height)));
+    QVERIFY2(!bare_status_row, "Resize/Move shows an empty Status row");
 }
 
 // UI review F43: the wipe dialogs' acknowledgements started 60 px and 21 px from the edge.
@@ -3814,6 +3940,104 @@ void PartitionManagerPanelTests::recoveryWizardWriteBackWaitsForTheAcknowledgeme
         QVERIFY2(!review->isComplete(), "Finish is on for a write-back nobody acknowledged");
         box->setChecked(true);
         QVERIFY(review->isComplete());
+        inspected = true;
+        wizard->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onPartitionRecoveryWizard", Qt::DirectConnection));
+    QVERIFY(inspected);
+}
+
+// Rig A as testpc1 has it: the MSR, then E: (3 GB at 16 MiB), then free space to the end.
+sak::PartitionInventory recoveryLivePlaceInventory() {
+    constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+    constexpr uint64_t kGiB = 1024ULL * kMiB;
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{0};
+    disk.partition_style = QStringLiteral("GPT");
+    disk.health_status = QStringLiteral("Healthy");
+    disk.operational_status = QStringLiteral("Online");
+    disk.size_bytes = 8 * kGiB;
+    sak::PartitionInfoEx msr;
+    msr.disk_number = disk.disk_number;
+    msr.partition_number = sak::PartitionNumber{1};
+    msr.type_name = QStringLiteral("Reserved");
+    msr.offset_bytes = kMiB;
+    msr.size_bytes = 15 * kMiB;
+    sak::PartitionVolumeInfo volume;
+    volume.drive_letter = QStringLiteral("E");
+    volume.file_system = QStringLiteral("NTFS");
+    volume.total_bytes = 3 * kGiB;
+    sak::PartitionInfoEx data = msr;
+    data.partition_number = sak::PartitionNumber{2};
+    data.type_name = QStringLiteral("Basic");
+    data.offset_bytes = 16 * kMiB;
+    data.size_bytes = 3 * kGiB;
+    data.volume = volume;
+    disk.partitions = {msr, data};
+    sak::PartitionInventory inventory;
+    inventory.layout_hash = QStringLiteral("recovery-live-place-layout");
+    inventory.disks.append(disk);
+
+    return inventory;
+}
+
+// Review 3 typed Rig A's live place (offset 1048576, size 1073741824: the MSR and E:) into the
+// write-back and the wizard took it to a review saying Apply would create it; only the queue's
+// check at Finish refused it. The page now refuses what the queue would, and says why.
+void PartitionManagerPanelTests::recoveryWizardRefusesALivePartitionsPlace() {
+    constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+    constexpr uint64_t kGiB = 1024ULL * kMiB;
+    const sak::PartitionInventory inventory = recoveryLivePlaceInventory();
+
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(inventory);
+    panel.findChild<QTableWidget*>()->selectRow(0);
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY(wizard != nullptr);
+        auto* write_back = findAccessibleWidget<QCheckBox>(
+            wizard, QStringLiteral("Queue recovered partition write-back candidate"));
+        auto* offset = findAccessibleWidget<QLineEdit>(
+            wizard, QStringLiteral("Recovered partition offset in bytes"));
+        auto* size = findAccessibleWidget<QLineEdit>(
+            wizard, QStringLiteral("Recovered partition size in bytes"));
+        auto* type = findAccessibleWidget<QLineEdit>(wizard,
+                                                     QStringLiteral("Recovered partition type ID"));
+        auto* status = findAccessibleWidget<QLabel>(
+            wizard, QStringLiteral("Recovered partition candidate status"));
+        QVERIFY(write_back != nullptr && offset != nullptr && size != nullptr && type != nullptr &&
+                status != nullptr);
+        while (wizard->currentPage() != write_back->parentWidget()) {
+            wizard->next();
+        }
+        QWizardPage* page = wizard->currentPage();
+        QVERIFY(page->isComplete());  // no write-back asked for: the scan alone goes on
+
+        write_back->setChecked(true);
+        offset->setText(QStringLiteral("1048576"));
+        size->setText(QStringLiteral("1073741824"));
+        type->setText(QStringLiteral("{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}"));
+        QVERIFY2(!page->isComplete(), "Next is on for a live partition's place");
+        QVERIFY(!status->isHidden());
+        QVERIFY2(status->text().contains(QStringLiteral(
+                     "Recovered partition candidate overlaps an existing partition")),
+                 qPrintable(status->text()));
+
+        // The free space after E:, where a deleted volume would have been.
+        offset->setText(QString::number(16 * kMiB + 3 * kGiB));
+        size->setText(QString::number(2 * kGiB));
+        QVERIFY2(page->isComplete(), qPrintable(status->text()));
+        QVERIFY(status->isHidden());
+
+        size->setText(QString::number(8 * kGiB));
+        QVERIFY(!page->isComplete());
+        QVERIFY2(status->text().contains(QStringLiteral("exceeds disk bounds")),
+                 qPrintable(status->text()));
+
+        write_back->setChecked(false);
+        QVERIFY(page->isComplete());
         inspected = true;
         wizard->reject();
     });
@@ -4834,6 +5058,38 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
 
     pressAction(button);
     QVERIFY(inspected);
+}
+
+// Review 3 (testpc1): an NVMe SSD in a USB enclosure read "Device class: ATA/SATA SSD". Windows
+// sees only the USB adapter, so that is what the row says; a SATA drive still reads ATA/SATA.
+void PartitionManagerPanelTests::ssdSecureEraseNamesTheBusItSees() {
+    for (const auto& [bus, expected] :
+         {std::pair{QStringLiteral("USB"), QStringLiteral("SSD behind a USB adapter")},
+          std::pair{QStringLiteral("SATA"), QStringLiteral("ATA/SATA SSD")},
+          std::pair{QStringLiteral("SAS"), QStringLiteral("SSD on a SAS bus")}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].model = QStringLiteral("Fixture SSD");
+        inventory.disks[0].bus_type = bus;
+        inventory.disks[0].media_type = QStringLiteral("SSD");
+        panel.setTestInventoryForReview(inventory);
+        panel.findChild<QTableWidget*>()->selectRow(0);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Erase SSD (TRIM + Overwrite)"));
+        QVERIFY(button != nullptr);
+        QString device_class;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY(dialog != nullptr);
+            auto* status =
+                dialog->findChild<QTableWidget*>(QStringLiteral("partitionSecureEraseStatusTable"));
+            QVERIFY(status != nullptr);
+            device_class = propertyTableValue(status, QStringLiteral("Device class"));
+            dialog->reject();
+        });
+        pressAction(button);
+        QCOMPARE(device_class, expected);
+    }
 }
 
 void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {

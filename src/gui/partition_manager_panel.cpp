@@ -19,6 +19,7 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+#include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
@@ -342,6 +343,84 @@ constexpr int kFileRecoveryDialogMinHeight = 420;
     return saturatingMultiplyDivide(bytes, target_bytes, source_bytes);
 }
 
+/// The narrowest a disk segment is drawn in a before/after bar, so a 2 or 3 GB partition on a
+/// 256 GB disk is still seen (review 3: on testpc1 the 3 GB E: and 2 GB F: were not, and a queued
+/// delete of F: did not show).
+constexpr int kMinimumSegmentPixels = 24;
+
+/// Each of @p sizes' share of @p width, none under @p floor_px.
+QVector<double> flooredShares(const QVector<uint64_t>& sizes, int width, int floor_px) {
+    const uint64_t total = std::accumulate(sizes.cbegin(), sizes.cend(), uint64_t{0});
+    QVector<double> widths;
+    widths.reserve(sizes.size());
+    for (const uint64_t bytes : sizes) {
+        const double share = total == 0 ? 0.0
+                                        : static_cast<double>(width) * static_cast<double>(bytes) /
+                                              static_cast<double>(total);
+        widths.append(std::max<double>(share, floor_px));
+    }
+    return widths;
+}
+
+/// Takes what @p widths have over @p width back from the ones above @p floor_px, in proportion to
+/// what each has over it.
+void squeezeToWidth(QVector<double>* widths, int width, int floor_px) {
+    const double used = std::accumulate(widths->cbegin(), widths->cend(), 0.0);
+    double spare = 0.0;
+    for (const double w : *widths) {
+        spare += std::max(0.0, w - floor_px);
+    }
+    const double excess = used - width;
+    if (excess <= 0.0 || spare <= 0.0) {
+        return;
+    }
+    for (double& w : *widths) {
+        w -= excess * std::max(0.0, w - floor_px) / spare;
+    }
+}
+
+/// Left edge and width of each of @p sizes, in disk order, across a bar @p width wide: in
+/// proportion to its bytes, but none narrower than @p min_px while the bar has room for that; the
+/// width the small ones take comes from the large ones, in proportion to what they have over it.
+QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width, int min_px) {
+    QVector<QPair<int, int>> spans;
+    if (sizes.isEmpty() || width <= 0) {
+        return spans;
+    }
+    const int floor_px = static_cast<qsizetype>(min_px) * sizes.size() <= width ? min_px : 1;
+    QVector<double> widths = flooredShares(sizes, width, floor_px);
+    squeezeToWidth(&widths, width, floor_px);
+    double x = 0.0;
+    for (const double w : widths) {
+        const int left = static_cast<int>(std::lround(x));
+        x += w;
+        spans.append({left, std::max(1, static_cast<int>(std::lround(x)) - left)});
+    }
+    return spans;
+}
+
+/// segmentSpans for segments drawn on a bar that stands for @p total_bytes: what the segments do
+/// not cover (a disk's tail past its last region) keeps its share of the bar, undrawn.
+QVector<QPair<int, int>> segmentSpansOver(QVector<uint64_t> sizes,
+                                          uint64_t total_bytes,
+                                          int width,
+                                          int min_px) {
+    const uint64_t covered = std::accumulate(sizes.cbegin(), sizes.cend(), uint64_t{0});
+    // A remainder under a hundredth of the disk (partition-table space, alignment) is not given a
+    // place of its own, which the minimum width would make 24 px of nothing.
+    constexpr uint64_t kVisibleRemainderDivisor = 100;
+    const bool padded = total_bytes > covered &&
+                        (total_bytes - covered) > total_bytes / kVisibleRemainderDivisor;
+    if (padded) {
+        sizes.append(total_bytes - covered);
+    }
+    QVector<QPair<int, int>> spans = segmentSpans(sizes, width, min_px);
+    if (padded && !spans.isEmpty()) {
+        spans.removeLast();
+    }
+    return spans;
+}
+
 [[nodiscard]] int scaledExtent(int extent, uint64_t numerator, uint64_t denominator) noexcept {
     if (extent <= 0) {
         return 0;
@@ -455,6 +534,7 @@ constexpr const char* kApfsSnapshotRevertMode = "snapshot-revert";
 constexpr const char* kApfsResizeContainerMode = "resize-container";
 constexpr const char* kActionDefaultTooltipProperty = "partitionActionDefaultTooltip";
 constexpr const char* kActionRequiresDriveLetterProperty = "partitionActionRequiresDriveLetter";
+constexpr const char* kActionRequiresDynamicDiskProperty = "partitionActionRequiresDynamicDisk";
 constexpr const char* kActionWindowsNativeFilesystemProperty =
     "partitionActionWindowsNativeFilesystem";
 constexpr const char* kActionResizeFilesystemProperty = "partitionActionResizeFilesystem";
@@ -537,24 +617,6 @@ QStringList actionTargetKindList(std::initializer_list<const char*> kinds) {
         values.append(QString::fromLatin1(kind));
     }
     return values;
-}
-
-void setRequiresDriveLetter(QAbstractButton* button) {
-    if (button != nullptr) {
-        button->setProperty(kActionRequiresDriveLetterProperty, true);
-    }
-}
-
-void setWindowsNativeFilesystemAction(QAbstractButton* button) {
-    if (button != nullptr) {
-        button->setProperty(kActionWindowsNativeFilesystemProperty, true);
-    }
-}
-
-void setResizeFilesystemAction(QAbstractButton* button) {
-    if (button != nullptr) {
-        button->setProperty(kActionResizeFilesystemProperty, true);
-    }
 }
 
 bool targetMatchesDisk(const std::optional<PartitionTarget>& target,
@@ -720,6 +782,18 @@ ContextActionSpec partitionContextActionSpec(const QString& text,
             .icon_path = icon_path,
             .enabled = availability.enabled,
             .disabled_reason = availability.reason};
+}
+
+/// Why Convert Dynamic Disk to Basic does not apply to @p disk, or empty when it does. Only a
+/// dynamic disk has a dynamic volume to convert; a basic disk is already what the action makes.
+QString basicDiskConversionRefusal(const PartitionDiskInfo* disk) {
+    if (disk == nullptr || disk->is_dynamic) {
+        return {};
+    }
+    return QObject::tr(
+               "Disk %1 is a basic disk, so there is nothing to convert. Convert Dynamic "
+               "Disk to Basic works on a dynamic disk only.")
+        .arg(disk->disk_number.value());
 }
 
 struct NonNativeFilesystemCheckState {
@@ -1266,6 +1340,16 @@ void updateTargetButtonState(QAbstractButton* button,
     button->setToolTip(reason);
     button->setStatusTip(reason);
     button->setAccessibleDescription(reason);
+}
+
+/// What to say for a scan that returned no disks and said why, or empty when it found disks or
+/// gave no reason (a PC with no disk Windows lists).
+QString failedScanText(const PartitionInventory& inventory) {
+    if (!inventory.disks.isEmpty() || inventory.warnings.isEmpty()) {
+        return {};
+    }
+    return QObject::tr("The disk scan found no disks: %1. Click Scan Disks to try again.")
+        .arg(inventory.warnings.join(QStringLiteral("; ")));
 }
 
 QString inventorySummaryText(const PartitionInventory& inventory) {
@@ -2234,19 +2318,18 @@ private:
         QPainterPath track_path;
         track_path.addRoundedRect(bar, kPartitionSegmentRadius, kPartitionSegmentRadius);
         painter->fillPath(track_path, palette().color(QPalette::AlternateBase));
-        const uint64_t safe_total = std::max(total_bytes, kDiskMapMinimumBytes);
-        int x = bar.left();
-        uint64_t consumed = 0;
+        // None too narrow to see, as in the Apply review's bars: on a 256 GB disk the 3 GB and
+        // 2 GB partitions were slivers (review 3).
+        QVector<uint64_t> sizes;
+        sizes.reserve(segments.size());
+        for (const auto& segment : segments) {
+            sizes.append(segment.bytes);
+        }
+        const auto spans = segmentSpansOver(sizes, total_bytes, bar.width(), kMinimumSegmentPixels);
         for (qsizetype i = 0; i < segments.size(); ++i) {
-            const auto& segment = segments.at(i);
-            consumed = saturatingAdd(consumed, segment.bytes);
-            const int right = i == segments.size() - 1
-                                  ? bar.right()
-                                  : bar.left() + scaledExtent(bar.width(), consumed, safe_total);
             const QRect segment_rect(
-                x, bar.top(), std::max(kTableDiskSeparatorWidth, right - x), bar.height());
-            drawSegment(painter, segment_rect, segment);
-            x = right;
+                bar.left() + spans.at(i).first, bar.top(), spans.at(i).second, bar.height());
+            drawSegment(painter, segment_rect, segments.at(i));
         }
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawPath(track_path);
@@ -3022,11 +3105,22 @@ private:
                           rect.width() - kApplyDiffPreviewTitleWidth,
                           rect.height() - (ui::kSpacingTight * 2));
         painter->fillRect(track, palette().color(QPalette::AlternateBase));
-        const uint64_t safe_total = std::max(total_bytes, kDiskMapMinimumBytes);
-        for (const auto& segment : segments) {
-            const int x = track.left() + scaledExtent(track.width(), segment.offset, safe_total);
-            const int width = std::max(kTableDiskSeparatorWidth,
-                                       scaledExtent(track.width(), segment.bytes, safe_total));
+        // In disk order, none too narrow to see.
+        QVector<ApplyDiffSegment> ordered = segments;
+        std::ranges::stable_sort(ordered, [](const auto& lhs, const auto& rhs) {
+            return lhs.offset < rhs.offset;
+        });
+        QVector<uint64_t> sizes;
+        sizes.reserve(ordered.size());
+        for (const auto& segment : ordered) {
+            sizes.append(segment.bytes);
+        }
+        const auto spans =
+            segmentSpansOver(sizes, total_bytes, track.width(), kMinimumSegmentPixels);
+        for (qsizetype index = 0; index < ordered.size(); ++index) {
+            const auto& segment = ordered.at(index);
+            const int x = track.left() + spans.at(index).first;
+            const int width = spans.at(index).second;
             QRect segment_rect(x, track.top(), width, track.height());
             segment_rect = segment_rect.intersected(track);
             if (segment_rect.isEmpty()) {
@@ -5630,6 +5724,9 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     widgets.backup_directory = backup.backup_directory;
     widgets.browse_backup = backup.browse_backup;
     widgets.confirmation = backup.confirmation;
+    // This dialog says what the move does on its Support row; the shared Status label is never
+    // set here, and stood as a bare "Status:" (review 3).
+    dialog.formLayout()->setRowVisible(backup.status, false);
     addResizeExtAndStatusControls(dialog, &widgets);
     widgets.size_preview = new OperationSizePreviewWidget(&dialog);
     dialog.addVisualPreview(widgets.size_preview);
@@ -7449,7 +7546,16 @@ QString secureEraseDeviceClass(const PartitionDiskInfo* disk) {
         return QObject::tr("NVMe SSD");
     }
     if (diskLooksSsd(disk)) {
-        return QObject::tr("ATA/SATA SSD");
+        // Behind a USB adapter Windows sees only the adapter, whatever the drive inside speaks:
+        // testpc1's NVMe in a USB enclosure read "ATA/SATA SSD" (review 3).
+        if (bus == QStringLiteral("USB")) {
+            return QObject::tr("SSD behind a USB adapter");
+        }
+        if (bus == QStringLiteral("SATA") || bus == QStringLiteral("ATA")) {
+            return QObject::tr("ATA/SATA SSD");
+        }
+        return bus.isEmpty() ? QObject::tr("SSD (bus not reported)")
+                             : QObject::tr("SSD on a %1 bus").arg(disk->bus_type);
     }
     return QObject::tr("Not SSD/NVMe");
 }
@@ -8093,8 +8199,51 @@ struct RecoveryWizardWidgets {
     QLineEdit* offset_bytes{nullptr};
     QLineEdit* size_bytes{nullptr};
     QLineEdit* type_id{nullptr};
+    QLabel* candidate_status{nullptr};
     QCheckBox* acknowledge{nullptr};
     QLabel* review{nullptr};
+};
+
+uint64_t parseWizardUInt64(const QLineEdit* edit);
+
+/// What would refuse a typed write-back candidate when it is queued, for the offset, size and type
+/// typed. Empty when it would be queued.
+using RecoveryCandidateCheck =
+    std::function<QStringList(uint64_t offset_bytes, uint64_t size_bytes, const QString& type_id)>;
+
+/// The Candidate Restore page, which goes on only with a candidate the queue would take. Review 3
+/// typed a live partition's place (the MSR and E: at 1048576) and the wizard took it to its review
+/// as "Apply will create the candidate partition": only Finish, through the queue's check, refused.
+class RecoveryCandidatePage final : public QWizardPage {
+public:
+    RecoveryCandidatePage(QWidget* parent,
+                          RecoveryWizardWidgets* widgets,
+                          RecoveryCandidateCheck check)
+        : QWizardPage(parent), m_widgets(widgets), m_check(std::move(check)) {}
+
+    [[nodiscard]] bool isComplete() const override {
+        return QWizardPage::isComplete() && m_blockers.isEmpty();
+    }
+
+    void recheck() {
+        m_blockers.clear();
+        if (m_widgets->restore_candidate->isChecked() && m_check) {
+            m_blockers = m_check(parseWizardUInt64(m_widgets->offset_bytes),
+                                 parseWizardUInt64(m_widgets->size_bytes),
+                                 m_widgets->type_id->text().trimmed());
+        }
+        m_widgets->candidate_status->setText(
+            m_blockers.isEmpty() ? QString()
+                                 : QObject::tr("This candidate cannot be written back: %1.")
+                                       .arg(m_blockers.join(QStringLiteral("; "))));
+        m_widgets->candidate_status->setVisible(!m_blockers.isEmpty());
+        Q_EMIT completeChanged();
+    }
+
+private:
+    RecoveryWizardWidgets* m_widgets;
+    RecoveryCandidateCheck m_check;
+    QStringList m_blockers;
 };
 
 /// The plan a wizard's last page shows, in a scroll area that takes the page's free height. A bare
@@ -8625,8 +8774,10 @@ void addRecoveryScanPage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     wizard->addPage(scan_page);
 }
 
-void addRecoveryCandidatePage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
-    auto* page = new QWizardPage(wizard);
+void addRecoveryCandidatePage(QWizard* wizard,
+                              RecoveryWizardWidgets* widgets,
+                              RecoveryCandidateCheck check) {
+    auto* page = new RecoveryCandidatePage(wizard, widgets, std::move(check));
     page->setTitle(QStringLiteral("Candidate Restore"));
     page->setSubTitle(QStringLiteral("Choose a found partition to write back, if any."));
     auto* layout = new QFormLayout(page);
@@ -8644,6 +8795,19 @@ void addRecoveryCandidatePage(QWizard* wizard, RecoveryWizardWidgets* widgets) {
     layout->addRow(QStringLiteral("Offset bytes:"), widgets->offset_bytes);
     layout->addRow(QStringLiteral("Size bytes:"), widgets->size_bytes);
     layout->addRow(QStringLiteral("Type ID:"), widgets->type_id);
+    widgets->candidate_status = new QLabel(page);
+    widgets->candidate_status->setWordWrap(true);
+    widgets->candidate_status->setAccessibleName(
+        QStringLiteral("Recovered partition candidate status"));
+    widgets->candidate_status->setStyleSheet(ui::textColorStyle(ui::kColorError));
+    widgets->candidate_status->hide();
+    layout->addRow(QString(), widgets->candidate_status);
+    for (QLineEdit* field : {widgets->offset_bytes, widgets->size_bytes, widgets->type_id}) {
+        QObject::connect(field, &QLineEdit::textChanged, page, [page]() { page->recheck(); });
+    }
+    QObject::connect(widgets->restore_candidate, &QCheckBox::toggled, page, [page]() {
+        page->recheck();
+    });
     wizard->addPage(page);
 }
 
@@ -8711,7 +8875,8 @@ PartitionWizardResult recoveryWizardResult(const RecoveryWizardWidgets& widgets)
 }
 
 std::optional<PartitionWizardResult> runRecoveryWizard(QWidget* parent,
-                                                       const QString& source_identity) {
+                                                       const QString& source_identity,
+                                                       RecoveryCandidateCheck check) {
     QWizard wizard(parent);
     useAppWizardStyle(&wizard);
     wizard.setWindowTitle(QStringLiteral("Partition Recovery Wizard"));
@@ -8719,7 +8884,7 @@ std::optional<PartitionWizardResult> runRecoveryWizard(QWidget* parent,
     addSourcePage(&wizard, QStringLiteral("Source Disk"), source_identity);
     RecoveryWizardWidgets widgets;
     addRecoveryScanPage(&wizard, &widgets);
-    addRecoveryCandidatePage(&wizard, &widgets);
+    addRecoveryCandidatePage(&wizard, &widgets, std::move(check));
     addRecoveryReviewPage(&wizard, &widgets);
     connectRecoveryWizardSignals(&wizard, &widgets);
     if (wizard.exec() != QDialog::Accepted) {
@@ -8751,6 +8916,10 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes, int width) {
+    return segmentSpans(sizes, width, kMinimumSegmentPixels);
+}
+
 QStringList partitionSpaceAnalyzerTableOrderForTest(const QVector<QPair<QString, uint64_t>>& rows) {
     SpaceAnalyzerResult result;
     for (const auto& [name, bytes] : rows) {
@@ -9023,29 +9192,22 @@ QToolButton* PartitionManagerPanel::createConfiguredActionLink(QWidget* parent,
         connect(button, &QToolButton::clicked, this, spec.slot, Qt::QueuedConnection);
     }
     button->setProperty(kActionTargetKindsProperty, spec.options.target_kinds);
-    if (spec.options.requires_drive_letter) {
-        setRequiresDriveLetter(button);
-    }
-    if (spec.options.windows_native_filesystem) {
-        setWindowsNativeFilesystemAction(button);
-    }
-    if (spec.options.resize_filesystem) {
-        setResizeFilesystemAction(button);
-    }
-    if (spec.options.inspect_non_native_filesystem) {
-        button->setProperty(kInspectNonNativeFilesystemActionProperty, true);
-    }
-    if (spec.options.browse_non_native_filesystem) {
-        button->setProperty(kBrowseNonNativeFilesystemActionProperty, true);
-    }
-    if (spec.options.check_non_native_filesystem) {
-        button->setProperty(kNonNativeFilesystemActionProperty, true);
-    }
-    if (spec.options.apfs_container_action) {
-        button->setProperty(kApfsContainerActionProperty, true);
-    }
-    if (spec.options.change_label) {
-        button->setProperty(kChangeLabelActionProperty, true);
+    // Each option the action has is a property its button carries, read back when the selection
+    // changes.
+    const std::pair<bool, const char*> flags[] = {
+        {spec.options.requires_drive_letter, kActionRequiresDriveLetterProperty},
+        {spec.options.requires_dynamic_disk, kActionRequiresDynamicDiskProperty},
+        {spec.options.windows_native_filesystem, kActionWindowsNativeFilesystemProperty},
+        {spec.options.resize_filesystem, kActionResizeFilesystemProperty},
+        {spec.options.inspect_non_native_filesystem, kInspectNonNativeFilesystemActionProperty},
+        {spec.options.browse_non_native_filesystem, kBrowseNonNativeFilesystemActionProperty},
+        {spec.options.check_non_native_filesystem, kNonNativeFilesystemActionProperty},
+        {spec.options.apfs_container_action, kApfsContainerActionProperty},
+        {spec.options.change_label, kChangeLabelActionProperty}};
+    for (const auto& [enabled, property] : flags) {
+        if (enabled) {
+            button->setProperty(property, true);
+        }
     }
     m_target_buttons.append(button);
     return button;
@@ -9381,7 +9543,8 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOp
                            kIconConvert,
                            tr("Back up dynamic volume, convert disk to basic, restore, and verify"),
                            &PartitionManagerPanel::onConvertDynamicDiskToBasic,
-                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk}),
+                            .requires_dynamic_disk = true}),
             makeActionSpec(tr("Properties"),
                            kIconProperties,
                            tr("Show selected properties"),
@@ -9696,6 +9859,11 @@ void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
     // always returns an inventory, so lifting the loading overlay here fails closed with no
     // stranded "Scanning" message even when the scan yields zero disks or warnings.
     m_table_empty_state->clearLoading();
+    // Review 3: a scan that timed out looked like a PC with no disks ("No disks to map", "Ready"),
+    // and its warning went only to the Log. A scan that found nothing says why where it is seen.
+    const QString failed_scan = failedScanText(inventory);
+    m_table_empty_state->setEmptyText(
+        failed_scan.isEmpty() ? tr("No disks scanned - click Scan Disks") : failed_scan);
     rebuildDiskMap(inventory);
     m_table->setRowCount(0);
     for (const auto& disk : inventory.disks) {
@@ -9703,7 +9871,7 @@ void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
         addDiskContentRows(disk);
     }
     fitColumnsAndStretchLast(m_table);
-    Q_EMIT statusMessage(inventorySummaryText(inventory), 0);
+    Q_EMIT statusMessage(failed_scan.isEmpty() ? inventorySummaryText(inventory) : failed_scan, 0);
     updateActionState();
 }
 
@@ -9744,8 +9912,12 @@ void PartitionManagerPanel::rebuildDiskMap(const PartitionInventory& inventory) 
     if (inventory.disks.empty()) {
         // Designed empty state for the model-less disk-map container (R5-G20-7):
         // without this the map is a blank pane, indistinguishable from a pending scan.
-        auto* placeholder = new QLabel(tr("No disks to map - click Scan Disks"),
+        const QString failed_scan = failedScanText(inventory);
+        auto* placeholder = new QLabel(failed_scan.isEmpty()
+                                           ? tr("No disks to map - click Scan Disks")
+                                           : failed_scan,
                                        m_disk_map_container);
+        placeholder->setWordWrap(true);
         placeholder->setAlignment(Qt::AlignCenter);
         placeholder->setStyleSheet(ui::textColorStyle(ui::kColorTextMuted));
         layout->addWidget(placeholder);
@@ -10091,8 +10263,18 @@ void PartitionManagerPanel::updateActionState() {
     const bool operation_cancellable = m_controller->canCancel();
     const auto target = selectedTarget();
     const auto* partition = selectedPartition();
+    const auto* disk = selectedDisk();
     for (auto* button : m_target_buttons) {
         updateTargetButtonState(button, operation_running, target, partition);
+        if (button->isEnabled() && button->property(kActionRequiresDynamicDiskProperty).toBool()) {
+            const QString reason = basicDiskConversionRefusal(disk);
+            if (!reason.isEmpty()) {
+                button->setEnabled(false);
+                button->setToolTip(reason);
+                button->setStatusTip(reason);
+                button->setAccessibleDescription(reason);
+            }
+        }
     }
     const bool has_queue = !m_controller->queue().isEmpty();
     m_apply_button->setEnabled(!operation_running && m_controller->queue().canApply(
@@ -10570,6 +10752,19 @@ void PartitionManagerPanel::addPartitionAdvancedContextMenuActions(QMenu& menu) 
                          [this]() { onChangeVolumeSerialNumber(); });
 }
 
+namespace {
+
+/// The disk menu's Convert Dynamic Disk to Basic: grayed out, saying why, for a basic disk.
+ContextActionSpec dynamicToBasicMenuSpec(const PartitionDiskInfo* disk) {
+    const QString refusal = basicDiskConversionRefusal(disk);
+    return {.text = QObject::tr("Convert Dynamic Disk to Basic"),
+            .icon_path = kIconConvert,
+            .enabled = refusal.isEmpty(),
+            .disabled_reason = refusal};
+}
+
+}  // namespace
+
 void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
     addContextMenuAction(menu, this, {tr("Migrate OS to SSD/HDD Wizard"), kIconOsDrive}, [this]() {
         onMigrateOs();
@@ -10614,7 +10809,7 @@ void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
     addContextMenuAction(menu, this, {tr("Delete All Partitions"), kIconDelete}, [this]() {
         onDeleteAllPartitions();
     });
-    addContextMenuAction(menu, this, {tr("Convert Dynamic Disk to Basic"), kIconConvert}, [this]() {
+    addContextMenuAction(menu, this, dynamicToBasicMenuSpec(selectedDisk()), [this]() {
         onConvertDynamicDiskToBasic();
     });
     addContextMenuAction(menu, this, {tr("Scan File Systems"), kIconSurface}, [this]() {
@@ -11843,16 +12038,33 @@ void PartitionManagerPanel::onChangeVolumeSerialNumber() {
                    volumeSerialPayload(*partition.volume, backupRestoreChoices(widgets)));
 }
 
+namespace {
+
+/// Says why Convert Dynamic Disk to Basic cannot start on @p disk, and returns true, or false when
+/// it can. Review 3: offered for a basic MBR disk with one volume, the dialog went on as if the
+/// disk were dynamic ("I understand this will delete the dynamic volume"). Queueing it was refused,
+/// and the helper's script refuses a disk that is not dynamic before it backs anything up, but
+/// neither should be where a technician first learns the disk is basic.
+bool dynamicToBasicRefused(QWidget* parent, const PartitionDiskInfo* disk) {
+    const QString refusal = disk == nullptr
+                                ? QObject::tr("Select a dynamic data disk before converting.")
+                                : basicDiskConversionRefusal(disk);
+    if (refusal.isEmpty()) {
+        return false;
+    }
+    showWarningLogged(parent, QObject::tr("Convert Dynamic Disk to Basic"), refusal);
+    return true;
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
     // Same central guard as every other queue mutation (see onAllocateFreeSpace).
     if (queueMutationBlockedByRunningOperation()) {
         return;
     }
     const auto* disk_ptr = selectedDisk();
-    if (disk_ptr == nullptr) {
-        showWarningLogged(this,
-                          tr("Convert Dynamic Disk to Basic"),
-                          tr("Select a dynamic data disk before converting."));
+    if (dynamicToBasicRefused(this, disk_ptr)) {
         return;
     }
     // Copy by value: a background inventory refresh during the modal can dangle these pointers,
@@ -12738,8 +12950,27 @@ void PartitionManagerPanel::onPartitionRecoveryWizard() {
         return;
     }
     const PartitionDiskInfo disk = *disk_ptr;
-    const QString expected_layout_hash = m_controller->inventory().layout_hash;
-    const auto result = runRecoveryWizard(this, targetIdentityText(selected, &disk, nullptr));
+    const PartitionInventory inventory = m_controller->inventory();
+    const QString expected_layout_hash = inventory.layout_hash;
+    const PartitionTarget target = *selected;
+    // The queue's own check, on the inventory the wizard was opened on: the page refuses exactly
+    // what Finish would have had refused. The acknowledgement is the review page's to ask.
+    const auto check = [inventory, target, style = disk.partition_style](uint64_t offset,
+                                                                         uint64_t size,
+                                                                         const QString& type_id) {
+        const auto candidate = PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreRecoveredPartition,
+            target,
+            restoreRecoveredPartitionPayload(
+                RecoveredPartitionChoices{.offset_bytes = offset,
+                                          .size_bytes = size,
+                                          .type_id = type_id,
+                                          .partition_style = style,
+                                          .restore_acknowledged = true}));
+        return PartitionSafetyValidator::validate(inventory, candidate).blockers;
+    };
+    const auto result =
+        runRecoveryWizard(this, targetIdentityText(selected, &disk, nullptr), check);
     if (result) {
         queueOperation(PartitionOperationType::PartitionRecoveryScan,
                        *selected,

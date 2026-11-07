@@ -162,6 +162,8 @@ private:
         QStringList target_kinds;
         // Action requires the selected volume to have a mounted drive letter.
         bool requires_drive_letter{false};
+        // Action applies only to a dynamic disk (Convert Dynamic Disk to Basic).
+        bool requires_dynamic_disk{false};
         // Action applies only to Windows-native file systems (NTFS/exFAT/FAT32).
         bool windows_native_filesystem{false};
         // Action is the filesystem resize/move path (extra ext-resize support gating).
@@ -333,6 +335,9 @@ private:
 };
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+/// Left edge and width of each segment of @p sizes across a before/after bar @p width wide.
+[[nodiscard]] QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes,
+                                                                    int width);
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
 /// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
 [[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(
