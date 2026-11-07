@@ -1935,6 +1935,130 @@ as it was; Rig A stays on the disposable Seagate (MSR, E: SAMPLE, F: DONOR) and 
 (H: BASICMBR); this round's scripts, probes, wizard probe and scheduled tasks removed. The capture VM was not used.
 On the workstation: the package, the probe pictures and every proof picture under E:\SAK-Utility-Test-Scratch\round6.
 
+### UI review round 7: the explorer heap corruption, and round 6's open list (2026-11-07)
+
+From round 6's open list and the reviewer's re-check (`ui-review\recheck3.md`), on dev at 20e330ea. Every fix has a
+test, and every test was drilled red with its fix broken in the source, one guard at a time, by a script that
+restores every byte and touches the file: 42 guards. One more survived: the row-height half of N2 (Map
+Users) passed with its line taken out, even under the app's theme, so the line was removed and the clipped
+descenders stay open (below); the column half went red (19 px for a 337 px box). Judgement calls and items that were not defects are
+named below.
+
+**The heap corruption (High).** test_file_management_explorer_panel ended with 0xc0000374 about one loaded run in
+30. Windows Error Reporting had kept round 6's minidump (2026-11-07 00:07), and a loop of 30 loaded Release runs here
+(build load and an ASan run beside it) produced a second at run 17. The release binary has no PDB, but relinking the
+same objects with /MAP alone gives a binary that differs in 4 bytes (time stamp and checksum), so its map names the
+dump's frames. Both dumps show the same stack: QtTest, viewModesSwitchAndPersistExplorerSettings,
+switchThroughViewModesAndVerifyVisibility's first statement, `listAction->trigger()`, and inside Qt6Gui the end of
+QAction::activate, where the action's QPointer guard drops the shared weak reference with `lock xadd` and, only when
+that was the last reference, tail-jumps to operator delete; that delete is the free that found the heap corrupt. The
+reference is the last one only when the action was destroyed during its own trigger. It was: the pane's
+selectionChanged handler calls updateActionButtons() synchronously, and that rebuilt the View menu with
+menu->clear(), deleting every View action, the item size slider and its row, while one of them was still being
+delivered; each rebuild also left an empty QActionGroup in the menu. Qt guards its own frames against a sender
+deleted in its slot, so the exact write that damaged the heap is in Qt's code and was not pinned down; what the dumps
+prove is the deletion at the point of failure. The View menu is now built once and refreshed in place (text,
+enabled state, blockers, check marks, the slider's range and value), and nothing in it is deleted.
+viewMenuActionsSurviveARefreshDuringTheirOwnTrigger changes the selection while the List action's triggered() is
+still being delivered and checks the action and the slider survive and the menu holds one action group; with the old
+code it fails every time. Proof under load: after the fix, 120 of 120 loaded Release runs clean (before it, 1 in 30
+here and 1 in about a dozen in round 6). AddressSanitizer (the Debug build, with the runtime hooking the process
+heap too) found nothing in six runs of the suite before the fix, solo and loaded; Qt's own code is not
+instrumented, which is why the dump, not ASan, found it.
+
+The same pattern elsewhere (a sweep of every menu clear, action removal and synchronous widget deletion in the GUI):
+the breadcrumb deleted the segment button being clicked, and with it the overflow menu whose entry was being
+triggered, because a segment's click navigates and navigating rebuilt the breadcrumb; old segments now leave the
+breadcrumb at once and are deleted from the event loop. The Sort flyout kept one more hidden "Group by" submenu every
+time it opened (clear() does not delete a submenu); the old one is deleted as the flyout is rebuilt. The New,
+Selection, Sort and tab menus rebuild only as they open, the context menus are stack menus run with exec(), and the
+AI transcript and Partition Manager rebuilds already used deleteLater.
+
+The four explorer crash reports from 2026-11-04 (and three from test_diagnostic_benchmark_panel and two from
+test_quick_action_panels) are not this: each is QtTest's watchdog ending a hung test, its main thread in
+QDialog::exec, mostly QFileDialog::getExistingDirectory, opened by a press with nothing to answer it. They fell
+between 01:39 and 03:26 while 7a1afcf4 (04:02, "Let a press return before its dialog opens, on every panel") was being
+made: queuing each dialog-opening press broke test drivers that answered from a zero timer, and that commit rewrote
+them to wait for the dialog's loop. No watchdog dump since.
+
+**The AddressSanitizer pass over the GUI suites.** The Debug build of all 31 suites that link sak_gui ran under ASan
+(the explorer suite seven times). One finding, a test defect: test_image_flasher_panel stopped on DriveScanner's
+one-instance assertion, because init() makes a panel for every test and four tests added since built a second panel
+beside it. In Release the assertion is compiled out, the second scanner took over the static instance its device
+notifications go through, and its destructor then cleared it under the fixture's scanner. The app has one panel; the
+tests use the fixture's. The suite now passes under ASan.
+
+**Fixed, each with a test.** Storage Health reads Windows' model and bus for every physical disk once per run
+(the hardware scanner's disk query without volumes), so a drive smartctl cannot read is named "PhysicalDrive1
+(NS-PCNVMEHDE)" with its bus when no hardware scan has run, and every drive's bus is spelled as the inventory spells
+it, "NVMe" not "NVME" (X1's rest). Temperatures have one style, the degree sign, in the SMART table, the stress
+results, the SMART warning, the stress abort reason and the HTML report (X17). CPU Benchmark has a "Score:" line in
+the score style, like Disk and Memory, and its two thread results are measurements (F40). The Disk I/O drive box says
+"Run Scan Hardware first" until a scan fills it (X15). A running stress test says so in the status bar, the bar set
+first so the message stays beside it (X3). AI page: disabled icons follow one rule in both themes, the drawing's
+silhouette in the disabled label's colour, read as the icon is drawn (X2); the popups take the width their entries
+need, without the fixed 420 px minimum (F21); the workflow pane's Close is secondary (F27); its headings use the
+pane's sizes, which setMarkdown() had replaced with Qt's own (N17); the workflow picker has the pane's width, with
+Add under it (DF11); the AI status ends in an ellipsis when the status bar squeezes it, with the whole text in its
+tooltip (S22, "Context: pe"). Network: the adapter Status column takes its contents' width, measured as the theme
+draws it (S15, "Disconnect..."; the old width was 168 px for 175 under the theme); a finished port scan puts its
+result in the status bar (S22). Backup and restore: Map Users' merge-mode column takes its combo's width (N2, "Merge Into Destinati"); one
+byte format on the restore folder page and its summary, the per-user dialog and both workers' summaries (X7); the
+restore Wi-Fi page says once that a backup has none and spells Wi-Fi one way, as the backup page now does (X20, S24);
+the last step's two options are one form, each box beside its label (X11); Installed Applications names a Store
+app's publisher by its organisation, with Advanced Uninstall's helper (N9); Ethernet settings show addresses whole
+(S15); "Select Users to Back Up" and "back up" as the verb in the wizard's and the worker's texts (low). Image
+Flasher: a raw flash's steps reach the status bar and its bar ends with the run, completed, failed or cancelled (S22);
+"1 drive available" (S24); the Windows ISO download bar counts bytes, with tenths below 1% (X19); the settings
+dialog's Restore Defaults is secondary (X10). Vulnerability Scanner: ten columns that fit a 1280 px window beside
+Patch Recommendation, which stretches and wraps (F18, S15), and the empty table says what to do (X12). File Explorer
+and Advanced Search: the file list and the sidebar select in the theme's selection colour (S7/DN8); the preview
+caption gives sizes as the list does and sits in from the pane's edge (X6); metadata dates read as the lists' times
+(X16); an incomplete search's status fits beside the progress bar (N6). Partition Manager: Convert MBR/GPT names the
+disk and its present style and starts on the other style (X21); the optimize and BitLocker dialogs' Copy and Open are
+secondary, so the Queue action is the one primary button (X10), and the optimize row is "In-app optimization" (X9);
+Quick Partition's count is "Partition count:" (X13); the operations list scrolls down only, so no horizontal bar
+covers "Initialize Disk" (R1). Email Tools' file scan uses the app's byte format (F38). Advanced Uninstall's Version,
+Size and Install Date take their contents' width (S15). "1 package", "1 file" and the administrator prompts' reasons
+no longer repeat the requirement the prompt's first line states; the data-folder refusal's title is "S.A.K. Utility:
+data folder" (S24).
+
+**Before the push.** The T2 labels (product, release-tooling, tooling, cert) three times at -j 6, 312 tests
+each, all green, and the whole-tree static gates clean.
+
+**Not defects, and judgement calls.** The backup wizard's "< Back" on Select Users is right: that is its second page,
+after the welcome page, and every wizard's first page has Back disabled (QWizard's own rule). X14, the log window over
+the main window's right edge on testpc1: the owner's ruling keeps the log a detached window that snaps beside the main
+window, and testpc1's screen is narrower than the two windows side by side, so it overlaps rather than going off
+screen; it sits beside the window on any screen with room. S22 (a) and (b), "Explorer loaded" and "7 adapters found"
+on other tabs: fixed in round 6 (the status bar clears on a tab change).
+
+**Still open, with what each needs.** F23: Explorer's details lines are selectable labels, and a QLabel wraps only at spaces; a long path needs a
+selectable text widget that wraps anywhere (zero-width break characters would go into every path a technician
+copies). The horizontal bar keeps the whole line reachable meanwhile. X4's second half (Resize/Move's Support line
+clipped at its descenders) and Copy Disk's 24 px target segment with no room for its label: both need the painter or
+the dialog's layout reworked and a picture to judge them. S25: Benchmark, Application Management, Image Flasher and
+Backup draw their light-tab icons in pale tones (1.2:1 to 1.6:1 on the tab); they need light-theme drawings, kept to
+the rule round 5 set for File Management (half the ink at 3:1, under a fifth below 1.5:1). F36: the BitLocker folder
+picker starts in the working folder (C:\SAK when launched from Explorer); Documents was ruled out in round 4 because
+it is usually on the volume the keys unlock, and starting on "This PC" (Qt's clsid URL) is the proposal. X10's rest:
+the QR dialogs put Cancel before the action and the batch uninstall's Remove Selected and Clear Queue are primary.
+RG2 and S15's Email Items sender: round 6 widened the pane to 480 px; not measured again. The 146 other "(s)" plurals
+in the GUI (the reviewer's listed ones are fixed). N2's clipped descenders: offscreen, themed or not, the
+rows already fit the combos, so whatever clips them on testpc1 (DPI, the cell widget delegate) needs a picture
+there.
+
+**What no test here covers.** The administrator prompts' reasons, the data-folder title and the two package confirmations are wording with no test
+of their own. The Windows ISO byte count is tested at the dialog; the builder's signal was not run (it needs a real
+UUP download). The breadcrumb and Sort-flyout fixes are tested offscreen, not clicked in a real window. Whether a
+long workflow name now fits the picker is a picture's question: this offscreen platform has no font files and its
+stand-in font is about twice as wide as Segoe UI. No picture was taken this round: the visual checks above
+(DF11's fit, N2's descenders, X4, Copy Disk, S25) are for the next capture.
+
+**Left behind.** testpc1 and the capture VM were not used this round and are as round 6 left them. On the
+workstation: the two minidumps, the cdb output and the relinked map under E:\SAK-Utility-Test-Scratch\round7\dump,
+the loop and drill logs beside them, and the Debug (ASan) build in lane2's build tree.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

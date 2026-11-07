@@ -8,6 +8,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **File Explorer no longer deletes its View menu while you use it** - Every selection change rebuilt the View
+  menu, deleting its entries and the item size slider even while one of them was running (a selection change
+  during a View choice, or a listing arriving while the slider was dragged). That is the cause of a heap
+  corruption crash a test run caught. The menu is now built once and kept up to date. Clicking a breadcrumb segment
+  or a collapsed-path entry no longer deletes the button being clicked, and the Sort menu no longer keeps a hidden
+  copy of its "Group by" menu each time it opens.
+- **Storage Health names every drive** - A drive smartctl cannot read (a USB-bridged drive, or a standard user's
+  run) shows its model and bus even when no hardware scan has run, and every drive's bus is spelled as the hardware
+  inventory spells it ("NVMe").
+- **Diagnostics** - Temperatures use the degree sign everywhere (the SMART table and stress results said "degC").
+  CPU Benchmark has a Score line like Disk and Memory. The Disk I/O drive box says "Run Scan Hardware first" before
+  a scan. A running stress test says so in the status bar.
+- **AI Assistant** - Disabled button icons look disabled in both themes (some vanished, some looked enabled). Its
+  drop-down lists are as wide as their entries and no longer run past the window. The workflow pane's headings are
+  the pane's size, its Close button is the secondary colour, and the workflow picker has the pane's width. The AI
+  status in the status bar ends in "..." when squeezed, with the whole text in its tooltip.
+- **Network Management** - "Disconnected" reads whole in the adapter list. A finished port scan says so in the
+  status bar.
+- **Backup and restore wizards** - "Select Users to Back Up". Map Users shows "Merge Into Destination" whole. Sizes
+  use one format on each page and in the summaries. The restore Wi-Fi page says once that a backup has no saved
+  Wi-Fi profiles, and spells Wi-Fi one way. The last step's two options sit beside their labels. Installed
+  Applications names a Store app's publisher ("Microsoft Corporation", not its certificate subject). Ethernet
+  settings show addresses whole.
+- **Image Flasher** - A raw flash shows its step in the status bar, and its progress bar ends with the run. The
+  Windows ISO download bar shows tenths below 1%. "1 drive available". The settings dialog has one primary button.
+- **Vulnerability Scanner** - The Findings table fits the window, wraps long recommendations, and says what to do
+  while it is empty.
+- **File Explorer and Advanced Search** - The file list and sidebar select in the same colour as every other list.
+  The preview caption gives sizes as the list does ("242 B"). Advanced Search shows metadata dates as
+  "2026-11-06 18:02" and an incomplete search's message fits the status bar.
+- **Partition Manager** - Convert MBR/GPT names the disk and its present partition style and starts on the other
+  style. The optimize and BitLocker dialogs have one primary button. Quick Partition's count reads "Partition
+  count". The operations list no longer hides its last entry behind a scroll bar.
+- **Smaller wording** - Package confirmations, Space Analyzer and the drive list say "1 package", "1 file",
+  "1 drive". Administrator prompts no longer say the requirement twice. Email Tools' file scan gives sizes as the
+  rest of Email Tools does.
 - **A restore that ran to its end says so, step by step** - A restore that brought back every file and could not
   apply one network setting read "Restore failed" and "Restore Stopped". It now reads "Restore Finished with
   Problems", says how many files and network settings were not restored or applied, and its summary lists the
