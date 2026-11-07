@@ -115,7 +115,7 @@ QString buildTextPreview(QTextStream& stream,
     }
 
     QString preview_text;
-    preview_text += QObject::tr("File: %1\n").arg(file_path);
+    preview_text += searchPreviewFileLine(file_path);
     preview_text += QObject::tr("Total matches: %1\n").arg(matches.size());
     preview_text += QString(kPreviewSeparatorLength, QChar(kPreviewSeparatorChar)) +
                     QStringLiteral("\n\n");
@@ -1826,7 +1826,7 @@ void AdvancedSearchPanel::showMetadataPreview(const QString& file_path,
 
     // Build a clean metadata listing instead of reading the binary file
     QString preview_text;
-    preview_text += tr("File: %1\n").arg(file_path);
+    preview_text += searchPreviewFileLine(file_path);
     preview_text += tr("Metadata matches: %1\n").arg(matches.size());
     preview_text += QString(kPreviewSeparatorLength, QChar(kPreviewSeparatorChar)) + "\n\n";
 

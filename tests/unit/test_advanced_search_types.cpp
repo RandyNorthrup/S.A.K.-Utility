@@ -41,6 +41,7 @@ private Q_SLOTS:
     // -- Compile-Time Invariants --
     void staticAsserts_defaultConstructible();
     void staticAsserts_copyConstructible();
+    void previewNamesTheFileWithBackslashes();
 };
 
 // -- SearchMatch -------------------------------------------------------------
@@ -437,6 +438,13 @@ void AdvancedSearchTypesTests::staticAsserts_copyConstructible() {
     QCOMPARE(target.max_search_file_size_mb, 100);
 
     QCOMPARE(target.context_lines, 7);
+}
+
+// Review 3: the preview header read "File: C:/SAK-Samples/Docs/sample-notes.txt" above a results
+// list that names the same file with backslashes.
+void AdvancedSearchTypesTests::previewNamesTheFileWithBackslashes() {
+    QCOMPARE(sak::searchPreviewFileLine(QStringLiteral("C:/SAK-Samples/Docs/sample-notes.txt")),
+             QStringLiteral("File: C:\\SAK-Samples\\Docs\\sample-notes.txt\n"));
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchTypesTests)

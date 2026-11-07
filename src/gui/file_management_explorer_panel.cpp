@@ -5102,7 +5102,13 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     menu->addSeparator();
     appendViewToggleActions(menu, context);
     menu->addSeparator();
-    addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
+    // A toggle shows its state, as Show Hidden Items does: unmarked, a click on Dual Pane with two
+    // panes open (as a restored session leaves them) closed the second one.
+    if (auto* dual_action =
+            addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context)) {
+        dual_action->setCheckable(true);
+        dual_action->setChecked(m_dual_pane_enabled);
+    }
     auto* stack_action = menu->addAction(tr("Stack Panes Vertically"));
     stack_action->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
     stack_action->setCheckable(true);
@@ -6710,9 +6716,34 @@ void FileManagementExplorerPanel::showCommandPalette() {
     }
 }
 
+namespace {
+
+// Case-insensitive contains over a command's text, status text and id name; an empty needle
+// matches every command.
+bool paletteCommandMatches(const FileExplorerCommand& command, const QString& needle) {
+    if (needle.isEmpty()) {
+        return true;
+    }
+    return QStringList{command.text,
+                       command.status_text,
+                       FileExplorerCommandRegistry::commandIdName(command.id)}
+        .join(QLatin1Char(' '))
+        .contains(needle, Qt::CaseInsensitive);
+}
+
+// A row the palette shows but cannot run: greyed and not selectable.
+void addInertPaletteRow(QListWidget* list, const QString& text, const QString& tooltip) {
+    auto* item = new QListWidgetItem(text, list);
+    item->setFlags(Qt::NoItemFlags);
+    item->setData(kCommandEnabledRole, false);
+    item->setToolTip(tooltip);
+}
+
+}  // namespace
+
 // Files PopulateOmnibarSuggestionsForCommandPaletteMode: a FLAT list of the
 // executable commands whose text matches the typed needle (case-insensitive
-// contains, unranked, uncapped); no group headers, no disabled rows.
+// contains, unranked, uncapped); no group headers. A match that cannot run yet follows, greyed.
 void FileManagementExplorerPanel::populateOmnibarPalette(const QString& needle) {
     if (m_omnibar == nullptr) {
         return;
@@ -6720,18 +6751,17 @@ void FileManagementExplorerPanel::populateOmnibarPalette(const QString& needle) 
     QListWidget* list = m_omnibar->suggestionList();
     list->clear();
     const FileExplorerCommandContext context = commandContext();
+    QVector<FileExplorerCommandState> unavailable;
     for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
+        if (!paletteCommandMatches(command, needle)) {
+            continue;
+        }
         const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
                                                                                   context);
         if (!state.enabled) {
-            continue;
-        }
-        const QString searchable =
-            QStringList{command.text,
-                        command.status_text,
-                        FileExplorerCommandRegistry::commandIdName(command.id)}
-                .join(QLatin1Char(' '));
-        if (!needle.isEmpty() && !searchable.contains(needle, Qt::CaseInsensitive)) {
+            if (!needle.isEmpty()) {
+                unavailable.append(state);
+            }
             continue;
         }
         QString label = command.text;
@@ -6743,14 +6773,20 @@ void FileManagementExplorerPanel::populateOmnibarPalette(const QString& needle) 
         item->setData(kCommandEnabledRole, true);
         item->setToolTip(command.status_text);
     }
-    if (list->count() == 0) {
-        // Files NoCommandsFound row.
-        auto* item = new QListWidgetItem(tr("There are no commands containing %1").arg(needle),
-                                         list);
-        item->setFlags(Qt::NoItemFlags);
-        item->setData(kCommandEnabledRole, false);
-    } else {
+    const bool any_runnable = list->count() > 0;
+    // A command that matches but cannot run now is named with what it needs, greyed, after the ones
+    // that can. Left out, "compare" with one pane open answered "There are no commands containing
+    // compare" (review 3), while the right-click menu showed Compare Panes and why it was off.
+    for (const FileExplorerCommandState& state : unavailable) {
+        addInertPaletteRow(list,
+                           tr("%1 - %2").arg(state.command.text, state.blocker.trimmed()),
+                           state.blocker);
+    }
+    if (any_runnable) {
         list->setCurrentRow(0);
+    } else if (list->count() == 0) {
+        // Files NoCommandsFound row.
+        addInertPaletteRow(list, tr("There are no commands containing %1").arg(needle), QString());
     }
     m_omnibar->setSuggestionsVisible(true);
 }
@@ -7086,9 +7122,13 @@ QString FileManagementExplorerPanel::composeStatusText(
     if (m_dual_pane_enabled) {
         const QString active_side = m_active_pane_index == 0 ? tr("Left") : tr("Right");
         const QString other_side = m_active_pane_index == 0 ? tr("Right") : tr("Left");
+        // In the other pane's own form: a Windows volume with backslashes ("Left:
+        // C:/SAK-Samples/Docs", review 3), a path in an ext, HFS+ or APFS image as that file system
+        // writes it.
         const QString other_path = m_secondary_state.location.path.isEmpty()
                                        ? tr("(empty)")
-                                       : m_secondary_state.location.path;
+                                       : shownTargetPath(otherPaneTarget(),
+                                                         m_secondary_state.location.path);
         text += tr("\nActive pane: %1  |  %2: %3").arg(active_side, other_side, other_path);
     }
     return text;

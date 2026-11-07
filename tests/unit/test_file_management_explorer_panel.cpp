@@ -4940,6 +4940,19 @@ private Q_SLOTS:
         const QStringList left = paneEntryNames(pane_a);
         QVERIFY2(left.contains(QStringLiteral("top.txt")), qPrintable(left.join(QLatin1Char(','))));
         QVERIFY2(left.contains(QStringLiteral("sub")), qPrintable(left.join(QLatin1Char(','))));
+        // Review 3: the dual-pane status named the other pane "Left: C:/SAK-Samples/Docs".
+        const QString expected_left = QStringLiteral("Left: ") +
+                                      QDir::toNativeSeparators(QDir::cleanPath(dir.path()));
+        bool named = false;
+        QStringList seen;
+        for (const auto* label : panel.findChildren<QLabel*>()) {
+            if (label->text().contains(QStringLiteral("Active pane:"))) {
+                seen.append(label->text());
+                named = named || label->text().contains(expected_left, Qt::CaseInsensitive);
+            }
+        }
+        QVERIFY2(named,
+                 qPrintable(seen.join(QLatin1Char('|')) + QStringLiteral(" / ") + expected_left));
         captureBaseline(&panel, QStringLiteral("dual-pane"));
     }
 
@@ -5648,6 +5661,52 @@ private Q_SLOTS:
         // A row that lost .arg(needle) still contains the fragment.
         QCOMPARE(suggestions->item(0)->text(),
                  QStringLiteral("There are no commands containing zz-no-such-command"));
+    }
+
+    // Review 3: with one pane open, "compare" answered "There are no commands containing compare"
+    // while the right-click menu listed Compare Panes and why it was off. A match that cannot run
+    // yet is named, greyed, with what it needs.
+    void commandPaletteNamesAMatchThatCannotRunYet() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QApplication::processEvents();
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
+        QTest::keyClicks(pathEdit, QStringLiteral("compare"));
+        QApplication::processEvents();
+        QCOMPARE(suggestions->count(), 1);
+        QCOMPARE(suggestions->item(0)->flags(), Qt::NoItemFlags);
+        QCOMPARE(suggestions->item(0)->text(),
+                 QStringLiteral("Compare Panes - Enable dual pane first."));
+    }
+
+    // A toggle shows its state, as Show Hidden Items does. Unmarked, a click on Dual Pane with two
+    // panes open, as a restored session leaves them, closed the second pane.
+    void dualPaneMenuItemShowsItsState() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1200, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view && view->menu());
+        QAction* dualPane = actionStartingWith(view->menu(), QStringLiteral("Dual Pane"));
+        QVERIFY(dualPane);
+        QVERIFY(dualPane->isCheckable());
+        QVERIFY(!dualPane->isChecked());
+        dualPane->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QApplication::processEvents();
+        QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+        dualPane = actionStartingWith(view->menu(), QStringLiteral("Dual Pane"));
+        QVERIFY(dualPane);
+        QVERIFY(dualPane->isChecked());
     }
 
     void duplicateTabClonesCurrentTab() {

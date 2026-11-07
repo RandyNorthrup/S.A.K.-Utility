@@ -13,6 +13,7 @@
 #include "sak/file_management_file_system.h"
 #include "sak/layout_constants.h"
 
+#include <QDir>
 #include <QMetaType>
 #include <QSet>
 #include <QString>
@@ -203,6 +204,13 @@ static_assert(std::is_copy_constructible_v<RegexPatternInfo>,
               "RegexPatternInfo must be copy-constructible for signal/slot.");
 static_assert(std::is_copy_constructible_v<SearchPreferences>,
               "SearchPreferences must be copy-constructible for signal/slot.");
+
+/// @brief The first line of a search preview, naming the file with backslashes, as the results
+///        list beside it does. The preview read "File: C:/SAK-Samples/Docs/sample-notes.txt" above
+///        a list in backslashes (review 3).
+[[nodiscard]] inline QString searchPreviewFileLine(const QString& file_path) {
+    return QStringLiteral("File: %1\n").arg(QDir::toNativeSeparators(file_path));
+}
 
 }  // namespace sak
 
