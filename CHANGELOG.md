@@ -8,6 +8,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Counts read as words** - "1 drive(s)", "9 package(s)", "3 item(s)" and about 260 more messages now say
+  "1 drive", "9 packages", "3 items", across every panel, the AI assistant's results and the log. Labels with no
+  count say what they mean ("Target drives", "Export formats").
+- **File Explorer's Details wrap long paths** - A long Path or Capability line was cut at the pane's edge behind a
+  scroll bar. Each line now wraps where it must, a path included, and selecting and copying it gives the path
+  exactly as it is.
+- **The BitLocker key picker opens on This PC** - It opened in the app's own folder, showing its Qt folders first.
+  It now opens on This PC, the drives side by side, and takes only a folder on a disk.
+- **One way to place dialog buttons** - The Wi-Fi QR dialogs put Cancel last, as every other dialog does, and their
+  Browse buttons are secondary, so the action is the one primary button. Batch Uninstall's Remove Selected and
+  Clear Queue are secondary beside Start Batch Uninstall, and its header says "1 program".
+- **Lighter tab icons are easier to see** - In the light theme, the Benchmark and Diagnostics, Application
+  Management, Image Flasher and Backup and Restore tab icons are drawn in darker tones so they read on the tab. The
+  dark theme keeps its drawings.
+- **Partition Manager** - Resize/Move grows to fit its Support line when it wraps, so its second line is no longer
+  cut. Copy Disk's Target bar names the copy ("Copy of Disk 1") when the target is much larger than the source,
+  instead of a sliver with no name.
+- **Map Users shows whole names** - A table's rows are as tall as the combo boxes in them, so "Morgan" and "Merge"
+  keep their descenders.
+
 - **File Explorer no longer deletes its View menu while you use it** - Every selection change rebuilt the View
   menu, deleting its entries and the item size slider even while one of them was running (a selection change
   during a View choice, or a listing arriving while the slider was dragged). That is the cause of a heap

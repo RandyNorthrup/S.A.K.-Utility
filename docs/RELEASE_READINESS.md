@@ -2059,6 +2059,102 @@ stand-in font is about twice as wide as Segoe UI. No picture was taken this roun
 workstation: the two minidumps, the cdb output and the relinked map under E:\SAK-Utility-Test-Scratch\round7\dump,
 the loop and drill logs beside them, and the Debug (ASan) build in lane2's build tree.
 
+### UI review round 8: round 7's open list, the plurals, and pictures of what rounds 6-8 changed (2026-11-07)
+
+From round 7's open list and the coordinator's calls on it, on dev at 9c218abf. Every fix has a test, and every
+test was drilled red with its fix broken in the source, one guard at a time, by a script that restores every
+byte and touches the file: 25 guards, the plural test by a planted "attachment(s)". Two survived their first run.
+Growing Resize/Move to its layout's height-for-width changed nothing a test sees, because the wrapped labels'
+minimum heights already make the window grow; it was removed. Putting back only Application Management's pale
+arrow left 51% of its ink at 3:1; putting back its whole old drawing went red (0%).
+
+**Plurals (S24, app-wide).** 264 string literals in 57 files said "file(s)", "match(es)", "director(ies)" and
+the like, in the panels, the AI assistant's tool results, the actions' reports and the log; the app loads no
+translations, so Qt's tr("%n item(s)", "", n) showed "(s)" too. Counts are spelled with sak::countOf ("1 file",
+"3 files"), moved from widget_helpers.h to format_utils.h so core messages use it; a sentence whose verb followed
+the count was reworded so the verb does not depend on it ("Not cleaned: safety screening refused 2 selected
+items."); a label with no count says what it means ("Step 2: Select Target Drives", "Export formats:", "Copy
+Selected Rows"). The stress report's CSV header "Duration (s)" reads "Duration (seconds)". "http(s)" (a URL
+scheme) stays. test_plural_placeholders reads every string literal under src/ and include/, comments left out,
+and refuses any such placeholder; a runtime string is built from these literals, so it answers for every message
+the code can build. Batch Uninstall's header and the program count said "1 programs" and count through countOf
+too. One grandfathered duplicate message changed in both its places (the PST and MBOX search warnings), so its
+entry in scripts/error_message_duplicate_baseline.json was edited by hand to the new text; the four stale entries
+a regeneration would also have dropped were left for their own change.
+
+**F23, File Explorer's details lines.** Properties, Safety and Evidence are read-only, frameless text boxes
+(FileExplorerDetailsText, a QTextEdit) that wrap at a word boundary or, when a line has none, anywhere
+(WrapAtWordBoundaryOrAnywhere), with no scroll bar of their own and as tall as their text at the width they are
+given (heightForWidth on a copy of the document), so the details scroller scrolls them together as before. No
+character is inserted: selecting and copying a path gives the path as it is. Each section is named for a screen
+reader, beside its text.
+
+**F36, the BitLocker key picker.** It opens on This PC: FOLDERID_ComputerFolder as a clsid URL, the form Qt
+documents for a Windows virtual folder, given to a QFileDialog's setDirectoryUrl. It takes only file: answers,
+so a virtual folder cannot come back as a destination. Qt's own dialog, which the test drives, cannot open a
+virtual folder and says so; the test reads that warning as proof the place was handed over, and the Windows
+picker opening on This PC is the testpc1 picture.
+
+**X10's rest.** The single QR wizard puts Cancel after Next and after Generate, the batch QR dialog after Batch
+Generate, and both Browse buttons are secondary, so the action is each page's one primary button. Batch
+Uninstall's Remove Selected and Clear Queue are secondary beside the danger-toned Start Batch Uninstall.
+
+**X4's second half, Resize/Move's Support line.** The Support line is a wrapped label in a form row, and the
+form gave the row less than the label needs at the row's width: offscreen it held one line of the four the
+text needed at 533 px, with the dialog's layout reporting it fitted (648 of 648 px). On testpc1, Move partition
+start's two-line text lost its descenders. A partition operation dialog now gives each wrapped label, as its
+minimum height, what its text needs at its width, on every layout change and resize; the window's minimum
+follows from its layout's, so the dialog grows with it. A second guard written beside it, growing the dialog to
+its layout's height-for-width, survived its drill for that reason and was removed.
+
+**Copy Disk's target.** On a target much larger than the source, each copied partition was a 24 px segment too
+narrow for any name. When the copied partitions cannot each be named where they land, the Target bar draws the
+copy as one segment named "Copy of Disk N", wide enough for its name (segments now take a floor each), then
+the space left; a target near the source's size still shows them one by one.
+
+**N2's descenders.** A table's rows are as tall as its cell widgets ask (the vertical header resizes to contents
+in placeCellWidgetsInWholeCells), so a themed combo box in Segoe UI keeps its descenders. Round 7 could not show
+this offscreen because the platform's stand-in font is not Segoe UI; the test now loads Segoe UI from Windows'
+fonts folder and draws in it at 9 pt, and without the fix the combo is 29 px in a row for one that needs 33.
+
+**S25, the light tab icons.** Benchmark and Diagnostics, Application Management, Image Flasher and Backup and
+Restore are redrawn for the light theme in darker tones of their own colours; their old drawings are kept as the
+"-dark" files the dark theme already picks. Near-white parts that were holes in the white selected-tab drawing
+stay holes (Application Management's tray is now open rather than pale), so the selected tabs look as before.
+Measured as the reviewer did, on review 3's light app_main_window (ink: pixels that differ from the #cfd8e3
+tab): Benchmark and Diagnostics median 1.17:1 with none of its ink at 3:1, Application Management 1.24:1 and
+none, Image Flasher 1.44:1 and none, Backup and Restore 1.55:1 and none. After, the test's reading of the 20 px
+icons on the light tab: 63%, 80%, 92% and 71% of their ink at 3:1; the review 4 pictures are measured below.
+tabIconsReadOnTheirTabsInBothThemes now holds these four in light too (half the ink at 3:1, under a fifth below
+1.5:1), as it held File Management and Email Tools.
+
+**RG2.** No code change: round 6 widened the Items pane to 480 px, and the sender column is re-measured in
+review 4's pictures on testpc1 (below).
+
+**Before the push.** The suites these changes reach, then the T2 labels three times at -j 6 (334 tests each: the
+label pattern also took in the 21 tooling-extended and cert-tooling tests), all green, and the whole-tree static
+gates clean.
+
+**Not defects, and judgement calls.** The row-height fix is in placeCellWidgetsInWholeCells, so it reaches every
+table with cell widgets: Map Users, the Wi-Fi saved networks and Quick Partition's table (the AI context list is a
+list, not a table); their rows are sized to their contents. Copy Disk names partitions one by one whenever each
+can be named where it lands, and otherwise draws the copy as one segment; the Source bar is unchanged. In the
+light S25 drawings, two pale fills that were holes in the white selected-tab drawing (Application Management's
+tray, Benchmark and Diagnostics' badge) are left out instead of darkened, so the selected tabs look as before.
+Wiki pages that quote the old wording (check-drive-health "Scanned 2 drive(s)", extract-email-attachments
+"Saved 12 attachment(s)", flash-iso-to-usb "Step 2: Select Target Drive(s)" and "target drive(s)",
+wifi-qr-codes "Select export format(s):") need the new words; this round edits only the site's shot files.
+Found while measuring and not in the item list: in light, Help and Support's and About's tab icons are pale
+discs (0 of their ink at 3:1 on the tab, read by the same test), and Partition Manager's has 40% at 3:1.
+
+**Still open.** Nothing from round 7's list is left in code; the pictures below judge N2, X4, Copy Disk, S25, F36
+and RG2.
+
+**What no test here covers.** The plural test reads literals; whether each reworded sentence reads well is
+review, not test (the suites' own assertions cover the messages they already pinned, now in both forms where one
+line added it). The Windows folder picker opening on This PC is a picture, not a test (Qt's own dialog cannot
+open a virtual folder). The S25 numbers above are offscreen at 20 px; the pictures are the real tab.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
