@@ -606,7 +606,9 @@ void MainWindow::createStatusBar() {
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     // Mirrors the AI panel's run details (model/tool text), so it renders verbatim too.
-    m_ai_status_label = sak::plainTextLabel(QString(), this);
+    // Squeezed by the status bar it ends in an ellipsis, with the whole text in its tooltip.
+    m_ai_status_label = new sak::ElidingLabel(this);
+    m_ai_status_label->setTextFormat(Qt::PlainText);
     m_ai_status_label->setContentsMargins(sak::ui::kSpacingDefault,
                                           sak::ui::kMarginNone,
                                           sak::ui::kSpacingDefault,
@@ -1660,10 +1662,9 @@ void MainWindow::wireAiPanel() {
             this,
             [this](const QString& details) {
                 if (m_ai_status_label) {
-                    m_ai_status_label->setText(details);
-                    // The details embed run-supplied ids (workflow phase, tool command); a
-                    // tooltip has no plain-text mode, so wrap it to be shown literally.
-                    m_ai_status_label->setToolTip(sak::ui::asLiteralRichText(details));
+                    // The details embed run-supplied ids (workflow phase, tool command); the
+                    // label's tooltip shows them literally.
+                    m_ai_status_label->setFullText(details);
                 }
                 updateAiStatusBarVisibility();
             });
@@ -1707,10 +1708,9 @@ void MainWindow::updateAiStatusBarVisibility() {
     const bool active = isAiAssistantPanelActive();
     if (active && m_ai_assistant_panel) {
         const QString details = m_ai_assistant_panel->statusDetails();
-        m_ai_status_label->setText(details);
-        m_ai_status_label->setToolTip(sak::ui::asLiteralRichText(details));
+        m_ai_status_label->setFullText(details);
     }
-    m_ai_status_label->setVisible(active && !m_ai_status_label->text().isEmpty());
+    m_ai_status_label->setVisible(active && !m_ai_status_label->fullText().isEmpty());
 }
 #endif
 

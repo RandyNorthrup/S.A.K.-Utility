@@ -8,6 +8,7 @@
 #pragma once
 
 #include "sak/layout_constants.h"
+#include "sak/rich_text_safety.h"
 
 #include "style_constants.h"
 
@@ -22,6 +23,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QIconEngine>
 #include <QImage>
 #include <QLabel>
 #include <QList>
@@ -29,6 +31,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QRect>
+#include <QResizeEvent>
 #include <QSizePolicy>
 #include <QString>
 #include <QStyledItemDelegate>
@@ -151,6 +154,124 @@ inline QIcon themedGlyphIcon(const QString& path) {
     }
     return tinted;
 }
+
+/// @brief A button icon with one disabled look in both themes: the drawing's silhouette in the
+///        colour a disabled button's label takes (the muted text colour). Qt greyed each drawing
+///        its own way, so on the AI page a disabled black glyph vanished on dark (1.06:1) while a
+///        white and blue drawing stayed bright there and vanished on light (review 3, X2). While
+///        enabled, a black glyph is drawn in the body text colour on the dark theme, as
+///        themedGlyphIcon does. The colours are read as the icon is drawn, so a change of theme
+///        takes effect at once.
+class ButtonIconEngine final : public QIconEngine {
+public:
+    explicit ButtonIconEngine(QString path) : m_path(std::move(path)), m_source(m_path) {}
+
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        QPixmap drawn = m_source.pixmap(size, QIcon::Normal, state);
+        if (mode == QIcon::Disabled) {
+            return silhouette(drawn, ui::themedColor(ui::kColorTextMuted));
+        }
+        if (ui::usingDarkUiTheme() && isBlackGlyph(drawn)) {
+            return silhouette(drawn, ui::themedColor(ui::kColorTextBody));
+        }
+        return drawn;
+    }
+
+    void paint(QPainter* painter,
+               const QRect& rect,
+               QIcon::Mode mode,
+               QIcon::State state) override {
+        const qreal ratio = painter->device() != nullptr ? painter->device()->devicePixelRatioF()
+                                                         : 1.0;
+        const QSize device_size(qRound(rect.width() * ratio), qRound(rect.height() * ratio));
+        painter->drawPixmap(rect, pixmap(device_size, mode, state));
+    }
+
+    [[nodiscard]] QIconEngine* clone() const override { return new ButtonIconEngine(m_path); }
+
+private:
+    static QPixmap silhouette(QPixmap pixmap, const QColor& color) {
+        QPainter painter(&pixmap);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(pixmap.rect(), color);
+        return pixmap;
+    }
+
+    // Every inked pixel near black: one of the icons8 line glyphs, drawn for a light surface.
+    static bool isBlackGlyph(const QPixmap& pixmap) {
+        constexpr int kNearBlack = 64;
+        const QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
+        bool inked = false;
+        for (int y = 0; y < image.height(); ++y) {
+            const auto* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+            for (int x = 0; x < image.width(); ++x) {
+                if (qAlpha(line[x]) == 0) {
+                    continue;
+                }
+                inked = true;
+                if (std::max({qRed(line[x]), qGreen(line[x]), qBlue(line[x])}) >= kNearBlack) {
+                    return false;
+                }
+            }
+        }
+        return inked;
+    }
+
+    QString m_path;
+    QIcon m_source;
+};
+
+/// @brief The icon a button shows, through ButtonIconEngine.
+inline QIcon buttonIcon(const QString& path) {
+    return QIcon(new ButtonIconEngine(path));
+}
+
+/// @brief A label that shortens its text with an ellipsis when it is given less room than the text
+///        needs, and keeps the whole text in its tooltip. A plain QLabel squeezed by the status bar
+///        cut the AI status mid-word ("Context: pe", review 3, S22).
+class ElidingLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+    void setFullText(const QString& text) {
+        m_full = text;
+        setToolTip(ui::asLiteralRichText(text));
+        updateGeometry();
+        elide();
+    }
+
+    [[nodiscard]] QString fullText() const { return m_full; }
+
+    [[nodiscard]] QSize sizeHint() const override {
+        const QSize hint = QLabel::sizeHint();
+        const QMargins margins = contentsMargins();
+        return {fontMetrics().horizontalAdvance(m_full) + margins.left() + margins.right(),
+                hint.height()};
+    }
+
+    [[nodiscard]] QSize minimumSizeHint() const override {
+        // Room for a few characters and the ellipsis; the status bar gives it what is left.
+        constexpr int kFewestCharacters = 8;
+        return {fontMetrics().averageCharWidth() * kFewestCharacters,
+                QLabel::minimumSizeHint().height()};
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QLabel::resizeEvent(event);
+        elide();
+    }
+
+private:
+    void elide() {
+        const int room = contentsRect().width();
+        setText(fontMetrics().horizontalAdvance(m_full) <= room
+                    ? m_full
+                    : fontMetrics().elidedText(m_full, Qt::ElideRight, room));
+    }
+
+    QString m_full;
+};
 
 /// @brief @p path, or its dark-theme drawing ("panel_email-dark.svg" beside "panel_email.svg")
 ///        while the dark theme shows and the drawing exists. Artwork drawn for a light surface

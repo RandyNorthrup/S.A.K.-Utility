@@ -41,6 +41,7 @@
 #include "sak/pst_parser.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
+#include "sak/widget_helpers.h"
 #include "sak/windows11_theme.h"
 #include "sak/windows_usb_creator.h"
 
@@ -70,6 +71,9 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextBrowser>
+#include <QTextCharFormat>
 #include <QTextDocument>
 #include <QThread>
 #include <QTimer>
@@ -79,6 +83,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -226,6 +231,143 @@ private Q_SLOTS:
         QCOMPARE(continuation.untrusted_input_messages.first().role,
                  ai::OpenAIInputMessageRole::User);
         QVERIFY(continuation.untrusted_input_messages.first().text.contains(stored_tool_text));
+    }
+
+    // Review 3 (X2): disabled icons followed no rule. On dark the disabled Clear glyph was 1.06:1
+    // (invisible) while disabled Send and Rename Chat stayed bright; on light the other way round.
+    // Every disabled icon is now its drawing's silhouette in the disabled label's colour.
+    void disabledIconsShareOneLookInBothThemes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            AiAssistantPanel panel;
+            const QColor muted = sak::ui::themedColor(sak::ui::kColorTextMuted);
+            for (QPushButton* button :
+                 {panel.m_clearContextButton, panel.m_sendButton, panel.m_renameSessionButton}) {
+                QVERIFY(button != nullptr);
+                const QImage disabled = button->icon()
+                                            .pixmap(QSize(20, 20), QIcon::Disabled)
+                                            .toImage()
+                                            .convertToFormat(QImage::Format_ARGB32);
+                int inked = 0;
+                for (int y = 0; y < disabled.height(); ++y) {
+                    for (int x = 0; x < disabled.width(); ++x) {
+                        const QRgb pixel = disabled.pixel(x, y);
+                        if (qAlpha(pixel) < 200) {
+                            continue;
+                        }
+                        ++inked;
+                        const int off = std::abs(qRed(pixel) - muted.red()) +
+                                        std::abs(qGreen(pixel) - muted.green()) +
+                                        std::abs(qBlue(pixel) - muted.blue());
+                        QVERIFY2(off <= 6,
+                                 qPrintable(
+                                     QStringLiteral("%1: %2 where the disabled colour is %3")
+                                         .arg(button->text(), QColor(pixel).name(), muted.name())));
+                    }
+                }
+                QVERIFY2(inked > 0, qPrintable(button->text()));
+            }
+        }
+    }
+
+    // Review 3 (F21): the popups had a fixed 420 px minimum, so the access-mode list ran to x=1358
+    // in a 1280 px window for entries about 170 px long.
+    void comboPopupsTakeTheWidthTheirEntriesNeed() {
+        AiAssistantPanel panel;
+        for (QComboBox* combo : {panel.m_accessModeCombo, panel.m_modelCombo}) {
+            QVERIFY(combo != nullptr && combo->count() > 0);
+            int widest = 0;
+            for (int row = 0; row < combo->count(); ++row) {
+                widest = std::max(widest,
+                                  combo->fontMetrics().horizontalAdvance(combo->itemText(row)));
+            }
+            QVERIFY2(combo->view()->minimumWidth() <= widest,
+                     qPrintable(QStringLiteral("%1 px minimum for entries of %2 px")
+                                    .arg(combo->view()->minimumWidth())
+                                    .arg(widest)));
+        }
+    }
+
+    // Review 3 (S22): the status bar squeezed the AI status label and cut it mid-word at
+    // "Context: pe". It ends in an ellipsis now, and its tooltip holds the whole text.
+    void theAiStatusEndsInAnEllipsisWhenSqueezed() {
+        sak::ElidingLabel label;
+        const QString full = QStringLiteral(
+            "Model: gpt-5 | Context: personal workstation, 12,345 of 400,000 tokens");
+        label.setFullText(full);
+        label.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&label));
+        label.resize(label.fontMetrics().horizontalAdvance(full) / 2, label.sizeHint().height());
+        QCoreApplication::processEvents();
+        QVERIFY2(label.text() != full && label.text().endsWith(QChar(0x2026)),
+                 qPrintable(label.text()));
+        QVERIFY(label.toolTip().contains(QStringLiteral("Context: personal")));
+        QCOMPARE(label.fullText(), full);
+        QVERIFY(label.minimumSizeHint().width() < label.sizeHint().width());
+        label.resize(label.sizeHint());
+        QCoreApplication::processEvents();
+        QCOMPARE(label.text(), full);
+    }
+
+    // Review 3 (F27): the workflow pane's Close only hides the pane, and was the primary tone.
+    void theWorkflowPaneCloseIsSecondary() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_workflowDetailsCloseButton != nullptr);
+        QCOMPARE(panel.m_workflowDetailsCloseButton->styleSheet(), sak::ui::kSecondaryButtonStyle);
+    }
+
+    // Review 3 (N17): the workflow pane's heading was 21 px tall beside a 13 px page title:
+    // setMarkdown() used Qt's own heading sizes and ignored the style sheet's.
+    void workflowHeadingsUseThePanesSizes() {
+        AiAssistantPanel panel;
+        ai::WorkflowTemplate workflow;
+        workflow.id = QStringLiteral("windows_update_repair");
+        workflow.title = QStringLiteral("Windows Update Repair");
+        workflow.description = QStringLiteral("Repair Windows Update.");
+        workflow.acceptance_criteria = {QStringLiteral("Updates install.")};
+        panel.showWorkflowDetails(workflow);
+        int section_titles = 0;
+        const QTextDocument* document = panel.m_workflowDetailsBody->document();
+        for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const QTextCharFormat format = it.fragment().charFormat();
+                // No text in the pane larger than the style sheet's heading size.
+                QVERIFY2(format.intProperty(QTextFormat::FontSizeAdjustment) <= 0,
+                         qPrintable(block.text()));
+                QVERIFY2(format.fontPointSize() <= sak::ui::kFontSizeStatus,
+                         qPrintable(QStringLiteral("%1 at %2 pt")
+                                        .arg(block.text())
+                                        .arg(format.fontPointSize())));
+                if (block.text() == QStringLiteral("Acceptance Criteria")) {
+                    QVERIFY(format.fontWeight() >= QFont::Bold);  // still reads as a heading
+                    ++section_titles;
+                }
+            }
+        }
+        QVERIFY(section_titles > 0);
+    }
+
+    // Review 3 (DF11): beside Add, the workflow picker cut "Reporting - Technician Servic".
+    void theWorkflowPickerHasThePanesWidth() {
+        AiAssistantPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        QComboBox* combo = panel.m_promptTemplateCombo;
+        QVERIFY(combo != nullptr && panel.m_addWorkflowButton != nullptr);
+        // The picker spans the pane and Add sits under it. (Whether a name fits is measured on a
+        // real PC: this offscreen platform has no font files, and its stand-in font is twice as
+        // wide as Segoe UI.)
+        const QRect picker = combo->geometry();
+        const QRect add = panel.m_addWorkflowButton->geometry();
+        QVERIFY2(add.top() >= picker.bottom(),
+                 qPrintable(QStringLiteral("Add at y %1, picker ends at y %2")
+                                .arg(add.top())
+                                .arg(picker.bottom())));
+        // As wide as the model picker above it, which has a row of its own.
+        QCOMPARE(picker.width(), panel.m_modelCombo->width());
     }
 
     // Review 2 (DF11): the narrow combo cut the chosen workflow to "Repair - Windows Update Re",

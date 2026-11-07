@@ -131,7 +131,9 @@
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QTemporaryDir>
+#include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QThread>
@@ -250,14 +252,10 @@ constexpr int kReportHtmlTimelineActivityLimit = 18;
 constexpr int kReadableDurationMillisecondsPerSecond = 1000;
 constexpr double kReadableDurationMillisecondsPerSecondF = 1000.0;
 constexpr int kReadableComboDefaultContentsLength = 24;
-constexpr int kReadableComboDefaultPopupMinWidth = 420;
 constexpr int kReadableComboMaxVisibleItems = 18;
 constexpr int kSessionComboContentsLength = 26;
-constexpr int kSessionComboPopupMinWidth = 440;
 constexpr int kReasoningComboContentsLength = 14;
-constexpr int kReasoningComboPopupMinWidth = 260;
 constexpr int kWorkflowComboContentsLength = 32;
-constexpr int kWorkflowComboPopupMinWidth = 620;
 /// Where the workflow picker keeps its own help text, which its tooltip follows the choice with.
 constexpr const char* kWorkflowPickerHelpProperty = "sakPickerHelp";
 constexpr ushort kStatusMarkerSuccess = 0x2714;
@@ -3542,10 +3540,37 @@ QString workflowDetailsMarkdown(const ai::WorkflowTemplate& workflow) {
     return lines.join(QLatin1Char('\n'));
 }
 
+// setMarkdown() gives a heading Qt's own sizes (an h1 is "xx-large") and ignores the default
+// style sheet's h1 and h2 rules, so "Windows Update Repair" came out 21 px tall and wrapped beside
+// a 13 px page title (review 3, N17). The headings become bold lines at the style sheet's sizes:
+// kept as headings, the HTML the pane is given would bring Qt's sizes back with its h1 and h2 tags.
+void applyWorkflowHeadingSizes(QTextDocument& document) {
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        const int level = block.blockFormat().headingLevel();
+        if (level <= 0) {
+            continue;
+        }
+        QTextCursor cursor(block);
+        QTextBlockFormat line = block.blockFormat();
+        line.setHeadingLevel(0);
+        line.setTopMargin(level == 1 ? 0 : sak::ui::kSpacingMedium);
+        line.setBottomMargin(level == 1 ? sak::ui::kSpacingSmall : sak::ui::kCssPaddingTinyPx);
+        cursor.setBlockFormat(line);
+        cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        QTextCharFormat heading;
+        heading.setProperty(QTextFormat::FontSizeAdjustment, 0);
+        heading.setFontPointSize(level == 1 ? sak::ui::kFontSizeStatus : sak::ui::kFontSizeBody);
+        heading.setFontWeight(QFont::Bold);
+        heading.setForeground(sak::ui::themedColor(sak::ui::kColorTextHeading));
+        cursor.mergeCharFormat(heading);
+    }
+}
+
 QString workflowDetailsHtml(const ai::WorkflowTemplate& workflow) {
     QTextDocument document;
     document.setDefaultStyleSheet(sak::ui::aiWorkflowMarkdownStyle());
     document.setMarkdown(workflowDetailsMarkdown(workflow), kMarkdownNoRawHtml);
+    applyWorkflowHeadingSizes(document);
     return document.toHtml();
 }
 
@@ -3557,9 +3582,11 @@ QScrollArea* createScrollArea(QWidget* parent, QWidget* content) {
     return scroll;
 }
 
+// The popup takes the width its longest entry needs (QComboBox measures its items) and no fixed
+// minimum: a 420 px minimum ran the access-mode list to x=1358 in a 1280 px window for entries
+// about 170 px long (review 3, F21).
 void configureReadableCombo(QComboBox* combo,
-                            int minimum_contents_length = kReadableComboDefaultContentsLength,
-                            int popup_min_width = kReadableComboDefaultPopupMinWidth) {
+                            int minimum_contents_length = kReadableComboDefaultContentsLength) {
     if (combo == nullptr) {
         return;
     }
@@ -3568,7 +3595,6 @@ void configureReadableCombo(QComboBox* combo,
     combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     combo->setMaxVisibleItems(kReadableComboMaxVisibleItems);
     if (auto* view = combo->view()) {
-        view->setMinimumWidth(popup_min_width);
         view->setTextElideMode(Qt::ElideNone);
         view->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     }
@@ -3585,7 +3611,7 @@ void configureCompactButton(QPushButton* button, const QString& icon_path = {}) 
     button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
     button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     if (!icon_path.isEmpty()) {
-        button->setIcon(QIcon(icon_path));
+        button->setIcon(sak::buttonIcon(icon_path));
         button->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     }
 }
@@ -4182,7 +4208,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     layout->addWidget(makeFieldLabel(pane, tr("Chat session")));
 
     m_sessionCombo = new QComboBox(pane);
-    configureReadableCombo(m_sessionCombo, kSessionComboContentsLength, kSessionComboPopupMinWidth);
+    configureReadableCombo(m_sessionCombo, kSessionComboContentsLength);
     m_sessionCombo->setToolTip(tr("Switch between saved AI chat sessions"));
     setAccessible(m_sessionCombo, tr("AI session"), tr("Open or switch AI chat session"));
     connect(m_sessionCombo,
@@ -4260,9 +4286,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
 
     layout->addWidget(makeFieldLabel(pane, tr("Reasoning effort")));
     m_reasoningEffortCombo = new QComboBox(pane);
-    configureReadableCombo(m_reasoningEffortCombo,
-                           kReasoningComboContentsLength,
-                           kReasoningComboPopupMinWidth);
+    configureReadableCombo(m_reasoningEffortCombo, kReasoningComboContentsLength);
     m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
     m_reasoningEffortCombo->setCurrentIndex(1);
     m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported OpenAI models"));
@@ -4275,9 +4299,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
 void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane) {
     layout->addWidget(makeFieldLabel(pane, tr("Workflow")));
     m_promptTemplateCombo = new QComboBox(pane);
-    configureReadableCombo(m_promptTemplateCombo,
-                           kWorkflowComboContentsLength,
-                           kWorkflowComboPopupMinWidth);
+    configureReadableCombo(m_promptTemplateCombo, kWorkflowComboContentsLength);
     const QString picker_help =
         tr("Choose a multi-step workflow. The list shows category, job name, and phase count.");
     m_promptTemplateCombo->setToolTip(picker_help);
@@ -4289,9 +4311,12 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
             &QComboBox::currentIndexChanged,
             this,
             &AiAssistantPanel::onWorkflowTemplatePickerChanged);
+    // The picker has the pane's whole width and Add sits under it: beside Add it was cut to
+    // "Reporting - Technician Servic" (review 3, DF11).
+    layout->addWidget(m_promptTemplateCombo);
     auto* workflow_row = new QHBoxLayout();
     workflow_row->setSpacing(sak::ui::kSpacingSmall);
-    workflow_row->addWidget(m_promptTemplateCombo, 1);
+    workflow_row->addStretch(1);
 
     m_addWorkflowButton = new QPushButton(tr("Add"), pane);
     configureCompactButton(m_addWorkflowButton,
@@ -4373,6 +4398,8 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     m_workflowDetailsCloseButton = new QPushButton(tr("Close"), m_workflowDetailsPanel);
     configureCompactButton(m_workflowDetailsCloseButton,
                            QStringLiteral(":/icons/icons/icons8-close-window.svg"));
+    // Close only hides the pane: the secondary tone, as every dialog's Close (review 3, F27).
+    m_workflowDetailsCloseButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_workflowDetailsCloseButton->setToolTip(tr("Hide workflow details panel"));
     setAccessible(m_workflowDetailsCloseButton, tr("Close"), tr("Hide workflow details"));
     connect(m_workflowDetailsCloseButton,
@@ -4708,7 +4735,7 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* action_row, QWidget
     action_row->addWidget(m_contextWindowLabel);
 
     m_sendButton = new QPushButton(tr("Send"), composer);
-    m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
+    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     m_sendButton->setMinimumHeight(sak::ui::kUiButtonHeightMini);
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -4964,7 +4991,8 @@ void AiAssistantPanel::updatePrimaryActionButton() {
 
     if (isAiBusy()) {
         m_sendButton->setText(tr("Stop"));
-        m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
+        m_sendButton->setIcon(
+            sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
         m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
         m_sendButton->setToolTip(tr("Stop the active AI request or running local command"));
         m_sendButton->setStyleSheet(sak::ui::kDangerButtonStyle);
@@ -4977,7 +5005,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
 
     const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
     m_sendButton->setText(tr("Send"));
-    m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
+    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     m_sendButton->setToolTip(tr("Send the message to the AI assistant"));
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);

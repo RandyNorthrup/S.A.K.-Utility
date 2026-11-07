@@ -30,6 +30,7 @@ class QShortcut;
 namespace sak {
 
 // Forward declarations for feature panels
+class ElidingLabel;
 class UserMigrationPanel;
 class OrganizerPanel;
 class PartitionManagerPanel;
@@ -335,7 +336,7 @@ private:
     QLabel* m_status_label{nullptr};
     QLabel* m_vulnerability_summary_label{nullptr};
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    QLabel* m_ai_status_label{nullptr};
+    ElidingLabel* m_ai_status_label{nullptr};
 #endif
     QWidget* m_elevation_label{nullptr};
     QPushButton* m_theme_button{nullptr};
