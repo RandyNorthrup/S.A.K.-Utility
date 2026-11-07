@@ -2063,10 +2063,12 @@ the loop and drill logs beside them, and the Debug (ASan) build in lane2's build
 
 From round 7's open list and the coordinator's calls on it, on dev at 9c218abf. Every fix has a test, and every
 test was drilled red with its fix broken in the source, one guard at a time, by a script that restores every
-byte and touches the file: 25 guards, the plural test by a planted "attachment(s)". Two survived their first run.
+byte and touches the file: 27 guards, the plural test by a planted "attachment(s)". Two survived their first run.
 Growing Resize/Move to its layout's height-for-width changed nothing a test sees, because the wrapped labels'
 minimum heights already make the window grow; it was removed. Putting back only Application Management's pale
-arrow left 51% of its ink at 3:1; putting back its whole old drawing went red (0%).
+arrow left 51% of its ink at 3:1; putting back its whole old drawing went red (0%). The last two guards came after
+review 4 (S25 below): putting back round 8's first thin-stroke drawing of Benchmark and Diagnostics, then of
+Backup and Restore, each went red.
 
 **Plurals (S24, app-wide).** 264 string literals in 57 files said "file(s)", "match(es)", "director(ies)" and
 the like, in the panels, the AI assistant's tool results, the actions' reports and the log; the app loads no
@@ -2123,17 +2125,31 @@ Restore are redrawn for the light theme in darker tones of their own colours; th
 stay holes (Application Management's tray is now open rather than pale), so the selected tabs look as before.
 Measured as the reviewer did, on review 3's light app_main_window (ink: pixels that differ from the #cfd8e3
 tab): Benchmark and Diagnostics median 1.17:1 with none of its ink at 3:1, Application Management 1.24:1 and
-none, Image Flasher 1.44:1 and none, Backup and Restore 1.55:1 and none. After, the test's reading of the 20 px
-icons on the light tab: 63%, 80%, 92% and 71% of their ink at 3:1; the review 4 pictures are measured below.
-tabIconsReadOnTheirTabsInBothThemes now holds these four in light too (half the ink at 3:1, under a fifth below
-1.5:1), as it held File Management and Email Tools.
+none, Image Flasher 1.44:1 and none, Backup and Restore 1.55:1 and none. After the first redraw, the test's
+reading of the 20 px icons on the light tab: 63%, 80%, 92% and 71% of their ink at 3:1, and
+tabIconsReadOnTheirTabsInBothThemes held these four in light too (half the ink at 3:1, under a fifth below
+1.5:1), as it held File Management and Email Tools. Review 4's light app_main_window on testpc1 read them the
+reviewer's way, every pixel an icon touches counted in full: Image Flasher median 3.53:1 with 81% at 3:1,
+Application Management 3.53:1 and 61%, but Benchmark and Diagnostics 2.80:1 and 38% and Backup and Restore 2.78:1
+and 47%. The test had weighed each pixel by its coverage, so a stroke a quarter of a pixel wide (the stethoscope's
+tube) or a 2 px ring anti-aliased in a 3.3:1 blue (the arrow) counted for little; read pixel by pixel offscreen,
+the two were 37% and 43%, as on the real tab. On the coordinator's call, a follow-up (46e51d00) gives the tube,
+the badge and the arrow strokes and darkens the blues and the gold, and the test now also reads the four by the
+reviewer's measure and wants more than half their pixels at 3:1 on the light tab: 62% and 65% offscreen. One
+light app_main_window taken on testpc1 from that commit's package (SHA-256 2AFCC9FD...5615), read the same way
+on the real tab: Benchmark and Diagnostics median 3.90:1 with 64% at 3:1, Backup and Restore 4.91:1 and 66%,
+Image Flasher and Application Management unchanged (3.53:1, 81% and 61%). All four now have a median of 3:1 or
+better.
 
-**RG2.** No code change: round 6 widened the Items pane to 480 px, and the sender column is re-measured in
-review 4's pictures on testpc1 (below).
+**RG2.** No code change: round 6 widened the Items pane to 480 px. In review 4's email_inspector_message and
+_headers on testpc1, in both themes, every sender in the Items pane reads whole at 1280x860 ("Marisol Quint",
+"Ines Caldera") and so does the From / Name header; the pane's horizontal bar is for the columns beyond it.
 
 **Before the push.** The suites these changes reach, then the T2 labels three times at -j 6 (334 tests each: the
 label pattern also took in the 21 tooling-extended and cert-tooling tests), all green, and the whole-tree static
-gates clean.
+gates clean. The commit hooks' cppcheck then asked for a const reference in the Wi-Fi test's helper; that test
+was rebuilt and rerun before the commit. T2 run 42395865259 on c759cba2 passed. For the S25 follow-up, the
+theme test, the labels once more at -j 6 (334, green), and T2 run 42403749219 on 46e51d00, which passed.
 
 **Not defects, and judgement calls.** The row-height fix is in placeCellWidgetsInWholeCells, so it reaches every
 table with cell widgets: Map Users, the Wi-Fi saved networks and Quick Partition's table (the AI context list is a
@@ -2148,12 +2164,58 @@ Found while measuring and not in the item list: in light, Help and Support's and
 discs (0 of their ink at 3:1 on the tab, read by the same test), and Partition Manager's has 40% at 3:1.
 
 **Still open.** Nothing from round 7's list is left in code; the pictures below judge N2, X4, Copy Disk, S25, F36
-and RG2.
+and RG2. Read pixel by pixel as the reviewer reads them, other light tab icons sit under half at 3:1: Email Tools
+43%, Network Management 42% and Partition Manager 35% offscreen, and Help and Support's and About's pale discs 0.
+None was in this round's list; the test reports them and holds only the four S25 redrew to the new measure.
 
 **What no test here covers.** The plural test reads literals; whether each reworded sentence reads well is
 review, not test (the suites' own assertions cover the messages they already pinned, now in both forms where one
 line added it). The Windows folder picker opening on This PC is a picture, not a test (Qt's own dialog cannot
 open a virtual folder). The S25 numbers above are offscreen at 20 px; the pictures are the real tab.
+
+**Review 4: pictures of what rounds 6, 7 and 8 changed, on testpc1.** From the Release package built at
+c759cba2 (SHA-256 38787171...CE28), installed by the capture harness, and the main worktree's sources at that
+commit for its label map. 95 wiki shots in both themes, 190 rows: 186 pictures (93 light, 93 dark), each passed
+through the harness's privacy gate and looked at by eye, in E:\SAK-Utility-Test-Scratch\capture\review4 with an
+index.json in review 3's form that names the item or items each picture proves. What the round 8 items show:
+bitlocker_output_folder and screenshot_settings_output (F23: a folder path wraps inside its word in the Details
+pane, no horizontal bar); bitlocker_folder_prompt (F36: the Windows picker opens on This PC, the drives side by
+side); net_wifi_qr_wizard, _qr_output and _batch_qr (X10: Cancel last, Browse secondary, one primary button) and
+app_mgmt_uninstall_batch (X10 and "2 programs"); partition_manager_move_dialog (X4: the two-line Support text
+whole, the window taller) beside _resize_dialog; partition_manager_copy_disk_review (Copy Disk: the 238 GB disk
+onto the 7.28 TB Seagate reads "Copy of Disk 1" then Unallocated); restore_wizard_map_users (N2: Segoe UI combos
+whole, "Merge" with its descender); email_inspector_message and _headers (RG2, above); app_main_window (S25,
+above); and plurals throughout ("Found 1 saved Wi-Fi profile.", "6 recoverable files found", "23 files, 7 file
+types", "3 drives available", "Step 2: Select Target Drives", "Writing to 1 drive...", "Select export
+formats:"). The other rows are the round 6 and 7 screens, each with its items in the index. Not captured, in
+either theme: app_mgmt_uninstall_leftovers (the shot really uninstalls Notepad++, whose own uninstaller asks
+questions only a person answers; at the 600 s wait the list still read "1 program"; review 3 could not capture
+it either) and restore_wizard_progress (a real restore applies network settings over the link the capture runs
+through). 64 rows ran testpc1 variants, kept in the round's scratch and named in each row: its own disk and folder
+names, "Windows (C:)" for the VM's "Local Disk (C:)" with SAK-Samples reached by type-ahead in a tree too long to
+show it, AnyDesk for the absent VLC in Batch Uninstall (Apple Software Update's version 2.7.0.3 read to the
+privacy gate as an address), a click and Home in the ISO dialog's Builds list for the operator's click, and
+pauses where a menu or the edition list was slower than the steps. One site shot file was edited, uncommitted, and
+recorded in shot_edits.json: help.json's wait for help_data_folder_error now reads "S.A.K. Utility: data folder",
+the title round 7 gave the box. The gate masked the real addresses and MACs (Network Adapters, both Ethernet
+pages), the saved network's SSID, Admin's profile path and the restore summary's computer name; link-local
+169.254 addresses and the disposable drives' serial numbers stay, as in review 3. Found while capturing, not
+defects of the app: the harness's 10-minute batch limit cut the first sample backup (Admin's 4.9 GB), so the
+runs took a longer limit; the Image Flasher's "Unmount drives on completion" ejects the stick's media, and Windows
+then lists it with no media and size 0, so a load-media request went to the pinned stick between flashes; on
+this stick Clear-Disk left an MBR disk, not RAW, so Quick Partition and Convert MBR/GPT show "Keep MBR" and "(now
+MBR)" where the VM showed a RAW disk; and the light run's Optimize Power left High performance, so the dark run's
+first try had nothing to switch, and Balanced was restored before its retry.
+
+**Left behind.** On testpc1: D: BENCH (32 GB NTFS) and Rig A on the disposable Seagate (E: SAMPLE, F: DONOR,
+BitLocker off again on F:); the console at 1024x768; Technician's apps and system theme dark; the Balanced power
+plan; C:\SakIso; C:\SAKCapture with its SAKCapture and SAKCaptureElevated tasks (its output folder emptied, and its
+package cache now holding the S25 check's package); C:\SAK, the harness's install of the 46e51d00 package from
+the S25 check; Notepad++, which the uninstall shots need; and the disposable USB DISK 3.0 stick holding the
+sample Alpine image the flasher shots wrote, its media loaded. Removed: the account Sam and its profile, the
+sample files and folders on C:, D: and E: (D:\SAK-Samples held the BitLocker key backup of the throwaway F: key,
+the sample backups and the Settings screenshots with the real SSID), C:\Program Files\SAK-Test, the round's job
+folder and job task. The capture VM was not used and its snapshot was not touched.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
