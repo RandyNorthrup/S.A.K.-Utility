@@ -30,7 +30,12 @@
 #include <QProgressBar>
 #include <QScrollArea>
 #include <QStandardPaths>
+#include <QUuid>
 #include <QVBoxLayout>
+
+#include <windows.h>
+
+#include <knownfolders.h>
 
 namespace sak {
 
@@ -291,17 +296,32 @@ void UserMigrationPanel::createQuickActions() {
     }
 }
 
+QUrl UserMigrationPanel::keyBackupStartFolder() {
+    // This PC (FOLDERID_ComputerFolder), the way Qt's Windows folder picker takes a virtual
+    // folder: the clsid scheme and the GUID without braces.
+    QUrl url;
+    url.setScheme(QStringLiteral("clsid"));
+    url.setPath(QUuid(FOLDERID_ComputerFolder).toString(QUuid::WithoutBraces));
+    return url;
+}
+
 QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_name) {
     if (action_name == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
-        // Recovery keys are asked a destination every time, with no starting folder: a folder on
-        // the system drive is usually on the very volume they unlock. The action refuses any
-        // folder on a BitLocker volume whose key it is backing up.
-        const QString destination = QFileDialog::getExistingDirectory(
-            this,
-            tr("Choose where to save the BitLocker recovery keys (use another drive; NTFS can "
-               "restrict who reads them)"),
-            QString(),
-            QFileDialog::ShowDirsOnly);
+        // Recovery keys are asked a destination every time. The picker opens on This PC, its
+        // drives side by side: a folder on the system drive is usually on the very volume the keys
+        // unlock, and the working folder showed the app's own Qt folders first (review 3, F36).
+        // The action refuses any folder on a BitLocker volume whose key it is backing up.
+        QFileDialog picker(this,
+                           tr("Choose where to save the BitLocker recovery keys (use another "
+                              "drive; NTFS can restrict who reads them)"));
+        picker.setFileMode(QFileDialog::Directory);
+        picker.setOption(QFileDialog::ShowDirsOnly, true);
+        // A folder on a disk, never a virtual one: only file: answers are taken.
+        picker.setSupportedSchemes({QStringLiteral("file")});
+        picker.setDirectoryUrl(keyBackupStartFolder());
+        const QString destination = picker.exec() == QDialog::Accepted
+                                        ? picker.selectedUrls().value(0).toLocalFile()
+                                        : QString();
         if (destination.isEmpty()) {
             appendLog(tr("BitLocker key backup cancelled: no destination was chosen"));
         }

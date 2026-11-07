@@ -14,6 +14,7 @@
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTextEdit>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -64,6 +65,10 @@ public:
 
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
+
+    /// Where the BitLocker key picker opens: This PC, as a clsid URL Qt's Windows folder picker
+    /// takes (review 3, F36).
+    [[nodiscard]] static QUrl keyBackupStartFolder();
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);

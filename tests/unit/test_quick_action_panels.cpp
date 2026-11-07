@@ -32,6 +32,8 @@
 #include <QThread>
 #include <QTimer>
 #include <QtTest/QtTest>
+#include <QUrl>
+#include <QUuid>
 
 #include <algorithm>
 #include <atomic>
@@ -157,6 +159,7 @@ private Q_SLOTS:
     void userMigrationBitLockerWithNoFolderRunsNothing();
     void userMigrationBitLockerWarningDefaultsToCancelAndCancelRunsNothing();
     void userMigrationBitLockerWarningAcceptedSaysSoToTheHelper();
+    void userMigrationBitLockerPickerStartsOnThisPc();
     void diagnosticsRunsEachMaintenanceActionThroughTheController();
     void diagnosticsVerifySystemFilesDeclinedRunsNothing();
     void diagnosticsInventoryReportSavesWhereTheUserChose();
@@ -429,6 +432,61 @@ void QuickActionPanelTests::userMigrationBitLockerWithNoFolderRunsNothing() {
     QVERIFY(m_system->elevatedTasks().isEmpty());
     QVERIFY(texts(log).contains(
         QStringLiteral("BitLocker key backup cancelled: no destination was chosen")));
+}
+
+namespace {
+/// Warnings Qt printed while a capture was installed.
+QStringList& capturedWarnings() {
+    static QStringList warnings;
+    return warnings;
+}
+
+void captureWarning(QtMsgType type, const QMessageLogContext&, const QString& message) {
+    if (type == QtWarningMsg) {
+        capturedWarnings().append(message);
+    }
+}
+}  // namespace
+
+// Review 3 (F36): the key picker opened in the working folder, C:\SAK when the app was started from
+// Explorer, and showed the app's own iconengines, imageformats and platforms folders first. A
+// folder on the system drive is usually on the very volume the keys unlock, so it opens on This PC.
+void QuickActionPanelTests::userMigrationBitLockerPickerStartsOnThisPc() {
+    // This PC's known folder ID, FOLDERID_ComputerFolder, in the form Qt's Windows picker reads.
+    const QUrl start = sak::UserMigrationPanel::keyBackupStartFolder();
+    QCOMPARE(start.scheme(), QStringLiteral("clsid"));
+    QCOMPARE(QUuid(start.path()), QUuid(QStringLiteral("{0AC0837C-BBF8-452A-850D-79D08E667CA7}")));
+
+    sak::QuickActionController controller;
+    QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
+    sak::UserMigrationPanel panel(controller);
+    QPushButton* button = buttonNamed(panel, QStringLiteral("BitLocker Key Backup"));
+    QVERIFY(button != nullptr);
+    bool asked = false;
+    QStringList schemes;
+    QFileDialog::FileMode mode = QFileDialog::AnyFile;
+    handleNextDialog([&](QWidget* modal) {
+        if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
+            asked = true;
+            schemes = dialog->supportedSchemes();
+            mode = dialog->fileMode();
+            dialog->reject();
+        }
+    });
+    capturedWarnings().clear();
+    const QtMessageHandler previous = qInstallMessageHandler(captureWarning);
+    button->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    qInstallMessageHandler(previous);
+    QVERIFY(asked);
+    QCOMPARE(mode, QFileDialog::Directory);
+    // A folder on a disk is the answer, never a virtual folder.
+    QCOMPARE(schemes, QStringList{QStringLiteral("file")});
+    // The picker was handed This PC. Qt's own dialog, which this test drives, opens only local
+    // folders and says so; the Windows picker the app uses opens This PC.
+    QVERIFY2(capturedWarnings().contains(
+                 QStringLiteral("Non-native QFileDialog supports only local files")),
+             qPrintable(capturedWarnings().join(u'\n')));
 }
 
 void QuickActionPanelTests::diagnosticsRunsEachMaintenanceActionThroughTheController() {
