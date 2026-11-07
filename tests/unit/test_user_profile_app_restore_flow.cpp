@@ -167,6 +167,7 @@ private Q_SLOTS:
     void customFolderMustBeInsideTheProfile();
     void executePageRunsWhatTheWizardChose();
     void executePageShowsWhatWentWrong();
+    void restorePageTellsFinishedWithProblemsFromStopped();
     void wholeRestoreWizardRunsOnARealBackup();
     void backupWizardWalksToItsLastPage();
     void aFinishedBackupStopsItsBars();
@@ -944,6 +945,37 @@ void UserProfileAppRestoreFlowTests::executePageShowsWhatWentWrong() {
              QStringLiteral("Backup finished, but not everything was copied."));
     page.onBackupComplete(true, QStringLiteral("Backup complete!\nFiles copied: 3"));
     QCOMPARE(page.m_statusLabel->text(), QStringLiteral("Backup completed successfully!"));
+}
+
+// Review 3: every file came back and one netsh call failed, and the page said "Restore failed",
+// "Restore Stopped" and "The restore did not finish." A restore that ran every step finished, with
+// what it could not do named; only one that stopped part way says it stopped.
+void UserProfileAppRestoreFlowTests::restorePageTellsFinishedWithProblemsFromStopped() {
+    sak::UserProfileRestoreExecutePage finished;
+    finished.onRestoreRanToEnd(0, 1);
+    finished.onRestoreComplete(
+        false,
+        QStringLiteral("Restore finished, but not everything was restored.\nFiles restored: 1198"));
+    QCOMPARE(finished.title(), QStringLiteral("Restore Finished with Problems"));
+    QCOMPARE(finished.subTitle(),
+             QStringLiteral("The restore finished, but not everything was restored."));
+    QCOMPARE(finished.m_statusLabel->text(),
+             QStringLiteral("Restore finished with problems: 1 network setting was not applied"));
+    QCOMPARE(finished.m_currentOperationLabel->text(), QStringLiteral("Current: done"));
+    QCOMPARE(finished.m_overallProgressBar->value(), finished.m_overallProgressBar->maximum());
+
+    sak::UserProfileRestoreExecutePage both;
+    both.onRestoreRanToEnd(3, 2);
+    both.onRestoreComplete(false, QString());
+    QCOMPARE(both.m_statusLabel->text(),
+             QStringLiteral("Restore finished with problems: 3 files or folders could not be "
+                            "restored; 2 network settings were not applied"));
+
+    sak::UserProfileRestoreExecutePage stopped;
+    stopped.onRestoreComplete(false, QStringLiteral("Restore cancelled"));
+    QCOMPARE(stopped.title(), QStringLiteral("Restore Stopped"));
+    QCOMPARE(stopped.subTitle(), QStringLiteral("The restore did not finish."));
+    QCOMPARE(stopped.m_statusLabel->text(), QStringLiteral("Restore failed"));
 }
 
 // The Select Folders crash sat on the only route through this wizard and no test walked it. Every

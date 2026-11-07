@@ -16,11 +16,13 @@
  *   - Tests run without admin privileges.
  */
 
+#include "sak/process_runner.h"
 #include "sak/user_profile_progress.h"
 #include "sak/user_profile_restore_worker.h"
 #include "sak/user_profile_types.h"
 
 #include <QDir>
+#include <QMutex>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -191,6 +193,9 @@ private Q_SLOTS:
     void appDataUnrelatedPathNotExcluded();
     void system32NetshResolvesUnderSystemRoot();
     void system32NetshEmptyWhenNoSystemRoot();
+
+    // ---- Network settings are a step of their own ----
+    void networkSettingsAreTheirOwnStep();
 };
 
 // ===========================================================================
@@ -669,8 +674,8 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     QVERIFY2(foundWarning, "Expected warning about source user not in manifest");
     // The failure is COUNTED, so the summary reports the error rather than a clean zero-file run.
     QCOMPARE(completeSpy.first().at(1).toString(),
-             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
-                            "1\nTotal size: 0.0 MB"));
+             QStringLiteral("Restore finished, but not everything was restored.\nFiles restored: "
+                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0.0 MB"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1536,8 +1541,8 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
     QVERIFY(!QDir(destDir.path() + "/Users/MfsUser/Documents").exists());
     // Counted as an error, so the summary reports it rather than a clean empty run.
     QCOMPARE(completeSpy.first().at(1).toString(),
-             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
-                            "1\nTotal size: 0.0 MB"));
+             QStringLiteral("Restore finished, but not everything was restored.\nFiles restored: "
+                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0.0 MB"));
 }
 
 // ===========================================================================
@@ -1680,6 +1685,112 @@ void UserProfileRestoreWorkerTests::system32NetshEmptyWhenNoSystemRoot() {
     }
     // Fail closed: no guessed path when %SystemRoot% is unavailable.
     QVERIFY(netsh.isEmpty());
+}
+
+
+// A static Ethernet setting as a backup records one.
+sak::EthernetConfigInfo staticTestNic() {
+    sak::EthernetConfigInfo nic;
+    nic.adapter_name = QStringLiteral("SakTestNic");
+    nic.dhcp_enabled = false;
+    nic.ip_address = QStringLiteral("10.0.2.15");
+    nic.subnet_mask = QStringLiteral("255.255.255.0");
+    nic.default_gateway = QStringLiteral("10.0.2.2");
+    nic.selected = true;
+    return nic;
+}
+
+// What netsh answers: success, or its own words on standard output with exit code 1.
+sak::ProcessResult netshAnswer(bool works) {
+    sak::ProcessResult result;
+    result.exit_status = 0;
+    result.exit_code = works ? 0 : 1;
+    if (!works) {
+        result.std_out = QStringLiteral("The object already exists.\r\n\r\n");
+    }
+    return result;
+}
+
+QString loggedLines(const QSignalSpy& log_spy) {
+    QStringList lines;
+    for (const auto& args : log_spy) {
+        lines.append(args.at(0).toString());
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+// Review 3: a restore that brought back every file read "Restore failed" for one netsh call. The
+// summary counted that call as a file error ("Errors: 1") and the log left out what netsh said,
+// which it writes to standard output. A network setting is now its own line in the summary, the
+// worker says it ran to the end, and netsh's words reach the log.
+void UserProfileRestoreWorkerTests::networkSettingsAreTheirOwnStep() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    writeFile(backupDir.path() + "/manifest.json", "{}");
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+    const sak::BackupManifest manifest = buildManifest(QStringLiteral("User1"), {});
+
+    const sak::EthernetConfigInfo nic = staticTestNic();
+
+    for (const bool netsh_works : {false, true}) {
+        QMutex guard;
+        QStringList launched;
+        // No netsh runs: every launch is answered here.
+        sak::ScopedProcessFaultInjector fake(
+            [&guard, &launched, netsh_works](const QString& program, const QStringList& args)
+                -> std::optional<sak::ProcessResult> {
+                const QMutexLocker lock(&guard);
+                launched.append(QFileInfo(program).fileName() + QLatin1Char(' ') +
+                                args.join(QLatin1Char(' ')));
+                return netshAnswer(netsh_works);
+            });
+        sak::UserProfileRestoreWorker worker;
+        QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+        QSignalSpy ranSpy(&worker, &sak::UserProfileRestoreWorker::restoreRanToEnd);
+        QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
+        QVERIFY(worker.startRestore(backupDir.path(),
+                                    manifest,
+                                    {},
+                                    {sak::ConflictResolution::SkipDuplicate,
+                                     sak::PermissionMode::PreserveOriginal,
+                                     false,
+                                     false,
+                                     {}},
+                                    {{}, {nic}, {}, {}}));
+        QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 10'000);
+        QVERIFY(worker.wait(5000));
+        {
+            const QMutexLocker lock(&guard);
+            QCOMPARE(launched.size(), 1);
+            QVERIFY2(launched.first().startsWith(
+                         QStringLiteral("netsh.exe interface ip set address")),
+                     qPrintable(launched.first()));
+        }
+        const QString summary = completeSpy.first().at(1).toString();
+        QCOMPARE(ranSpy.count(), 1);
+        QCOMPARE(ranSpy.first().at(0).toInt(), 0);
+        QVERIFY2(summary.contains(QStringLiteral("\nErrors: 0\n")), qPrintable(summary));
+        if (netsh_works) {
+            QCOMPARE(completeSpy.first().at(0).toBool(), true);
+            QCOMPARE(ranSpy.first().at(1).toInt(), 0);
+            QVERIFY2(summary.contains(QStringLiteral("Network settings applied: 1 of 1")),
+                     qPrintable(summary));
+            QVERIFY(!summary.contains(QStringLiteral("Not applied:")));
+        } else {
+            QCOMPARE(completeSpy.first().at(0).toBool(), false);
+            QCOMPARE(ranSpy.first().at(1).toInt(), 1);
+            QVERIFY2(summary.contains(QStringLiteral("Network settings applied: 0 of 1")),
+                     qPrintable(summary));
+            QVERIFY2(summary.contains(
+                         QStringLiteral("Not applied: Ethernet settings for 'SakTestNic'")),
+                     qPrintable(summary));
+            const QString joined = loggedLines(logSpy);
+            QVERIFY2(joined.contains(QStringLiteral("(exit code 1): The object already exists.")),
+                     qPrintable(joined));
+        }
+    }
 }
 
 QTEST_MAIN(UserProfileRestoreWorkerTests)

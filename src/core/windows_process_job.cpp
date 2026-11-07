@@ -331,6 +331,58 @@ std::expected<WindowsJobAccounting, QString> WindowsProcessJob::accounting() con
                                 .active_processes = accounting.ActiveProcesses};
 }
 
+std::expected<QStringList, QString> WindowsProcessJob::memberImagePaths() const {
+    if (m_job == nullptr) {
+        return std::unexpected(QStringLiteral("Windows process Job is closed"));
+    }
+    // Room for every process a ProcessRunner family has been seen to hold, and more; a family too
+    // large for it answers ERROR_MORE_DATA and is reported, never read as a short list.
+    constexpr DWORD kMaxListedMembers = 256;
+    constexpr std::size_t kMaxImagePathChars = 1024;
+    std::vector<std::byte> storage(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) +
+                                   (kMaxListedMembers * sizeof(ULONG_PTR)));
+    auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());
+    if (m_api.query_information(m_job,
+                                JobObjectBasicProcessIdList,
+                                list,
+                                static_cast<DWORD>(storage.size()),
+                                nullptr) == FALSE) {
+        const DWORD error = m_api.last_error();
+        return std::unexpected(
+            nativeFailure(QStringLiteral("List Windows process Job members"), error));
+    }
+    QStringList paths;
+    for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i) {
+        const auto pid = static_cast<DWORD>(list->ProcessIdList[i]);
+        const HANDLE process =
+            ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
+        if (process == nullptr) {
+            if (::GetLastError() == ERROR_INVALID_PARAMETER) {
+                continue;  // it exited between the list and the open: no longer a member
+            }
+            paths.append(QString());
+            continue;
+        }
+        // Exited, and still listed while Windows tears it down. Such a process can have its exit
+        // code and time set and not yet be signaled, and then refuses its image name (measured
+        // here: exit code 0, WAIT_TIMEOUT, ERROR_ACCESS_DENIED); it is no longer a member.
+        DWORD exit_code = STILL_ACTIVE;
+        if (::WaitForSingleObject(process, 0) == WAIT_OBJECT_0 ||
+            (::GetExitCodeProcess(process, &exit_code) != FALSE && exit_code != STILL_ACTIVE)) {
+            ::CloseHandle(process);
+            continue;
+        }
+        std::array<wchar_t, kMaxImagePathChars> buffer{};
+        auto length = static_cast<DWORD>(buffer.size());
+        const bool named = ::QueryFullProcessImageNameW(process, 0, buffer.data(), &length) !=
+                           FALSE;
+        ::CloseHandle(process);
+        paths.append(named ? QString::fromWCharArray(buffer.data(), static_cast<int>(length))
+                           : QString());
+    }
+    return paths;
+}
+
 std::expected<void, QString> WindowsProcessJob::terminate() {
     if (m_job == nullptr) {
         return std::unexpected(QStringLiteral("Windows process Job is closed"));

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/process_runner_containment.h"
 #include "sak/windows_process_job.h"
 
 #include "../support/ai_mcp_native_fixture.h"
@@ -1002,6 +1003,13 @@ void WindowsProcessJobTests::startupDescendantSurvivesPrimaryUntilTermination() 
     // Total is cumulative; additional console hosts are not fixed-lifetime test participants.
     QVERIFY(count->total_processes >= initial->total_processes);
     QVERIFY(count->active_processes >= 1);
+    // The primary has exited and is not listed; the live descendant is, by its image, so a
+    // family that leaves a real child is never read as one that left only its console host.
+    const auto members = job.memberImagePaths();
+    QVERIFY2(members.has_value(), qPrintable(failureDiagnostic(members)));
+    QVERIFY(!members->isEmpty());
+    QVERIFY2(!members->contains(QString()), qPrintable(members->join(QLatin1Char('|'))));
+    QVERIFY2(!sak::onlyConsoleHostsRemain(*members), qPrintable(members->join(QLatin1Char('|'))));
     QVERIFY(!job.closeEmpty());
     QVERIFY(job.terminate().has_value());
     // Keep the independent generation handle open while Job accounting reaches zero.

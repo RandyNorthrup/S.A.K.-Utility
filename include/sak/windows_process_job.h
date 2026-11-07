@@ -12,6 +12,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 
 #include <array>
 #include <cstddef>
@@ -69,6 +70,11 @@ public:
                                                               bool started);
 
     [[nodiscard]] std::expected<WindowsJobAccounting, QString> accounting() const;
+
+    /// The full image path of each process still in the Job. A member that exits while it is
+    /// being read is left out; one whose image cannot be read for another reason is listed with
+    /// an empty path, so a caller can never mistake it for a process it recognises.
+    [[nodiscard]] std::expected<QStringList, QString> memberImagePaths() const;
 
     /// Requests termination for every Job member. Completion must be observed separately.
     [[nodiscard]] std::expected<void, QString> terminate();

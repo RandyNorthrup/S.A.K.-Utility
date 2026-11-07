@@ -84,6 +84,19 @@ std::optional<bool> adapterDhcpEnabled(const QString& adapterName) {
     return std::nullopt;
 }
 
+// What netsh said about a failed run. netsh writes its own errors to standard output, so a log of
+// standard error alone said only that it failed, or, once the run's family was judged, why that
+// was.
+QString netshSaid(const ProcessResult& result) {
+    QStringList said;
+    for (const QString& stream : {result.std_out.simplified(), result.std_err.simplified()}) {
+        if (!stream.isEmpty()) {
+            said.append(stream);
+        }
+    }
+    return said.isEmpty() ? QObject::tr("netsh gave no reason") : said.join(QLatin1Char(' '));
+}
+
 bool buildSafePath(const QString& basePath, const QString& relativePath, QString& outPath) {
     // This is the containment guard for every restore path, so an empty input is
     // REJECTED rather than asserted. An assert would abort a Debug build and
@@ -343,6 +356,8 @@ bool UserProfileRestoreWorker::startRestore(const QString& backupPath,
             m_filesRestored = 0;
             m_filesSkipped = 0;
             m_filesErrored = 0;
+            m_networkApplied = 0;
+            m_networkNotApplied.clear();
             m_lastProgressFileCount = 0;
             m_lastProgressByteCount = 0;
 
@@ -382,17 +397,32 @@ bool UserProfileRestoreWorker::consumeConfiguredArm() {
 // errored (a copy/mkpath/remove failure or a refused reparse point) AND the run was not
 // cancelled; a partial or cancelled restore must not read as clean success.
 void UserProfileRestoreWorker::emitRestoreSummary() {
-    const QString summary =
-        tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
-           "%3\nTotal size: %4 MB")
-            .arg(m_filesRestored)
-            .arg(m_filesSkipped)
-            .arg(m_filesErrored)
-            .arg(static_cast<double>(m_bytesRestored) / sak::kBytesPerMBf, 0, 'f', 1);
+    const bool success = (m_filesErrored == 0) && m_networkNotApplied.isEmpty() && !m_cancelled;
+    // One verdict, the page's: a run with an error is not "complete!" (review 3 printed that above
+    // "Errors: 1" and "[ERROR] Restore failed").
+    QString summary = (success ? tr("Restore complete!")
+                               : tr("Restore finished, but not everything was restored.")) +
+                      tr("\nFiles restored: %1\nFiles skipped: %2\nErrors: %3\nTotal size: %4 MB")
+                          .arg(m_filesRestored)
+                          .arg(m_filesSkipped)
+                          .arg(m_filesErrored)
+                          .arg(static_cast<double>(m_bytesRestored) / sak::kBytesPerMBf, 0, 'f', 1);
+    // Each step says how it went: a network setting that was not applied is not a file error.
+    const auto network_selected = m_networkApplied + m_networkNotApplied.size();
+    if (network_selected > 0) {
+        summary +=
+            tr("\nNetwork settings applied: %1 of %2").arg(m_networkApplied).arg(network_selected);
+        if (!m_networkNotApplied.isEmpty()) {
+            summary += tr("\nNot applied: %1").arg(m_networkNotApplied.join(QStringLiteral(", ")));
+        }
+    }
 
-    Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
+    Q_EMIT logMessage(success ? tr("=== Restore Complete ===") : tr("=== Restore Finished ==="),
+                      false);
     Q_EMIT logMessage(summary, false);
-    const bool success = (m_filesErrored == 0) && !m_cancelled;
+    if (!m_cancelled) {
+        Q_EMIT restoreRanToEnd(m_filesErrored, static_cast<int>(m_networkNotApplied.size()));
+    }
     Q_EMIT restoreComplete(success, summary);
 }
 
@@ -1353,7 +1383,7 @@ bool UserProfileRestoreWorker::restoreWifiProfile(const WifiProfileInfo& profile
                                             [this] { return m_cancelled.load(); });
     if (!result.completedSuccessfully()) {
         Q_EMIT logMessage(tr("netsh wlan add profile failed for '%1': %2")
-                              .arg(profile.profile_name, result.std_err.trimmed()),
+                              .arg(profile.profile_name, netshSaid(result)),
                           true);
         return false;
     }
@@ -1366,8 +1396,12 @@ bool UserProfileRestoreWorker::runNetshLogged(const QString& netsh,
     const ProcessResult r =
         runProcess(netsh, args, kNetshTimeoutMs, [this] { return m_cancelled.load(); });
     if (!r.completedSuccessfully()) {
-        Q_EMIT logMessage(tr("netsh %1 failed for adapter '%2': %3")
-                              .arg(args.join(QLatin1Char(' ')), adapter, r.std_err.trimmed()),
+        // One arg() call: a "%" in what netsh printed must not be read as a placeholder.
+        Q_EMIT logMessage(tr("netsh %1 failed for adapter '%2' (exit code %3): %4")
+                              .arg(args.join(QLatin1Char(' ')),
+                                   adapter,
+                                   QString::number(r.exit_code),
+                                   netshSaid(r)),
                           true);
     }
     return r.completedSuccessfully();
@@ -1498,9 +1532,11 @@ void UserProfileRestoreWorker::applyWifiProfiles() {
         }
         Q_EMIT statusUpdate(profile.profile_name, tr("Restoring WiFi profile..."));
         if (restoreWifiProfile(profile)) {
+            ++m_networkApplied;
             Q_EMIT logMessage(tr("Restored WiFi profile: %1").arg(profile.profile_name), false);
         } else {
-            m_filesErrored++;  // A selected item that could not be applied fails the result.
+            // A selected item that could not be applied fails the result.
+            m_networkNotApplied.append(tr("Wi-Fi profile '%1'").arg(profile.profile_name));
         }
     }
 }
@@ -1515,10 +1551,11 @@ void UserProfileRestoreWorker::applyEthernetConfigs() {
         }
         Q_EMIT statusUpdate(config.adapter_name, tr("Restoring Ethernet configuration..."));
         if (restoreEthernetConfig(config)) {
+            ++m_networkApplied;
             Q_EMIT logMessage(tr("Restored Ethernet configuration: %1").arg(config.adapter_name),
                               false);
         } else {
-            m_filesErrored++;
+            m_networkNotApplied.append(tr("Ethernet settings for '%1'").arg(config.adapter_name));
         }
     }
 }

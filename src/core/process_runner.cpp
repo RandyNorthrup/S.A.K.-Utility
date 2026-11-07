@@ -191,11 +191,23 @@ std::expected<DescendantOutcome, QString> settleContainedDescendants(WindowsProc
     if (*settled) {
         return DescendantOutcome::Finished;
     }
+    // Read before the stop: what is left decides whether anything of the program's was cut short.
+    // A list that cannot be read proves nothing, so the run is judged as before: descendants
+    // remained.
+    const auto remaining = job.memberImagePaths();
+    if (!remaining) {
+        logWarning("Could not list the processes left in a run's Job: {}",
+                   remaining.error().toStdString());
+    }
     const auto terminated = terminateActiveMembers(job);
     if (!terminated) {
         return std::unexpected(terminated.error());
     }
-    return cancelled ? DescendantOutcome::Cancelled : DescendantOutcome::Stopped;
+    if (cancelled) {
+        return DescendantOutcome::Cancelled;
+    }
+    return remaining && onlyConsoleHostsRemain(*remaining) ? DescendantOutcome::Finished
+                                                           : DescendantOutcome::Stopped;
 }
 
 std::expected<void, QString> waitForPrimaryExit(QProcess* proc, const QDeadlineTimer& deadline) {
@@ -486,6 +498,19 @@ std::optional<bool> settleContainedProcessRun(ContainedProcessRun& run,
         QStringLiteral("Contained process cleanup could not be proved: %1").arg(finished.error()));
     retainUnprovenRun(run, finished.error());
     return std::nullopt;
+}
+
+bool onlyConsoleHostsRemain(const QStringList& member_images) {
+    const QString console_host =
+        QDir::fromNativeSeparators(system32Path(QStringLiteral("conhost.exe")));
+    if (member_images.isEmpty() || console_host.isEmpty()) {
+        return false;
+    }
+    return std::all_of(
+        member_images.cbegin(), member_images.cend(), [&console_host](const QString& image) {
+            return !image.isEmpty() && QDir::fromNativeSeparators(QDir::cleanPath(image))
+                                               .compare(console_host, Qt::CaseInsensitive) == 0;
+        });
 }
 
 bool appendCappedOutput(QString& target, const QString& chunk, qsizetype cap) {

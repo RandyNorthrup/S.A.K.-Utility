@@ -180,6 +180,14 @@ Q_SIGNALS:
      */
     void restoreComplete(bool success, const QString& message);
 
+    /**
+     * @brief The restore ran through every step, emitted just before restoreComplete. Not emitted
+     *        for a restore that stopped (cancelled, or a backup that could not be read).
+     * @param files_errored Files and folders that could not be restored
+     * @param network_not_applied Selected Wi-Fi profiles and Ethernet settings not applied
+     */
+    void restoreRanToEnd(int files_errored, int network_not_applied);
+
 protected:
     void run() override;
 
@@ -353,6 +361,9 @@ private:
     int m_filesRestored{0};
     int m_filesSkipped{0};
     int m_filesErrored{0};
+    // Network settings are their own step: a profile or adapter not applied is not a file error.
+    int m_networkApplied{0};
+    QStringList m_networkNotApplied;
     // Progress-throttle watermarks as members, not function-static locals, so two
     // restore instances never share/race the throttle state (B7-34).
     int m_lastProgressFileCount{0};

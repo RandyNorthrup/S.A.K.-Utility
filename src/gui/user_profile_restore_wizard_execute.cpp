@@ -143,6 +143,9 @@ void UserProfileRestoreExecutePage::initializePage() {
     }
     // Reset state
     m_restoreSuccess = false;
+    m_restoreRanToEnd = false;
+    m_filesErrored = 0;
+    m_networkNotApplied = 0;
     m_lastProcessedBytes = 0;
     m_overallProgressBar->setRange(0, 0);
     m_overallProgressBar->setFormat(tr("Waiting for restore size..."));
@@ -228,6 +231,10 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
             this,
             &UserProfileRestoreExecutePage::onLogMessage);
     connect(worker,
+            &UserProfileRestoreWorker::restoreRanToEnd,
+            this,
+            &UserProfileRestoreExecutePage::onRestoreRanToEnd);
+    connect(worker,
             &UserProfileRestoreWorker::restoreComplete,
             this,
             [this, worker](bool success, const QString& message) {
@@ -281,6 +288,64 @@ void UserProfileRestoreExecutePage::onLogMessage(const QString& message, bool is
     m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
 }
 
+void UserProfileRestoreExecutePage::onRestoreRanToEnd(int files_errored, int network_not_applied) {
+    m_restoreRanToEnd = true;
+    m_filesErrored = files_errored;
+    m_networkNotApplied = network_not_applied;
+}
+
+namespace {
+
+/// What a restore that ran to its end could not do, for its status line.
+QString restoreProblemsText(int files_errored, int network_not_applied) {
+    QStringList parts;
+    if (files_errored == 1) {
+        parts.append(QObject::tr("1 file or folder could not be restored"));
+    } else if (files_errored > 1) {
+        parts.append(QObject::tr("%1 files or folders could not be restored").arg(files_errored));
+    }
+    if (network_not_applied == 1) {
+        parts.append(QObject::tr("1 network setting was not applied"));
+    } else if (network_not_applied > 1) {
+        parts.append(QObject::tr("%1 network settings were not applied").arg(network_not_applied));
+    }
+    return parts.join(QStringLiteral("; "));
+}
+
+}  // namespace
+
+namespace {
+
+/// What the page says for a restore that ran every step, with problems or without.
+struct FinishedVerdict {
+    QString title;
+    QString subtitle;
+    QString status;
+    QString overall_format;
+    QString log_line;
+};
+
+FinishedVerdict finishedVerdict(bool success, int files_errored, int network_not_applied) {
+    if (success) {
+        return {.title = QObject::tr("Restore Complete"),
+                .subtitle = QObject::tr("The restore finished."),
+                .status = QObject::tr("Restore completed successfully!"),
+                .overall_format = QObject::tr("Restore complete - %1 processed"),
+                .log_line = QObject::tr("[INFO] Restore completed successfully")};
+    }
+    // Ran every step. With problems it is still finished, not stopped: the files it restored are
+    // there, and the summary above names what was not done.
+    return {.title = QObject::tr("Restore Finished with Problems"),
+            .subtitle = QObject::tr("The restore finished, but not everything was restored."),
+            .status = QObject::tr("Restore finished with problems: %1")
+                          .arg(restoreProblemsText(files_errored, network_not_applied)),
+            .overall_format = QObject::tr("Finished with problems - %1 processed"),
+            .log_line = QObject::tr(
+                "[WARNING] Restore finished with problems; the warnings above name each one")};
+}
+
+}  // namespace
+
 void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QString& /*summary*/) {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_logText);
@@ -290,19 +355,23 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
     // Nothing is running now, so no bar may still be moving or stopped part way. The worker has
     // logged its own summary; this adds only the verdict.
     m_currentProgressBar->setRange(0, kPercentMax);
-    if (success) {
-        setSubTitle(tr("The restore finished."));
-        m_statusLabel->setText(tr("Restore completed successfully!"));
+    if (success || m_restoreRanToEnd) {
+        const FinishedVerdict verdict =
+            finishedVerdict(success, m_filesErrored, m_networkNotApplied);
+        setTitle(verdict.title);
+        setSubTitle(verdict.subtitle);
+        m_statusLabel->setText(verdict.status);
         m_overallProgressBar->setRange(0, kPercentMax);
         m_overallProgressBar->setValue(kPercentMax);
         m_overallProgressBar->setFormat(
-            tr("Restore complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
+            verdict.overall_format.arg(formatBytes(m_lastProcessedBytes)));
         m_overallProgressBar->setAccessibleDescription(m_overallProgressBar->format());
         m_currentProgressBar->setValue(kPercentMax);
         m_currentProgressBar->setFormat(tr("Done"));
         m_currentOperationLabel->setText(tr("Current: done"));
-        m_logText->append(tr("[INFO] Restore completed successfully"));
+        m_logText->append(verdict.log_line);
     } else {
+        setTitle(tr("Restore Stopped"));
         setSubTitle(tr("The restore did not finish."));
         m_statusLabel->setText(tr("Restore failed"));
         m_overallProgressBar->setRange(0, kPercentMax);
@@ -314,7 +383,6 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
     }
 
     // The header and the wizard's own Cancel said the restore was still running after it ended.
-    setTitle(success ? tr("Restore Complete") : tr("Restore Stopped"));
     m_cancelButton->setEnabled(false);
     if (wizard() != nullptr && wizard()->button(QWizard::CancelButton) != nullptr) {
         wizard()->button(QWizard::CancelButton)->setEnabled(false);

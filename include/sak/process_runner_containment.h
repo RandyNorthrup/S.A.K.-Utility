@@ -7,6 +7,7 @@
 #include "sak/windows_process_job.h"
 
 #include <QProcess>
+#include <QStringList>
 
 #include <memory>
 #include <optional>
@@ -20,6 +21,16 @@ struct ContainedProcessRun {
     std::unique_ptr<QProcess> process;
     std::unique_ptr<WindowsProcessJob> job;
 };
+
+/// True when every process in @p member_images is a console host Windows started for the family
+/// (%SystemRoot%\System32\conhost.exe), and there is at least one. A console program started
+/// without a console -- every one QProcess starts from this GUI application -- gets a conhost.exe
+/// of its own in its Job. It exits once its last client has, which takes milliseconds on a PC at
+/// rest (5 to 20 ms on testpc1, netsh included) but can run past the 1 s grace on a loaded one,
+/// and that read as "descendants remained" and failed a netsh call whose work was done. A console
+/// host does none of the program's work, so it is stopped like any leftover and the run is
+/// judged on the program alone. An unreadable image (empty path) is not a console host.
+[[nodiscard]] bool onlyConsoleHostsRemain(const QStringList& member_images);
 
 /// Settles @p run: optionally terminates the family (@p terminate_now), waits for the primary and
 /// every descendant to leave the Job within kTimeoutProcessTerminateMs, and closes the empty Job.

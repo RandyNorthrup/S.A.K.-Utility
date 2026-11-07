@@ -37,6 +37,7 @@ private Q_SLOTS:
     void runProcess_timeout();
     void runProcess_timeoutKillsChildTree();
     void runProcess_primaryExitWithLiveDescendantFailsAndCleansJob();
+    void onlyConsoleHostsRemain_judgesTheProgramAlone();
     void runProcess_startedCallbackExceptionStillCleansJob();
     void runProcess_outputCallbackExceptionStillCleansJob();
     void runProcess_cancellation();
@@ -277,6 +278,22 @@ void ProcessRunnerTests::runProcess_primaryExitWithLiveDescendantFailsAndCleansJ
     const auto stopped = child_generation->waitForExit();
     QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
     QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+// A console program QProcess starts from the GUI gets a conhost.exe of its own in its Job, and on a
+// loaded PC that host can outlive the 1 s grace. It does none of the program's work: a family with
+// nothing else left is not one whose descendants remained (review 3: a restore's netsh failed that
+// way, though the adapter ended as it was asked to be). Anything else left still is.
+void ProcessRunnerTests::onlyConsoleHostsRemain_judgesTheProgramAlone() {
+    const QString console_host = sak::system32Path(QStringLiteral("conhost.exe"));
+    QVERIFY(!console_host.isEmpty());
+    const QString native = QDir::toNativeSeparators(console_host);
+    QVERIFY(sak::onlyConsoleHostsRemain({native}));
+    QVERIFY(sak::onlyConsoleHostsRemain({native.toUpper(), console_host}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({native, sak::systemPowerShellPath()}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({QStringLiteral("C:/Temp/conhost.exe")}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({native, QString()}));
 }
 
 // An NSIS uninstaller copies itself to %TEMP%, relaunches and exits at once; the run used to stop

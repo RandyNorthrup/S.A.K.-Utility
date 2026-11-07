@@ -382,6 +382,11 @@ private:
     QPointer<UserProfileRestoreWorker> m_worker;
     bool m_restoreComplete;
     bool m_restoreSuccess;
+    // Set when the worker ran every step: a restore that finished with problems is not one that
+    // stopped, and the page said "Restore failed" and "did not finish" for both.
+    bool m_restoreRanToEnd{false};
+    int m_filesErrored{0};
+    int m_networkNotApplied{0};
     qint64 m_lastProcessedBytes{0};
 
 private Q_SLOTS:
@@ -394,6 +399,7 @@ private Q_SLOTS:
     void onFileProgress(int current, int total);
     void onStatusUpdate(const QString& username, const QString& operation);
     void onLogMessage(const QString& message, bool is_warning);
+    void onRestoreRanToEnd(int files_errored, int network_not_applied);
     void onRestoreComplete(bool success, const QString& message);
     void onViewLog();
 };
