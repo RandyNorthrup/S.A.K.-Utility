@@ -4,6 +4,7 @@
 /// @file test_advanced_uninstall_panel.cpp
 /// @brief A program's install-folder size is measured on demand, off the GUI thread, and cached.
 
+#include "sak/advanced_uninstall_controller.h"
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/advanced_uninstall_types.h"
 #include "sak/style_constants.h"
@@ -58,7 +59,43 @@ private Q_SLOTS:
     void aRegistryKeyIsShownWholeOnOneLine();
     void theUninstallConfirmationMatchesTheOtherUninstalls();
     void theNameColoursHaveAKey();
+    void theBatchDialogHasOneStrongButtonAndCountsItsPrograms();
 };
+
+// Review 3 (X10): Remove Selected and Clear Queue were primary blue beside the danger-toned Start
+// Batch Uninstall. They edit the queue, so they are secondary. The header said "1 programs".
+void AdvancedUninstallPanelTests::theBatchDialogHasOneStrongButtonAndCountsItsPrograms() {
+    sak::AdvancedUninstallPanel panel;
+    sak::ProgramInfo program;
+    program.displayName = QStringLiteral("7-Zip 26.05 (x64)");
+    program.registryKeyPath = QStringLiteral("HKLM/Uninstall/7-Zip");
+    QVERIFY(panel.m_controller->addToQueue(
+        program, panel.m_controller->defaultScanLevel(), panel.m_controller->autoCleanSafe()));
+    QHash<QString, QString> styles;
+    QStringList labels;
+    bool seen = false;
+    QTimer::singleShot(0, &panel, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+            return;
+        }
+        seen = true;
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            styles.insert(button->text(), button->styleSheet());
+        }
+        for (auto* label : dialog->findChildren<QLabel*>()) {
+            labels.append(label->text());
+        }
+        dialog->reject();
+    });
+    panel.showBatchUninstallDialog();
+    QVERIFY(seen);
+    QCOMPARE(styles.value(QStringLiteral("Remove Selected")), sak::ui::kSecondaryButtonStyle);
+    QCOMPARE(styles.value(QStringLiteral("Clear Queue")), sak::ui::kSecondaryButtonStyle);
+    QCOMPARE(styles.value(QStringLiteral("Start Batch Uninstall")), sak::ui::kDangerButtonStyle);
+    QVERIFY2(labels.contains(QStringLiteral("<b>Batch Uninstall Queue</b> - 1 program")),
+             qPrintable(labels.join(QLatin1Char('|'))));
+}
 
 // The batch is built from the ticked rows. Add to Batch Queue once wrote to a separate queue, which
 // pressing Batch emptied, so it did nothing at all.

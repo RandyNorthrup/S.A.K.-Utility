@@ -379,7 +379,8 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
         delete w.queue_list->takeItem(row);
 
         w.header_label->setText(
-            tr("<b>Batch Uninstall Queue</b> - %1 programs").arg(w.queue_list->count()));
+            tr("<b>Batch Uninstall Queue</b> - %1")
+                .arg(countOf(w.queue_list->count(), tr("program"), tr("programs"))));
 
         qint64 new_total = 0;
         for (const auto& qi : m_controller->queue()) {
@@ -393,6 +394,32 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
             dialog->reject();
         }
     });
+}
+
+void AdvancedUninstallPanel::addBatchUninstallQueueActions(QDialog* dialog,
+                                                           QVBoxLayout* layout,
+                                                           qint64 total_size,
+                                                           BatchQueueWidgets* widgets) const {
+    auto* action_row = new QHBoxLayout();
+    // Start Batch Uninstall is the dialog's one strong button; these edit the queue (review 3,
+    // X10: both were primary beside it).
+    widgets->remove_btn = new QPushButton(tr("Remove Selected"), dialog);
+    widgets->remove_btn->setEnabled(false);
+    widgets->remove_btn->setStyleSheet(ui::kSecondaryButtonStyle);
+    action_row->addWidget(widgets->remove_btn);
+
+    widgets->clear_btn = new QPushButton(tr("Clear Queue"), dialog);
+    widgets->clear_btn->setStyleSheet(ui::kSecondaryButtonStyle);
+    action_row->addWidget(widgets->clear_btn);
+
+    action_row->addStretch();
+
+    widgets->total_label = new QLabel(totalSizeText(total_size), dialog);
+    widgets->total_label->setStyleSheet(
+        ui::fontWeightAndColorStyle(ui::kFontWeightBold, ui::kColorTextSecondary));
+    action_row->addWidget(widgets->total_label);
+
+    layout->addLayout(action_row);
 }
 
 QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
@@ -443,8 +470,9 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
     auto* layout = new QVBoxLayout(&dialog);
     layout->setSpacing(ui::kSpacingLarge);
 
-    auto* header_label =
-        new QLabel(tr("<b>Batch Uninstall Queue</b> - %1 programs").arg(queue.size()), &dialog);
+    auto* header_label = new QLabel(tr("<b>Batch Uninstall Queue</b> - %1")
+                                        .arg(countOf(queue.size(), tr("program"), tr("programs"))),
+                                    &dialog);
     layout->addWidget(header_label);
 
     // Queue list
@@ -455,33 +483,17 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
     populateBatchUninstallQueueList(queue, queue_list, &total_size);
     layout->addWidget(queue_list, 1);
 
-    // Queue actions
-    auto* action_row = new QHBoxLayout();
-    auto* remove_btn = new QPushButton(tr("Remove Selected"), &dialog);
-    remove_btn->setEnabled(false);
-    action_row->addWidget(remove_btn);
-
-    auto* clear_btn = new QPushButton(tr("Clear Queue"), &dialog);
-    action_row->addWidget(clear_btn);
-
-    action_row->addStretch();
-
-    auto* total_label = new QLabel(totalSizeText(total_size), &dialog);
-    total_label->setStyleSheet(
-        ui::fontWeightAndColorStyle(ui::kFontWeightBold, ui::kColorTextSecondary));
-    action_row->addWidget(total_label);
-
-    layout->addLayout(action_row);
+    BatchQueueWidgets queue_widgets{.queue_list = queue_list,
+                                    .header_label = header_label,
+                                    .total_label = nullptr,
+                                    .remove_btn = nullptr,
+                                    .clear_btn = nullptr};
+    addBatchUninstallQueueActions(&dialog, layout, total_size, &queue_widgets);
 
     auto* restore_check = addBatchUninstallOptions(&dialog, layout);
     auto* button_box = addBatchUninstallButtons(&dialog, layout);
 
-    wireBatchUninstallQueueActions({.queue_list = queue_list,
-                                    .header_label = header_label,
-                                    .total_label = total_label,
-                                    .remove_btn = remove_btn,
-                                    .clear_btn = clear_btn},
-                                   &dialog);
+    wireBatchUninstallQueueActions(queue_widgets, &dialog);
 
     connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -491,8 +503,10 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
             Q_EMIT statusMessage(tr("Batch queue is empty."), kDialogStatusTimeoutMs);
             return;
         }
-        logMessage(QString("Starting batch uninstall of %1 programs...")
-                       .arg(m_controller->queue().size()));
+        logMessage(QString("Starting batch uninstall of %1...")
+                       .arg(countOf(m_controller->queue().size(),
+                                    QStringLiteral("program"),
+                                    QStringLiteral("programs"))));
         if (!m_controller->startBatchUninstall(restore_check->isChecked())) {
             return;
         }

@@ -818,9 +818,10 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     ctl.btnNext = new QPushButton(tr("Next >"));
     ctl.btnNext->setDefault(true);
     ctl.btnNext->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Cancel last, as in every other dialog here and in Windows (review 3, X10).
     btn_row->addStretch();
-    btn_row->addWidget(ctl.btnCancel0);
     btn_row->addWidget(ctl.btnNext);
+    btn_row->addWidget(ctl.btnCancel0);
     outer_layout->addLayout(top_row);
     outer_layout->addLayout(btn_row);
     return page;
@@ -836,7 +837,8 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     ctl.dirEdit->setPlaceholderText(tr("Click Browse to select a folder..."));
     ctl.btnBrowse = new QPushButton(tr("Browse..."));
     ctl.btnBrowse->setMinimumWidth(kQrBrowseButtonWidth);
-    ctl.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Generate is the page's one primary button (review 3, X10).
+    ctl.btnBrowse->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     dir_row->addWidget(ctl.dirEdit, 1);
     dir_row->addWidget(ctl.btnBrowse);
     layout->addLayout(dir_row);
@@ -857,8 +859,8 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     ctl.btnGenerate->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     btn_row->addWidget(ctl.btnBack);
     btn_row->addStretch();
-    btn_row->addWidget(ctl.btnCancel1);
     btn_row->addWidget(ctl.btnGenerate);
+    btn_row->addWidget(ctl.btnCancel1);
     layout->addLayout(btn_row);
     return page;
 }
@@ -1136,7 +1138,8 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int network_count) {
     ui.dir_edit->setPlaceholderText(QObject::tr("Click Browse..."));
     ui.btn_browse = new QPushButton(QObject::tr("Browse..."), dlg);
     ui.btn_browse->setMinimumWidth(kQrBrowseButtonWidth);
-    ui.btn_browse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Batch Generate is the dialog's one primary button (review 3, X10).
+    ui.btn_browse->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     dir_row->addWidget(ui.dir_edit, 1);
     dir_row->addWidget(ui.btn_browse);
     layout->addLayout(dir_row);
@@ -1155,9 +1158,10 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int network_count) {
     ui.btn_gen->setDefault(true);
     ui.btn_gen->setEnabled(false);
     ui.btn_gen->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Cancel last, as in every other dialog here and in Windows (review 3, X10).
     btn_row->addStretch();
-    btn_row->addWidget(ui.btn_cancel);
     btn_row->addWidget(ui.btn_gen);
+    btn_row->addWidget(ui.btn_cancel);
     layout->addLayout(btn_row);
 
     return ui;

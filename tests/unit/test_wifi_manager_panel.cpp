@@ -4,16 +4,89 @@
 /// @file test_wifi_manager_panel.cpp
 /// @brief Unit tests for WifiManagerPanel::buildWindowsScript SSID injection safety
 
+#include "sak/style_constants.h"
 #include "sak/wifi_manager_panel.h"
 
+#include <QApplication>
+#include <QDialog>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QTableWidget>
+#include <QTimer>
 #include <QtTest/QtTest>
 
+#include <functional>
+
 using namespace sak;
+
+namespace {
+
+QPushButton* buttonNamed(const QWidget& owner, const QString& name) {
+    for (auto* button : owner.findChildren<QPushButton*>()) {
+        if (button->accessibleName() == name || button->text() == name) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+/// What one page of a QR dialog shows: whether Cancel sits right of the action, which buttons are
+/// primary, and the Browse button's style.
+struct QrButtonRow {
+    bool cancel_last{false};
+    QStringList primary;
+    QString browse_style;
+};
+
+QrButtonRow readQrButtonRow(QWidget* dialog, const QString& action) {
+    QrButtonRow row;
+    QPushButton* action_button = nullptr;
+    QPushButton* cancel = nullptr;
+    for (auto* button : dialog->findChildren<QPushButton*>()) {
+        if (!button->isVisibleTo(dialog)) {
+            continue;
+        }
+        if (button->styleSheet() == sak::ui::kPrimaryButtonStyle) {
+            row.primary.append(button->text());
+        }
+        if (button->text() == action) {
+            action_button = button;
+        } else if (button->text() == QStringLiteral("Cancel")) {
+            cancel = button;
+        } else if (button->text() == QStringLiteral("Browse...")) {
+            row.browse_style = button->styleSheet();
+        }
+    }
+    row.cancel_last = action_button != nullptr && cancel != nullptr &&
+                      cancel->mapTo(dialog, QPoint()).x() >
+                          action_button->mapTo(dialog, QPoint()).x();
+    return row;
+}
+
+/// Presses Generate QR Code and hands the dialog it opens to @p inspect, inside its own loop.
+void inspectQrDialog(const WifiManagerPanel& panel, const std::function<void(QDialog*)>& inspect) {
+    bool seen = false;
+    QTimer::singleShot(1, qApp, [&seen, inspect]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+            return;
+        }
+        seen = true;
+        inspect(dialog);
+        dialog->reject();
+    });
+    QPushButton* generate = buttonNamed(panel, QStringLiteral("Generate QR Code"));
+    QVERIFY(generate != nullptr);
+    generate->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QVERIFY(seen);
+}
+
+}  // namespace
 
 class WifiManagerPanelTests : public QObject {
     Q_OBJECT
@@ -31,7 +104,65 @@ private Q_SLOTS:
     void deleteSelectedNeedsASelectedRow();
     void thePasswordRowLinesUpWithTheOthers();
     void anEmptyTableSaysHowToFillIt();
+    void qrDialogsPutCancelLastWithOnePrimaryButton();
 };
+
+// Review 3 (X10): the QR dialogs put Cancel before Next, Generate and Batch Generate, where every
+// other dialog puts it last, and Browse was a second primary button beside Generate.
+void WifiManagerPanelTests::qrDialogsPutCancelLastWithOnePrimaryButton() {
+    WifiManagerPanel panel;
+    QLineEdit* ssid = nullptr;
+    for (auto* edit : panel.findChildren<QLineEdit*>()) {
+        if (edit->accessibleName() == QStringLiteral("Network SSID")) {
+            ssid = edit;
+        }
+    }
+    QVERIFY(ssid != nullptr);
+    ssid->setText(QStringLiteral("Example-Guest"));
+
+    QrButtonRow format_page;
+    QrButtonRow output_page;
+    inspectQrDialog(panel, [&](QDialog* dialog) {
+        auto* pages = dialog->findChild<QStackedWidget*>();
+        QVERIFY(pages != nullptr);
+        format_page = readQrButtonRow(dialog, QStringLiteral("Next >"));
+        pages->setCurrentIndex(1);
+        dialog->layout()->activate();
+        output_page = readQrButtonRow(dialog, QStringLiteral("Generate"));
+    });
+    QVERIFY(format_page.cancel_last);
+    QCOMPARE(format_page.primary, QStringList{QStringLiteral("Next >")});
+    QVERIFY(output_page.cancel_last);
+    QCOMPARE(output_page.primary, QStringList{QStringLiteral("Generate")});
+    QCOMPARE(output_page.browse_style, QString(sak::ui::kSecondaryButtonStyle));
+
+    // Two ticked rows take the batch dialog.
+    QPushButton* add = buttonNamed(panel, QStringLiteral("Add to Table"));
+    QVERIFY(add != nullptr);
+    add->click();
+    ssid->setText(QStringLiteral("Example-Office"));
+    add->click();
+    QTableWidget* table = nullptr;
+    for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+            table = candidate;
+        }
+    }
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 2);
+    for (int row = 0; row < table->rowCount(); ++row) {
+        QVERIFY(table->item(row, 0) != nullptr);
+        table->item(row, 0)->setCheckState(Qt::Checked);
+    }
+    QrButtonRow batch;
+    inspectQrDialog(panel, [&](QDialog* dialog) {
+        batch = readQrButtonRow(dialog, QStringLiteral("Batch Generate"));
+    });
+    QVERIFY(batch.cancel_last);
+    QCOMPARE(batch.browse_style, QString(sak::ui::kSecondaryButtonStyle));
+    // Batch Generate starts disabled, until a folder is chosen; it is still the one primary.
+    QCOMPARE(batch.primary, QStringList{QStringLiteral("Batch Generate")});
+}
 
 // Review 2: the Password field stood 10 px in from the fields above and below it, its label riding
 // above it, because its row kept a layout's own margins.

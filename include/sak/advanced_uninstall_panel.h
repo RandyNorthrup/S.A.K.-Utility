@@ -154,6 +154,12 @@ private:
 
     void wireBatchUninstallQueueActions(const BatchQueueWidgets& widgets, QDialog* dialog);
 
+    /// @brief The row under the queue: Remove Selected, Clear Queue and the total size. Fills
+    ///        @p widgets' remove_btn, clear_btn and total_label.
+    void addBatchUninstallQueueActions(QDialog* dialog,
+                                       QVBoxLayout* layout,
+                                       qint64 total_size,
+                                       BatchQueueWidgets* widgets) const;
     QCheckBox* addBatchUninstallOptions(QDialog* dialog, QVBoxLayout* layout) const;
     QDialogButtonBox* addBatchUninstallButtons(QDialog* dialog, QVBoxLayout* layout) const;
 
