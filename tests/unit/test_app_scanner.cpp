@@ -29,6 +29,9 @@ private Q_SLOTS:
 
     // Anti-hijack: the Windows root comes from the OS, not %SystemRoot% env.
     void authoritativeWindowsRoot_fromOsNotEnv();
+
+    // Review 3 (N9): the backup wizard listed "CN=Microsoft Corporation, O=Micro...".
+    void appxPublisherIsTheOrganisation();
 };
 
 void TestAppScanner::construction_default() {
@@ -129,6 +132,19 @@ void TestAppScanner::authoritativeWindowsRoot_fromOsNotEnv() {
     const QString ps = AppScanner::composePowerShellPath(root);
     QVERIFY(QDir::isAbsolutePath(ps));
     QVERIFY(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")));
+}
+
+void TestAppScanner::appxPublisherIsTheOrganisation() {
+    QJsonObject row;
+    row.insert(QStringLiteral("Name"), QStringLiteral("Microsoft.WindowsCalculator"));
+    row.insert(QStringLiteral("Version"), QStringLiteral("11.2405.2.0"));
+    row.insert(QStringLiteral("Publisher"),
+               QStringLiteral("CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, "
+                              "S=Washington, C=US"));
+    const AppScanner::AppInfo app = AppScanner::appxAppFromJson(row);
+    QCOMPARE(app.name, QStringLiteral("Microsoft.WindowsCalculator"));
+    QCOMPARE(app.publisher, QStringLiteral("Microsoft Corporation"));
+    QVERIFY(app.source == AppScanner::AppInfo::Source::AppX);
 }
 
 QTEST_MAIN(TestAppScanner)

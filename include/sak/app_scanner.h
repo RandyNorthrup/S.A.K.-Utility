@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 
@@ -86,6 +87,11 @@ public:
      * @return List of AppX packages
      */
     static std::vector<AppInfo> scanAppX(bool* scanOk = nullptr);
+
+    /// @brief One Get-AppxPackage row as an AppInfo. A package's publisher is its signing subject
+    ///        ("CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, ..."); the
+    ///        organisation is kept, as Advanced Uninstall shows it (review 3, N9).
+    [[nodiscard]] static AppInfo appxAppFromJson(const QJsonObject& object);
 
     /**
      * @brief Scan already installed Chocolatey packages

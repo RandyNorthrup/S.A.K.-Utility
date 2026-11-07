@@ -18,8 +18,11 @@
 #include "sak/windows_user_scanner.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
+#include <QFormLayout>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -172,6 +175,12 @@ private Q_SLOTS:
     void backupWizardWalksToItsLastPage();
     void aFinishedBackupStopsItsBars();
     void backupWizardReadsAsPlainText();
+    void mappingRowsShowWholeMergeModes();
+    void restoreFolderSizesUseTheAppsByteFormat();
+    void anEmptyWifiBackupSaysItOnce();
+    void permissionOptionsSitBesideTheirLabels();
+    void backupWizardSaysBackUpAsAVerb();
+    void ethernetAddressesReadWhole();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -185,6 +194,144 @@ sak::UserProfileRestoreAppRestorePage* UserProfileAppRestoreFlowTests::restorePa
 
 // Review 2 (F35): the Wi-Fi page's list was empty with nothing to say why, before a scan and after
 // one that found no profiles (the capture VM has no Wi-Fi adapter).
+// Review 3 (N2): five equal columns cut "Merge Into Destinati" and the descenders of "Morgan".
+void UserProfileAppRestoreFlowTests::mappingRowsShowWholeMergeModes() {
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Morgan");
+    sak::BackupManifest manifest;
+    manifest.users = {user};
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    restore_wizard.resize(900, 700);
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreUserMappingPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    restore_wizard.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&restore_wizard));
+    auto* table = page->m_mappingTable;
+    table->setVisible(true);
+    table->resize(860, 300);
+    QCoreApplication::processEvents();
+    auto* mode = qobject_cast<QComboBox*>(table->cellWidget(0, 4));
+    QVERIFY(mode != nullptr);
+    QVERIFY2(table->columnWidth(4) >= mode->sizeHint().width(),
+             qPrintable(QStringLiteral("merge mode column %1 px for a %2 px box")
+                            .arg(table->columnWidth(4))
+                            .arg(mode->sizeHint().width())));
+    QVERIFY2(table->rowHeight(0) >= mode->sizeHint().height(),
+             qPrintable(QStringLiteral("row %1 px for a %2 px box")
+                            .arg(table->rowHeight(0))
+                            .arg(mode->sizeHint().height())));
+}
+
+// Review 3 (X7): "4996.4 MB" in the rows beside "4.88 GB" in the summary.
+void UserProfileAppRestoreFlowTests::restoreFolderSizesUseTheAppsByteFormat() {
+    sak::FolderSelection documents;
+    documents.type = sak::FolderType::Documents;
+    documents.display_name = QStringLiteral("Documents");
+    documents.relative_path = QStringLiteral("Documents");
+    documents.selected = true;
+    documents.size_bytes = 5'239'000'000LL;
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    user.backed_up_folders = {documents};
+    sak::BackupManifest manifest;
+    manifest.users = {user};
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    sak::UserMapping mapping;
+    mapping.source_username = user.username;
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreFolderSelectionPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QCOMPARE(page->m_folderTable->rowCount(), 1);
+    const QString shown = sak::formatBytes(documents.size_bytes);
+    QCOMPARE(page->m_folderTable->item(0, 3)->text(), shown);  // the Size column
+    QVERIFY2(page->m_summaryLabel->text().endsWith(shown),
+             qPrintable(page->m_summaryLabel->text()));
+}
+
+// Review 3 (X20): an empty backup's Wi-Fi page said so three times in two wordings, as "WiFi".
+void UserProfileAppRestoreFlowTests::anEmptyWifiBackupSaysItOnce() {
+    sak::BackupManifest manifest;
+    manifest.users = {sak::BackupUserData{}};
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreNetworksPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QStringList said;
+    for (const auto* label : page->findChildren<QLabel*>()) {
+        if (!label->isHidden() && !label->text().trimmed().isEmpty()) {
+            said.append(label->text());
+        }
+    }
+    said.append(page->title());
+    said.append(page->subTitle());
+    const QString all = said.join(QLatin1Char('\n'));
+    QVERIFY2(!all.contains(QStringLiteral("WiFi")), qPrintable(all));
+    QCOMPARE(all.count(QStringLiteral("no saved Wi-Fi profiles")), 1);
+}
+
+// Review 3 (X11): the two option boxes started about 430 px right of their labels.
+void UserProfileAppRestoreFlowTests::permissionOptionsSitBesideTheirLabels() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    for (QComboBox* box : {page->m_permissionModeCombo, page->m_conflictResolutionCombo}) {
+        QVERIFY(box != nullptr);
+        auto* form = qobject_cast<QFormLayout*>(box->parentWidget()->layout());
+        QVERIFY2(form != nullptr && form->labelForField(box) != nullptr,
+                 qPrintable(box->accessibleName()));
+    }
+}
+
+// Review 3 (S15): seven equal columns cut the subnet mask to "255.255.25...".
+void UserProfileAppRestoreFlowTests::ethernetAddressesReadWhole() {
+    sak::UserProfileBackupWizard backup_wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupEthernetSettingsPage*>(
+        backup_wizard.page(sak::UserProfileBackupWizard::Page_EthernetSettings));
+    QVERIFY(page != nullptr);
+    sak::EthernetConfigInfo config;
+    config.adapter_name = QStringLiteral("Ethernet");
+    config.ip_address = QStringLiteral("192.168.100.200");
+    config.subnet_mask = QStringLiteral("255.255.255.0");
+    config.default_gateway = QStringLiteral("192.168.100.1");
+    page->populateTable({config});
+    // Shown as a window of its own, so its columns are laid out.
+    auto* table = page->m_ethernetTable;
+    QWidget* const page_widget = table->parentWidget();
+    table->setParent(nullptr);
+    const auto put_back = qScopeGuard([table, page_widget]() { table->setParent(page_widget); });
+    table->resize(700, 240);
+    table->show();
+    QVERIFY(QTest::qWaitForWindowExposed(table));
+    QCoreApplication::processEvents();
+    for (int column = 2; column <= 5; ++column) {
+        const int needed = static_cast<QAbstractItemView*>(table)->sizeHintForColumn(column);
+        QVERIFY2(table->columnWidth(column) >= needed,
+                 qPrintable(QStringLiteral("column %1: %2 px for %3")
+                                .arg(column)
+                                .arg(table->columnWidth(column))
+                                .arg(needed)));
+    }
+}
+
+// Low (coordinator, round 6): "Select Users to Backup". The verb is "back up".
+void UserProfileAppRestoreFlowTests::backupWizardSaysBackUpAsAVerb() {
+    sak::UserProfileBackupWizard backup_wizard;
+    for (const int id : backup_wizard.pageIds()) {
+        const QWizardPage* page = backup_wizard.page(id);
+        for (const QString& text : {page->title(), page->subTitle()}) {
+            QVERIFY2(!text.contains(QStringLiteral("to Backup")) &&
+                         !text.contains(QStringLiteral("to backup")),
+                     qPrintable(text));
+        }
+    }
+}
+
 void UserProfileAppRestoreFlowTests::theWifiListSaysWhyItIsEmpty() {
     sak::UserProfileBackupWizard backup_wizard;
     auto* page = qobject_cast<sak::UserProfileBackupKnownNetworksPage*>(
@@ -922,7 +1069,7 @@ void UserProfileAppRestoreFlowTests::executePageRunsWhatTheWizardChose() {
     // each appeared twice, and "=== Backup Complete ===" stood over "=== Backup Failed ===".
     const QString log = page->m_logEdit->toPlainText();
     for (const QString& once : {QStringLiteral("=== Backup Started ==="),
-                                QStringLiteral("Users to backup: 1"),
+                                QStringLiteral("Users to back up: 1"),
                                 QStringLiteral("=== Backup Complete ==="),
                                 QStringLiteral("Files copied: 1\n")}) {
         QVERIFY2(log.count(once) == 1, qPrintable(once + QStringLiteral(" in\n") + log));

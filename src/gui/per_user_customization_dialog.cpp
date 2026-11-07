@@ -33,8 +33,6 @@ constexpr int kFolderSizeColumnWidth = 100;
 constexpr int kFolderFilesColumnWidth = 80;
 constexpr int kFolderTreeIndentationPx = 20;
 constexpr int kInitialFolderScanMaxDepth = 2;
-constexpr int kSizeDisplayPrecisionLarge = 2;
-constexpr int kSizeDisplayPrecisionSmall = 1;
 
 enum FolderColumn {
     FolderColName = 0,
@@ -280,25 +278,8 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
         dir, folder_item, {.checked = selection.selected, .depth = 0, .max_depth = max_depth});
 
     // Column 2: Size
-    QString size_str;
-    if (totals.total_size > 0) {
-        const double size_mb = static_cast<double>(totals.total_size) / sak::kBytesPerMBf;
-        if (size_mb >= sak::kBytesPerKBf) {
-            size_str = QString("%1 GB").arg(
-                size_mb / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionLarge);
-        } else if (size_mb >= 1) {
-            size_str = QString("%1 MB").arg(size_mb, 0, 'f', kSizeDisplayPrecisionSmall);
-        } else {
-            size_str =
-                QString("%1 KB").arg(static_cast<double>(totals.total_size) / sak::kBytesPerKBf,
-                                     0,
-                                     'f',
-                                     kSizeDisplayPrecisionSmall);
-        }
-    } else {
-        size_str = "0 KB";
-    }
-    folder_item->setText(1, size_str);
+    // One byte format in the dialog, the app's (review 3, X7: "0.00 GB" beside KB folders).
+    folder_item->setText(1, sak::formatBytes(static_cast<qint64>(totals.total_size)));
 
     // Column 2: File count
     folder_item->setText(FolderColFiles, QString::number(totals.total_files));
@@ -773,9 +754,8 @@ void PerUserCustomizationDialog::updateSummary() {
     QString summary = QString("<b>Backup Summary:</b> %1 folders selected").arg(selected_count);
 
     if (total_size > 0) {
-        const double size_gb = static_cast<double>(total_size) / sak::kBytesPerGBf;
-        summary += QString(" | Estimated size: <b>%1 GB</b>")
-                       .arg(size_gb, 0, 'f', kSizeDisplayPrecisionLarge);
+        summary += QString(" | Estimated size: <b>%1</b>")
+                       .arg(sak::formatBytes(static_cast<qint64>(total_size)));
     }
 
     m_summaryLabel->setText(summary);

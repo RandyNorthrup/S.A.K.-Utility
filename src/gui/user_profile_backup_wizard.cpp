@@ -181,7 +181,7 @@ void UserProfileBackupWelcomePage::setupUi() {
 UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserProfile>& users,
                                                                    QWidget* parent)
     : QWizardPage(parent), m_users(users), m_scanner(new WindowsUserScanner(this)) {
-    setTitle(tr("Select Users to Backup"));
+    setTitle(tr("Select Users to Back Up"));
     setSubTitle(tr("Scan and select which user profiles to include in the backup"));
 
     setupUi();

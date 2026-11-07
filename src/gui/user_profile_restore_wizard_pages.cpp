@@ -20,8 +20,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFormLayout>
 #include <QFutureWatcher>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QJsonArray>
@@ -75,8 +75,6 @@ constexpr int kAppDataExcludeRole = Qt::UserRole + 2;
 // The source's own path, with forward slashes, as the manifest spells it; the row shows it with
 // Windows separators (review 2: "AppData/Local/Microsoft/Edge/User Data").
 constexpr int kAppDataPathRole = Qt::UserRole + 3;
-constexpr int kSizeDisplayPrecision = 2;
-constexpr int kMegabyteDisplayPrecision = 1;
 
 QString bundledChocolateyRoot() {
     return QApplication::applicationDirPath() + QStringLiteral("/tools/chocolatey");
@@ -160,7 +158,16 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_mappingTable->setAccessibleName(tr("User mapping"));
     m_mappingTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("Source User"), tr("->"), tr("Destination User"), tr("Merge Mode")});
-    m_mappingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    // The names stretch; the check box, arrow and merge mode take what they need, and each row the
+    // height of its combos: five equal columns cut "Merge Into Destinati" and the descenders of
+    // "Morgan" (review 3, N2).
+    auto* mapping_header = m_mappingTable->horizontalHeader();
+    mapping_header->setSectionResizeMode(QHeaderView::Stretch);
+    for (const int column :
+         {0, static_cast<int>(KMappingColumnArrow), static_cast<int>(KMappingColumnMergeMode)}) {
+        mapping_header->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    }
+    m_mappingTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
     // The destination and merge-mode combos are cell widgets: in the padded text area they were
@@ -542,9 +549,9 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
             m_folderTable->setItem(row, KFolderColumnFolder, folder_item);
 
             // Size
-            const double size_mb = static_cast<double>(folder.size_bytes) / sak::kBytesPerMBf;
-            auto* size_item = new QTableWidgetItem(
-                QString("%1 MB").arg(size_mb, 0, 'f', kMegabyteDisplayPrecision));
+            // One byte format on the page, the app's (review 3, X7: "4996.4 MB" beside "4.88 GB").
+            auto* size_item = new QTableWidgetItem(sak::formatBytes(folder.size_bytes));
+            size_item->setData(Qt::UserRole, folder.size_bytes);
             size_item->setFlags(size_item->flags() & ~Qt::ItemIsEditable);
             m_folderTable->setItem(row, KFolderColumnSize, size_item);
 
@@ -586,21 +593,18 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
         if (m_folderTable->item(row, 0)->checkState() == Qt::Checked) {
             selected_folders++;
 
-            QString size_text = m_folderTable->item(row, KFolderColumnSize)->text();
-            size_text.remove(" MB");
-            total_size += static_cast<qint64>(size_text.toDouble() * sak::kBytesPerMB);
+            total_size +=
+                m_folderTable->item(row, KFolderColumnSize)->data(Qt::UserRole).toLongLong();
 
             total_files += m_folderTable->item(row, KFolderColumnFiles)->text().toInt();
         }
     }
 
-    const double total_gb = static_cast<double>(total_size) / sak::kBytesPerGBf;
-
-    m_summaryLabel->setText(tr("Selected: %1 of %2 folders | %3 files | %4 GB")
+    m_summaryLabel->setText(tr("Selected: %1 of %2 folders | %3 files | %4")
                                 .arg(selected_folders)
                                 .arg(total_folders)
                                 .arg(total_files)
-                                .arg(total_gb, 0, 'f', kSizeDisplayPrecision));
+                                .arg(sak::formatBytes(total_size)));
 }
 
 bool UserProfileRestoreFolderSelectionPage::validatePage() {
@@ -959,8 +963,8 @@ void UserProfileRestoreAppDataPage::onSelectNone() {
 
 UserProfileRestoreNetworksPage::UserProfileRestoreNetworksPage(QWidget* parent)
     : QWizardPage(parent) {
-    setTitle(tr("Restore WiFi Networks"));
-    setSubTitle(tr("Select WiFi network profiles to restore (all selected by default)"));
+    setTitle(tr("Restore Wi-Fi Networks"));
+    setSubTitle(tr("Select Wi-Fi network profiles to restore (all selected by default)"));
 
     setupUi();
 }
@@ -969,8 +973,9 @@ void UserProfileRestoreNetworksPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    auto* instruction_label = new QLabel(tr("The backup contains saved WiFi network profiles. "
-                                            "Select the ones you want to import on this machine. "
+    // Said whether or not the backup has any: the empty case is the list's own message, once
+    // (review 3, X20: three empty messages in two wordings).
+    auto* instruction_label = new QLabel(tr("Select the saved Wi-Fi profiles to add to this PC. "
                                             "All profiles are selected by default."),
                                          this);
     instruction_label->setWordWrap(true);
@@ -992,8 +997,8 @@ void UserProfileRestoreNetworksPage::setupUi() {
             &UserProfileRestoreNetworksPage::onItemChanged);
     layout->addWidget(m_networkTree);
     // Designed empty/loading overlay (R5-G20-7); loadNetworkProfiles() populates it.
-    m_networkEmptyState = new sak::ui::ViewEmptyState(m_networkTree,
-                                                      tr("No WiFi networks in the backup"));
+    m_networkEmptyState =
+        new sak::ui::ViewEmptyState(m_networkTree, tr("This backup has no saved Wi-Fi profiles."));
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -1018,14 +1023,14 @@ void UserProfileRestoreNetworksPage::setupUi() {
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No WiFi profiles found in backup"));
+    m_summaryLabel->setVisible(false);
     layout->addWidget(m_summaryLabel);
 }
 
 void UserProfileRestoreNetworksPage::initializePage() {
     if (!m_loaded) {
         Q_ASSERT(m_networkEmptyState);
-        m_networkEmptyState->setLoading(tr("Reading WiFi profiles from the backup..."));
+        m_networkEmptyState->setLoading(tr("Reading Wi-Fi profiles from the backup..."));
         loadNetworkProfiles();
         m_networkEmptyState->clearLoading();
     }
@@ -1073,7 +1078,7 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     const BackupManifest& manifest = wiz->manifest();
     if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
         m_statusLabel->setText(
-            tr("Backup has no verified integrity checksum - WiFi restore is disabled"));
+            tr("Backup has no verified integrity checksum - Wi-Fi restore is disabled"));
         m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
@@ -1086,11 +1091,15 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     m_loaded = true;
 
     if (profiles.isEmpty()) {
-        m_statusLabel->setText(tr("No WiFi profiles found in backup"));
+        m_statusLabel->clear();
         return;
     }
 
-    m_statusLabel->setText(tr("Found %1 WiFi profile(s) in backup").arg(profiles.size()));
+    m_statusLabel->setText(tr("This backup has %1.")
+                               .arg(sak::countOf(profiles.size(),
+                                                 tr("saved Wi-Fi profile"),
+                                                 tr("saved Wi-Fi profiles"))));
+    m_summaryLabel->setVisible(true);
     m_networkTree->setEnabled(true);
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
@@ -1131,7 +1140,7 @@ void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>
     }
 
     m_networkTree->blockSignals(false);
-    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected for restore")
+    m_summaryLabel->setText(tr("%1 of %2 Wi-Fi profiles selected for restore")
                                 .arg(profiles.size())
                                 .arg(profiles.size()));
 }
@@ -1152,7 +1161,7 @@ void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem*, int column)
     }
 
     m_summaryLabel->setText(
-        tr("%1 of %2 WiFi profile(s) selected for restore").arg(selected).arg(total));
+        tr("%1 of %2 Wi-Fi profiles selected for restore").arg(selected).arg(total));
 }
 
 void UserProfileRestoreNetworksPage::onSelectAll() {
@@ -1425,12 +1434,14 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     // Permission mode
+    // One form for both options, so each box sits beside its label: two grids with nothing to
+    // stretch put the boxes about 430 px right of their labels (review 3, X11).
     auto* perm_group = new QWidget(this);
-    auto* perm_layout = new QGridLayout(perm_group);
+    auto* perm_layout = new QFormLayout(perm_group);
     perm_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    perm_layout->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
 
-    perm_layout->addWidget(new QLabel(tr("Permission Mode:"), perm_group), 0, 0);
     m_permissionModeCombo = new QComboBox(perm_group);
     m_permissionModeCombo->setAccessibleName(tr("Permission handling"));
     m_permissionModeCombo->addItem(tr("Strip All ACLs (Safest)"),
@@ -1439,18 +1450,10 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
                                    static_cast<int>(PermissionMode::AssignToDestination));
     m_permissionModeCombo->addItem(tr("Preserve Original"),
                                    static_cast<int>(PermissionMode::PreserveOriginal));
-    perm_layout->addWidget(m_permissionModeCombo, 0, 1);
-
-    layout->addWidget(perm_group);
+    perm_layout->addRow(tr("Permission Mode:"), m_permissionModeCombo);
 
     // Conflict resolution
-    auto* conflict_group = new QWidget(this);
-    auto* conflict_layout = new QGridLayout(conflict_group);
-    conflict_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-
-    conflict_layout->addWidget(new QLabel(tr("Conflict Resolution:"), conflict_group), 0, 0);
-    m_conflictResolutionCombo = new QComboBox(conflict_group);
+    m_conflictResolutionCombo = new QComboBox(perm_group);
     m_conflictResolutionCombo->setAccessibleName(tr("Conflict resolution"));
     m_conflictResolutionCombo->addItem(tr("Skip Duplicate"),
                                        static_cast<int>(ConflictResolution::SkipDuplicate));
@@ -1461,9 +1464,9 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     m_conflictResolutionCombo->addItem(tr("Keep Larger"),
                                        static_cast<int>(ConflictResolution::KeepLarger));
     m_conflictResolutionCombo->setCurrentIndex(1);  // Default to RenameWithSuffix
-    conflict_layout->addWidget(m_conflictResolutionCombo, 0, 1);
+    perm_layout->addRow(tr("Conflict Resolution:"), m_conflictResolutionCombo);
 
-    layout->addWidget(conflict_group);
+    layout->addWidget(perm_group);
 
     setupUi_optionsAndConnections(layout);
 }
@@ -1610,7 +1613,7 @@ QString UserProfileRestorePermissionSettingsPage::selectionSummary() const {
         return profile.selected;
     });
     if (selected_wifi > 0) {
-        lines += tr("* WiFi networks (%1): added to this PC<br>").arg(selected_wifi);
+        lines += tr("* Wi-Fi networks (%1): added to this PC<br>").arg(selected_wifi);
     }
     const auto ethernet = wiz->ethernetConfigs();
     const auto selected_ethernet = std::ranges::count_if(

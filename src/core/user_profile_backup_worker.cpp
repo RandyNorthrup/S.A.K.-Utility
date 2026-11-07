@@ -325,7 +325,7 @@ void UserProfileBackupWorker::run() {
     // See startBackup: an empty user list backs up nothing and is not an abort.
     Q_EMIT logMessage(tr("=== Backup Started ==="), false);
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
-    Q_EMIT logMessage(tr("Users to backup: %1").arg(m_users.size()), false);
+    Q_EMIT logMessage(tr("Users to back up: %1").arg(m_users.size()), false);
 
     // Report only what is actually applied. The old wizard logged "Encryption: Enabled
     // (AES-256)" and then refused to encrypt, and logged a compression level it never
@@ -495,7 +495,7 @@ void UserProfileBackupWorker::backupAllUsers() {
 
             const QString userBackupPath = m_destinationPath + "/" + user.username;
             if (!backupUser(user, userBackupPath)) {
-                Q_EMIT logMessage(tr("Failed to backup user: %1").arg(user.username), true);
+                Q_EMIT logMessage(tr("Failed to back up user: %1").arg(user.username), true);
                 // Continue with other users
             }
         }
@@ -529,14 +529,13 @@ void UserProfileBackupWorker::emitBackupSummary() {
         // well as files, so "Files skipped: 16" beside "Files copied: 16" read as half the files
         // (review 3).
         tr("%1\nFiles copied: %2\nItems skipped (filters and Windows links): %3\n"
-           "Skipped (elevation required): %4\nErrors: %5\nTotal "
-           "size: %6 MB")
+           "Skipped (elevation required): %4\nErrors: %5\nTotal size: %6")
             .arg(headline)
             .arg(m_filesCopied)
             .arg(m_filesSkipped)
             .arg(m_filesElevationSkipped)
             .arg(m_filesErrored)
-            .arg(static_cast<double>(m_bytesCopied) / sak::kBytesPerMBf, 0, 'f', 1);
+            .arg(sak::formatBytes(static_cast<qint64>(m_bytesCopied)));
 
     // The outcome and the summary go to the wizard with backupComplete, and it logs them: logged
     // here as well, each appeared twice, and "=== Backup Complete ===" stood over a failed run.
@@ -603,7 +602,7 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
         const QString destPath = userBackupPath + "/" + folder.relative_path;
 
         if (!backupFolder(folder, sourcePath, destPath)) {
-            Q_EMIT logMessage(tr("Warning: Failed to backup folder: %1").arg(folder.display_name),
+            Q_EMIT logMessage(tr("Warning: Failed to back up folder: %1").arg(folder.display_name),
                               true);
             // Continue with other folders
         }

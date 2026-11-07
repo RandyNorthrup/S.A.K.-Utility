@@ -9,6 +9,7 @@
 #include "sak/app_data_sources.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/backup_file_codec.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/media_read_back.h"
@@ -402,11 +403,11 @@ void UserProfileRestoreWorker::emitRestoreSummary() {
     // "Errors: 1" and "[ERROR] Restore failed").
     QString summary = (success ? tr("Restore complete!")
                                : tr("Restore finished, but not everything was restored.")) +
-                      tr("\nFiles restored: %1\nFiles skipped: %2\nErrors: %3\nTotal size: %4 MB")
+                      tr("\nFiles restored: %1\nFiles skipped: %2\nErrors: %3\nTotal size: %4")
                           .arg(m_filesRestored)
                           .arg(m_filesSkipped)
                           .arg(m_filesErrored)
-                          .arg(static_cast<double>(m_bytesRestored) / sak::kBytesPerMBf, 0, 'f', 1);
+                          .arg(sak::formatBytes(static_cast<qint64>(m_bytesRestored)));
     // Each step says how it went: a network setting that was not applied is not a file error.
     const auto network_selected = m_networkApplied + m_networkNotApplied.size();
     if (network_selected > 0) {

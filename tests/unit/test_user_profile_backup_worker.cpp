@@ -220,7 +220,7 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
     QCOMPARE(run.message,
              QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
                             "Items skipped (filters and Windows links): 0\nSkipped (elevation "
-                            "required): 0\nErrors: 1\nTotal size: 0.0 MB"));
+                            "required): 0\nErrors: 1\nTotal size: 0 bytes"));
 }
 
 // Windows makes Documents\My Music, My Pictures and My Videos in every profile: hidden, system

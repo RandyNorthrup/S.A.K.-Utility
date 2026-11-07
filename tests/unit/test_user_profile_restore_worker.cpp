@@ -302,7 +302,7 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     // what separates "no mappings, nothing to do" from "restored something unasked-for".
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
-                            "0\nTotal size: 0.0 MB"));
+                            "0\nTotal size: 0 bytes"));
 }
 
 // ---------------------------------------------------------------------------
@@ -624,7 +624,7 @@ void UserProfileRestoreWorkerTests::unselectedMappingSkipped() {
     QVERIFY(!QDir(destDir.path() + "/Users").exists());
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
-                            "0\nTotal size: 0.0 MB"));
+                            "0\nTotal size: 0 bytes"));
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +675,7 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     // The failure is COUNTED, so the summary reports the error rather than a clean zero-file run.
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore finished, but not everything was restored.\nFiles restored: "
-                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0.0 MB"));
+                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0 bytes"));
 }
 
 // ---------------------------------------------------------------------------
@@ -736,7 +736,7 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
     }
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore complete!\nFiles restored: 3\nFiles skipped: 0\nErrors: "
-                            "0\nTotal size: 0.0 MB"));
+                            "0\nTotal size: 42 bytes"));
 }
 
 // ===========================================================================
@@ -793,7 +793,7 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
     // The skip is COUNTED as a skip, not silently dropped from both tallies.
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 1\nErrors: "
-                            "0\nTotal size: 0.0 MB"));
+                            "0\nTotal size: 0 bytes"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,7 +1260,7 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
     const QString summary = args.at(1).toString();
     QCOMPARE(summary,
              QStringLiteral("Restore complete!\nFiles restored: 1\nFiles skipped: 0\nErrors: "
-                            "0\nTotal size: 0.0 MB"));
+                            "0\nTotal size: 11 bytes"));
 
     // statusUpdate is emitted exactly twice -- once at the start and once at the end -- and
     // each carries the user it is reporting on. ">= 1" could not catch a lost final update
@@ -1542,7 +1542,7 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
     // Counted as an error, so the summary reports it rather than a clean empty run.
     QCOMPARE(completeSpy.first().at(1).toString(),
              QStringLiteral("Restore finished, but not everything was restored.\nFiles restored: "
-                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0.0 MB"));
+                            "0\nFiles skipped: 0\nErrors: 1\nTotal size: 0 bytes"));
 }
 
 // ===========================================================================

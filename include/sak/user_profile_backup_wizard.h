@@ -348,6 +348,7 @@ private:
  */
 class UserProfileBackupEthernetSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupEthernetSettingsPage(QWidget* parent = nullptr);

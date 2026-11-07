@@ -120,7 +120,7 @@ UserProfileBackupCustomizeDataPage::UserProfileBackupCustomizeDataPage(QVector<U
                                                                        QWidget* parent)
     : QWizardPage(parent), m_users(users) {
     setTitle(tr("Customize Per-User Data"));
-    setSubTitle(tr("Customize which folders and application data to backup for each user"));
+    setSubTitle(tr("Customize which folders and application data to back up for each user"));
 
     setupUi();
 }
@@ -1769,8 +1769,8 @@ void UserProfileBackupAppDataPage::onSelectNone() {
 
 UserProfileBackupKnownNetworksPage::UserProfileBackupKnownNetworksPage(QWidget* parent)
     : QWizardPage(parent) {
-    setTitle(tr("Known WiFi Networks"));
-    setSubTitle(tr("Scan and select WiFi network profiles to include in the backup"));
+    setTitle(tr("Known Wi-Fi Networks"));
+    setSubTitle(tr("Scan and select Wi-Fi network profiles to include in the backup"));
 
     setupUi();
 }
@@ -1780,7 +1780,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     auto* instruction_label =
-        new QLabel(tr("Click <b>Scan Networks</b> to detect saved WiFi profiles. "
+        new QLabel(tr("Click <b>Scan Networks</b> to detect saved Wi-Fi profiles. "
                       "Selected profiles will be exported and included in the backup "
                       "for easy restoration on the destination machine."),
                    this);
@@ -1842,7 +1842,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No WiFi networks scanned yet"));
+    m_summaryLabel->setText(tr("No Wi-Fi networks scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -1865,7 +1865,7 @@ void UserProfileBackupKnownNetworksPage::onScanNetworks() {
     Q_ASSERT(m_scanButton);
     Q_ASSERT(m_statusLabel);
     m_scanButton->setEnabled(false);
-    m_statusLabel->setText(tr("Scanning WiFi profiles..."));
+    m_statusLabel->setText(tr("Scanning Wi-Fi profiles..."));
     m_scanProgress->setVisible(true);
     m_scanProgress->setRange(0, 0);
     m_networkTree->clear();
@@ -1879,7 +1879,13 @@ void UserProfileBackupKnownNetworksPage::onScanNetworks() {
     m_networkTree->setEnabled(true);
     m_scanProgress->setVisible(false);
 
-    m_statusLabel->setText(tr("Found %1 WiFi profile(s)").arg(profiles.size()));
+    // None found is the list's own message ("This PC has no saved Wi-Fi profiles."); "Found 0
+    // WiFi profile(s)" above it said it again (review 3, S24).
+    m_statusLabel->setText(profiles.isEmpty() ? QString()
+                                              : tr("Found %1.")
+                                                    .arg(sak::countOf(profiles.size(),
+                                                                      tr("saved Wi-Fi profile"),
+                                                                      tr("saved Wi-Fi profiles"))));
     populateTree(profiles);
     updateNextButtonText();
 }
@@ -1933,7 +1939,7 @@ void UserProfileBackupKnownNetworksPage::commitWifiSelection() {
         selected_profiles.append(info);
     }
 
-    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected").arg(selected).arg(total));
+    m_summaryLabel->setText(tr("%1 of %2 Wi-Fi profiles selected").arg(selected).arg(total));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setWifiProfiles(selected_profiles);
     }
@@ -2040,7 +2046,11 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
                                                 tr("Subnet"),
                                                 tr("Gateway"),
                                                 tr("DNS")});
-    m_ethernetTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    // Addresses whole: seven equal columns cut a subnet mask to "255.255.25..." (review 3, S15).
+    m_ethernetTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_ethernetTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_ethernetTable->horizontalHeader()->setSectionResizeMode(kEthernetColumnCount - 1,
+                                                              QHeaderView::Stretch);
     m_ethernetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_ethernetTable->verticalHeader()->setVisible(false);
     m_ethernetTable->setEnabled(false);

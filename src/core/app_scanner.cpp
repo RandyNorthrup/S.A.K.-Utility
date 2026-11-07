@@ -8,6 +8,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
+#include "sak/program_enumerator.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -295,6 +296,16 @@ QString AppScanner::composePowerShellPath(const QString& systemRoot) {
                            QStringLiteral("/System32/WindowsPowerShell/v1.0/powershell.exe"));
 }
 
+AppScanner::AppInfo AppScanner::appxAppFromJson(const QJsonObject& object) {
+    AppInfo app;
+    app.source = AppInfo::Source::AppX;
+    app.name = object.value("Name").toString();
+    app.version = object.value("Version").toString();
+    app.publisher = ProgramEnumerator::publisherFromSubject(object.value("Publisher").toString());
+    app.install_location = object.value("InstallLocation").toString();
+    return app;
+}
+
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX(bool* scanOk) {
     if (scanOk != nullptr) {
         *scanOk = true;
@@ -346,14 +357,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX(bool* scanOk) {
         if (!value.isObject()) {
             continue;
         }
-        const QJsonObject obj = value.toObject();
-        AppInfo app;
-        app.source = AppInfo::Source::AppX;
-        app.name = obj.value("Name").toString();
-        app.version = obj.value("Version").toString();
-        app.publisher = obj.value("Publisher").toString();
-        app.install_location = obj.value("InstallLocation").toString();
-
+        const AppInfo app = appxAppFromJson(value.toObject());
         if (!app.name.isEmpty()) {
             apps.push_back(app);
         }
