@@ -79,6 +79,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
@@ -731,6 +732,10 @@ void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu, const bool includ
         return;
     }
     menu->clear();
+    // clear() leaves a submenu alive (its action belongs to the submenu), so every opening of the
+    // Sort flyout used to keep one more hidden "Group by" menu. This runs as the flyout opens or on
+    // a new context menu, never from one of these actions, so they can go now.
+    qDeleteAll(menu->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly));
     // Files sort flyout (Toolbar.xaml ArrangementOptions): checkable sort-by
     // entries, then Ascending/Descending. Sorting runs through the shared
     // proxy model, so it applies to every layout mode.
@@ -5041,15 +5046,24 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
         return nullptr;
     }
 
-    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
-    const QString text = state.enabled || state.blocker.isEmpty()
-                             ? state.command.text
-                             : tr("%1 - %2").arg(state.command.text, state.blocker);
-    auto* action = menu->addAction(text);
+    auto* action = menu->addAction(QString());
     const QIcon icon = FileExplorerIconRegistry::iconForCommand(command);
     if (!icon.isNull()) {
         action->setIcon(icon);
     }
+    applyCommandMenuActionState(action, command, context);
+    connect(action, &QAction::triggered, this, [this, command]() { executeCommand(command); });
+    return action;
+}
+
+void FileManagementExplorerPanel::applyCommandMenuActionState(
+    QAction* action,
+    const FileExplorerCommandId command,
+    const FileExplorerCommandContext& context) {
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
+    action->setText(state.enabled || state.blocker.isEmpty()
+                        ? state.command.text
+                        : tr("%1 - %2").arg(state.command.text, state.blocker));
     action->setEnabled(state.enabled);
     const QString hint = state.enabled ? state.command.status_text : state.blocker;
     action->setToolTip(ui::asLiteralRichText(hint));
@@ -5062,22 +5076,57 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
         // that QShortcut and Qt then fires neither (seen on Ctrl+H).
         action->setShortcutContext(Qt::WidgetShortcut);
     }
-    connect(action, &QAction::triggered, this, [this, command]() { executeCommand(command); });
-    return action;
 }
 
-void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandContext& context) {
+// The View menu is built once and refreshed in place. It used to be cleared and rebuilt on every
+// updateActionButtons(), which the selection, listing and target handlers call synchronously: a
+// View action whose own trigger changed the selection was deleted inside QAction::trigger(), and
+// the item size slider under the pointer could be deleted mid-drag. Round 6's heap corruption
+// (0xc0000374) was reported at exactly that point, freeing the weak reference of a List action
+// destroyed during its own trigger. Each rebuild also left an empty QActionGroup behind.
+void FileManagementExplorerPanel::refreshViewMenu(const FileExplorerCommandContext& context) {
     if (m_view_button == nullptr) {
         return;
     }
-
-    auto* menu = m_view_button->menu();
-    if (menu == nullptr) {
-        menu = new QMenu(m_view_button);
-        menu->setObjectName(QStringLiteral("fileExplorerViewMenu"));
-        m_view_button->setMenu(menu);
+    if (m_view_menu_actions.isEmpty()) {
+        buildViewMenu(context);
     }
-    menu->clear();
+    for (const auto& [command, action] : std::as_const(m_view_menu_actions)) {
+        applyCommandMenuActionState(action, command, context);
+        if (action->isCheckable()) {
+            action->setChecked(viewMenuActionChecked(command));
+        }
+    }
+    refreshItemSizeSlider();
+    refreshViewMenuLocalActions();
+
+    const FileExplorerCommandState details_state =
+        FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
+    m_view_button->setEnabled(details_state.enabled);
+    m_view_button->setToolTip(details_state.enabled ? tr("Change File Explorer view layout")
+                                                    : details_state.blocker);
+}
+
+bool FileManagementExplorerPanel::viewMenuActionChecked(const FileExplorerCommandId command) const {
+    if (isViewModeCommand(command)) {
+        return modeForCommand(command) == m_pane_state.view.mode;
+    }
+    switch (command) {
+    case FileExplorerCommandId::ToggleHiddenItems:
+        return m_pane_state.view.show_hidden;
+    case FileExplorerCommandId::ToggleFileExtensions:
+        return m_pane_state.view.show_extensions;
+    case FileExplorerCommandId::ToggleDualPane:
+        return m_dual_pane_enabled;
+    default:
+        return false;
+    }
+}
+
+void FileManagementExplorerPanel::buildViewMenu(const FileExplorerCommandContext& context) {
+    auto* menu = new QMenu(m_view_button);
+    menu->setObjectName(QStringLiteral("fileExplorerViewMenu"));
+    m_view_button->setMenu(menu);
 
     auto* view_group = new QActionGroup(menu);
     view_group->setExclusive(true);
@@ -5087,13 +5136,7 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
                                                 FileExplorerCommandId::ViewCards,
                                                 FileExplorerCommandId::ViewColumns,
                                                 FileExplorerCommandId::ViewAdaptive}) {
-        auto* action = addCommandMenuAction(menu, command, context);
-        if (action == nullptr) {
-            continue;
-        }
-        action->setCheckable(true);
-        action->setChecked(modeForCommand(command) == m_pane_state.view.mode);
-        view_group->addAction(action);
+        view_group->addAction(addViewMenuCommand(menu, command, context, true));
     }
     menu->addSeparator();
 
@@ -5104,54 +5147,55 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     menu->addSeparator();
     // A toggle shows its state, as Show Hidden Items does: unmarked, a click on Dual Pane with two
     // panes open (as a restored session leaves them) closed the second one.
-    if (auto* dual_action =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context)) {
-        dual_action->setCheckable(true);
-        dual_action->setChecked(m_dual_pane_enabled);
-    }
-    auto* stack_action = menu->addAction(tr("Stack Panes Vertically"));
-    stack_action->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
-    stack_action->setCheckable(true);
-    stack_action->setChecked((m_pane_splitter != nullptr) &&
-                             m_pane_splitter->orientation() == Qt::Vertical);
-    stack_action->setEnabled(m_dual_pane_enabled);
-    stack_action->setToolTip(m_dual_pane_enabled
-                                 ? tr("Switch between side-by-side and stacked panes.")
-                                 : tr("Enable dual pane first."));
-    connect(stack_action,
+    addViewMenuCommand(menu, FileExplorerCommandId::ToggleDualPane, context, true);
+    m_view_stack_action = menu->addAction(tr("Stack Panes Vertically"));
+    m_view_stack_action->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
+    m_view_stack_action->setCheckable(true);
+    connect(m_view_stack_action,
             &QAction::triggered,
             this,
             &FileManagementExplorerPanel::togglePaneOrientation);
-    addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
-    addCommandMenuAction(menu, FileExplorerCommandId::DuplicateTab, context);
-    addCommandMenuAction(menu, FileExplorerCommandId::ReopenClosedTab, context);
+    for (const FileExplorerCommandId command : {FileExplorerCommandId::OpenInNewTab,
+                                                FileExplorerCommandId::DuplicateTab,
+                                                FileExplorerCommandId::ReopenClosedTab}) {
+        addViewMenuCommand(menu, command, context, false);
+    }
+}
 
-    const FileExplorerCommandState details_state =
-        FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
-    m_view_button->setEnabled(details_state.enabled);
-    m_view_button->setToolTip(details_state.enabled ? tr("Change File Explorer view layout")
-                                                    : details_state.blocker);
+QAction* FileManagementExplorerPanel::addViewMenuCommand(QMenu* menu,
+                                                         const FileExplorerCommandId command,
+                                                         const FileExplorerCommandContext& context,
+                                                         const bool checkable) {
+    QAction* action = addCommandMenuAction(menu, command, context);
+    action->setCheckable(checkable);
+    m_view_menu_actions.append({command, action});
+    return action;
+}
+
+void FileManagementExplorerPanel::refreshViewMenuLocalActions() {
+    if (m_view_stack_action != nullptr) {
+        m_view_stack_action->setChecked((m_pane_splitter != nullptr) &&
+                                        m_pane_splitter->orientation() == Qt::Vertical);
+        m_view_stack_action->setEnabled(m_dual_pane_enabled);
+        m_view_stack_action->setToolTip(m_dual_pane_enabled
+                                            ? tr("Switch between side-by-side and stacked panes.")
+                                            : tr("Enable dual pane first."));
+    }
+    if (m_view_checkboxes_action != nullptr) {
+        m_view_checkboxes_action->setChecked(showCheckboxesEnabled());
+    }
 }
 
 void FileManagementExplorerPanel::appendViewToggleActions(
     QMenu* menu, const FileExplorerCommandContext& context) {
-    if (auto* hidden_action =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
-        hidden_action->setCheckable(true);
-        hidden_action->setChecked(m_pane_state.view.show_hidden);
-    }
-    if (auto* extension_action =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
-        extension_action->setCheckable(true);
-        extension_action->setChecked(m_pane_state.view.show_extensions);
-    }
+    addViewMenuCommand(menu, FileExplorerCommandId::ToggleHiddenItems, context, true);
+    addViewMenuCommand(menu, FileExplorerCommandId::ToggleFileExtensions, context, true);
     // Files Settings > Folders "Show checkboxes when selecting items";
     // surfaced here until the C6 settings page lands.
-    auto* checkboxes_action = menu->addAction(tr("Item Check Boxes"));
-    checkboxes_action->setObjectName(QStringLiteral("fileExplorerItemCheckBoxesAction"));
-    checkboxes_action->setCheckable(true);
-    checkboxes_action->setChecked(showCheckboxesEnabled());
-    connect(checkboxes_action, &QAction::triggered, this, [this](const bool checked) {
+    m_view_checkboxes_action = menu->addAction(tr("Item Check Boxes"));
+    m_view_checkboxes_action->setObjectName(QStringLiteral("fileExplorerItemCheckBoxesAction"));
+    m_view_checkboxes_action->setCheckable(true);
+    connect(m_view_checkboxes_action, &QAction::triggered, this, [this](const bool checked) {
         setShowCheckboxes(checked);
     });
 }
@@ -5159,8 +5203,7 @@ void FileManagementExplorerPanel::appendViewToggleActions(
 void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     // Files Toolbar.xaml layout flyout: a tick-snapped slider per layout bound
     // to that layout's size kind (Details/List/Columns 1-5, Cards 1-4, Grid
-    // 1-12). This row binds to the active layout's kind.
-    const FileExplorerViewMode mode = m_pane_state.view.mode;
+    // 1-12). This row binds to the active layout's kind; refreshItemSizeSlider() sets its range.
     auto* size_row = new QWidget(menu);
     size_row->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
     auto* size_layout = new QHBoxLayout(size_row);
@@ -5168,22 +5211,20 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
         ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
     size_layout->setSpacing(ui::kSpacingSmall);
     auto* size_label = new QLabel(tr("Item size"), size_row);
-    auto* size_slider = new QSlider(Qt::Horizontal, size_row);
-    size_slider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
-    size_slider->setAccessibleName(tr("Explorer item size"));
-    size_slider->setRange(fileExplorerSizeKindMin(mode), fileExplorerSizeKindMax(mode));
-    size_slider->setSingleStep(1);
-    size_slider->setPageStep(1);
-    size_slider->setTickPosition(QSlider::TicksBelow);
-    size_slider->setTickInterval(1);
-    size_slider->setValue(fileExplorerSizeKind(m_pane_state.view.sizes, mode));
-    size_label->setBuddy(size_slider);
+    m_view_size_slider = new QSlider(Qt::Horizontal, size_row);
+    m_view_size_slider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
+    m_view_size_slider->setAccessibleName(tr("Explorer item size"));
+    m_view_size_slider->setSingleStep(1);
+    m_view_size_slider->setPageStep(1);
+    m_view_size_slider->setTickPosition(QSlider::TicksBelow);
+    m_view_size_slider->setTickInterval(1);
+    size_label->setBuddy(m_view_size_slider);
     size_layout->addWidget(size_label);
-    size_layout->addWidget(size_slider, 1);
+    size_layout->addWidget(m_view_size_slider, 1);
     auto* size_action = new QWidgetAction(menu);
     size_action->setDefaultWidget(size_row);
     menu->addAction(size_action);
-    connect(size_slider, &QSlider::valueChanged, this, [this](const int value) {
+    connect(m_view_size_slider, &QSlider::valueChanged, this, [this](const int value) {
         setFileExplorerSizeKind(m_pane_state.view.sizes, m_pane_state.view.mode, value);
         applyViewSettings();
         saveViewSettings();
@@ -5192,6 +5233,17 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
                                  .arg(fileExplorerSizeKindMax(m_pane_state.view.mode)),
                              sak::kTimerStatusMessageMs);
     });
+}
+
+void FileManagementExplorerPanel::refreshItemSizeSlider() {
+    if (m_view_size_slider == nullptr) {
+        return;
+    }
+    // A refresh shows the state; only the person moving the slider changes it.
+    const QSignalBlocker blocker(m_view_size_slider);
+    const FileExplorerViewMode mode = m_pane_state.view.mode;
+    m_view_size_slider->setRange(fileExplorerSizeKindMin(mode), fileExplorerSizeKindMax(mode));
+    m_view_size_slider->setValue(fileExplorerSizeKind(m_pane_state.view.sizes, mode));
 }
 
 void FileManagementExplorerPanel::executeCommand(const FileExplorerCommandId command) {
@@ -7276,7 +7328,7 @@ void FileManagementExplorerPanel::updateActionButtons() {
                           FileExplorerCommandId::Properties,
                           context);
     }
-    rebuildViewMenu(context);
+    refreshViewMenu(context);
     updateStatusCounts();
     updateDetailsPane();
 }

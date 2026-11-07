@@ -27,6 +27,7 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -55,6 +56,7 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -1526,6 +1528,75 @@ private Q_SLOTS:
         QCOMPARE(pane->showFileExtensions(), false);
 
         verifyRestoredPaneMatchesPersistedSettings();
+    }
+
+    // Round 6's heap corruption (0xc0000374, about 1 loaded run in 30): the List action was
+    // destroyed inside its own QAction::trigger(). A selection change rebuilt the View menu
+    // synchronously, and the rebuild cleared the menu, deleting every action and the size slider.
+    // Here the selection changes while the List action's triggered() is still being delivered, as
+    // a late listing or the other pane did in those runs.
+    void viewMenuActionsSurviveARefreshDuringTheirOwnTrigger() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        for (const QString& name : {QStringLiteral("a.txt"), QStringLiteral("b.txt")}) {
+            QFile file(QDir(dir.path()).filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("x") == 1);
+        }
+        DeterministicExplorerPanel panel(localTargets(dir.path()));
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(view && view->menu() && table);
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+        table->selectRow(0);
+
+        QPointer<QAction> list = actionStartingWith(view->menu(), QStringLiteral("List"));
+        QPointer<QSlider> slider =
+            view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
+        QVERIFY(list && slider);
+        bool refreshed_mid_trigger = false;
+        connect(list, &QAction::triggered, table, [table, &refreshed_mid_trigger]() {
+            table->selectRow(1);  // the panel's selection handler refreshes the View menu here
+            refreshed_mid_trigger = true;
+        });
+        list->trigger();
+        QVERIFY(refreshed_mid_trigger);
+        QVERIFY2(!list.isNull(), "the List action was deleted during its own trigger");
+        QVERIFY2(!slider.isNull(), "the item size slider was deleted by a View menu refresh");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QApplication::processEvents();
+        QVERIFY(!list.isNull());
+        QVERIFY(list->isChecked());
+
+        // Every refresh used to leave an empty QActionGroup behind in the menu.
+        for (int row : {0, 1, 0, 1}) {
+            table->selectRow(row);
+        }
+        QCOMPARE(view->menu()->findChildren<QActionGroup*>().size(), static_cast<qsizetype>(1));
+        QCOMPARE(view->menu()->findChildren<QSlider*>().size(), static_cast<qsizetype>(1));
+    }
+
+    // Each opening of the Sort flyout rebuilt it and kept the previous "Group by" submenu alive
+    // (clear() does not delete a submenu), so the flyout's children grew with every opening.
+    void sortFlyoutKeepsOneGroupBySubmenu() {
+        DeterministicExplorerPanel panel;
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* sortButton = child<QToolButton>(&panel, "fileExplorerSortButton");
+        QVERIFY(sortButton && sortButton->menu());
+        for (int opening = 0; opening < 3; ++opening) {
+            sortButton->menu()->popup(QPoint(10, 10));
+            QApplication::processEvents();
+            sortButton->menu()->hide();
+            QApplication::processEvents();
+        }
+        QCOMPARE(sortButton->menu()
+                     ->findChildren<QMenu*>(QStringLiteral("fileExplorerGroupBySubmenu"))
+                     .size(),
+                 static_cast<qsizetype>(1));
     }
 
     void zoomStepsSizeKindsAndCyclesLayoutRing() {

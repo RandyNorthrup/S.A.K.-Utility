@@ -22,9 +22,16 @@ namespace {
 constexpr int kMaxVisibleSegments = 5;
 constexpr int kChevronIconPx = 10;
 
+// A segment's own click (or an overflow entry's trigger) navigates, and navigating rebuilds the
+// breadcrumb from inside that signal, so the old segments must not be deleted there: they are
+// taken out of the breadcrumb at once and deleted when control is back in the event loop.
 void clearLayout(QHBoxLayout* layout) {
     while (const QLayoutItem* item = layout->takeAt(0)) {
-        delete item->widget();
+        if (QWidget* widget = item->widget()) {
+            widget->hide();
+            widget->setParent(nullptr);
+            widget->deleteLater();
+        }
         delete item;
     }
 }

@@ -24,6 +24,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPair>
 #include <QPersistentModelIndex>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -33,6 +34,7 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QUrl>
+#include <QVector>
 #include <QWidget>
 
 #include <array>
@@ -47,6 +49,7 @@ class QMimeData;
 class QPoint;
 class QAction;
 class QToolButton;
+class QSlider;
 class QVBoxLayout;
 class QImage;
 class QTabBar;
@@ -698,8 +701,19 @@ private:
     QAction* addCommandMenuAction(QMenu* menu,
                                   FileExplorerCommandId command,
                                   const FileExplorerCommandContext& context);
-    void rebuildViewMenu(const FileExplorerCommandContext& context);
+    static void applyCommandMenuActionState(QAction* action,
+                                            FileExplorerCommandId command,
+                                            const FileExplorerCommandContext& context);
+    void refreshViewMenu(const FileExplorerCommandContext& context);
+    void buildViewMenu(const FileExplorerCommandContext& context);
+    QAction* addViewMenuCommand(QMenu* menu,
+                                FileExplorerCommandId command,
+                                const FileExplorerCommandContext& context,
+                                bool checkable);
+    [[nodiscard]] bool viewMenuActionChecked(FileExplorerCommandId command) const;
+    void refreshViewMenuLocalActions();
     void appendItemSizeMenuRow(QMenu* menu);
+    void refreshItemSizeSlider();
     void executeCommand(FileExplorerCommandId command);
     bool dispatchNavigationCommand(FileExplorerCommandId command);
     bool dispatchCopyPathCommand(FileExplorerCommandId command);
@@ -882,6 +896,11 @@ private:
     QPushButton* m_rename_button{nullptr};
     QPushButton* m_delete_button{nullptr};
     QToolButton* m_view_button{nullptr};
+    // The View menu's parts, built once and refreshed in place (owned by the menu).
+    QVector<QPair<FileExplorerCommandId, QAction*>> m_view_menu_actions;
+    QAction* m_view_stack_action{nullptr};
+    QAction* m_view_checkboxes_action{nullptr};
+    QSlider* m_view_size_slider{nullptr};
     QLabel* m_summary_label{nullptr};
     QLabel* m_items_count_label{nullptr};
     QLabel* m_selection_count_label{nullptr};
