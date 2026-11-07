@@ -10,11 +10,20 @@
 #include <QButtonGroup>
 #include <QHBoxLayout>
 #include <QSettings>
+#include <QTextDocument>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
 
 namespace sak {
 
 namespace {
+
+// The narrowest a Details section asks to be, in average characters. Anything wider is given by
+// the pane; a long path wraps to fit rather than widening the scroller (review 3, F23).
+constexpr int kDetailsTextMinimumChars = 8;
 
 // Mirrors Files InfoPaneSettingsService.SelectedTab (default Details).
 constexpr const char* kInfoPaneSelectedTabKey = "FileManagementExplorer/InfoPane/SelectedTab";
@@ -29,6 +38,61 @@ constexpr int kInfoPanePreviewStretch = 2;
 constexpr int kInfoPaneDetailsStretch = 3;
 
 }  // namespace
+
+FileExplorerDetailsText::FileExplorerDetailsText(QWidget* parent) : QTextEdit(parent) {
+    // The info pane's style sheet draws these without a box, on the scroller's own background,
+    // as the labels they replace were drawn.
+    setProperty("infoPaneDetailsText", true);
+    setReadOnly(true);
+    setAcceptRichText(false);
+    setUndoRedoEnabled(false);
+    setTabChangesFocus(true);
+    setFrameShape(QFrame::NoFrame);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setLineWrapMode(QTextEdit::WidgetWidth);
+    setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    document()->setDocumentMargin(0);
+    QSizePolicy policy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
+    connect(document(), &QTextDocument::contentsChanged, this, [this]() { updateGeometry(); });
+}
+
+void FileExplorerDetailsText::setDetailsText(const QString& text) {
+    setPlainText(text);
+}
+
+bool FileExplorerDetailsText::hasHeightForWidth() const {
+    return true;
+}
+
+QSize FileExplorerDetailsText::chromeSize() const {
+    const QMargins frame = contentsMargins();
+    const QMargins viewport = viewportMargins();
+    return {frame.left() + frame.right() + viewport.left() + viewport.right(),
+            frame.top() + frame.bottom() + viewport.top() + viewport.bottom()};
+}
+
+int FileExplorerDetailsText::heightForWidth(const int width) const {
+    const QSize chrome = chromeSize();
+    // Measured on a copy, so asking about one width does not lay out the text shown at another.
+    const std::unique_ptr<QTextDocument> measure(document()->clone());
+    measure->setTextWidth(std::max(1, width - chrome.width()));
+    return static_cast<int>(std::ceil(measure->size().height())) + chrome.height();
+}
+
+QSize FileExplorerDetailsText::sizeHint() const {
+    const int width = QTextEdit::sizeHint().width();
+    return {width, heightForWidth(width)};
+}
+
+QSize FileExplorerDetailsText::minimumSizeHint() const {
+    const QSize chrome = chromeSize();
+    return {fontMetrics().averageCharWidth() * kDetailsTextMinimumChars + chrome.width(),
+            fontMetrics().height() + chrome.height()};
+}
 
 FileExplorerDetailsPane::FileExplorerDetailsPane(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("fileExplorerInfoPane"));
@@ -140,13 +204,13 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
     auto* layout = new QVBoxLayout(content);
     layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
 
-    m_properties_text = makeDetailsLabel(tr("Explorer item properties"));
+    m_properties_text = makeDetailsSection(tr("Explorer item properties"));
     m_properties_text->setObjectName(QStringLiteral("fileExplorerPropertiesText"));
     addDetailsSection(layout, tr("Properties"), m_properties_text);
-    m_safety_text = makeDetailsLabel(tr("Explorer target safety"));
+    m_safety_text = makeDetailsSection(tr("Explorer target safety"));
     m_safety_text->setObjectName(QStringLiteral("fileExplorerSafetyText"));
     addDetailsSection(layout, tr("Safety"), m_safety_text);
-    m_evidence_text = makeDetailsLabel(tr("Explorer evidence details"));
+    m_evidence_text = makeDetailsSection(tr("Explorer evidence details"));
     m_evidence_text->setObjectName(QStringLiteral("fileExplorerEvidenceText"));
     addDetailsSection(layout, tr("Evidence"), m_evidence_text);
     layout->addStretch(1);
@@ -157,27 +221,23 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
 
 void FileExplorerDetailsPane::addDetailsSection(QVBoxLayout* layout,
                                                 const QString& title,
-                                                QLabel* text) {
+                                                QWidget* text) {
     auto* header = new QLabel(title, this);
     header->setProperty("infoPaneSectionHeader", true);
     layout->addWidget(header);
     layout->addWidget(text);
 }
 
-QLabel* FileExplorerDetailsPane::makeDetailsLabel(const QString& description) {
+FileExplorerDetailsText* FileExplorerDetailsPane::makeDetailsSection(
+    const QString& accessible_name) {
     // Each section is as tall as its text and the details scroller scrolls them together. As
     // five-line text boxes each scrolled on its own inside that scroller and cut its lines
-    // ("Capability: NTFS - local file API -", review 2, F23).
-    auto* label = new QLabel(this);
-    // Paths and names in here come from the disk being browsed, so nothing is read as markup.
-    label->setTextFormat(Qt::PlainText);
-    label->setWordWrap(true);
-    label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-    // A label's name is what a screen reader says for it, so a name would say "Explorer item
-    // properties" in place of the properties. With none it reads the text; this says what it is.
-    label->setAccessibleDescription(description);
-    return label;
+    // ("Capability: NTFS - local file API -", review 2, F23); as labels a long path could break
+    // only at a space and ran past the pane's edge (review 3, F23).
+    auto* section = new FileExplorerDetailsText(this);
+    // A text box's name is said beside its text, not in place of it, so it can name the section.
+    section->setAccessibleName(accessible_name);
+    return section;
 }
 
 void FileExplorerDetailsPane::applySelectedTab(const bool details, const bool persist) {
@@ -234,15 +294,15 @@ QLabel* FileExplorerDetailsPane::previewCaption() const {
     return m_preview_caption;
 }
 
-QLabel* FileExplorerDetailsPane::propertiesText() const {
+FileExplorerDetailsText* FileExplorerDetailsPane::propertiesText() const {
     return m_properties_text;
 }
 
-QLabel* FileExplorerDetailsPane::safetyText() const {
+FileExplorerDetailsText* FileExplorerDetailsPane::safetyText() const {
     return m_safety_text;
 }
 
-QLabel* FileExplorerDetailsPane::evidenceText() const {
+FileExplorerDetailsText* FileExplorerDetailsPane::evidenceText() const {
     return m_evidence_text;
 }
 

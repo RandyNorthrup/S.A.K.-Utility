@@ -123,7 +123,10 @@ inline QString tabStripStyles() {
                "#fileExplorerInfoPane QLabel[infoPaneSectionHeader=\"true\"] { "
                "font-weight: 600; color: palette(dark); padding: 4px 2px 0 2px; }"
                "#fileExplorerInfoPane QPlainTextEdit { border: none; "
-               "background: palette(base); }")
+               "background: palette(base); }"
+               // The Details sections: text on the scroller's background, no box, focused or not.
+               "#fileExplorerInfoPane QTextEdit[infoPaneDetailsText=\"true\"] { border: none; "
+               "background: transparent; padding: 0; }")
         .arg(kExplorerTabRadiusPx)
         .arg(colorWithAlpha(kColorPrimary, kExplorerHoverAlpha),
              QString::fromLatin1(kColorPrimary));

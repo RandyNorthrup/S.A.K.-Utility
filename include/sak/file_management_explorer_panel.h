@@ -906,9 +906,9 @@ private:
     QLabel* m_selection_count_label{nullptr};
     QLabel* m_status_label{nullptr};
     QPlainTextEdit* m_preview_text{nullptr};
-    QLabel* m_properties_text{nullptr};
-    QLabel* m_safety_text{nullptr};
-    QLabel* m_evidence_text{nullptr};
+    FileExplorerDetailsText* m_properties_text{nullptr};
+    FileExplorerDetailsText* m_safety_text{nullptr};
+    FileExplorerDetailsText* m_evidence_text{nullptr};
     // Slow-double-click inline rename (Files tapDebounceTimer, 1500 ms): a
     // second left-click on the already-selected item's name arms the timer;
     // opening (double-click) or selection churn cancels it.

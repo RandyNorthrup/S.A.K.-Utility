@@ -62,6 +62,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QSlider>
@@ -70,6 +71,11 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextDocumentFragment>
+#include <QTextLayout>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -693,23 +699,22 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
                  QStringLiteral("No file selected. Select one to see it here."));
     }
     // Review 2 (F23): Properties, Safety and Evidence were five-line text boxes, each scrolling
-    // on its own inside the details scroller and cutting its text. They are labels as tall as
-    // their text, and the one scroller scrolls them together.
+    // on its own inside the details scroller and cutting its text. They are as tall as their text,
+    // with no scroll bar of their own, and the one scroller scrolls them together.
     for (const char* name :
          {"fileExplorerPropertiesText", "fileExplorerSafetyText", "fileExplorerEvidenceText"}) {
-        auto* section = child<QLabel>(&panel, name);
+        auto* section = child<sak::FileExplorerDetailsText>(&panel, name);
         QVERIFY2(section != nullptr, name);
-        QVERIFY(section->wordWrap());
-        QCOMPARE(section->textFormat(), Qt::PlainText);
+        QVERIFY(section->isReadOnly());
+        QVERIFY(!section->acceptRichText());
+        QCOMPARE(section->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+        QCOMPARE(section->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+        QVERIFY(section->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
         QVERIFY(scroller->widget()->isAncestorOf(section));
-        // As a label, an accessible name is what a screen reader says in place of its text
-        // (T2's accessibility audit: "hides its text"); the section is described instead.
-        if (section->text().isEmpty()) {
-            section->setText(QStringLiteral("Target: Home"));
-        }
+        // A text box needs a name for a screen reader, said beside its text (T2's audit).
         const sak::AccessibilityFindings findings = sak::auditWidgetTree(*section);
-        QVERIFY2(findings.hides_text.isEmpty(), qPrintable(findings.hides_text.join(u'\n')));
-        QVERIFY(!section->accessibleDescription().isEmpty());
+        QVERIFY2(findings.missing.isEmpty(), qPrintable(findings.missing.join(u'\n')));
+        QVERIFY(!section->accessibleName().isEmpty());
     }
 
     // The preview region stays visible on both tabs; only the details
@@ -1530,6 +1535,53 @@ private Q_SLOTS:
         QCOMPARE(pane->showFileExtensions(), false);
 
         verifyRestoredPaneMatchesPersistedSettings();
+    }
+
+    // Review 3 (F23): "Path: D:\SAK-Samples\Keys\BitLocker_Keys_20261106_18" was cut at the pane's
+    // edge behind a horizontal scroll bar. A label wraps only at a space, and a path has none. The
+    // sections wrap anywhere a line must break, and the text a technician copies is the path as
+    // it is, with nothing inserted.
+    void detailsLinesWrapAnywhereAndCopyUnchanged() {
+        sak::FileExplorerDetailsPane pane;
+        pane.setStyleSheet(sak::ui::fileExplorerShellStyleSheetText());
+        constexpr int kPaneWidth = 280;
+        constexpr int kPaneHeight = 900;
+        pane.resize(kPaneWidth, kPaneHeight);
+        pane.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&pane));
+        const QString path = QStringLiteral(
+            "Path: D:\\SAK-Samples\\Keys\\BitLocker_Keys_20261106_181849_539_0\\"
+            "BitLocker_Recovery_Keys_For_Every_Volume_On_This_Machine.txt");
+        const QString text = QStringLiteral("Target: DATA (D:)\nFile system: NTFS\n") + path +
+                             QStringLiteral("\nCapability: NTFS - local file API - read/write");
+        sak::FileExplorerDetailsText* section = pane.propertiesText();
+        QVERIFY(section != nullptr);
+        section->setDetailsText(text);
+        auto* scroller = child<QScrollArea>(&pane, "fileExplorerInfoPaneDetailsScroll");
+        QVERIFY(scroller != nullptr);
+        QTRY_VERIFY(section->viewport()->width() > 0);
+        QApplication::processEvents();
+
+        // Nothing reaches past the pane: no horizontal scrolling, and every line fits the section.
+        QCOMPARE(scroller->horizontalScrollBar()->maximum(), 0);
+        QVERIFY2(section->width() <= scroller->viewport()->width(),
+                 qPrintable(QStringLiteral("%1 > %2")
+                                .arg(section->width())
+                                .arg(scroller->viewport()->width())));
+        QVERIFY2(section->document()->idealWidth() <= section->viewport()->width(),
+                 qPrintable(QStringLiteral("%1 > %2")
+                                .arg(section->document()->idealWidth())
+                                .arg(section->viewport()->width())));
+        // The path, which has no space after "Path:", broke into several lines.
+        const QTextBlock path_block = section->document()->findBlockByNumber(2);
+        QCOMPARE(path_block.text(), path);
+        QVERIFY2(path_block.layout()->lineCount() > 2,
+                 qPrintable(QString::number(path_block.layout()->lineCount())));
+        // The section is as tall as its text: it never scrolls inside itself.
+        QCOMPARE(section->verticalScrollBar()->maximum(), 0);
+        // What is copied is what was given.
+        section->selectAll();
+        QCOMPARE(section->textCursor().selection().toPlainText(), text);
     }
 
     // Round 6's heap corruption (0xc0000374, about 1 loaded run in 30): the List action was
@@ -2547,7 +2599,7 @@ private Q_SLOTS:
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
         auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
-        auto* safety = child<QLabel>(&panel, "fileExplorerSafetyText");
+        auto* safety = child<sak::FileExplorerDetailsText>(&panel, "fileExplorerSafetyText");
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(safety);
@@ -2558,7 +2610,9 @@ private Q_SLOTS:
         QApplication::processEvents();
         QVERIFY(!pathEdit->text().trimmed().isEmpty());
         // Review 2 (S21): "Root: C:/" and "Path: C:/SAK-Samples/Docs" on a Windows volume.
-        const QString properties = child<QLabel>(&panel, "fileExplorerPropertiesText")->text();
+        const QString properties = child<sak::FileExplorerDetailsText>(&panel,
+                                                                       "fileExplorerPropertiesText")
+                                       ->toPlainText();
         for (const QString& line : properties.split(QLatin1Char('\n'))) {
             if (line.startsWith(QStringLiteral("Root: ")) ||
                 line.startsWith(QStringLiteral("Path: "))) {
@@ -2570,8 +2624,8 @@ private Q_SLOTS:
         // one LABEL and ignores its value and every sibling line, so an empty capability word
         // or a lost Read/Browse line passes. The host-dependent label, file system and root
         // path are deliberately left unpinned; the capability words are a closed vocabulary.
-        const QStringList safety_lines = safety->text().split(QLatin1Char('\n'));
-        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->text()));
+        const QStringList safety_lines = safety->toPlainText().split(QLatin1Char('\n'));
+        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->toPlainText()));
         const QStringList prefixes{QStringLiteral("Target: "),
                                    QStringLiteral("File system: "),
                                    QStringLiteral("Identity: ")};
@@ -2720,7 +2774,7 @@ private Q_SLOTS:
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
-        auto* safety = child<QLabel>(&panel, "fileExplorerSafetyText");
+        auto* safety = child<sak::FileExplorerDetailsText>(&panel, "fileExplorerSafetyText");
         QVERIFY(targetList);
         QVERIFY(safety);
 
@@ -2733,7 +2787,8 @@ private Q_SLOTS:
     }
 
     // One Safety-pane verdict: identity, capability words, and the file-system note.
-    void verifySafetyPaneCase(QLabel* safety, const SafetyPaneCase& expected) {
+    void verifySafetyPaneCase(sak::FileExplorerDetailsText* safety,
+                              const SafetyPaneCase& expected) {
         const QString& file_system = expected.file_system;
         const QString& image_path = expected.image;
         const bool write_enabled = expected.write_enabled;
@@ -2742,8 +2797,8 @@ private Q_SLOTS:
         // The pane repaints from the selection change; wait for THIS target's identity
         // line so a stale previous verdict can never be read as this one's.
         const QString identity = QStringLiteral("Identity: %1").arg(image_path);
-        QTRY_VERIFY2(safety->text().contains(identity), qPrintable(safety->text()));
-        const QString text = safety->text();
+        QTRY_VERIFY2(safety->toPlainText().contains(identity), qPrintable(safety->toPlainText()));
+        const QString text = safety->toPlainText();
         const QStringList lines = text.split(QLatin1Char('\n'));
         const auto verdict = [](bool enabled) {
             return enabled ? QStringLiteral("enabled") : QStringLiteral("blocked");

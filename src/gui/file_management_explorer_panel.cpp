@@ -7153,14 +7153,14 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     const FileExplorerSelection selection = currentSelection();
 
     if (m_properties_text != nullptr) {
-        m_properties_text->setText(
+        m_properties_text->setDetailsText(
             buildDetailsProperties(target, selection).join(QStringLiteral("\n")));
     }
     if (m_safety_text != nullptr) {
-        m_safety_text->setText(buildDetailsSafety(target).join(QStringLiteral("\n")));
+        m_safety_text->setDetailsText(buildDetailsSafety(target).join(QStringLiteral("\n")));
     }
     if (m_evidence_text != nullptr) {
-        m_evidence_text->setText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
+        m_evidence_text->setDetailsText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
     }
     updatePreviewPane(target, selection);
     if (m_status_label != nullptr) {
