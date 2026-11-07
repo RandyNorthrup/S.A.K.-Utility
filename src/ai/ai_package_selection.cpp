@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_package_selection.h"
 
+#include "sak/format_utils.h"
+
 #include <QHash>
 #include <QJsonValue>
 #include <QRegularExpression>
@@ -189,8 +191,10 @@ AiPackageSelectionResult noPackageCandidatesResult(const QString& clean_query, i
             ? QStringLiteral("Package search returned no usable candidates")
             : QStringLiteral("Package search returned no candidates for '%1'").arg(clean_query);
     if (rejected > 0) {
-        result.error_message +=
-            QStringLiteral(" (%1 malformed search result(s) rejected)").arg(rejected);
+        result.error_message += QStringLiteral(" (%1 rejected)")
+                                    .arg(countOf(rejected,
+                                                 QStringLiteral("malformed search result"),
+                                                 QStringLiteral("malformed search results")));
     }
     return result;
 }

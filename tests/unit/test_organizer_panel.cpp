@@ -173,7 +173,9 @@ void OrganizerPanelTests::aFileThatWillNotMoveIsListedWithWhatDidMove() {
     CloseHandle(lock);
 
     const QString report = answers.seen.join('\n');
-    QVERIFY2(report.contains(QStringLiteral("Moved 1 file(s).")), qPrintable(report));
+    QVERIFY2(report.contains(QStringLiteral("Moved 1 file.")), qPrintable(report));
+    QVERIFY2(report.contains(QStringLiteral("1 file could not be moved and stayed where it was")),
+             qPrintable(report));
     QVERIFY2(report.contains(QStringLiteral("locked.jpg")), qPrintable(report));
     QVERIFY(QFile::exists(locked));
     QVERIFY(QFile::exists(dir.filePath(QStringLiteral("Images/free.jpg"))));

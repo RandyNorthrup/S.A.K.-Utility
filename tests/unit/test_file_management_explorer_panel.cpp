@@ -1943,7 +1943,7 @@ private Q_SLOTS:
         // Both undo headers contain "delete", so the create wording -- a different count
         // noun and a second scope note -- passed the fragment unchanged.
         verifyUndoConfirmation(question_text,
-                               QStringLiteral("Undoing this copy will delete 1 copied item(s):"),
+                               QStringLiteral("Undoing this copy will delete 1 copied item:"),
                                QStringLiteral("These will be moved to the Recycle Bin."));
         // The dismissed confirmation cleared focus; the focus-scoped Ctrl+Y
         // shortcut needs it back.
@@ -1982,7 +1982,7 @@ private Q_SLOTS:
         // fragment could not see it go missing.
         verifyUndoConfirmation(
             question_text,
-            QStringLiteral("Undoing this create will delete 1 item(s):"),
+            QStringLiteral("Undoing this create will delete 1 item:"),
             QStringLiteral("These will be moved to the Recycle Bin.<br/>Any folder is removed "
                            "together with its entire contents."));
         // Re-focus after the dismissed confirmation before the redo shortcut.
@@ -4616,9 +4616,7 @@ private Q_SLOTS:
     // the middle is bridged by a third anchor instead of being pinned.
     static void verifyPermanentDeleteConfirmation(const QString& question_text,
                                                   const QString& entry_name) {
-        verifyDeleteConfirmation(question_text,
-                                 QStringLiteral("Delete 1 item(s) from '"),
-                                 entry_name);
+        verifyDeleteConfirmation(question_text, QStringLiteral("Delete 1 item from '"), entry_name);
         QVERIFY2(question_text.contains(QStringLiteral("'? This permanently removes data from "
                                                        "the selected target.<br/><br/>")),
                  qPrintable(question_text));
@@ -4670,7 +4668,7 @@ private Q_SLOTS:
         // The count and the path list -- what tells the user what is about to be destroyed --
         // are what the fragment never looked at.
         verifyDeleteConfirmation(question_text,
-                                 QStringLiteral("Move 1 item(s) to the Recycle Bin?<br/><br/>"),
+                                 QStringLiteral("Move 1 item to the Recycle Bin?<br/><br/>"),
                                  QStringLiteral("bin_me.txt"));
 
         // Shift+Delete is the permanent path (DeleteItemPermanentlyAction).

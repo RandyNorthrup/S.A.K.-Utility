@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_subagent_runner.h"
 
+#include "sak/format_utils.h"
+
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QElapsedTimer>
@@ -702,12 +704,14 @@ bool pendingToolCallsAreRunnable(const AttemptContext& ctx,
         ctx.m_tools.m_executor != nullptr) {
         return true;
     }
-    AiSubagentResult failed = baseResult(
-        *ctx.m_task,
-        AiSubagentStatus::Failed,
-        QStringLiteral("Model requested %1 tool call(s) but no tool executor is available "
-                       "under this task's policy; the turn produced no final answer")
-            .arg(outcome->m_response.tool_calls.size()));
+    AiSubagentResult failed =
+        baseResult(*ctx.m_task,
+                   AiSubagentStatus::Failed,
+                   QStringLiteral("Model requested %1 but no tool executor is available "
+                                  "under this task's policy; the turn produced no final answer")
+                       .arg(countOf(outcome->m_response.tool_calls.size(),
+                                    QStringLiteral("tool call"),
+                                    QStringLiteral("tool calls"))));
     failed.usage = accumulated;
     recordExecutedTools(&failed, outcome->m_executed_tools);
     return stopBatch(outcome, failed);
@@ -830,11 +834,11 @@ bool deadlineOverridesResult(AiSubagentStatus status) {
 // run to the runner-wide limit (or forever) regardless of its own declared budget. A source that
 // is 0/unset does not constrain; if both are unset the deadline is Forever.
 qint64 effectiveWallClockMs(const AiSubagentRunnerOptions& options, const AiSubagentTask& task) {
-    constexpr qint64 kMillisecondsPerSecond = 1000;
+    // sak::kMillisecondsPerSecond comes from layout_constants.h, through format_utils.h.
     const qint64 option_ms = options.wall_clock_timeout_ms > 0 ? options.wall_clock_timeout_ms : 0;
-    const qint64 task_ms = task.timeout_seconds > 0
-                               ? static_cast<qint64>(task.timeout_seconds) * kMillisecondsPerSecond
-                               : 0;
+    const qint64 task_ms = task.timeout_seconds > 0 ? static_cast<qint64>(task.timeout_seconds) *
+                                                          sak::kMillisecondsPerSecond
+                                                    : 0;
     if (option_ms > 0 && task_ms > 0) {
         return std::min(option_ms, task_ms);
     }

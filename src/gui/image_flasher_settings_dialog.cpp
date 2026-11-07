@@ -5,6 +5,7 @@
 
 #include "sak/app_paths.h"
 #include "sak/config_manager.h"
+#include "sak/format_utils.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -23,6 +24,32 @@
 #include <QVBoxLayout>
 
 namespace {
+
+QString cachedFoldersCount(qint64 count) {
+    return sak::countOf(count,
+                        QStringLiteral("cached download folder"),
+                        QStringLiteral("cached download folders"));
+}
+
+// A clear that removed some cache folders but not all: logged, and told to the user with the
+// pronoun agreeing with how many were left behind.
+void reportPartialCacheClear(QWidget* parent, int removed_count, int failed_count) {
+    const QString cleared =
+        sak::countOf(removed_count, QStringLiteral("folder"), QStringLiteral("folders"));
+    sak::logWarning(
+        "Cache clear partially failed: "
+        "cleared {}, {} could not be removed",
+        cleared.toStdString(),
+        failed_count);
+    sak::showWarningLogged(
+        parent,
+        "Clear Download Caches",
+        QString("Cleared %1, but %2 could not be removed.\n%3")
+            .arg(cleared,
+                 QString::number(failed_count),
+                 failed_count == 1 ? QStringLiteral("It may be in use by an active download.")
+                                   : QStringLiteral("They may be in use by an active download.")));
+}
 
 constexpr int kGridNoteRowSpan = 1;
 constexpr int kGridNoteColumnSpan = 2;
@@ -370,7 +397,7 @@ void ImageFlasherSettingsDialog::updateCacheInfo() {
                                             kSizeDisplayPrecisionLarge);
         }
         m_cacheInfoLabel->setText(
-            QString("%1 cached download folder(s) using %2.").arg(dirs.size()).arg(size_str));
+            QString("%1 using %2.").arg(cachedFoldersCount(dirs.size()), size_str));
         m_clearCacheButton->setEnabled(true);
     }
 }
@@ -395,12 +422,11 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     auto reply =
         sak::showQuestionLogged(this,
                                 "Clear Download Caches",
-                                QString("This will delete %1 cached download folder(s) (%2) "
+                                QString("This will delete %1 (%2) "
                                         "from the temp directory.\n\n"
                                         "Any in-progress downloads should be cancelled first.\n\n"
                                         "Continue?")
-                                    .arg(dirs.size())
-                                    .arg(size_str),
+                                    .arg(cachedFoldersCount(dirs.size()), size_str),
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
 
@@ -424,23 +450,11 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     updateCacheInfo();
 
     if (failed_count == 0) {
-        sak::showInformationLogged(
-            this,
-            "Clear Download Caches",
-            QString("Successfully cleared %1 cached download folder(s) (%2 freed).")
-                .arg(removed_count)
-                .arg(size_str));
+        sak::showInformationLogged(this,
+                                   "Clear Download Caches",
+                                   QString("Successfully cleared %1 (%2 freed).")
+                                       .arg(cachedFoldersCount(removed_count), size_str));
     } else {
-        sak::logWarning(
-            "Cache clear partially failed: "
-            "cleared {} folder(s), {} could not be removed",
-            removed_count,
-            failed_count);
-        sak::showWarningLogged(this,
-                               "Clear Download Caches",
-                               QString("Cleared %1 folder(s), but %2 could not be removed.\n"
-                                       "They may be in use by an active download.")
-                                   .arg(removed_count)
-                                   .arg(failed_count));
+        reportPartialCacheClear(this, removed_count, failed_count);
     }
 }

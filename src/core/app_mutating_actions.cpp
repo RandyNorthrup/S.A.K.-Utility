@@ -25,6 +25,7 @@
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/flash_coordinator.h"
+#include "sak/format_utils.h"
 #include "sak/image_source.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_item_guard.h"
@@ -91,6 +92,14 @@ constexpr double kMaxPstNodeId = 4294967295.0;
 
 // Number base for formatting/parsing hexadecimal values (e.g. QString::number(x, kHexBase)).
 constexpr int kHexBase = 16;
+
+QString itemsCount(qint64 count) {
+    return countOf(count, QStringLiteral("item"), QStringLiteral("items"));
+}
+
+QString filesCount(qint64 count) {
+    return countOf(count, QStringLiteral("file"), QStringLiteral("files"));
+}
 
 // Map the model-facing format string to the MBOX-capable ExportFormat set. MBOX
 // export only supports per-message file formats (eml/html/text/pdf); the CSV / VCF /
@@ -287,9 +296,12 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
                     (captured.errors.isEmpty() && captured.items_failed == 0);
     QString message;
     if (ok) {
-        message = QStringLiteral("Exported %1 message(s) as %2 to %3")
-                      .arg(captured.items_exported)
-                      .arg(exportFormatLabel(format), output_path);
+        message = QStringLiteral("Exported %1 as %2 to %3")
+                      .arg(countOf(captured.items_exported,
+                                   QStringLiteral("message"),
+                                   QStringLiteral("messages")),
+                           exportFormatLabel(format),
+                           output_path);
         // Surface partial failures in the human-readable message too, not only in
         // the structured payload, so a consumer reading just the message is not
         // misled into thinking every message exported.
@@ -297,9 +309,11 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
             message += QStringLiteral(" (%1 failed)").arg(captured.items_failed);
         }
     } else if (captured.errors.isEmpty()) {
-        message = QStringLiteral("%1 export failed (%2 item(s) failed)")
-                      .arg(source_label)
-                      .arg(captured.items_failed);
+        message = QStringLiteral("%1 export failed (%2 failed)")
+                      .arg(source_label,
+                           countOf(captured.items_failed,
+                                   QStringLiteral("item"),
+                                   QStringLiteral("items")));
     } else {
         message = captured.errors.first();
     }
@@ -895,17 +909,21 @@ AppActionResult buildAttachmentSaveResult(const AttachmentSaveTally& tally,
                            {QStringLiteral("saved_paths"), tally.saved_paths},
                            {QStringLiteral("errors"), tally.errors}};
     if (tally.failed == 0 && tally.saved == req.attempted) {
-        QString msg =
-            QStringLiteral("Saved %1 attachment(s) to %2").arg(tally.saved).arg(req.output_dir);
+        QString msg = QStringLiteral("Saved %1 to %2")
+                          .arg(countOf(tally.saved,
+                                       QStringLiteral("attachment"),
+                                       QStringLiteral("attachments")),
+                               req.output_dir);
         if (req.truncated) {
             msg += QStringLiteral(" (capped at %1 of %2)").arg(req.attempted).arg(req.total);
         }
         return {true, msg, data};
     }
     return {false,
-            QStringLiteral("Saved %1 of %2 attachment(s); %3 failed")
+            QStringLiteral("Saved %1 of %2; %3 failed")
                 .arg(tally.saved)
-                .arg(req.attempted)
+                .arg(countOf(
+                    req.attempted, QStringLiteral("attachment"), QStringLiteral("attachments")))
                 .arg(tally.failed),
             data};
 }
@@ -1280,9 +1298,8 @@ AppActionResult organizeDirectory(const QJsonObject& args,
     QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv, &worker, target]() {
         const int moved = worker.movedCount();
         inv.finish({false,
-                    QStringLiteral("Organize of %1 cancelled after %2 file(s) moved")
-                        .arg(target)
-                        .arg(moved),
+                    QStringLiteral("Organize of %1 cancelled after %2 moved")
+                        .arg(target, filesCount(moved)),
                     {{QStringLiteral("target_directory"), target},
                      {QStringLiteral("files_moved"), moved},
                      {QStringLiteral("cancelled"), true}}});
@@ -1292,7 +1309,7 @@ AppActionResult organizeDirectory(const QJsonObject& args,
         const QJsonObject data{{QStringLiteral("target_directory"), target},
                                {QStringLiteral("files_moved"), moved}};
         inv.finish(
-            {true, QStringLiteral("Organized %1 (%2 file(s) moved)").arg(target).arg(moved), data});
+            {true, QStringLiteral("Organized %1 (%2 moved)").arg(target, filesCount(moved)), data});
     });
     QObject::connect(
         &worker, &WorkerBase::failed, inv.context(), [&inv, &worker](int, const QString& error) {
@@ -1723,10 +1740,8 @@ AppActionResult buildRestoreResult(const sak::FileRecoveryRestoreResult& res,
     if (restored > 0 && res.source_opened_read_only && res.source_not_mutated &&
         res.source_hash_covered_whole) {
         return {true,
-                QStringLiteral("Recovered %1 of %2 file(s) to %3")
-                    .arg(restored)
-                    .arg(requested)
-                    .arg(destination),
+                QStringLiteral("Recovered %1 of %2 to %3")
+                    .arg(QString::number(restored), filesCount(requested), destination),
                 data};
     }
     return {false, QStringLiteral("Recovery failed: %1").arg(restoreFailureReason(res)), data};
@@ -2388,17 +2403,20 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
         {QStringLiteral("permanently_deleted"),
          jsonStringArrayCapped(tally.recycle_fallback_paths, kMaxReportedListEntries)},
         {QStringLiteral("items"), tally.per_item}};
-    QString message =
-        ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
-           : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
+    QString message = ok ? QStringLiteral("Cleaned %1")
+                               .arg(countOf(tally.succeeded,
+                                            QStringLiteral("leftover item"),
+                                            QStringLiteral("leftover items")))
+                         : QStringLiteral("Cleaned %1; %2 failed")
+                               .arg(itemsCount(tally.succeeded))
+                               .arg(tally.failed);
     if (!tally.recycle_fallback_paths.isEmpty()) {
         // The Recycle Bin failed for these, so they were destroyed permanently despite recycle
         // mode. Surface it explicitly -- the recoverable-default contract was silently broken
         // otherwise.
-        message += QStringLiteral(
-                       " (%1 item(s) could NOT be sent to the Recycle Bin and were PERMANENTLY "
-                       "deleted)")
-                       .arg(tally.recycle_fallback_paths.size());
+        message +=
+            QStringLiteral(" (PERMANENTLY deleted %1 that could NOT be sent to the Recycle Bin)")
+                .arg(itemsCount(tally.recycle_fallback_paths.size()));
     }
     return {ok, message, data};
 }
@@ -2518,11 +2536,11 @@ constexpr int kMaxRefusalListEntries = 20;
 AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total) {
     return {false,
             QStringLiteral(
-                "Refused: %1 of %2 item(s) were not produced by a prior software.scan_leftovers in "
-                "this session; run scan_leftovers for this program first (its output is the safe "
+                "Refused: no prior software.scan_leftovers in this session produced %1 of %2; "
+                "run scan_leftovers for this program first (its output is the safe "
                 "source for this list). No deletion performed. %3")
                 .arg(unscanned.size())
-                .arg(total)
+                .arg(itemsCount(total))
                 .arg(unscanned.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
             QJsonObject{{QStringLiteral("unscanned"),
                          jsonStringArrayCapped(unscanned, kMaxRefusalListEntries)},
@@ -2558,10 +2576,10 @@ AppActionResult cleanLeftovers(const QJsonObject& args, const AppActionCancelChe
     // proof-of-scan gate.
     if (!refusals.isEmpty()) {
         return {false,
-                QStringLiteral("Refused: %1 of %2 item(s) target protected/invalid resources; no "
+                QStringLiteral("Refused: %1 of %2 would target protected/invalid resources; no "
                                "deletion performed. %3")
                     .arg(refusals.size())
-                    .arg(items_arr.size())
+                    .arg(itemsCount(items_arr.size()))
                     .arg(refusals.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
                 QJsonObject{{QStringLiteral("refused"),
                              jsonStringArrayCapped(refusals, kMaxRefusalListEntries)}}};
@@ -3603,13 +3621,13 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
     // when nothing was written.
     const int error_count = static_cast<int>(result.errors.size());
     if (result.items_converted > 0) {
-        QString message = QStringLiteral("Converted %1 item(s) to MBOX in %2")
-                              .arg(result.items_converted)
-                              .arg(output_dir);
+        QString message = QStringLiteral("Converted %1 to MBOX in %2")
+                              .arg(itemsCount(result.items_converted), output_dir);
         if (result.items_failed > 0 || error_count > 0) {
-            message += QStringLiteral(" (%1 failed, %2 warning(s))")
+            message += QStringLiteral(" (%1 failed, %2)")
                            .arg(result.items_failed)
-                           .arg(error_count);
+                           .arg(countOf(
+                               error_count, QStringLiteral("warning"), QStringLiteral("warnings")));
         }
         return {true, message, data};
     }

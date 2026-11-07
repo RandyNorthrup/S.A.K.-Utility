@@ -3,6 +3,7 @@
 
 #include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -22,6 +23,10 @@ using sak::ChocolateyManager;
 
 namespace {
 constexpr int kQueueSaveStatusMessageMs = sak::kTimerStatusMessageMs;
+
+QString packagesCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
+}
 
 bool isAllowedQueuePackageChar(QChar ch) {
     return ch.isLetterOrNumber() || ch == QLatin1Char('.') || ch == QLatin1Char('-') ||
@@ -196,8 +201,11 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
     m_onlineResultsTable->scrollToTop();
 
     const int count = static_cast<int>(packages.size());
-    Q_EMIT logOutput(QString("Search returned %1 result(s)").arg(count));
-    Q_EMIT statusMessage(tr("Found %1 package(s)").arg(count), sak::kTimerStatusMessageMs);
+    Q_EMIT logOutput(
+        QString("Search returned %1")
+            .arg(sak::countOf(count, QStringLiteral("result"), QStringLiteral("results"))));
+    Q_EMIT statusMessage(tr("Found %1").arg(sak::countOf(count, tr("package"), tr("packages"))),
+                         sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -293,10 +301,9 @@ void AppInstallationPanel::saveQueueToFile() {
     }
     file.close();
 
-    Q_EMIT logOutput(
-        QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(file_path));
-    Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()),
-                         kQueueSaveStatusMessageMs);
+    const QString saved = packagesCount(m_installQueue.size());
+    Q_EMIT logOutput(QString("Saved %1 to %2").arg(saved, file_path));
+    Q_EMIT statusMessage(QString("App list saved (%1)").arg(saved), kQueueSaveStatusMessageMs);
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
@@ -317,7 +324,7 @@ void AppInstallationPanel::loadQueueFromFile() {
 
     updateQueueDisplay();
 
-    QString msg = QString("Loaded %1 package(s)").arg(added);
+    QString msg = QString("Loaded %1").arg(packagesCount(added));
     if (skipped > 0) {
         msg += QString(", %1 skipped (duplicate or invalid)").arg(skipped);
     }

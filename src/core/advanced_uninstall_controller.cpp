@@ -8,6 +8,7 @@
 
 #include "sak/cleanup_worker.h"
 #include "sak/config_manager.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_item_guard.h"
 #include "sak/logger.h"
@@ -35,6 +36,20 @@ constexpr int kThreadWaitMs = 5000;
 constexpr int kDefaultScanLevelValue = 1;
 constexpr int kMaxScanLevelValue = 2;
 constexpr int kRecoveredSizeDisplayPrecision = 1;
+
+QString itemsCount(qint64 count) {
+    return countOf(count, QStringLiteral("item"), QStringLiteral("items"));
+}
+
+QString uninstallsCount(qint64 count) {
+    return countOf(count, QStringLiteral("uninstall"), QStringLiteral("uninstalls"));
+}
+
+QString safeLeftoverCount(qint64 count) {
+    return countOf(count,
+                   QStringLiteral("safe leftover item"),
+                   QStringLiteral("safe leftover items"));
+}
 
 // Safely dispose of a worker QThread before it is replaced or torn down (B10-09).
 // A completion slot fires from a WORKER signal that is delivered before QThread::run
@@ -446,9 +461,9 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
         setState(State::Idle);
         Q_EMIT cleanupFinished(0, static_cast<int>(screen.refused.size()), 0);
         Q_EMIT statusMessage(QStringLiteral(
-                                 "Cleanup refused %1 item(s) during safety screening; nothing was "
+                                 "Cleanup refused %1 during safety screening; nothing was "
                                  "removed.")
-                                 .arg(screen.refused.size()),
+                                 .arg(itemsCount(screen.refused.size())),
                              kStatusTimeoutLongMs);
         return;
     }
@@ -456,10 +471,11 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
     // Say so in aggregate too: the per-item "Skipped protected item" notices scroll past, and a
     // clean that quietly does less than was asked for must be visible as such.
     if (!screen.refused.isEmpty()) {
-        Q_EMIT statusMessage(
-            QString("%1 selected item(s) were refused by safety screening and were not cleaned.")
-                .arg(screen.refused.size()),
-            kStatusTimeoutLongMs);
+        Q_EMIT statusMessage(QString("Not cleaned: safety screening refused %1.")
+                                 .arg(countOf(screen.refused.size(),
+                                              QStringLiteral("selected item"),
+                                              QStringLiteral("selected items"))),
+                             kStatusTimeoutLongMs);
     }
 
     // Manual clean honors the user's recycle preference. When that preference is the Recycle Bin,
@@ -600,11 +616,11 @@ void AdvancedUninstallController::mergeDeferredAutoCleanResult(int succeeded,
     m_pendingAutoCleanReport.totalSpaceRecovered += bytes_recovered;
     if (recorded_successes != succeeded) {
         const QString mismatch =
-            QStringLiteral(
-                "Automatic cleanup reported %1 success(es), but %2 item identity "
-                "record(s) matched the deferred report.")
-                .arg(succeeded)
-                .arg(recorded_successes);
+            QStringLiteral("Automatic cleanup reported %1, but %2 matched the deferred report.")
+                .arg(countOf(succeeded, QStringLiteral("success"), QStringLiteral("successes")),
+                     countOf(recorded_successes,
+                             QStringLiteral("item identity record"),
+                             QStringLiteral("item identity records")));
         m_pendingAutoCleanReport.errorLog.append(mismatch);
         sak::logError(mismatch.toStdString());
     }
@@ -667,9 +683,9 @@ bool AdvancedUninstallController::maybeAutoCleanSafeLeftovers(UninstallReport& r
     m_pendingAutoCleanItemCount = static_cast<int>(cleanable.size());
     m_autoCleanedItems.clear();
     Q_EMIT autoCleanSafeStarted(static_cast<int>(cleanable.size()));
-    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from %2 to the Recycle "
+    Q_EMIT statusMessage(QString("Auto-cleaning %1 from %2 to the Recycle "
                                  "Bin (Review/Risky items kept for your review)...")
-                             .arg(cleanable.size())
+                             .arg(safeLeftoverCount(cleanable.size()))
                              .arg(report.programName),
                          0);
     // Auto-clean is automatic (no per-item human review), so it ALWAYS uses the Recycle Bin AND
@@ -1467,11 +1483,10 @@ void AdvancedUninstallController::finishDeferredBatchCleanup(int cleanup_succeed
     Q_EMIT batchFinished(
         succeeded, failed, cleanup_succeeded, cleanup_failed, cleanup_bytes_recovered);
     Q_EMIT statusMessage(
-        QString("Batch pipeline complete: %1 uninstall(s) succeeded, %2 failed; cleanup removed "
-                "%3 item(s), %4 failed.")
-            .arg(succeeded)
+        QString("Batch pipeline complete: %1 succeeded, %2 failed; cleanup removed %3, %4 failed.")
+            .arg(uninstallsCount(succeeded))
             .arg(failed)
-            .arg(cleanup_succeeded)
+            .arg(itemsCount(cleanup_succeeded))
             .arg(cleanup_failed),
         kStatusTimeoutLongMs);
 }
@@ -1511,17 +1526,17 @@ void AdvancedUninstallController::finishBatchUninstall() {
         setState(State::Idle);
         reportCleanupRefusals(screen.refused);
         Q_EMIT batchFinished(succeeded, failed, 0, static_cast<int>(screen.refused.size()), 0);
-        const QString cleanup_summary =
-            screen.refused.isEmpty()
-                ? QStringLiteral("no automatic cleanup was required")
-                : QStringLiteral("automatic cleanup refused %1 protected item(s)")
-                      .arg(screen.refused.size());
-        Q_EMIT statusMessage(
-            QString("Batch pipeline complete: %1 uninstall(s) succeeded, %2 failed; %3.")
-                .arg(succeeded)
-                .arg(failed)
-                .arg(cleanup_summary),
-            kStatusTimeoutLongMs);
+        const QString cleanup_summary = screen.refused.isEmpty()
+                                            ? QStringLiteral("no automatic cleanup was required")
+                                            : QStringLiteral("automatic cleanup refused %1")
+                                                  .arg(countOf(screen.refused.size(),
+                                                               QStringLiteral("protected item"),
+                                                               QStringLiteral("protected items")));
+        Q_EMIT statusMessage(QString("Batch pipeline complete: %1 succeeded, %2 failed; %3.")
+                                 .arg(uninstallsCount(succeeded))
+                                 .arg(failed)
+                                 .arg(cleanup_summary),
+                             kStatusTimeoutLongMs);
         return;
     }
 
@@ -1533,9 +1548,8 @@ void AdvancedUninstallController::finishBatchUninstall() {
     // terminal result, and m_batchIndex is already -1 so queue mutation is no longer falsely
     // locked.
     Q_EMIT autoCleanSafeStarted(static_cast<int>(screen.allowed.size() + screen.refused.size()));
-    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from the batch to the "
-                                 "Recycle Bin...")
-                             .arg(screen.allowed.size() + screen.refused.size()),
+    Q_EMIT statusMessage(QString("Auto-cleaning %1 from the batch to the Recycle Bin...")
+                             .arg(safeLeftoverCount(screen.allowed.size() + screen.refused.size())),
                          0);
     startCleanupWorker(screen.allowed,
                        screen.refused,

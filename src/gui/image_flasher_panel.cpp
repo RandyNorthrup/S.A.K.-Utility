@@ -548,7 +548,7 @@ void ImageFlasherPanel::createDriveSelectionPage() {
     m_driveSelectionPage = new QWidget();
     auto* layout = new QVBoxLayout(m_driveSelectionPage);
 
-    auto* group_box = new QGroupBox("Step 2: Select Target Drive(s)", m_driveSelectionPage);
+    auto* group_box = new QGroupBox("Step 2: Select Target Drives", m_driveSelectionPage);
     auto* group_layout = new QVBoxLayout(group_box);
 
     // The empty-state message now lives in the list overlay below; this label carries only the
@@ -981,7 +981,10 @@ void ImageFlasherPanel::notifyFlashFinished(const FlashResult& result) {
 void ImageFlasherPanel::onFlashError(const QString& error) {
     // Everything the coordinator reports this way happens before a writer starts: a write that
     // fails after that ends in flashCompleted, with the failed drives listed.
-    showFlashFailure(error, QStringLiteral("Nothing was written to the target drive(s)."));
+    showFlashFailure(error,
+                     m_selectedDrives.size() == 1
+                         ? QStringLiteral("Nothing was written to the target drive.")
+                         : QStringLiteral("Nothing was written to the target drives."));
 }
 
 void ImageFlasherPanel::showFlashFailure(const QString& error, const QString& drive_state) {
@@ -1016,9 +1019,13 @@ void ImageFlasherPanel::onCancelClicked() {
     auto reply = sak::showWarningLogged(
         this,
         "Cancel Flash",
-        "Are you sure you want to cancel the flash operation?\n\n"
-        "WARNING: Cancelling mid-write may leave the target drive(s) in an \n"
-        "unusable state. You may need to reformat them before they can be used again.",
+        m_selectedDrives.size() == 1
+            ? "Are you sure you want to cancel the flash operation?\n\n"
+              "WARNING: Cancelling mid-write may leave the target drive in an \n"
+              "unusable state. You may need to reformat it before it can be used again."
+            : "Are you sure you want to cancel the flash operation?\n\n"
+              "WARNING: Cancelling mid-write may leave the target drives in an \n"
+              "unusable state. You may need to reformat them before they can be used again.",
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
 
@@ -1248,13 +1255,15 @@ bool ImageFlasherPanel::confirmLargeDrives() {
 
     // Say which of the two situations this is. Claiming the listed drives exceed a
     // threshold that could not be applied would be a lie about why they are listed.
+    const bool one = oversized.size() == 1;
     const QString lead =
         threshold_bytes < 0
             ? QString(
                   "The large-drive threshold (%1 GB) could not be applied, so every "
                   "selected target is listed:")
                   .arg(threshold_gb)
-            : QString("The following target(s) are larger than the %1 GB threshold:")
+            : (one ? QString("The following target is larger than the %1 GB threshold:")
+                   : QString("The following targets are larger than the %1 GB threshold:"))
                   .arg(threshold_gb);
 
     const auto reply = sak::showWarningLogged(
@@ -1263,8 +1272,10 @@ bool ImageFlasherPanel::confirmLargeDrives() {
         QString("%1\n\n%2\n\n"
                 "Drives this size are usually internal or external hard disks rather than "
                 "USB sticks or SD cards. Flashing one ERASES ALL DATA on it.\n\n"
-                "Continue with these targets?")
-            .arg(lead, oversized.join("\n")),
+                "Continue with %3?")
+            .arg(lead,
+                 oversized.join("\n"),
+                 one ? QStringLiteral("this target") : QStringLiteral("these targets")),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     return reply == QMessageBox::Yes;
@@ -1293,16 +1304,19 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
             "(Bootable for Linux, other ISOs)";
     }
 
+    const bool one = drive_details.size() == 1;
     return QString(
                "Image: %1\n\n"
-               "Target Drive(s):\n%2\n"
-               "%3\n\n"
-               "ALL DATA on the target drive(s) will be PERMANENTLY ERASED.\n"
+               "%2:\n%3\n"
+               "%4\n\n"
+               "ALL DATA on the %5 will be PERMANENTLY ERASED.\n"
                "This action CANNOT be undone.\n\n"
                "Are you absolutely sure you want to continue?")
-        .arg(QFileInfo(m_selectedImagePath).fileName())
-        .arg(drive_details.join("\n"))
-        .arg(method_info);
+        .arg(QFileInfo(m_selectedImagePath).fileName(),
+             one ? QStringLiteral("Target Drive") : QStringLiteral("Target Drives"),
+             drive_details.join("\n"),
+             method_info,
+             one ? QStringLiteral("target drive") : QStringLiteral("target drives"));
 }
 
 bool ImageFlasherPanel::decideImageWriter(bool* is_windows_iso) {

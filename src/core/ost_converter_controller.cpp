@@ -7,6 +7,7 @@
 #include "sak/ost_converter_controller.h"
 
 #include "sak/conversion_report_generator.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_constants.h"
@@ -359,9 +360,10 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
     // reported as Complete. classifyOutcome centralizes that rule.
     job.status = classifyOutcome(result);
     if (job.status == OstConversionJob::Status::Failed) {
-        job.error_message = result.errors.isEmpty()
-                                ? tr("%1 item(s) failed").arg(result.items_failed)
-                                : result.errors.first();
+        job.error_message =
+            result.errors.isEmpty()
+                ? tr("%1 failed").arg(countOf(result.items_failed, tr("item"), tr("items")))
+                : result.errors.first();
         ++m_batch_result.files_failed;
     } else if (job.status == OstConversionJob::Status::Cancelled) {
         // Count a cancelled result into files_cancelled, never files_succeeded, so the

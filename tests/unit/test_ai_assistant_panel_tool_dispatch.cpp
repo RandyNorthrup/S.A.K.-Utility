@@ -586,7 +586,9 @@ private Q_SLOTS:
                  AiAssistantPanel::WorkflowSendResult::Handled);
 
         const bool warned = std::ranges::any_of(log, [](const QList<QVariant>& entry) {
-            return entry.at(0).toString().contains(QStringLiteral("need local tools"));
+            const QString text = entry.at(0).toString();
+            return text.contains(QStringLiteral("1 step that needs local tools")) ||
+                   text.contains(QStringLiteral("steps that need local tools"));
         });
         QVERIFY(warned);
     }

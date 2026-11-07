@@ -662,7 +662,8 @@ void EmailAttachmentsBrowserDialog::startBatch(const QString& dir,
     // Lock the save controls for the duration: arrivals from a second batch begun
     // now would interleave with this one's and land in each other's slots.
     updateSaveControls();
-    m_status_label->setText(tr("Saving %1 attachment(s)...").arg(refs.size()));
+    m_status_label->setText(
+        tr("Saving %1...").arg(countOf(refs.size(), tr("attachment"), tr("attachments"))));
     for (const auto& ref : refs) {
         m_controller->loadAttachmentContent(ref.message_id, ref.index);
     }

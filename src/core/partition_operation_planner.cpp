@@ -6,6 +6,8 @@
 
 #include "sak/partition_operation_planner.h"
 
+#include "sak/format_utils.h"
+
 #include <QHash>
 
 #include <initializer_list>
@@ -206,10 +208,12 @@ OperationPreview PartitionOperationPlanner::previewOperation(const PartitionInve
     preview.warnings.append(validation.warnings);
 
     expandCompositeOperation(operation, &preview);
-    preview.after_layout_description =
-        preview.operations.isEmpty()
-            ? QStringLiteral("No operation planned")
-            : QStringLiteral("%1 operation(s) queued").arg(preview.operations.size());
+    preview.after_layout_description = preview.operations.isEmpty()
+                                           ? QStringLiteral("No operation planned")
+                                           : QStringLiteral("%1 queued")
+                                                 .arg(countOf(preview.operations.size(),
+                                                              QStringLiteral("operation"),
+                                                              QStringLiteral("operations")));
     return preview;
 }
 

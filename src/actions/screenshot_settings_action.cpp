@@ -7,6 +7,7 @@
 #include "sak/actions/screenshot_settings_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_adapter_inspector.h"
@@ -904,7 +905,9 @@ int ScreenshotSettingsAction::countMonitorsOnGui() {
     QList<QScreen*> screens = QGuiApplication::screens();
     const int count = static_cast<int>(screens.size());
 
-    sak::logDebug("Detected {} monitor(s)", count);
+    sak::logDebug(
+        "Detected {}",
+        sak::countOf(count, QStringLiteral("monitor"), QStringLiteral("monitors")).toStdString());
 
     // Log each monitor's properties
     for (int i = 0; i < count; i++) {

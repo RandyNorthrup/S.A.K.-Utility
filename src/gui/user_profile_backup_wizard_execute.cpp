@@ -3,6 +3,7 @@
 
 #include "sak/app_data_program_prompt.h"
 #include "sak/backup_destination_guard.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/running_operations.h"
@@ -333,7 +334,10 @@ bool UserProfileBackupExecutePage::saveInstalledAppsToBackup(
         appendLog(tr("ERROR: Could not save installed applications list: %1").arg(error));
         return false;
     }
-    appendLog(tr("Saved %1 installed application(s) to backup").arg(installed_apps.size()));
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(installed_apps.size(),
+                               tr("installed application"),
+                               tr("installed applications"))));
     return true;
 }
 
@@ -360,7 +364,8 @@ bool UserProfileBackupExecutePage::saveWifiProfilesToBackup(
         appendLog(tr("ERROR: Could not save WiFi profiles: %1").arg(error));
         return false;
     }
-    appendLog(tr("Saved %1 WiFi profile(s) to backup").arg(arr.size()));
+    appendLog(
+        tr("Saved %1 to backup").arg(countOf(arr.size(), tr("WiFi profile"), tr("WiFi profiles"))));
     return true;
 }
 
@@ -387,7 +392,9 @@ bool UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
         appendLog(tr("ERROR: Could not save Ethernet configurations: %1").arg(error));
         return false;
     }
-    appendLog(tr("Saved %1 Ethernet configuration(s) to backup").arg(arr.size()));
+    appendLog(
+        tr("Saved %1 to backup")
+            .arg(countOf(arr.size(), tr("Ethernet configuration"), tr("Ethernet configurations"))));
     return true;
 }
 
@@ -414,7 +421,9 @@ bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
         appendLog(tr("ERROR: Could not save application data sources: %1").arg(error));
         return false;
     }
-    appendLog(tr("Saved %1 application data source(s) to backup").arg(arr.size()));
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(
+                      arr.size(), tr("application data source"), tr("application data sources"))));
     return true;
 }
 

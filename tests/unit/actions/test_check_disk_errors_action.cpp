@@ -121,7 +121,7 @@ void CheckDiskErrorsActionTests::aFat32StickIsNamedAsNotCheckedNotFailed() {
              qPrintable(result.log));
     QVERIFY2(result.log.contains(QStringLiteral("chkdsk U:")), qPrintable(result.log));
     // Counted where it is named: the summary said "0 could not be checked" under this drive.
-    QVERIFY2(result.log.contains(QStringLiteral("1 of 2 drive(s) scanned, 1 could not be checked")),
+    QVERIFY2(result.log.contains(QStringLiteral("1 of 2 drives scanned, 1 could not be checked")),
              qPrintable(result.log));
     QVERIFY2(result.message.contains(QStringLiteral("(U: is FAT32)")), qPrintable(result.message));
     QVERIFY(Action::fileSystemIsScannable(QStringLiteral("NTFS")));
@@ -170,8 +170,7 @@ void CheckDiskErrorsActionTests::executeSaysItSkippedANetworkDrive() {
              qPrintable(result.log));
     // Left out on purpose, so it is not counted as a drive that could not be checked.
     QVERIFY2(result.success, qPrintable(result.message));
-    QVERIFY2(result.log.contains(QStringLiteral("1 of 1 drive(s) scanned")),
-             qPrintable(result.log));
+    QVERIFY2(result.log.contains(QStringLiteral("1 of 1 drive scanned")), qPrintable(result.log));
 }
 
 void CheckDiskErrorsActionTests::reportSaysNetworkDrivesAreNotChecked() {

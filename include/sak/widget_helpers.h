@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/rich_text_safety.h"
 
@@ -444,11 +445,6 @@ inline void setItemForeground(QTableWidgetItem* item, const QColor& color) {
 inline QString readableRegistryDate(const QString& value) {
     const QDate date = QDate::fromString(value.trimmed(), QStringLiteral("yyyyMMdd"));
     return date.isValid() ? date.toString(Qt::ISODate) : value;
-}
-
-/// @brief "1 hop", "2 hops": @p count with the noun that agrees with it.
-inline QString countOf(qint64 count, const QString& singular, const QString& plural) {
-    return QStringLiteral("%1 %2").arg(count).arg(count == 1 ? singular : plural);
 }
 
 /// @brief A compiler __DATE__ ("Nov  4 2026") as "November 4, 2026", or simplified if it does

@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_human_gate_store.h"
 
+#include "sak/format_utils.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -138,8 +140,10 @@ QVector<AiHumanGate> AiHumanGateStore::loadGates(QString& error_message) const {
         return gates;
     }
     if (malformed_lines > 0) {
-        error_message =
-            QStringLiteral("Human-gate log has %1 unreadable record(s)").arg(malformed_lines);
+        error_message = QStringLiteral("Human-gate log has %1")
+                            .arg(countOf(malformed_lines,
+                                         QStringLiteral("unreadable record"),
+                                         QStringLiteral("unreadable records")));
     }
     return gates;
 }

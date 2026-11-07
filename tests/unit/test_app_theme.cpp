@@ -1185,7 +1185,7 @@ void AppThemeTests::aTabsStatusMessageLeavesWithIt() {
     QVERIFY(tabs != nullptr && tabs->count() > 1);
     tabs->setCurrentIndex(0);
     QCoreApplication::processEvents();
-    m_window->updateStatus(QStringLiteral("Explorer loaded 6 item(s)"), 0);
+    m_window->updateStatus(QStringLiteral("Explorer loaded 6 items"), 0);
     m_window->updateStatus(QStringLiteral("Querying DNS for example.com..."), 60'000);
     tabs->setCurrentIndex(1);
     QCoreApplication::processEvents();
@@ -1196,7 +1196,7 @@ void AppThemeTests::aTabsStatusMessageLeavesWithIt() {
             shown << label->text();
         }
     }
-    QVERIFY2(!shown.contains(QStringLiteral("Explorer loaded 6 item(s)")),
+    QVERIFY2(!shown.contains(QStringLiteral("Explorer loaded 6 items")),
              qPrintable(shown.join(QStringLiteral(" | "))));
     QVERIFY(shown.contains(QStringLiteral("Ready")));
 }
@@ -1244,7 +1244,7 @@ void AppThemeTests::aSubTabsStatusMessageLeavesWithIt() {
             sub->setCurrentIndex(0);
             QCoreApplication::processEvents();
             // A message without a timeout goes to the status label, one with a timeout to the bar.
-            const QString lasting = QStringLiteral("Explorer loaded 6 item(s)");
+            const QString lasting = QStringLiteral("Explorer loaded 6 items");
             m_window->updateStatus(lasting, 0);
             m_window->updateStatus(QStringLiteral("2 adapters found"), 60'000);
             const auto shows = [this](const QString& text) {

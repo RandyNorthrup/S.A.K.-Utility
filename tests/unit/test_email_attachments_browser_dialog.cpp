@@ -207,8 +207,7 @@ void EmailAttachmentsBrowserDialogTests::specificAndGenericSaveErrorsCountOnce()
     Q_EMIT controller.attachmentContentReady(
         2, 0, QByteArrayLiteral("saved"), QStringLiteral("saved.txt"));
     QVERIFY(!dialog.m_batch_save.isActive());
-    QCOMPARE(dialog.m_status_label->text(),
-             QStringLiteral("Saved 1 of 2 attachment(s) (1 failed)"));
+    QCOMPARE(dialog.m_status_label->text(), QStringLiteral("Saved 1 of 2 attachments (1 failed)"));
 }
 
 // UI re-check N4: the Select column's fixed width cut its header to "Selec".

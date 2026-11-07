@@ -35,6 +35,10 @@ constexpr int kDuplicateVirtualBrowseMaxEntries = 10'000;
 // in-flight file hash is interrupted promptly on teardown (well within ~WorkerBase's join window),
 // large enough to be negligible on a normal run.
 constexpr int kHashCancelPollMs = 50;
+
+QString filesCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("file"), QStringLiteral("files"));
+}
 }  // namespace
 
 // SHA-256 (not MD5) is the dedup hash: files are grouped as duplicates purely by digest equality,
@@ -102,7 +106,8 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
     // can report that the results are incomplete instead of a clean success.
     m_files_unhashed = static_cast<int>(files.size() - hashed_files.size());
     if (m_files_unhashed > 0) {
-        sak::logWarning("{} file(s) could not be hashed and were skipped", m_files_unhashed);
+        sak::logWarning("Skipped {} that could not be hashed",
+                        filesCount(m_files_unhashed).toStdString());
     }
 
     // Group files by hash and find duplicates
@@ -539,9 +544,13 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     int count = 0;
     for (const DuplicateGroup* group : ordered) {
         if (++count > kDuplicateSummaryGroupLimit) {
-            summary +=
-                QString("\n%1 more group(s) are not listed here.\n")
-                    .arg(static_cast<qsizetype>(ordered.size()) - kDuplicateSummaryGroupLimit);
+            const qsizetype hidden = static_cast<qsizetype>(ordered.size()) -
+                                     kDuplicateSummaryGroupLimit;
+            summary += QString("\n%1 %2 not listed here.\n")
+                           .arg(sak::countOf(hidden,
+                                             QStringLiteral("more group"),
+                                             QStringLiteral("more groups")),
+                                hidden == 1 ? QStringLiteral("is") : QStringLiteral("are"));
             break;
         }
 

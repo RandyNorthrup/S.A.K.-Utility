@@ -8,6 +8,7 @@
 
 #include "sak/app_paths.h"
 #include "sak/bundled_tools_manager.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
@@ -43,6 +44,14 @@ namespace sak {
 namespace {
 constexpr qsizetype kInstallErrorPreviewChars = 200;
 constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
+
+QString packagesCount(qint64 count) {
+    return countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
+}
+
+QString filesCount(qint64 count) {
+    return countOf(count, QStringLiteral("file"), QStringLiteral("files"));
+}
 
 /// @brief Manifest-facing view of an engine OfflineReadiness classification.
 struct OfflineReadinessInfo {
@@ -418,11 +427,11 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
     }
 
     Q_EMIT operationStarted(static_cast<int>(packages.size()));
-    Q_EMIT logMessage(QString("Building %1: %2 package(s)")
+    Q_EMIT logMessage(QString("Building %1: %2")
                           .arg(mode == PayloadMode::List
                                    ? QStringLiteral("Thin Bundle (metadata-only)")
                                    : QStringLiteral("Full Bundle (self-contained)"))
-                          .arg(packages.size()));
+                          .arg(packagesCount(packages.size())));
 
     if (mode == PayloadMode::List) {
         m_operation_future = QtConcurrent::run([this, output_dir, description]() {
@@ -486,8 +495,8 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     lock.unlock();
 
     if (ctx.total_jobs > 0) {
-        emitLog(
-            QStringLiteral("Resolved %1 package(s) including dependencies").arg(ctx.total_jobs));
+        emitLog(QStringLiteral("Resolved %1 including dependencies")
+                    .arg(packagesCount(ctx.total_jobs)));
     }
 
     for (int idx = 0; idx < ctx.total_jobs; ++idx) {
@@ -553,8 +562,8 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
         this,
         [this, stats, output_dir]() {
             Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
-            Q_EMIT logMessage(
-                QString("Thin Bundle written: %1 package(s), fetched at install").arg(stats.total));
+            Q_EMIT logMessage(QString("Thin Bundle written: %1, fetched at install")
+                                  .arg(packagesCount(stats.total)));
             Q_EMIT operationCompleted(stats);
         },
         Qt::QueuedConnection);
@@ -1057,9 +1066,9 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
     const bool is_list = manifest.payload_mode == PayloadMode::List;
     Q_EMIT operationStarted(static_cast<int>(manifest.packages.size()));
     Q_EMIT logMessage(
-        QString("Installing %1: %2 package(s)%3")
+        QString("Installing %1: %2%3")
             .arg(is_list ? QStringLiteral("Thin Bundle") : QStringLiteral("Full Bundle"))
-            .arg(manifest.packages.size())
+            .arg(packagesCount(manifest.packages.size()))
             .arg(packed_only && !is_list ? QStringLiteral(" (air-gap: packed only)") : QString()));
 
     m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir, packed_only]() {
@@ -1113,10 +1122,9 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
     const QVector<DeploymentManifestEntry> ordered =
         is_bundle ? topologicalInstallOrder(manifest.packages, &cyclic_ids) : manifest.packages;
     if (!cyclic_ids.isEmpty()) {
-        emitLog(QStringLiteral("[Dependencies] Cycle detected among %1 package(s); installed in "
+        emitLog(QStringLiteral("[Dependencies] Cycle detected among %1; installed in "
                                "manifest order (dependency ordering not guaranteed): %2")
-                    .arg(cyclic_ids.size())
-                    .arg(cyclic_ids.join(QStringLiteral(", "))));
+                    .arg(packagesCount(cyclic_ids.size()), cyclic_ids.join(QStringLiteral(", "))));
     }
 
     BatchStats stats;
@@ -1361,7 +1369,7 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
     m_cancelled = false;
 
     Q_EMIT operationStarted(static_cast<int>(packages.size()));
-    Q_EMIT logMessage(QString("Direct download: %1 package(s)").arg(packages.size()));
+    Q_EMIT logMessage(QString("Direct download: %1").arg(packagesCount(packages.size())));
 
     m_operation_future = QtConcurrent::run(
         [this, packages, output_dir]() { executeDirectDownload(packages, output_dir); });
@@ -1420,7 +1428,7 @@ void OfflineDeploymentWorker::executeDirectDownload(
             ++failed;
         }
 
-        const QString msg = ok ? QString("Downloaded %1 file(s)").arg(files)
+        const QString msg = ok ? QString("Downloaded %1").arg(filesCount(files))
                                : QString("No installers found");
         QMetaObject::invokeMethod(
             this,
@@ -1587,7 +1595,11 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
         return 0;
     }
 
-    emitLog(QString("[%1] Found %2 embedded installer(s)").arg(pkg_id).arg(embedded.size()));
+    emitLog(QString("[%1] Found %2")
+                .arg(pkg_id,
+                     countOf(embedded.size(),
+                             QStringLiteral("embedded installer"),
+                             QStringLiteral("embedded installers"))));
     int copied = 0;
     for (const auto& name : embedded) {
         // Disambiguate against every name already written this run so a second
@@ -1678,9 +1690,9 @@ int OfflineDeploymentWorker::downloadInstallersToDir(const QString& pkg_id,
     }
 
     if (downloaded == 0 && !downloads.isEmpty()) {
-        emitLog(QString("[%1] Found %2 URL(s) but all downloads failed")
-                    .arg(pkg_id)
-                    .arg(downloads.size()));
+        emitLog(QString("[%1] Found %2 but every download failed")
+                    .arg(pkg_id,
+                         countOf(downloads.size(), QStringLiteral("URL"), QStringLiteral("URLs"))));
     }
     return downloaded;
 }

@@ -7,6 +7,7 @@
 #include "sak/email_profile_manager.h"
 
 #include "sak/email_constants.h"
+#include "sak/format_utils.h"
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -461,9 +462,11 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
     // items that DID succeed, but a caller that only watches backupComplete must not
     // read that as a fully successful backup: surface an aggregate failure first.
     if (m_backup_failures > 0) {
-        Q_EMIT errorOccurred(QStringLiteral("Backup finished with %1 failed item(s); "
+        Q_EMIT errorOccurred(QStringLiteral("Backup finished with %1; "
                                             "some profiles were not fully backed up")
-                                 .arg(m_backup_failures));
+                                 .arg(sak::countOf(m_backup_failures,
+                                                   QStringLiteral("failed item"),
+                                                   QStringLiteral("failed items"))));
     }
     Q_EMIT backupComplete(backup_path, files_done, bytes_copied);
 }

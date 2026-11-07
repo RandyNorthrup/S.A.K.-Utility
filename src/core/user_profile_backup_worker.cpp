@@ -241,10 +241,12 @@ void UserProfileBackupWorker::applySmartFilterRules(const SmartFilter& smartFilt
     // backing up what they asked to skip (B8-23).
     const QStringList invalidPatterns = m_fileFilter->invalidPatterns();
     if (!invalidPatterns.isEmpty()) {
-        Q_EMIT logMessage(tr("Ignoring %1 invalid exclusion pattern(s); matching files will NOT "
+        Q_EMIT logMessage(tr("Ignoring %1; matching files will NOT "
                              "be excluded from the backup: %2")
-                              .arg(invalidPatterns.size())
-                              .arg(invalidPatterns.join(QStringLiteral("; "))),
+                              .arg(countOf(invalidPatterns.size(),
+                                           tr("invalid exclusion pattern"),
+                                           tr("invalid exclusion patterns")),
+                                   invalidPatterns.join(QStringLiteral("; "))),
                           true);
     }
 }
@@ -540,8 +542,11 @@ void UserProfileBackupWorker::emitBackupSummary() {
     // The outcome and the summary go to the wizard with backupComplete, and it logs them: logged
     // here as well, each appeared twice, and "=== Backup Complete ===" stood over a failed run.
     if (m_verify) {
-        Q_EMIT logMessage(
-            tr("Checked %1 stored file(s) against their originals").arg(m_filesVerified), false);
+        Q_EMIT logMessage(tr("Checked %1 against %2")
+                              .arg(countOf(m_filesVerified, tr("stored file"), tr("stored files")),
+                                   m_filesVerified == 1 ? tr("its original")
+                                                        : tr("their originals")),
+                          false);
     }
     Q_EMIT backupComplete(success, summary, m_manifest);
 }

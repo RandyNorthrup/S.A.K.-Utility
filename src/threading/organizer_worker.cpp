@@ -7,6 +7,7 @@
 #include "sak/organizer_worker.h"
 
 #include "sak/app_organizer_helpers.h"
+#include "sak/format_utils.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
@@ -170,7 +171,9 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
     }
 
     if (!m_failed_moves.isEmpty()) {
-        sak::logError("Organizer could not move {} file(s)", m_failed_moves.size());
+        const QString failed =
+            sak::countOf(m_failed_moves.size(), QStringLiteral("file"), QStringLiteral("files"));
+        sak::logError("Organizer could not move {}", failed.toStdString());
         return std::unexpected(sak::error_code::write_error);
     }
     sak::logInfo("Directory organization complete");
@@ -351,7 +354,9 @@ auto OrganizerWorker::generatePreviewSummary() -> QString {
         }));
 
     if (collisions > 0) {
-        summary += QString("\nWarning: %1 file(s) would have collisions\n").arg(collisions);
+        summary +=
+            QString("\nWarning: %1 would have collisions\n")
+                .arg(sak::countOf(collisions, QStringLiteral("file"), QStringLiteral("files")));
     }
 
     return summary;

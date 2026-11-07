@@ -7,6 +7,7 @@
 #include "sak/actions/reset_network_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -408,10 +409,11 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
     ExecutionResult result;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.success = all_errors.isEmpty();
-    result.message =
-        all_errors.isEmpty()
-            ? "Network settings reset successfully"
-            : QString("Network reset completed with %1 issue(s)").arg(all_errors.size());
+    result.message = all_errors.isEmpty() ? "Network settings reset successfully"
+                                          : QString("Network reset completed with %1")
+                                                .arg(countOf(all_errors.size(),
+                                                             QStringLiteral("issue"),
+                                                             QStringLiteral("issues")));
 
     if (m_requires_reboot) {
         result.message += " - REBOOT REQUIRED for Winsock/TCP-IP changes";

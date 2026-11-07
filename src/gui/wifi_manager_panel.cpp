@@ -175,6 +175,10 @@ namespace sak {
 
 namespace {
 
+QString networksCount(qint64 count) {
+    return countOf(count, QStringLiteral("network"), QStringLiteral("networks"));
+}
+
 // A QR export writes into <chosen directory>/<sub_name>. The character class coerces the
 // separators Windows rejects, but it does NOT stop "." or ".." -- and an SSID is arbitrary
 // text this program did not author, so ".." is a legal network name that resolves to the
@@ -480,7 +484,7 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
     m_load_table_btn = new QPushButton("Load\u2026", m_table_group);
     m_load_table_btn->setAccessibleName(QStringLiteral("Load Networks from File"));
     m_load_table_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    m_delete_selected_btn->setToolTip("Remove the selected row(s) from the table");
+    m_delete_selected_btn->setToolTip("Remove the selected rows from the table");
     // A danger button with nothing to act on: it was enabled on an empty table.
     m_delete_selected_btn->setEnabled(false);
     m_add_to_windows_btn->setToolTip(
@@ -675,8 +679,10 @@ void WifiManagerPanel::onDeleteSelectedClicked() {
     }
 
     onSelectionChanged();
-    Q_EMIT statusMessage(QString("Deleted %1 row(s).").arg(rows.size()),
-                         sak::kTimerStatusMessageMs);
+    Q_EMIT statusMessage(
+        QString("Deleted %1.")
+            .arg(countOf(rows.size(), QStringLiteral("row"), QStringLiteral("rows"))),
+        sak::kTimerStatusMessageMs);
 }
 
 void WifiManagerPanel::onTableDoubleClicked(const QModelIndex& index) {
@@ -786,7 +792,7 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     auto* opt_layout = new QVBoxLayout(opt_widget);
     opt_layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    opt_layout->addWidget(new QLabel("Select export format(s):"));
+    opt_layout->addWidget(new QLabel("Select export formats:"));
     ctl.chkPng = new QCheckBox("PNG");
     ctl.chkPng->setChecked(true);
     ctl.chkPdf = new QCheckBox("PDF");
@@ -1069,11 +1075,9 @@ void WifiManagerPanel::executeBatchQrExport(QDialog* dlg,
     }
     dlg->accept();
     const QString msg =
-        failed > 0 ? QString("Batch QR: saved %1 network(s) to %2 (%3 failed).")
-                         .arg(saved)
-                         .arg(base_dir)
-                         .arg(failed)
-                   : QString("Batch QR: saved %1 network(s) to: %2").arg(saved).arg(base_dir);
+        failed > 0 ? QString("Batch QR: saved %1 to %2 (%3 failed).")
+                         .arg(networksCount(saved), base_dir, QString::number(failed))
+                   : QString("Batch QR: saved %1 to: %2").arg(networksCount(saved), base_dir);
     Q_EMIT statusMessage(msg, sak::kTimerStatusExtendedMs);
 }
 
@@ -1097,14 +1101,17 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int network_count) {
     Q_ASSERT(dlg);
 
     BatchQrDialogUi ui;
-    dlg->setWindowTitle(QString("Batch QR Export (%1 networks)").arg(network_count));
+    dlg->setWindowTitle(QString("Batch QR Export (%1)").arg(networksCount(network_count)));
     dlg->setMinimumWidth(kBatchQrDialogMinWidth);
 
     auto* layout = new QVBoxLayout(dlg);
-    layout->addWidget(
-        new QLabel(QString("Generate QR codes for %1 selected networks:").arg(network_count), dlg));
+    layout->addWidget(new QLabel(QString("Generate QR codes for %1:")
+                                     .arg(countOf(network_count,
+                                                  QStringLiteral("selected network"),
+                                                  QStringLiteral("selected networks"))),
+                                 dlg));
     layout->addSpacing(sak::ui::kSpacingSmall);
-    layout->addWidget(new QLabel("Export format(s):", dlg));
+    layout->addWidget(new QLabel("Export formats:", dlg));
 
     ui.chk_png = new QCheckBox("PNG", dlg);
     ui.chk_png->setChecked(true);
@@ -1401,9 +1408,15 @@ void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sou
         ++saved;
     }
     const QString msg =
-        failed > 0
-            ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(out_dir).arg(failed)
-            : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(out_dir);
+        failed > 0 ? QString("Saved %1 to %2 (%3 failed).")
+                         .arg(countOf(saved, QStringLiteral("script"), QStringLiteral("scripts")),
+                              out_dir,
+                              QString::number(failed))
+                   : QString("Saved %1 to: %2")
+                         .arg(countOf(saved,
+                                      QStringLiteral("Windows script"),
+                                      QStringLiteral("Windows scripts")),
+                              out_dir);
     Q_EMIT statusMessage(msg, sak::kTimerStatusLongMs);
 }
 
@@ -1521,7 +1534,11 @@ void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<in
                                "Failed to write the network table (file left unchanged):\n" + path);
         return;
     }
-    Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path),
+    Q_EMIT statusMessage(QString("Saved %1 to %2")
+                             .arg(countOf(arr.size(),
+                                          QStringLiteral("checked network"),
+                                          QStringLiteral("checked networks")),
+                                  path),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -1717,7 +1734,10 @@ void WifiManagerPanel::onScanNetworksClicked() {
             ++added;
         }
 
-        Q_EMIT panel->statusMessage(QString("Added %1 known network(s) to table.").arg(added),
+        Q_EMIT panel->statusMessage(QString("Added %1 to table.")
+                                        .arg(countOf(added,
+                                                     QStringLiteral("known network"),
+                                                     QStringLiteral("known networks"))),
                                     sak::kTimerStatusDefaultMs);
     });
 
@@ -1773,9 +1793,12 @@ void WifiManagerPanel::onSelectionChanged() {
 
     // Update multi-modal button tooltips to indicate source
     if (checked > 0) {
-        const QString src = QString("checked %1 network(s)").arg(checked);
-        m_generate_qr_btn->setToolTip(QString("Export QR code(s) for %1").arg(src));
-        m_export_script_btn->setToolTip(QString("Generate Windows script(s) for %1").arg(src));
+        const QString src = QString("checked %1").arg(networksCount(checked));
+        m_generate_qr_btn->setToolTip(
+            QString(checked == 1 ? "Export QR code for %1" : "Export QR codes for %1").arg(src));
+        m_export_script_btn->setToolTip(QString(checked == 1 ? "Generate Windows script for %1"
+                                                             : "Generate Windows scripts for %1")
+                                            .arg(src));
         m_export_macos_btn->setToolTip(QString("Generate macOS profile for %1").arg(src));
         m_connect_phone_btn->setToolTip(QString("Show QR dialog for %1").arg(src));
     } else {
@@ -1853,7 +1876,11 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
         return;
     }
     m_add_to_windows_btn->setEnabled(false);
-    Q_EMIT statusMessage("Adding selected network(s) to Windows WiFi profiles...", 0);
+    Q_EMIT statusMessage(QString("Adding %1 to Windows WiFi profiles...")
+                             .arg(countOf(configs.size(),
+                                          QStringLiteral("selected network"),
+                                          QStringLiteral("selected networks"))),
+                         0);
 
     auto* watcher = new QFutureWatcher<QPair<int, int>>(this);
     const QPointer<WifiManagerPanel> panel(this);
@@ -1866,12 +1893,12 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
         const auto [added, failed] = watcher->result();
         if (failed == 0) {
             Q_EMIT panel->statusMessage(
-                QString("Added %1 network(s) to Windows WiFi profiles.").arg(added),
+                QString("Added %1 to Windows WiFi profiles.").arg(networksCount(added)),
                 sak::kTimerStatusDefaultMs);
         } else {
-            Q_EMIT panel->statusMessage(QString("Added %1 network(s); %2 failed"
+            Q_EMIT panel->statusMessage(QString("Added %1; %2 failed"
                                                 " (try running as Administrator).")
-                                            .arg(added)
+                                            .arg(networksCount(added))
                                             .arg(failed),
                                         sak::kTimerStatusLongMs);
         }
@@ -2350,7 +2377,7 @@ void WifiManagerPanel::saveTableToJson(const QString& path) {
                                "Failed to write the network table (file left unchanged):\n" + path);
         return;
     }
-    Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path),
+    Q_EMIT statusMessage(QString("Saved %1 to %2").arg(networksCount(arr.size()), path),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -2392,7 +2419,7 @@ void WifiManagerPanel::loadTableFromJson(const QString& path) {
         addRowToTable(cfg);
     }
     Q_EMIT statusMessage(
-        QString("Loaded %1 network(s) from %2").arg(m_network_table->rowCount()).arg(path),
+        QString("Loaded %1 from %2").arg(networksCount(m_network_table->rowCount()), path),
         sak::kTimerStatusDefaultMs);
     onSelectionChanged();
 }

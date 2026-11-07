@@ -1405,9 +1405,9 @@ void EmailInspectorPanel::startSearch(const QString& query,
 void EmailInspectorPanel::finishSearchResults(int total_hits) {
     m_item_empty_state->clearLoading();
     m_item_list->setSortingEnabled(true);
-    QString label = m_search_scope_name.isEmpty()
-                        ? tr("%1 search result(s)").arg(total_hits)
-                        : tr("%1 search result(s) in %2").arg(total_hits).arg(m_search_scope_name);
+    const QString results = countOf(total_hits, tr("search result"), tr("search results"));
+    QString label =
+        m_search_scope_name.isEmpty() ? results : tr("%1 in %2").arg(results, m_search_scope_name);
     if (total_hits >= email::kMaxSearchResults) {
         // The limit counts results, so a filter is the way to reach what it stopped short of.
         label += tr(" (the limit: narrow the search or add a filter to see the rest)");
@@ -1687,7 +1687,8 @@ void EmailInspectorPanel::startAttachmentBatch(const QString& dir,
     // Lock the controls for the duration: arrivals from a second batch begun now
     // would interleave with this one's and land in each other's slots.
     setAttachmentSaveControlsEnabled(false);
-    updateStatusBar(tr("Saving %1 attachment(s)...").arg(refs.size()));
+    updateStatusBar(
+        tr("Saving %1...").arg(countOf(refs.size(), tr("attachment"), tr("attachments"))));
     for (const auto& ref : refs) {
         m_controller->loadAttachmentContent(ref.message_id, ref.index);
     }
@@ -1994,7 +1995,8 @@ void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
     // A user-initiated cancel is not a failure, but the results ARE partial -- show it in the
     // caution colour so it never reads as a clean "Search complete". The colour is applied
     // AFTER updateStatusBar because that method resets the label style to muted on every call.
-    updateStatusBar(tr("Search cancelled: %1 partial hit(s)").arg(partial_hits));
+    updateStatusBar(tr("Search cancelled: %1")
+                        .arg(countOf(partial_hits, tr("partial hit"), tr("partial hits"))));
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
 }
 
@@ -2031,17 +2033,15 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
         }
         return;
     }
-    updateStatusBar(
-        tr("Export complete: %1 items to %2").arg(result.items_exported).arg(result.export_path));
-    Q_EMIT logOutput(tr("Exported %1 items (%2 bytes)")
-                         .arg(result.items_exported)
-                         .arg(formatBytes(result.total_bytes)));
+    const QString exported = countOf(result.items_exported, tr("item"), tr("items"));
+    updateStatusBar(tr("Export complete: %1 to %2").arg(exported, result.export_path));
+    Q_EMIT logOutput(tr("Exported %1 (%2)").arg(exported, formatBytes(result.total_bytes)));
     if (!result.notes.isEmpty()) {
         // Everything was written, and not everything came across exactly. Say so where it shows.
-        updateStatusBar(tr("Export complete: %1 items to %2, with %3 note(s) in the log")
-                            .arg(result.items_exported)
-                            .arg(result.export_path)
-                            .arg(result.notes.size()));
+        updateStatusBar(tr("Export complete: %1 to %2, with %3 in the log")
+                            .arg(exported,
+                                 result.export_path,
+                                 countOf(result.notes.size(), tr("note"), tr("notes"))));
         m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
         for (const QString& note : result.notes) {
             Q_EMIT logOutput(tr("  Export note: %1").arg(note));

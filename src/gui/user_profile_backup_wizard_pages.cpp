@@ -283,10 +283,11 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
     }
 
     const double total_gb = static_cast<double>(total_size) / sak::kBytesPerGBf;
-    m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
-                                .arg(total_users)
-                                .arg(total_folders)
-                                .arg(total_gb, 0, 'f', kSizeDisplayPrecision));
+    m_summaryLabel->setText(
+        tr("%1, %2 | Estimated: %3 GB")
+            .arg(countOf(total_users, tr("user"), tr("users")),
+                 countOf(total_folders, tr("total folder"), tr("total folders")))
+            .arg(total_gb, 0, 'f', kSizeDisplayPrecision));
 }
 
 // ============================================================================
@@ -1211,38 +1212,39 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
     // Run heavy scanning work on a background thread to avoid freezing the UI
     auto* watcher = new QFutureWatcher<QVector<InstalledAppInfo>>(this);
 
-    connect(
-        watcher,
-        &QFutureWatcher<QVector<InstalledAppInfo>>::finished,
-        this,
-        [safe_this, watcher]() {
-            watcher->deleteLater();
-            if (!safe_this) {
-                return;  // Page was destroyed
-            }
+    connect(watcher,
+            &QFutureWatcher<QVector<InstalledAppInfo>>::finished,
+            this,
+            [safe_this, watcher]() {
+                watcher->deleteLater();
+                if (!safe_this) {
+                    return;  // Page was destroyed
+                }
 
-            auto app_infos = watcher->result();
+                auto app_infos = watcher->result();
 
-            safe_this->m_scanned = true;
-            safe_this->m_scanButton->setEnabled(true);
-            safe_this->m_selectAllButton->setEnabled(true);
-            safe_this->m_selectNoneButton->setEnabled(true);
-            safe_this->m_appTree->setEnabled(true);
-            safe_this->m_scanProgress->setVisible(false);
+                safe_this->m_scanned = true;
+                safe_this->m_scanButton->setEnabled(true);
+                safe_this->m_selectAllButton->setEnabled(true);
+                safe_this->m_selectNoneButton->setEnabled(true);
+                safe_this->m_appTree->setEnabled(true);
+                safe_this->m_scanProgress->setVisible(false);
 
-            const auto with_package = std::ranges::count_if(app_infos,
-                                                            [](const InstalledAppInfo& app) {
-                                                                return !app.choco_package.isEmpty();
-                                                            });
-            safe_this->m_statusLabel->setText(
-                QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
-                                            "Found %1 application(s), %2 with a Chocolatey package")
-                    .arg(app_infos.size())
-                    .arg(with_package));
-            safe_this->populateTree(app_infos);
-            safe_this->updateNextButtonText();
-            Q_EMIT safe_this->completeChanged();
-        });
+                const auto with_package =
+                    std::ranges::count_if(app_infos, [](const InstalledAppInfo& app) {
+                        return !app.choco_package.isEmpty();
+                    });
+                safe_this->m_statusLabel->setText(
+                    QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
+                                                "Found %1, %2 with a Chocolatey package")
+                        .arg(countOf(app_infos.size(),
+                                     UserProfileBackupInstalledAppsPage::tr("application"),
+                                     UserProfileBackupInstalledAppsPage::tr("applications")))
+                        .arg(with_package));
+                safe_this->populateTree(app_infos);
+                safe_this->updateNextButtonText();
+                Q_EMIT safe_this->completeChanged();
+            });
 
     watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
         AppScanner scanner;
@@ -1353,7 +1355,9 @@ void UserProfileBackupInstalledAppsPage::commitAppSelection() {
             m_appTree->topLevelItem(category_index), total, selected, selected_apps);
     }
 
-    m_summaryLabel->setText(tr("%1 application(s) selected out of %2").arg(selected).arg(total));
+    m_summaryLabel->setText(tr("%1 selected out of %2")
+                                .arg(countOf(selected, tr("application"), tr("applications")))
+                                .arg(total));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setInstalledApps(selected_apps);
     }
@@ -1569,7 +1573,10 @@ void UserProfileBackupAppDataPage::onScanFinished() {
     m_appDataTree->setEnabled(true);
     m_scanProgress->setVisible(false);
 
-    m_statusLabel->setText(tr("Found %1 application data source(s)").arg(all_sources.size()));
+    m_statusLabel->setText(tr("Found %1")
+                               .arg(countOf(all_sources.size(),
+                                            tr("application data source"),
+                                            tr("application data sources"))));
     populateTree(all_sources);
     updateNextButtonText();
 }
@@ -1654,10 +1661,11 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
         }
     }
 
-    m_summaryLabel->setText(tr("%1 of %2 application data source(s) selected, about %3")
-                                .arg(selected)
-                                .arg(total)
-                                .arg(formatBytes(selected_bytes)));
+    m_summaryLabel->setText(
+        tr("%1 of %2 selected, about %3")
+            .arg(QString::number(selected),
+                 countOf(total, tr("application data source"), tr("application data sources")),
+                 formatBytes(selected_bytes)));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setAppDataSources(selected_sources);
     }
@@ -2141,7 +2149,9 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
         m_selectNoneButton->setEnabled(true);
         m_ethernetTable->setEnabled(true);
 
-        m_statusLabel->setText(tr("Found %1 ethernet adapter(s)").arg(configs.size()));
+        m_statusLabel->setText(
+            tr("Found %1")
+                .arg(countOf(configs.size(), tr("ethernet adapter"), tr("ethernet adapters"))));
         populateTable(configs);
         updateNextButtonText();
     });
@@ -2222,7 +2232,9 @@ void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
         configs.append(info);
     }
 
-    m_summaryLabel->setText(tr("%1 ethernet adapter(s) selected").arg(configs.size()));
+    m_summaryLabel->setText(
+        tr("%1 selected")
+            .arg(countOf(configs.size(), tr("ethernet adapter"), tr("ethernet adapters"))));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setEthernetConfigs(configs);
     }

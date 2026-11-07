@@ -10,6 +10,7 @@
 #include "sak/email_profile_manager.h"
 #include "sak/email_report_generator.h"
 #include "sak/email_search_worker.h"
+#include "sak/format_utils.h"
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
@@ -87,6 +88,10 @@ QString cleanupPartialReport(const QString& html_path,
     }
     return QStringLiteral("Report generation failed: could not write %1")
         .arg(failed.join(QStringLiteral(", ")));
+}
+
+QString itemsCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("item"), QStringLiteral("items"));
 }
 }  // namespace
 
@@ -702,7 +707,10 @@ void EmailInspectorController::connectSearchSignals() {
     connect(m_search_worker.get(), &EmailSearchWorker::searchCancelled, this, [this](int partial) {
         m_total_search_hits += partial;
         Q_EMIT searchCancelled(partial);
-        Q_EMIT logOutput(QStringLiteral("Search cancelled: %1 partial hit(s)").arg(partial));
+        Q_EMIT logOutput(QStringLiteral("Search cancelled: %1")
+                             .arg(sak::countOf(partial,
+                                               QStringLiteral("partial hit"),
+                                               QStringLiteral("partial hits"))));
         setState(State::Idle);
     });
 
@@ -743,19 +751,19 @@ void EmailInspectorController::connectExportSignals() {
                     (!result.errors.isEmpty() || result.items_failed > 0)) {
                     Q_EMIT errorOccurred(
                         result.errors.isEmpty()
-                            ? QStringLiteral("Export failed: %1 item(s) could not be exported")
-                                  .arg(result.items_failed)
+                            ? QStringLiteral("Export failed: %1 could not be exported")
+                                  .arg(itemsCount(result.items_failed))
                             : QStringLiteral("Export failed: %1")
                                   .arg(result.errors.join(QStringLiteral("; "))));
                 } else if (result.items_failed > 0 || !result.errors.isEmpty()) {
                     Q_EMIT errorOccurred(
-                        QStringLiteral("Export incomplete: %1 item(s) exported, %2 failed -- %3")
-                            .arg(result.items_exported)
+                        QStringLiteral("Export incomplete: %1 exported, %2 failed -- %3")
+                            .arg(itemsCount(result.items_exported))
                             .arg(result.items_failed)
                             .arg(result.errors.join(QStringLiteral("; "))));
                 } else {
-                    Q_EMIT logOutput(QStringLiteral("Export complete: %1 items (%2)")
-                                         .arg(result.items_exported)
+                    Q_EMIT logOutput(QStringLiteral("Export complete: %1 (%2)")
+                                         .arg(itemsCount(result.items_exported))
                                          .arg(result.export_format));
                 }
                 setState(State::Idle);

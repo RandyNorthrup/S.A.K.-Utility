@@ -8,6 +8,7 @@
 #include "sak/ai/ai_secret_redaction.h"
 #include "sak/app_action_guards.h"
 #include "sak/cleanup_worker.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/reused_line_buffer.h"
 #include "sak/windows_reserved_names.h"
@@ -1174,8 +1175,9 @@ int ConversationStore::pruneSessionFolders(int keep,
         }
     }
     if (removed > 0) {
-        sak::logInfo("AI session retention removed {} session(s) beyond the newest {}",
-                     removed,
+        sak::logInfo("AI session retention removed {} beyond the newest {}",
+                     sak::countOf(removed, QStringLiteral("session"), QStringLiteral("sessions"))
+                         .toStdString(),
                      keep);
     }
     if (!failures.isEmpty()) {

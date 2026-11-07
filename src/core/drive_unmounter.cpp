@@ -3,6 +3,7 @@
 
 #include "sak/drive_unmounter.h"
 
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QThread>
@@ -120,9 +121,11 @@ void logRestartManagerHolders(const RM_PROCESS_INFO* processes, UINT listed, UIN
                             .toStdString());
     }
     if (needed > listed) {
-        sak::logWarning(QString("Restart Manager reported %1 holder process(es); only %2 could be "
+        sak::logWarning(QString("Restart Manager reported %1; only %2 could be "
                                 "listed before the force-close")
-                            .arg(needed)
+                            .arg(sak::countOf(needed,
+                                              QStringLiteral("holder process"),
+                                              QStringLiteral("holder processes")))
                             .arg(listed)
                             .toStdString());
     }

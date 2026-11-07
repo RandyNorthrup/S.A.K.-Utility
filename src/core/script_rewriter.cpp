@@ -22,6 +22,11 @@ namespace {
 // A matched wrapping quote pair is two characters (the opening and closing quote).
 constexpr int kWrappingQuotePairChars = 2;
 
+/// @brief "URL" for one listed URL, "URLs" for several.
+QString urlNoun(const QStringList& urls) {
+    return urls.size() == 1 ? QStringLiteral("URL") : QStringLiteral("URLs");
+}
+
 /// @brief Build the fail-closed error for an incomplete rewrite, or "" if the
 ///        rewrite internalized every expected URL. A rewrite that leaves a
 ///        download URL live would silently fall back to the network (defeating
@@ -33,14 +38,14 @@ QString rewriteFailure(const QStringList& unreplaced,
                        bool has_resources,
                        bool replaced_any) {
     if (!unreplaced.isEmpty()) {
-        return QStringLiteral("Expected download URL(s) not found in script: %1")
-            .arg(unreplaced.join(QStringLiteral(", ")));
+        return QStringLiteral("Expected download %1 not found in script: %2")
+            .arg(urlNoun(unreplaced), unreplaced.join(QStringLiteral(", ")));
     }
     if (!unmapped.isEmpty()) {
         // A declared download URL with no internalized local file: shipping it live would fall
         // back to the network at install time. Fail closed rather than call a partial map done.
-        return QStringLiteral("Declared download URL(s) with no internalized local file: %1")
-            .arg(unmapped.join(QStringLiteral(", ")));
+        return QStringLiteral("Declared download %1 with no internalized local file: %2")
+            .arg(urlNoun(unmapped), unmapped.join(QStringLiteral(", ")));
     }
     if (has_resources && !replaced_any) {
         return QStringLiteral(

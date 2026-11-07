@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "sak/format_utils.h"
 #include "sak/partition_hfs_core.h"
 
 #include <memory>
@@ -341,14 +342,12 @@ public:
         result.bytes_written = source.size();
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(
-            plan->extents_mutation.has_value()
-                ? QStringLiteral("HFS+ file created with %1 allocated data-fork block(s) and %2 "
-                                 "extents-overflow record(s)")
-                      .arg(plan->allocated_blocks)
-                      .arg(plan->overflow_records.size())
-                : QStringLiteral("HFS+ file created with %1 allocated data-fork block(s)")
-                      .arg(plan->allocated_blocks));
+        result.warnings.append(plan->extents_mutation.has_value()
+                                   ? QStringLiteral("HFS+ file created with %1 and %2")
+                                         .arg(allocatedDataForkBlocks(plan->allocated_blocks),
+                                              extentsOverflowRecords(plan->overflow_records.size()))
+                                   : QStringLiteral("HFS+ file created with %1")
+                                         .arg(allocatedDataForkBlocks(plan->allocated_blocks)));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
@@ -512,10 +511,12 @@ public:
         result.warnings.append(m_warnings);
         result.warnings.append(
             plan->inode_removed
-                ? QStringLiteral("HFS+ hard link deleted; inode CNID %1 and its %2 data block(s) "
+                ? QStringLiteral("HFS+ hard link deleted; inode CNID %1 and its %2 "
                                  "were reclaimed (link count 0) %3")
                       .arg(plan->inode_cnid)
-                      .arg(plan->released_blocks)
+                      .arg(countOf(plan->released_blocks,
+                                   QStringLiteral("data block"),
+                                   QStringLiteral("data blocks")))
                       .arg(options.secure_wipe_deleted_blocks
                                ? QStringLiteral("after zeroing the released blocks with read-back "
                                                 "verification")
@@ -1380,9 +1381,9 @@ private:
         result.bytes_written = static_cast<uint64_t>(data.size());
         result.chunks_written = *chunksWritten;
         result.warnings = m_warnings;
-        result.warnings.append(QStringLiteral("HFS+ fork attribute grew by allocating %1 new "
-                                              "block(s) inside initial extent records")
-                                   .arg(plan->allocated_blocks));
+        result.warnings.append(QStringLiteral("HFS+ fork attribute grew by allocating %1 "
+                                              "inside initial extent records")
+                                   .arg(newBlocksCount(plan->allocated_blocks)));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
@@ -5348,12 +5349,13 @@ private:
         // freeBlocks understates the bitmap would otherwise let growth proceed and then underflow
         // the counter on commit.
         if (addBlocks > m_volume.free_blocks) {
-            blockers->append(
-                QStringLiteral("HFS+ %1 node-pool growth needs %2 free block(s) but the "
-                               "volume header reports only %3")
-                    .arg(tree.label)
-                    .arg(addBlocks)
-                    .arg(m_volume.free_blocks));
+            blockers->append(QStringLiteral("HFS+ %1 node-pool growth needs %2 but the "
+                                            "volume header reports only %3")
+                                 .arg(tree.label)
+                                 .arg(countOf(addBlocks,
+                                              QStringLiteral("free block"),
+                                              QStringLiteral("free blocks")))
+                                 .arg(m_volume.free_blocks));
             return std::nullopt;
         }
         const auto newExtents = findFreeAllocationExtents(addBlocks, tree.label, blockers);
@@ -8552,15 +8554,12 @@ private:
         result.warnings = m_warnings;
         result.warnings.append(
             plan->extents_mutation.has_value()
-                ? QStringLiteral("HFS+ %1 grew by allocating %2 new block(s) with %3 "
-                                 "extents-overflow record(s)")
-                      .arg(hfsForkLabel(selector))
-                      .arg(plan->allocated_blocks)
-                      .arg(plan->overflow_records.size())
-                : QStringLiteral(
-                      "HFS+ %1 grew by allocating %2 new block(s) inside initial extent records")
-                      .arg(hfsForkLabel(selector))
-                      .arg(plan->allocated_blocks));
+                ? QStringLiteral("HFS+ %1 grew by allocating %2 with %3")
+                      .arg(hfsForkLabel(selector),
+                           newBlocksCount(plan->allocated_blocks),
+                           extentsOverflowRecords(plan->overflow_records.size()))
+                : QStringLiteral("HFS+ %1 grew by allocating %2 inside initial extent records")
+                      .arg(hfsForkLabel(selector), newBlocksCount(plan->allocated_blocks)));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
@@ -9261,6 +9260,22 @@ private:
     [[nodiscard]] static QString hfsForkLabel(HfsForkSelector selector) {
         return selector == HfsForkSelector::Resource ? QStringLiteral("resource fork")
                                                      : QStringLiteral("data fork");
+    }
+
+    [[nodiscard]] static QString allocatedDataForkBlocks(qint64 count) {
+        return countOf(count,
+                       QStringLiteral("allocated data-fork block"),
+                       QStringLiteral("allocated data-fork blocks"));
+    }
+
+    [[nodiscard]] static QString extentsOverflowRecords(qint64 count) {
+        return countOf(count,
+                       QStringLiteral("extents-overflow record"),
+                       QStringLiteral("extents-overflow records"));
+    }
+
+    [[nodiscard]] static QString newBlocksCount(qint64 count) {
+        return countOf(count, QStringLiteral("new block"), QStringLiteral("new blocks"));
     }
 
     [[nodiscard]] static QString allocatedForkResizeWarning(HfsForkSelector selector) {

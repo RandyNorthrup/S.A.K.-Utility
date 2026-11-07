@@ -1074,7 +1074,7 @@ void AdvancedUninstallControllerTests::cleanupRefusals_areTypedAndCounted() {
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
     QVERIFY(source.contains(QStringLiteral("failed += m_pendingCleanupRefused")));
     QVERIFY(source.contains(QStringLiteral("reportCleanupRefusals(screen.refused)")));
-    QVERIFY(source.contains(QStringLiteral("automatic cleanup refused %1 protected item(s)")));
+    QVERIFY(source.contains(QStringLiteral("automatic cleanup refused %1")));
 
     AdvancedUninstallController partial_ctrl;
     QSignalSpy partialFinishedSpy(&partial_ctrl, &AdvancedUninstallController::cleanupFinished);
@@ -1091,7 +1091,8 @@ void AdvancedUninstallControllerTests::cleanupRefusals_areTypedAndCounted() {
     batch_ctrl.finishBatchUninstall();
     QCOMPARE(batchFinishedSpy.count(), 1);
     QCOMPARE(batchFinishedSpy.at(0).at(3).toInt(), 1);
-    QVERIFY(batchStatusSpy.last().at(0).toString().contains(QStringLiteral("refused 1 protected")));
+    QVERIFY(batchStatusSpy.last().at(0).toString().contains(
+        QStringLiteral("refused 1 protected item.")));
 
     sak::LeftoverItem irreversible_registry;
     irreversible_registry.type = sak::LeftoverItem::Type::RegistryKey;

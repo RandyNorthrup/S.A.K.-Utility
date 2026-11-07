@@ -325,7 +325,8 @@ void UserProfileBackupSelectUsersPage::onScanUsers() {
         return;
     }
 
-    m_statusLabel->setText(tr("Found %1 user account(s)").arg(m_users.size()));
+    m_statusLabel->setText(
+        tr("Found %1").arg(countOf(m_users.size(), tr("user account"), tr("user accounts"))));
     populateTable();
     updateSummary();
     Q_EMIT completeChanged();
@@ -421,8 +422,8 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
     if (selected_count == 0) {
         m_summaryLabel->setText(tr("No users selected"));
     } else {
-        m_summaryLabel->setText(tr("%1 user(s) selected | Estimated total size: %2 GB")
-                                    .arg(selected_count)
+        m_summaryLabel->setText(tr("%1 selected | Estimated total size: %2 GB")
+                                    .arg(countOf(selected_count, tr("user"), tr("users")))
                                     .arg(total_gb, 0, 'f', 1));
     }
 

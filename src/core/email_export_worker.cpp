@@ -11,6 +11,7 @@
 #include "sak/email_folder_selection.h"
 #include "sak/email_ics_writer.h"
 #include "sak/eml_writer.h"
+#include "sak/format_utils.h"
 #include "sak/html_email_writer.h"
 #include "sak/io_write_utils.h"
 #include "sak/layout_constants.h"
@@ -1482,9 +1483,12 @@ bool EmailExportWorker::exportAttachments(PstParser* parser,
     // A message with an eligible attachment that failed to extract must be recorded as
     // failed/partial, not silently counted complete because a sibling attachment succeeded.
     if (succeeded < eligible) {
-        result.errors.append(QStringLiteral("Item NID %1: failed to extract attachment(s): %2")
+        result.errors.append(QStringLiteral("Item NID %1: failed to extract %2: %3")
                                  .arg(item.node_id)
-                                 .arg(failed_names.join(QStringLiteral(", "))));
+                                 .arg(sak::countOf(failed_names.size(),
+                                                   QStringLiteral("attachment"),
+                                                   QStringLiteral("attachments")),
+                                      failed_names.join(QStringLiteral(", "))));
         return false;
     }
     return true;

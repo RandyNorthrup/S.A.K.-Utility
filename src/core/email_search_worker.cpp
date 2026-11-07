@@ -7,6 +7,7 @@
 #include "sak/email_search_worker.h"
 
 #include "sak/email_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
@@ -150,9 +151,10 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
         // is not announced as a clean, complete search (R5-P6-18). Emitted BEFORE the terminal
         // searchComplete, matching the per-folder read-failure surfacing contract the controller
         // relies on (errorOccurred is non-terminal; searchComplete is the single terminal event).
-        Q_EMIT errorOccurred(QStringLiteral("Search encountered %1 item read failure(s); results "
-                                            "may be incomplete")
-                                 .arg(t_item_read_failures));
+        Q_EMIT errorOccurred(QStringLiteral("Search encountered %1; results may be incomplete")
+                                 .arg(sak::countOf(t_item_read_failures,
+                                                   QStringLiteral("item read failure"),
+                                                   QStringLiteral("item read failures"))));
     }
     const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
     emitTerminal(state.total_hits, elapsed);
@@ -301,9 +303,10 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
         // is not announced as a clean, complete search (R5-P6-18). Emitted BEFORE the terminal
         // searchComplete, matching the per-folder read-failure surfacing contract the controller
         // relies on (errorOccurred is non-terminal; searchComplete is the single terminal event).
-        Q_EMIT errorOccurred(QStringLiteral("Search encountered %1 item read failure(s); results "
-                                            "may be incomplete")
-                                 .arg(t_item_read_failures));
+        Q_EMIT errorOccurred(QStringLiteral("Search encountered %1; results may be incomplete")
+                                 .arg(sak::countOf(t_item_read_failures,
+                                                   QStringLiteral("item read failure"),
+                                                   QStringLiteral("item read failures"))));
     }
     const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
     emitTerminal(state.total_hits, elapsed);

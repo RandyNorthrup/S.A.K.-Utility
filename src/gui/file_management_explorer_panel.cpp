@@ -103,6 +103,13 @@ namespace sak {
 
 namespace {
 
+/// "1 item", "3 items": every item count this panel shows.
+QString itemsCount(qint64 count) {
+    return countOf(count,
+                   FileManagementExplorerPanel::tr("item"),
+                   FileManagementExplorerPanel::tr("items"));
+}
+
 constexpr int kExplorerPreviewMaxBytes = 1024 * 1024;
 constexpr int kExplorerImagePreviewMaxPx = 480;
 constexpr int kExplorerListMaxEntries = 10'000;
@@ -988,14 +995,14 @@ void FileManagementExplorerPanel::updateStatusCounts() {
     const int item_count = ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr))
                                ? m_pane->sortFilterModel()->rowCount()
                                : 0;
-    m_items_count_label->setText(tr("%n item(s)", nullptr, item_count));
+    m_items_count_label->setText(itemsCount(item_count));
 
     QModelIndexList rows = ((m_pane != nullptr) && (m_pane->sharedSelectionModel() != nullptr))
                                ? m_pane->sharedSelectionModel()->selectedRows()
                                : QModelIndexList{};
     rows.removeIf([this](const QModelIndex& index) { return !m_pane->hasViewEntry(index.row()); });
     if (!rows.isEmpty()) {
-        QString text = tr("%n item(s) selected", nullptr, static_cast<int>(rows.size()));
+        QString text = tr("%1 selected").arg(itemsCount(rows.size()));
         const uint64_t selected_bytes = selectedFileBytes(m_pane, rows);
         if (selected_bytes > 0) {
             text += QStringLiteral("   %1").arg(FileExplorerItemModel::sizeText(selected_bytes));
@@ -2828,14 +2835,13 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
     }
 
     const auto target = currentTarget();
-    QString summary = tr("%1 item(s) - %2")
-                          .arg(result.entries.size())
-                          .arg(FileManagementFileSystemBridge::capabilitySummary(target));
+    QString summary = tr("%1 - %2").arg(itemsCount(result.entries.size()),
+                                        FileManagementFileSystemBridge::capabilitySummary(target));
     if (!result.warnings.isEmpty()) {
         summary += tr(" - %1").arg(result.warnings.join(QStringLiteral("; ")));
     }
     m_summary_label->setText(summary);
-    Q_EMIT statusMessage(tr("Explorer loaded %1 item(s)").arg(result.entries.size()),
+    Q_EMIT statusMessage(tr("Explorer loaded %1").arg(itemsCount(result.entries.size())),
                          sak::kTimerStatusDefaultMs);
     selectPendingSearchResult();
     updateDetailsPane();
@@ -3015,7 +3021,7 @@ void FileManagementExplorerPanel::startExportWorker(const FileManagementTarget& 
     completion.source_target = source_target;
     completion.destination_target = request.destination_target;
     completion.destination_dir = destination_dir;
-    completion.status_template = tr("Exported %1 of %2 item(s).");
+    completion.status_template = tr("Exported %1 of %2.");
     completion.requested_count = 1;
     completion.record_history = false;
     startTransferWorker(request, completion);
@@ -3070,12 +3076,14 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
         m_item_model->setCutPaths(QSet<QString>(batch.lines.cbegin(), batch.lines.cend()));
     }
     const QString verb = move ? tr("Cut") : tr("Copied");
-    Q_EMIT statusMessage(batch.skipped > 0 ? tr("%1 %2 item(s); %3 special item(s) skipped.")
-                                                 .arg(verb)
-                                                 .arg(batch.items.size())
-                                                 .arg(batch.skipped)
-                                           : tr("%1 %2 item(s).").arg(verb).arg(batch.items.size()),
-                         sak::kTimerStatusMessageMs);
+    Q_EMIT statusMessage(
+        batch.skipped > 0
+            ? tr("%1 %2; %3 skipped.")
+                  .arg(verb,
+                       itemsCount(batch.items.size()),
+                       countOf(batch.skipped, tr("special item"), tr("special items")))
+            : tr("%1 %2.").arg(verb, itemsCount(batch.items.size())),
+        sak::kTimerStatusMessageMs);
     updateActionButtons();
 }
 
@@ -3356,19 +3364,19 @@ bool FileManagementExplorerPanel::confirmTypedRawImport(const FileManagementTarg
     // Typed confirmation before any raw-media import: the write is irreversible and runs
     // through the certified writer, so the user must acknowledge the exact destination.
     bool accepted = false;
-    const QString typed = QInputDialog::getText(
-        this,
-        tr("Confirm Raw Import"),
-        tr("This imports %1 file(s) into raw media through the raw disk writer.\n"
-           "Target: %2\nFile system: %3\nIdentity: %4\n\n"
-           "Raw writes are irreversible. Type WRITE to continue:")
-            .arg(QString::number(file_count),
-                 target.label,
-                 target.file_system,
-                 FileExplorerTargetId::fromTarget(target).value),
-        QLineEdit::Normal,
-        {},
-        &accepted);
+    const QString typed =
+        QInputDialog::getText(this,
+                              tr("Confirm Raw Import"),
+                              tr("This imports %1 into raw media through the raw disk writer.\n"
+                                 "Target: %2\nFile system: %3\nIdentity: %4\n\n"
+                                 "Raw writes are irreversible. Type WRITE to continue:")
+                                  .arg(countOf(file_count, tr("file"), tr("files")),
+                                       target.label,
+                                       target.file_system,
+                                       FileExplorerTargetId::fromTarget(target).value),
+                              QLineEdit::Normal,
+                              {},
+                              &accepted);
     return accepted && typed.trimmed() == QStringLiteral("WRITE");
 }
 
@@ -3381,10 +3389,10 @@ bool FileManagementExplorerPanel::confirmTypedRawMove(const FileManagementTarget
     const QString typed = QInputDialog::getText(
         this,
         tr("Confirm Raw Move"),
-        tr("This moves %1 item(s) on raw media through the raw disk writer.\n"
+        tr("This moves %1 on raw media through the raw disk writer.\n"
            "Raw target: %2\nFile system: %3\nIdentity: %4\n\n"
            "The source entries are removed permanently. Type MOVE to continue:")
-            .arg(QString::number(file_count),
+            .arg(itemsCount(file_count),
                  target.label,
                  target.file_system,
                  FileExplorerTargetId::fromTarget(target).value),
@@ -3647,8 +3655,7 @@ FileManagementExplorerPanel::pasteTransferCompletion(const PasteBatch& batch,
     completion.source_target = batch.source_target;
     completion.destination_target = batch.target;
     completion.destination_dir = batch.destination_dir;
-    completion.status_template = sources.move ? tr("Moved %1 of %2 item(s).")
-                                              : tr("Pasted %1 of %2 item(s).");
+    completion.status_template = sources.move ? tr("Moved %1 of %2.") : tr("Pasted %1 of %2.");
     completion.requested_count = requested;
     completion.move = sources.move;
     completion.consume_clipboard = sources.move && sources.clipboard;
@@ -3901,11 +3908,10 @@ void FileManagementExplorerPanel::finishTransferWorker(const FileExplorerTransfe
                                                                   : completion.failure_title,
                                problems.join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage(
-        canceled
-            ? tr("Canceled after %1 of %2 item(s).").arg(written).arg(completion.requested_count)
-            : completion.status_template.arg(written).arg(completion.requested_count),
-        sak::kTimerStatusDefaultMs);
+    const QString requested = itemsCount(completion.requested_count);
+    Q_EMIT statusMessage(canceled ? tr("Canceled after %1 of %2.").arg(written).arg(requested)
+                                  : completion.status_template.arg(written).arg(requested),
+                         sak::kTimerStatusDefaultMs);
 }
 
 FileExplorerStatusCardRequest FileManagementExplorerPanel::terminalTransferCard(
@@ -4068,7 +4074,7 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     completion.source_target = target;
     completion.destination_target = target;
     completion.destination_dir = destination_dir;
-    completion.status_template = tr("Moved %1 of %2 item(s).");
+    completion.status_template = tr("Moved %1 of %2.");
     completion.requested_count = static_cast<int>(items.size());
     completion.move = true;
     completion.consume_clipboard = sources.clipboard;
@@ -4700,9 +4706,10 @@ bool FileManagementExplorerPanel::confirmHistoryDelete(const FileExplorerStorage
     for (const FileExplorerHistoryItem& item : history.items) {
         has_directory = has_directory || item.directory;
     }
-    const QString header =
-        undo_of_create ? tr("Undoing this create will delete %n item(s):", nullptr, count)
-                       : tr("Undoing this copy will delete %n copied item(s):", nullptr, count);
+    const QString header = undo_of_create
+                               ? tr("Undoing this create will delete %1:").arg(itemsCount(count))
+                               : tr("Undoing this copy will delete %1:")
+                                     .arg(countOf(count, tr("copied item"), tr("copied items")));
     const QString message =
         QStringLiteral("%1\n\n%2\n\n%3\n\n%4")
             .arg(header,
@@ -4851,7 +4858,7 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     }
     if (items.isEmpty()) {
         Q_EMIT statusMessage(
-            tr("Copied %1 of %2 item(s) to the other pane.").arg(0).arg(file_count),
+            tr("Copied %1 of %2 to the other pane.").arg(0).arg(itemsCount(file_count)),
             sak::kTimerStatusDefaultMs);
         return;
     }
@@ -4868,7 +4875,7 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     completion.source_target = source;
     completion.destination_target = destination;
     completion.destination_dir = destination_dir;
-    completion.status_template = tr("Copied %1 of %2 item(s) to the other pane.");
+    completion.status_template = tr("Copied %1 of %2 to the other pane.");
     completion.failure_title = tr("Copy to Other Pane");
     completion.requested_count = file_count;
     completion.refresh_other_pane = true;
@@ -5701,8 +5708,8 @@ void FileManagementExplorerPanel::applyTagFilter(const QString& tag) {
     // Report what the user actually sees: matching rows in THIS folder (the tag may also
     // mark items elsewhere on the target, which the filter cannot show from here).
     const int visible = m_pane->sortFilterModel()->rowCount();
-    Q_EMIT statusMessage(tr("Tag '%1': showing %2 matching item(s) in this folder")
-                             .arg(tag, QString::number(visible)),
+    Q_EMIT statusMessage(tr("Tag '%1': showing %2 in this folder")
+                             .arg(tag, countOf(visible, tr("matching item"), tr("matching items"))),
                          sak::kTimerStatusMessageMs);
 }
 
@@ -5764,7 +5771,7 @@ void FileManagementExplorerPanel::removeTagsFromSelection() {
         m_item_model->refreshTags();
     }
     rebuildTargetList();
-    Q_EMIT statusMessage(tr("Removed tags from %1 item(s).").arg(selection.count()),
+    Q_EMIT statusMessage(tr("Removed tags from %1.").arg(itemsCount(selection.count())),
                          sak::kTimerStatusMessageMs);
 }
 
@@ -5826,7 +5833,7 @@ void FileManagementExplorerPanel::createFolderAndMoveSelection(
         sak::showWarningLogged(this, tr("Create Folder"), blockers.join(QStringLiteral("\n")));
     }
     Q_EMIT statusMessage(
-        tr("Moved %1 of %2 item(s) into %3.").arg(moved).arg(items.size()).arg(name),
+        tr("Moved %1 of %2 into %3.").arg(QString::number(moved), itemsCount(items.size()), name),
         sak::kTimerStatusDefaultMs);
 }
 
@@ -6119,10 +6126,11 @@ void FileManagementExplorerPanel::finishArchiveWorker(const FileExplorerArchiveW
     }
     QString status =
         request.compress
-            ? tr("Created %1 (%2 file(s)).").arg(request.zip_name).arg(worker->zipEntryCount())
-            : tr("Extracted %1 of %2 archive(s).")
+            ? tr("Created %1 (%2).")
+                  .arg(request.zip_name, countOf(worker->zipEntryCount(), tr("file"), tr("files")))
+            : tr("Extracted %1 of %2.")
                   .arg(worker->completedCount())
-                  .arg(request.archives.size());
+                  .arg(countOf(request.archives.size(), tr("archive"), tr("archives")));
     if (skipped) {
         status += QLatin1Char(' ') + tr("Some entries were skipped.");
     }
@@ -6312,9 +6320,8 @@ void FileManagementExplorerPanel::flattenSelectedFolder() {
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Flatten folder"), blockers.join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage(tr("Flattened %1 item(s) into %2")
-                             .arg(moved)
-                             .arg(nameForPath(root, target.local_file_system)),
+    Q_EMIT statusMessage(tr("Flattened %1 into %2")
+                             .arg(itemsCount(moved), nameForPath(root, target.local_file_system)),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -6489,7 +6496,7 @@ void FileManagementExplorerPanel::applyFilterHeaderText(const QString& text) {
     const int visible_count = m_pane->sortFilterModel()->rowCount();
     const QString message = text.trimmed().isEmpty()
                                 ? tr("Current folder filter cleared.")
-                                : tr("Filter active: %1 item(s) visible.").arg(visible_count);
+                                : tr("Filter active: %1 visible.").arg(itemsCount(visible_count));
     if (m_status_label != nullptr) {
         m_status_label->setText(message);
     }
@@ -6729,11 +6736,11 @@ void FileManagementExplorerPanel::submitExplorerSearch(const QString& query) {
                     m_pane->showReadyState();
                 }
             }
-            Q_EMIT statusMessage(tr("%n result(s) for %1.",
-                                    nullptr,
-                                    static_cast<int>(m_search_result_entries.size()))
-                                     .arg(clean),
-                                 sak::kTimerStatusDefaultMs);
+            Q_EMIT statusMessage(
+                tr("%1 for %2.")
+                    .arg(countOf(m_search_result_entries.size(), tr("result"), tr("results")),
+                         clean),
+                sak::kTimerStatusDefaultMs);
             updateStatusCounts();
         });
 }
@@ -6979,7 +6986,7 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
         properties.append(tags.isEmpty() ? tr("Tags: (none)")
                                          : tr("Tags: %1").arg(tags.join(QStringLiteral(", "))));
     } else if (!selection.isEmpty()) {
-        properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
+        properties.append(tr("Selected: %1").arg(itemsCount(selection.count())));
         properties.append(selection.paths().join(QStringLiteral("\n")));
     }
     return properties;
@@ -8296,12 +8303,11 @@ QString FileManagementExplorerPanel::deleteConfirmationText(
     const FileExplorerSelection& selection) const {
     const QString paths = selection.paths().join(QStringLiteral("\n"));
     if (recycle) {
-        return tr("Move %1 item(s) to the Recycle Bin?\n\n%2")
-            .arg(QString::number(selection.count()), paths);
+        return tr("Move %1 to the Recycle Bin?\n\n%2").arg(itemsCount(selection.count()), paths);
     }
-    return tr("Delete %1 item(s) from '%2'? This permanently removes data "
+    return tr("Delete %1 from '%2'? This permanently removes data "
               "from the selected target.\n\n%3")
-        .arg(QString::number(selection.count()), target.label, paths);
+        .arg(itemsCount(selection.count()), target.label, paths);
 }
 
 void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool permanent) {
@@ -8356,7 +8362,7 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
     completion.source_target = target;
     completion.destination_target = target;
     completion.destination_dir = m_current_path;
-    completion.status_template = tr("Deleted %1 of %2 item(s).");
+    completion.status_template = tr("Deleted %1 of %2.");
     completion.failure_title = tr("Delete Entry");
     completion.requested_count = selection.count();
     completion.record_history = false;
@@ -8533,8 +8539,9 @@ void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
     }
     if (known_tags.size() > shown_tags) {
         // Never drop rows silently: say how many are not listed.
-        QAction* more = tags_menu->addAction(tr(
-            "... and %n more tag(s)", nullptr, static_cast<int>(known_tags.size() - shown_tags)));
+        QAction* more = tags_menu->addAction(
+            tr("... and %1")
+                .arg(countOf(known_tags.size() - shown_tags, tr("more tag"), tr("more tags"))));
         more->setEnabled(false);
     }
     if (!known_tags.isEmpty()) {
@@ -8864,7 +8871,7 @@ void FileManagementExplorerPanel::applyDroppedTag(const QString& tag, const QMim
     if (m_item_model != nullptr) {
         m_item_model->refreshTags();
     }
-    Q_EMIT statusMessage(tr("Tagged %1 item(s) with %2").arg(tagged).arg(tag),
+    Q_EMIT statusMessage(tr("Tagged %1 with %2").arg(itemsCount(tagged), tag),
                          sak::kTimerStatusDefaultMs);
 }
 

@@ -7197,6 +7197,11 @@ add_test(NAME test_dialog_buttons_deferred
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dialog_buttons_deferred.py")
 set_tests_properties(test_dialog_buttons_deferred PROPERTIES TIMEOUT 60)
 
+add_test(NAME test_plural_placeholders
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_plural_placeholders.py")
+set_tests_properties(test_plural_placeholders PROPERTIES TIMEOUT 60)
+
 add_test(NAME test_clang_tidy_naming_gate
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
@@ -7279,7 +7284,7 @@ set(_sak_label_lists
 set(_sak_labels_product
     test_browser_extension_pure test_pack_extension test_register_native_host
     test_sak_apfs_writer_cli test_sak_hfs_writer_cli test_release_binary_test_hooks
-    test_single_instance_app
+    test_single_instance_app test_plural_placeholders
     test_partition_image_volume_lock_whole_disk
     test_partition_image_volume_lock_selected_partition
     test_partition_image_volume_lock_selected_mbr_unpinned_guid

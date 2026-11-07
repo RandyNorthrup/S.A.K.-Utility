@@ -337,7 +337,9 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     m_smart_warnings_label->setText(warnings_list.join("\n"));
     m_smart_warnings_label->setVisible(!warnings_list.isEmpty());
 
-    logMessage(QString("SMART analysis complete: %1 drive(s) analyzed").arg(reports.size()));
+    logMessage(
+        QString("SMART analysis complete: %1 analyzed")
+            .arg(countOf(reports.size(), QStringLiteral("drive"), QStringLiteral("drives"))));
     Q_EMIT statusMessage("SMART analysis complete", sak::kTimerStatusMessageMs);
 }
 

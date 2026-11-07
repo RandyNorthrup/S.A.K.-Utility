@@ -14,6 +14,12 @@
 
 namespace sak {
 
+/// @brief "1 hop", "2 hops": @p count with the noun that agrees with it. Every count the app shows
+///        is spelled this way, never "hop(s)" (UI review S24); core messages reach the window too.
+[[nodiscard]] inline QString countOf(qint64 count, const QString& singular, const QString& plural) {
+    return QStringLiteral("%1 %2").arg(count).arg(count == 1 ? singular : plural);
+}
+
 /// @brief A temperature as every view shows one: "43 degrees C", "71.5 degrees C" (UI review X17:
 /// the SMART
 ///        table said "40 degC" beside the Thermal row's degree sign).

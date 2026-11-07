@@ -4852,8 +4852,9 @@ void NetworkDiagnosticPanel::copySelectedRows(QTableWidget* table) {
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
     QApplication::clipboard()->setText(text.trimmed());
-    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(rows.size()),
-                         sak::kTimerBroadcastMs);
+    Q_EMIT statusMessage(
+        tr("Copied %1 to clipboard").arg(countOf(rows.size(), tr("row"), tr("rows"))),
+        sak::kTimerBroadcastMs);
 }
 
 void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
@@ -4881,8 +4882,9 @@ void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
     QApplication::clipboard()->setText(text.trimmed());
-    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(table->rowCount()),
-                         sak::kTimerBroadcastMs);
+    Q_EMIT statusMessage(
+        tr("Copied %1 to clipboard").arg(countOf(table->rowCount(), tr("row"), tr("rows"))),
+        sak::kTimerBroadcastMs);
 }
 
 void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString& default_name) {
@@ -4958,7 +4960,7 @@ void NetworkDiagnosticPanel::addCommonTableActions(QMenu& menu,
                                                    QTableWidget* table,
                                                    const QString& export_name) {
     menu.addSeparator();
-    menu.addAction(tr("Copy Selected Row(s)"), this, [this, table]() { copySelectedRows(table); });
+    menu.addAction(tr("Copy Selected Rows"), this, [this, table]() { copySelectedRows(table); });
     menu.addAction(tr("Copy All Results"), this, [this, table]() { copyAllRows(table); });
     menu.addAction(tr("Export to CSV..."), this, [this, table, export_name]() {
         exportTableToCsv(table, export_name);

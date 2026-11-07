@@ -458,7 +458,7 @@ void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {
     QVERIFY(!disabled_until.isEmpty());
     QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
              QStringLiteral("Tool/provider 'take_screenshot' is temporarily disabled until %1 "
-                            "after 2 consecutive failure(s): capture failed")
+                            "after 2 consecutive failures: capture failed")
                  .arg(disabled_until));
 }
 

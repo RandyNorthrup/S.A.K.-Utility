@@ -132,6 +132,20 @@ void fitColumnsAndStretchLast(QTableWidget* table) {
     header->setStretchLastSection(true);
 }
 
+// "partition" for one, "partitions" for any other count: the file system name sits between the
+// number and the noun, so countOf() cannot spell it.
+QString partitionNoun(int count) {
+    return count == 1 ? QObject::tr("partition") : QObject::tr("partitions");
+}
+
+QString filesCount(qint64 count) {
+    return countOf(count, QObject::tr("file"), QObject::tr("files"));
+}
+
+QString foldersCount(qint64 count) {
+    return countOf(count, QObject::tr("folder"), QObject::tr("folders"));
+}
+
 // The box's own words are its name, so a screen reader says what is being agreed to. The short
 // version is kept as the description.
 void nameConfirmationBox(QCheckBox* box, const QString& what) {
@@ -1353,9 +1367,9 @@ QString failedScanText(const PartitionInventory& inventory) {
 }
 
 QString inventorySummaryText(const PartitionInventory& inventory) {
-    return QObject::tr("%1 disk(s), layout %2")
-        .arg(inventory.disks.size())
-        .arg(inventory.layout_hash.left(kPartitionLayoutHashPreviewChars));
+    return QObject::tr("%1, layout %2")
+        .arg(countOf(inventory.disks.size(), QObject::tr("disk"), QObject::tr("disks")),
+             inventory.layout_hash.left(kPartitionLayoutHashPreviewChars));
 }
 
 bool targetMatchesPartition(const std::optional<PartitionTarget>& target,
@@ -5430,10 +5444,11 @@ void updateQuickPartitionPreview(PartitionOperationDialog& dialog,
             selectedQuickPartitionScheme(widgets, disk) == QStringLiteral("MBR")
                 ? QObject::tr(" MBR uses primary partitions and is capped at four.")
                 : QString();
-        dialog.setPreviewText(QObject::tr("%1 %2 custom %3 partition(s), total %4, remaining %5.%6")
+        dialog.setPreviewText(QObject::tr("%1 %2 custom %3 %4, total %5, remaining %6.%7")
                                   .arg(action_text,
                                        QString::number(count),
                                        widgets.file_system->currentText(),
+                                       partitionNoun(count),
                                        formatPartitionBytes(total_bytes),
                                        remaining,
                                        scheme_note));
@@ -5442,14 +5457,14 @@ void updateQuickPartitionPreview(PartitionOperationDialog& dialog,
     const QString scheme_note = selectedQuickPartitionScheme(widgets, disk) == QStringLiteral("MBR")
                                     ? QObject::tr(" MBR primary cap: four partitions.")
                                     : QString();
-    dialog.setPreviewText(
-        QObject::tr("%1 %2 equal %3 partition(s), about %4 each, label prefix \"%5\".%6")
-            .arg(action_text,
-                 QString::number(count),
-                 widgets.file_system->currentText(),
-                 formatPartitionBytes(first_slice_bytes),
-                 widgets.label_prefix->text(),
-                 scheme_note));
+    dialog.setPreviewText(QObject::tr("%1 %2 equal %3 %4, about %5 each, label prefix \"%6\".%7")
+                              .arg(action_text,
+                                   QString::number(count),
+                                   widgets.file_system->currentText(),
+                                   partitionNoun(count),
+                                   formatPartitionBytes(first_slice_bytes),
+                                   widgets.label_prefix->text(),
+                                   scheme_note));
 }
 
 using QuickPartitionCallback = std::function<void()>;
@@ -6460,11 +6475,12 @@ void exportExtDirectory(QWidget* parent, const QString& target_path, const QStri
     }
     showInformationLogged(parent,
                           QObject::tr("Export ext Directory"),
-                          QObject::tr(
-                              "Exported %1 file(s), %2 folder(s), %3 symlink sidecar(s), %4 bytes.")
-                              .arg(result.files_exported)
-                              .arg(result.directories_exported)
-                              .arg(result.symlinks_exported)
+                          QObject::tr("Exported %1, %2, %3, %4 bytes.")
+                              .arg(filesCount(result.files_exported),
+                                   foldersCount(result.directories_exported),
+                                   countOf(result.symlinks_exported,
+                                           QObject::tr("symlink sidecar"),
+                                           QObject::tr("symlink sidecars")))
                               .arg(result.bytes_exported));
 }
 
@@ -6760,14 +6776,17 @@ void exportHfsDirectory(QWidget* parent, const QString& target_path, const QStri
                           result.blockers.join(QStringLiteral("\n")));
         return;
     }
-    showInformationLogged(
-        parent,
-        QObject::tr("Export HFS+ Directory"),
-        QObject::tr("Exported %1 data file(s), %2 resource fork(s), %3 folder(s), %4 bytes.")
-            .arg(result.files_exported)
-            .arg(result.resource_forks_exported)
-            .arg(result.directories_exported)
-            .arg(result.bytes_exported));
+    showInformationLogged(parent,
+                          QObject::tr("Export HFS+ Directory"),
+                          QObject::tr("Exported %1, %2, %3, %4 bytes.")
+                              .arg(countOf(result.files_exported,
+                                           QObject::tr("data file"),
+                                           QObject::tr("data files")),
+                                   countOf(result.resource_forks_exported,
+                                           QObject::tr("resource fork"),
+                                           QObject::tr("resource forks")),
+                                   foldersCount(result.directories_exported))
+                              .arg(result.bytes_exported));
 }
 
 void configureNonNativeBrowserTable(QTableWidget* table, const QString& accessible_name) {
@@ -6993,14 +7012,14 @@ void exportApfsDirectory(QWidget* parent, const QString& target_path, const QStr
                           result.blockers.join(QStringLiteral("\n")));
         return;
     }
-    showInformationLogged(parent,
-                          QObject::tr("Export APFS Directory"),
-                          QObject::tr(
-                              "Exported %1 file(s), %2 folder(s), skipped %3 symlink(s), %4 bytes.")
-                              .arg(result.files_exported)
-                              .arg(result.directories_exported)
-                              .arg(result.symlinks_skipped)
-                              .arg(result.bytes_exported));
+    showInformationLogged(
+        parent,
+        QObject::tr("Export APFS Directory"),
+        QObject::tr("Exported %1, %2, skipped %3, %4 bytes.")
+            .arg(filesCount(result.files_exported),
+                 foldersCount(result.directories_exported),
+                 countOf(result.symlinks_skipped, QObject::tr("symlink"), QObject::tr("symlinks")))
+            .arg(result.bytes_exported));
 }
 
 void addApfsBrowserSummary(QVBoxLayout* layout,
@@ -7792,14 +7811,14 @@ QString spaceAnalyzerStatusText(const QString& root_path, const SpaceAnalyzerRes
         return QObject::tr("Volume path is not available: %1").arg(root_path);
     }
     if (result.cancelled) {
-        return QObject::tr("Scan cancelled. Partial total: %1 across %2 file(s).")
-            .arg(formatPartitionBytes(result.total_bytes))
-            .arg(result.scanned_entries);
+        return QObject::tr("Scan cancelled. Partial total: %1 across %2.")
+            .arg(formatPartitionBytes(result.total_bytes), filesCount(result.scanned_entries));
     }
-    return QObject::tr("Total scanned usage: %1 across %2 file(s), %3 file type(s).")
-        .arg(formatPartitionBytes(result.total_bytes))
-        .arg(result.scanned_entries)
-        .arg(result.file_types.size());
+    return QObject::tr("Total scanned usage: %1 across %2, %3.")
+        .arg(
+            formatPartitionBytes(result.total_bytes),
+            filesCount(result.scanned_entries),
+            countOf(result.file_types.size(), QObject::tr("file type"), QObject::tr("file types")));
 }
 
 void showSpaceAnalyzerDialog(QWidget* parent, const QString& root_path, const QString& title) {
@@ -7980,11 +7999,13 @@ bool showFileRecoveryReviewDialog(QWidget* parent,
     dialog.setAccessibleName(QObject::tr("Offline image data recovery review"));
     dialog.setMinimumSize(kFileRecoveryDialogMinWidth, kFileRecoveryDialogMinHeight);
     auto* layout = new QVBoxLayout(&dialog);
-    auto* summary = new QLabel(
-        QObject::tr("%1 recoverable file(s) found in %2. Restore destination: %3")
-            .arg(scan.candidates.size())
-            .arg(QDir::toNativeSeparators(source_path), QDir::toNativeSeparators(destination_path)),
-        &dialog);
+    auto* summary = new QLabel(QObject::tr("%1 found in %2. Restore destination: %3")
+                                   .arg(countOf(scan.candidates.size(),
+                                                QObject::tr("recoverable file"),
+                                                QObject::tr("recoverable files")),
+                                        QDir::toNativeSeparators(source_path),
+                                        QDir::toNativeSeparators(destination_path)),
+                               &dialog);
     summary->setAccessibleDescription(QObject::tr("Data recovery summary"));
     summary->setWordWrap(true);
     layout->addWidget(summary);
@@ -12909,8 +12930,8 @@ void showFileRecoveryRestoreResult(QWidget* parent,
                                    : QObject::tr("\nWarnings: %1").arg(restore.warnings.join("; "));
     showInformationLogged(parent,
                           QObject::tr("Data Recovery"),
-                          QObject::tr("Restored %1 file(s). Source unchanged%2: %3%4")
-                              .arg(restore.restored_paths.size())
+                          QObject::tr("Restored %1. Source unchanged%2: %3%4")
+                              .arg(filesCount(restore.restored_paths.size()))
                               .arg(restore.source_hash_covered_whole
                                        ? QString()
                                        : QObject::tr(" (its first %1 checked)")
@@ -12959,8 +12980,9 @@ void PartitionManagerPanel::onDataRecovery() {
     // Write the restored files off the GUI thread behind a modal progress dialog.
     const auto restore = runFileRecoveryRestoreWithProgress(this, restore_options);
     showFileRecoveryRestoreResult(this, restore, restore_options.source_hash_bytes);
-    Q_EMIT statusMessage(tr("Data Recovery restored %1 file(s)").arg(restore.restored_paths.size()),
-                         sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(
+        tr("Data Recovery restored %1").arg(filesCount(restore.restored_paths.size())),
+        sak::kTimerStatusDefaultMs);
 }
 
 void PartitionManagerPanel::onPartitionRecoveryWizard() {

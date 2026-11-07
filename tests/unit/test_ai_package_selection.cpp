@@ -183,7 +183,7 @@ void AiPackageSelectionTests::dropsCandidateWithDisallowedIdCharacters() {
     QVERIFY(result.selected.package_id.isEmpty());  // NOT rewritten to a valid "firefox"
     QCOMPARE(result.error_message,
              QStringLiteral("Package search returned no candidates for 'firefox' (1 malformed "
-                            "search result(s) rejected)"));
+                            "search result rejected)"));
 }
 
 void AiPackageSelectionTests::rejectsUnsafePackageIdDomain() {

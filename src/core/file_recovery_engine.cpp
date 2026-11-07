@@ -801,7 +801,9 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
         // partial view of the source. Flag it (like the candidate-limit and work-budget bounds)
         // so a caller that only checks scan_cancelled never reports a capped scan as complete.
         result.warnings.append(
-            QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
+            QStringLiteral("Scan limited to first %1 %2")
+                .arg(QString::number(scanBytes),
+                     scanBytes == 1 ? QStringLiteral("byte") : QStringLiteral("bytes")));
         result.scan_cancelled = true;
         result.scan_truncated = true;
     }

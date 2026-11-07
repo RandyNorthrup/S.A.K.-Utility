@@ -251,6 +251,7 @@ void EmailInspectorPanelTests::resultsAreListedSoTheyCanBeOpened() {
     QCOMPARE(*id, uint64_t{1});
     QVERIFY2(m_panel->m_item_count_label->text().contains(QStringLiteral("1 search result")),
              qPrintable(m_panel->m_item_count_label->text()));
+    QVERIFY(!m_panel->m_item_count_label->text().contains(QStringLiteral("1 search results")));
     QVERIFY(columnTexts(*m_panel->m_item_list, sak::EmailInspectorPanel::ColFrom)
                 .first()
                 .contains(QStringLiteral("Sender Two")));
@@ -268,7 +269,7 @@ void EmailInspectorPanelTests::aSearchThatFindsNothingSaysSo() {
     }
     runRibbonSearch(QStringLiteral("no-such-text-anywhere"));
     QCOMPARE(m_panel->m_item_list->rowCount(), 0);
-    QVERIFY2(m_panel->m_item_count_label->text().contains(QStringLiteral("0 search result")),
+    QVERIFY2(m_panel->m_item_count_label->text().contains(QStringLiteral("0 search results")),
              qPrintable(m_panel->m_item_count_label->text()));
 }
 
@@ -439,8 +440,8 @@ void EmailInspectorPanelTests::theFoldersPaneKeepsItsWidthWhateverTheCountSays()
     // Review 3 (RG2): with the count on a line of its own the Items pane fell from 447 px to 399,
     // and senders were cut ("Marisc", "Theo B").
     QVERIFY2(short_items.at(0) >= 447, qPrintable(QString::number(short_items.at(0))));
-    for (const QString& text : {QStringLiteral("4 search result(s) (filtered)"),
-                                QStringLiteral("125 search result(s) in Deleted Items (filtered)"),
+    for (const QString& text : {QStringLiteral("4 search results (filtered)"),
+                                QStringLiteral("125 search results in Deleted Items (filtered)"),
                                 QStringLiteral("Showing 1\u2013100 of 25000")}) {
         m_panel->m_item_count_label->setText(text);
         QApplication::processEvents();

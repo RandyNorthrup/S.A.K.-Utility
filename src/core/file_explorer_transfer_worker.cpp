@@ -3,6 +3,7 @@
 
 #include "sak/file_explorer_transfer_worker.h"
 
+#include "sak/format_utils.h"
 #include "sak/recycle_bin.h"
 
 #include <QDir>
@@ -30,10 +31,9 @@ constexpr int kDiscoveryMaxEntriesPerDirectory = 10'000;
 // destination whose name already sits near it.
 constexpr qsizetype kSiblingTempNameChars = 64;
 
-// The 64-bit entropy suffix renders as 16 hexadecimal digits, zero-padded to that field width.
+// The 64-bit entropy suffix renders as 16 hexadecimal digits, zero-padded to that field width,
+// in base sak::kHexBase (layout_constants.h, which format_utils.h brings in).
 constexpr int kHexTokenWidth = 16;
-// Base-16 (hexadecimal) formatting for the entropy suffix.
-constexpr int kHexBase = 16;
 
 // Cosmetic progress totals only: fold a byte count into a running qint64 sum without
 // signed-overflow UB or a negative wrap from a quint64 that exceeds INT64_MAX (raw-tree
@@ -420,10 +420,11 @@ bool FileExplorerTransferEngine::transferRawDirectoryToLocal(
     if (result.ok && result.capped_files > 0 && !m_allow_capped_raw_reads) {
         // A truncated file means the tree did not land whole: report it and
         // fail the item so a move never deletes the intact source.
-        m_blockers.append(QStringLiteral("%1 file(s) inside %2 exceed the raw read "
-                                         "window; the pasted copy is incomplete.")
-                              .arg(result.capped_files)
-                              .arg(transferItemName(item.source_path)));
+        m_blockers.append(
+            QStringLiteral("%1 inside %2 exceeded the raw read "
+                           "window; the pasted copy is incomplete.")
+                .arg(countOf(result.capped_files, QStringLiteral("file"), QStringLiteral("files")),
+                     transferItemName(item.source_path)));
         return false;
     }
     return result.ok;

@@ -109,7 +109,9 @@ void SmartDiskAnalyzer::analyzeAll() {
         return;
     }
 
-    logInfo("Starting SMART analysis for {} drive(s)", drives.size());
+    logInfo(
+        "Starting SMART analysis for {}",
+        countOf(drives.size(), QStringLiteral("drive"), QStringLiteral("drives")).toStdString());
 
     for (int i = 0; i < drives.size(); ++i) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
@@ -129,7 +131,9 @@ void SmartDiskAnalyzer::analyzeAll() {
 
     Q_EMIT analysisProgress(kPercentMax, "SMART analysis complete");
     Q_EMIT analysisComplete(m_reports);
-    logInfo("SMART analysis complete -- {} report(s) generated", m_reports.size());
+    logInfo("SMART analysis complete -- {} generated",
+            countOf(m_reports.size(), QStringLiteral("report"), QStringLiteral("reports"))
+                .toStdString());
 }
 
 void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
@@ -805,7 +809,10 @@ QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
         }
     }
 
-    logInfo("Enumerated {} physical drive(s)", drives.size());
+    logInfo(
+        "Enumerated {}",
+        countOf(drives.size(), QStringLiteral("physical drive"), QStringLiteral("physical drives"))
+            .toStdString());
     return drives;
 }
 

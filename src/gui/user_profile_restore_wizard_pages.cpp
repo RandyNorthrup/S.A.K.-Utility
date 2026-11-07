@@ -38,6 +38,22 @@
 
 namespace sak {
 namespace {
+QString appDataSourcesCount(qint64 count) {
+    return countOf(count,
+                   QObject::tr("application data source"),
+                   QObject::tr("application data sources"));
+}
+
+QString ethernetConfigsCount(qint64 count) {
+    return countOf(count,
+                   QObject::tr("ethernet configuration"),
+                   QObject::tr("ethernet configurations"));
+}
+
+QString applicationsCount(qint64 count) {
+    return countOf(count, QObject::tr("application"), QObject::tr("applications"));
+}
+
 enum MappingColumn {
     KMappingColumnSelect,
     KMappingColumnSource,
@@ -787,7 +803,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
         return;
     }
 
-    m_statusLabel->setText(tr("Found %1 application data source(s) in backup").arg(sources.size()));
+    m_statusLabel->setText(tr("Found %1 in backup").arg(appDataSourcesCount(sources.size())));
     m_appDataTree->setEnabled(true);
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
@@ -863,9 +879,8 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
     }
 
     m_appDataTree->blockSignals(false);
-    m_summaryLabel->setText(tr("%1 of %2 application data source(s) selected for restore")
-                                .arg(total_selected)
-                                .arg(total));
+    m_summaryLabel->setText(
+        tr("%1 of %2 selected for restore").arg(total_selected).arg(appDataSourcesCount(total)));
 }
 
 void UserProfileRestoreAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
@@ -920,7 +935,7 @@ void UserProfileRestoreAppDataPage::onItemChanged(QTreeWidgetItem* item, int col
     }
 
     m_summaryLabel->setText(
-        tr("%1 of %2 application data source(s) selected for restore").arg(selected).arg(total));
+        tr("%1 of %2 selected for restore").arg(selected).arg(appDataSourcesCount(total)));
 }
 
 void UserProfileRestoreAppDataPage::onSelectAll() {
@@ -1317,7 +1332,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
         return;
     }
 
-    m_statusLabel->setText(tr("Found %1 ethernet configuration(s) in backup").arg(configs.size()));
+    m_statusLabel->setText(tr("Found %1 in backup").arg(ethernetConfigsCount(configs.size())));
     m_ethernetTable->setEnabled(true);
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
@@ -1387,7 +1402,7 @@ void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigI
     }
 
     const int total = m_ethernetTable->rowCount();
-    m_summaryLabel->setText(tr("%1 ethernet configuration(s) selected for restore").arg(total));
+    m_summaryLabel->setText(tr("%1 selected for restore").arg(ethernetConfigsCount(total)));
 }
 
 void UserProfileRestoreEthernetPage::onSelectAll() {
@@ -1395,14 +1410,14 @@ void UserProfileRestoreEthernetPage::onSelectAll() {
         m_ethernetTable->item(i, 0)->setCheckState(Qt::Checked);
     }
     m_summaryLabel->setText(
-        tr("%1 ethernet configuration(s) selected for restore").arg(m_ethernetTable->rowCount()));
+        tr("%1 selected for restore").arg(ethernetConfigsCount(m_ethernetTable->rowCount())));
 }
 
 void UserProfileRestoreEthernetPage::onSelectNone() {
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
         m_ethernetTable->item(i, 0)->setCheckState(Qt::Unchecked);
     }
-    m_summaryLabel->setText(tr("0 ethernet configuration(s) selected for restore"));
+    m_summaryLabel->setText(tr("%1 selected for restore").arg(ethernetConfigsCount(0)));
 }
 
 // ============================================================================
@@ -1917,7 +1932,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
         return;
     }
 
-    m_statusLabel->setText(tr("Found %1 application(s) in backup").arg(m_apps.size()));
+    m_statusLabel->setText(tr("Found %1 in backup").arg(applicationsCount(m_apps.size())));
     m_appTree->setEnabled(true);
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
@@ -2007,9 +2022,9 @@ void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo
     }
 
     m_appTree->blockSignals(false);
-    m_summaryLabel->setText(tr("%1 application(s) selected for installation (%2 have Chocolatey "
-                               "packages)")
-                                .arg(total_selected)
+    m_summaryLabel->setText(tr("%1 selected for installation (%2 with a Chocolatey "
+                               "package)")
+                                .arg(applicationsCount(total_selected))
                                 .arg(total_with_package));
 }
 
@@ -2048,8 +2063,8 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
         selected += s;
     }
 
-    m_summaryLabel->setText(tr("%1 application(s) selected for installation out of %2 available")
-                                .arg(selected)
+    m_summaryLabel->setText(tr("%1 selected for installation out of %2 available")
+                                .arg(applicationsCount(selected))
                                 .arg(total));
 }
 

@@ -1068,7 +1068,7 @@ void UserProfileAppRestoreFlowTests::executePageRunsWhatTheWizardChose() {
     QVERIFY2(QFile::exists(backup_path + QStringLiteral("/Pat/") + file_inside),
              qPrintable(page->m_logEdit->toPlainText()));
     QVERIFY2(page->m_logEdit->toPlainText().contains(
-                 QStringLiteral("Checked 1 stored file(s) against their originals")),
+                 QStringLiteral("Checked 1 stored file against its original")),
              qPrintable(page->m_logEdit->toPlainText()));
     // The page and the worker both wrote the start and the outcome, so in the capture VM's log
     // each appeared twice, and "=== Backup Complete ===" stood over "=== Backup Failed ===".

@@ -411,7 +411,10 @@ void AppInstallationPanel::setupWorkerLifecycleConnections() {
         m_progressLabel->setVisible(true);
         Q_EMIT progressUpdated(0, total_jobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);
-        Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(total_jobs));
+        Q_EMIT logOutput(QString("Installation started: %1")
+                             .arg(sak::countOf(total_jobs,
+                                               QStringLiteral("package"),
+                                               QStringLiteral("packages"))));
     });
 
     connect(m_worker.get(),

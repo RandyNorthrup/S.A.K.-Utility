@@ -1165,7 +1165,7 @@ void UserProfileRoundTripTests::verifyAfterBackupChecksEveryStoredFile() {
     const RunResult backed_up = runBackup(sourceProfile(profile.path()), backup.path(), options);
     QVERIFY2(backed_up.completed && backed_up.success,
              qPrintable(backed_up.message + QLatin1Char('\n') + backed_up.warnings.join('\n')));
-    QVERIFY2(backed_up.notes.contains(QStringLiteral("Checked 2 stored file(s) against their "
+    QVERIFY2(backed_up.notes.contains(QStringLiteral("Checked 2 stored files against their "
                                                      "originals")),
              qPrintable(backed_up.notes.join('\n')));
 }

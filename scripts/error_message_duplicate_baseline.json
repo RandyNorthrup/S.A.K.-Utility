@@ -40,7 +40,7 @@
     "Requested HFS+ fork read is out of range",
     "Run-state store has no session directory",
     "STEP 1 VERIFICATION FAILED:",
-    "Search encountered %1 item read failure(s); results",
+    "Search encountered %1; results may be incomplete",
     "Unable to copy %1 to %2",
     "Unable to create output directory",
     "Unable to open HFS+ filesystem for file create",

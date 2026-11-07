@@ -7,6 +7,7 @@
 #include "sak/actions/check_disk_errors_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -59,6 +60,18 @@ QString describeProcessFailure(const ProcessResult& proc) {
         reason += QStringLiteral(", output truncated");
     }
     return reason;
+}
+
+QString drivesCount(qint64 count) {
+    return countOf(count, QStringLiteral("drive"), QStringLiteral("drives"));
+}
+
+QString errorsCount(qint64 count) {
+    return countOf(count, QStringLiteral("error"), QStringLiteral("errors"));
+}
+
+QString repairsCount(qint64 count) {
+    return countOf(count, QStringLiteral("repair"), QStringLiteral("repairs"));
 }
 
 }  // namespace
@@ -454,13 +467,13 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
     QString final_report = report;
     final_report += QString("-").repeated(kDiskReportWidth) + "\n";
     final_report += QString(
-                        "Summary: %1 of %2 drive(s) scanned, %3 could not be checked, "
-                        "%4 error(s) found, %5 repair(s) recommended\n")
+                        "Summary: %1 of %2 scanned, %3 could not be checked, "
+                        "%4 found, %5 recommended\n")
                         .arg(totals.drives_scanned)
-                        .arg(totals.total_drives + unsupported)
+                        .arg(drivesCount(totals.total_drives + unsupported))
                         .arg(not_checked)
-                        .arg(totals.errors_found)
-                        .arg(totals.repairs_recommended);
+                        .arg(errorsCount(totals.errors_found))
+                        .arg(repairsCount(totals.repairs_recommended));
 
     // Run as administrator, Windows may not even show this check the drives mapped for the
     // signed-in user, so this holds whether or not any network drive was named above.
@@ -483,15 +496,15 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
         // a guessed cause; final_report already lists why each drive did not scan.
         result.log = final_report;
     } else if (outcome.success && unsupported == 0) {
-        result.message = QString("Scanned %1 drive(s): %2 error(s), %3 repair(s) recommended")
-                             .arg(totals.drives_scanned)
-                             .arg(totals.errors_found)
-                             .arg(totals.repairs_recommended);
+        result.message = QString("Scanned %1: %2, %3 recommended")
+                             .arg(drivesCount(totals.drives_scanned))
+                             .arg(errorsCount(totals.errors_found))
+                             .arg(repairsCount(totals.repairs_recommended));
         result.log = final_report;
     } else {
-        result.message = QString("Scanned %1 of %2 drive(s); %3 could not be checked (%4)")
+        result.message = QString("Scanned %1 of %2; %3 could not be checked (%4)")
                              .arg(totals.drives_scanned)
-                             .arg(totals.total_drives + unsupported)
+                             .arg(drivesCount(totals.total_drives + unsupported))
                              .arg(not_checked)
                              .arg(not_checked_names.join(QStringLiteral(", ")));
         result.log = final_report;

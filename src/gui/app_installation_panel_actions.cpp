@@ -59,6 +59,10 @@ namespace {
     return cleaned;
 }
 
+[[nodiscard]] QString packagesCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
+}
+
 // Max package names listed in the pre-install review dialog before a "... and N more"
 // summary; bounds the dialog height for a large bundle while still previewing the set.
 constexpr int kMaxReviewNamesShown = 40;
@@ -407,7 +411,10 @@ void AppInstallationPanel::onInstallAll() {
         return;
     }
 
-    Q_EMIT logOutput(QString("=== Installing %1 Package(s) ===").arg(m_installQueue.size()));
+    Q_EMIT logOutput(QString("=== Installing %1 ===")
+                         .arg(sak::countOf(m_installQueue.size(),
+                                           QStringLiteral("Package"),
+                                           QStringLiteral("Packages"))));
 
     setInstallInProgressUi(true);
 
@@ -554,7 +561,7 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
     }
 
     m_offlineResultsTable->scrollToTop();
-    Q_EMIT logOutput(QString("Found %1 package(s)").arg(display_count));
+    Q_EMIT logOutput(QString("Found %1").arg(packagesCount(display_count)));
 }
 
 void AppInstallationPanel::onAddToOfflineList() {
@@ -673,7 +680,7 @@ void AppInstallationPanel::onBuildBundle() {
     }
 
     Q_EMIT logOutput(
-        QString("=== Building Offline Bundle: %1 package(s) ===").arg(packages.size()));
+        QString("=== Building Offline Bundle: %1 ===").arg(packagesCount(packages.size())));
 
     setOfflineInProgressUi(true);
 
@@ -773,7 +780,7 @@ void AppInstallationPanel::onDirectDownload() {
         packages.append({pkg_id, version});
     }
 
-    Q_EMIT logOutput(QString("=== Direct Download: %1 package(s) ===").arg(packages.size()));
+    Q_EMIT logOutput(QString("=== Direct Download: %1 ===").arg(packagesCount(packages.size())));
 
     setOfflineInProgressUi(true);
 

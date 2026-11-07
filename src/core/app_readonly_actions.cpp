@@ -36,6 +36,7 @@
 #include "sak/file_recovery_engine.h"
 #include "sak/file_scanner.h"
 #include "sak/firewall_rule_auditor.h"
+#include "sak/format_utils.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/iso_analyzer.h"
@@ -110,6 +111,29 @@ QList<DriveInfo> readOnlyActionDrives(bool& enumeration_ok) {
     return DriveScanner::enumerateDrivesOnce(enumeration_ok);
 }
 
+QString filesCount(qint64 count) {
+    return countOf(count, QStringLiteral("file"), QStringLiteral("files"));
+}
+
+QString hopsCount(qint64 count) {
+    return countOf(count, QStringLiteral("hop"), QStringLiteral("hops"));
+}
+
+QString leftoverItemsCount(qint64 count) {
+    return countOf(count, QStringLiteral("leftover item"), QStringLiteral("leftover items"));
+}
+
+QString hitsCount(qint64 count) {
+    return countOf(count, QStringLiteral("hit"), QStringLiteral("hits"));
+}
+
+// "3 matches across 1 file": the file search's one-line result.
+QString searchSummary(qint64 match_count, qint64 file_count) {
+    return QStringLiteral("%1 across %2")
+        .arg(countOf(match_count, QStringLiteral("match"), QStringLiteral("matches")),
+             filesCount(file_count));
+}
+
 // Bound model-facing list payloads so a machine with hundreds of programs or a
 // large scan does not blow the tool-result size. Truncation is reported, never
 // silent.
@@ -153,8 +177,8 @@ constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
 // chunk, so a huge file is cancelled at the deadline and mapped to an honest timeout failure (never
 // a partial digest reported as the file's hash).
 constexpr int kHashFileTimeoutMs = 2 * 60 * 1000;  // 2 min
-// Milliseconds-per-second divisor for rendering a millisecond deadline as whole seconds.
-constexpr int kMillisecondsPerSecond = 1000;
+// Milliseconds-per-second divisor for rendering a millisecond deadline as whole seconds:
+// sak::kMillisecondsPerSecond, from layout_constants.h through format_utils.h.
 // backup.preview_app_data: cap the discovered dirs actually SIZED (each is a full tree walk), the
 // dirs surfaced to the model, and the shared wall time across all of them.
 constexpr int kMaxAppDataScanDirs = 64;
@@ -428,7 +452,10 @@ AppActionResult listInventory(const QJsonObject&) {
                            {QStringLiteral("disks"), disks},
                            {QStringLiteral("warning_count"), inventory.warnings.size()},
                            {QStringLiteral("warnings"), warnings}};
-    return {true, QStringLiteral("Enumerated %1 disk(s)").arg(disks.size()), data};
+    return {true,
+            QStringLiteral("Enumerated %1")
+                .arg(countOf(disks.size(), QStringLiteral("disk"), QStringLiteral("disks"))),
+            data};
 }
 
 // The partition-op arg mapping (ParsedPartitionOp, parsePartitionOpType,
@@ -557,12 +584,14 @@ AppActionResult previewPartitionOperation(const QJsonObject& args) {
                            {QStringLiteral("blockers"), cappedMessages(preview.blockers)},
                            {QStringLiteral("warnings"), cappedMessages(preview.warnings)},
                            {QStringLiteral("operations"), operations}};
-    const QString message =
-        preview.canApply()
-            ? QStringLiteral("Operation ALLOWED (%1 warning(s))").arg(preview.warnings.size())
-            : QStringLiteral("Operation BLOCKED: %1")
-                  .arg(preview.blockers.isEmpty() ? QStringLiteral("(no reason given)")
-                                                  : preview.blockers.first());
+    const QString message = preview.canApply() ? QStringLiteral("Operation ALLOWED (%1)")
+                                                     .arg(countOf(preview.warnings.size(),
+                                                                  QStringLiteral("warning"),
+                                                                  QStringLiteral("warnings")))
+                                               : QStringLiteral("Operation BLOCKED: %1")
+                                                     .arg(preview.blockers.isEmpty()
+                                                              ? QStringLiteral("(no reason given)")
+                                                              : preview.blockers.first());
     return {true, message, data};
 }
 
@@ -595,7 +624,12 @@ AppActionResult listInstalledPrograms(const QJsonObject&) {
                            {QStringLiteral("truncated"), truncated},
                            {QStringLiteral("inventory_complete"), inventory_complete},
                            {QStringLiteral("programs"), listed}};
-    return {true, QStringLiteral("Found %1 installed program(s)").arg(programs.size()), data};
+    return {true,
+            QStringLiteral("Found %1")
+                .arg(countOf(programs.size(),
+                             QStringLiteral("installed program"),
+                             QStringLiteral("installed programs"))),
+            data};
 }
 
 // software.scan_leftovers
@@ -761,20 +795,20 @@ QString buildLeftoverMessage(const ProgramInfo& program,
                              bool timed_out,
                              const QStringList& failed_phases) {
     if (timed_out) {
-        return QStringLiteral("Found at least %1 leftover item(s) for '%2' (scan timed out)")
-            .arg(item_count)
+        return QStringLiteral("Found at least %1 for '%2' (scan timed out)")
+            .arg(leftoverItemsCount(item_count))
             .arg(program.displayName);
     }
     if (!failed_phases.isEmpty()) {
         return QStringLiteral(
-                   "Found at least %1 leftover item(s) for '%2' (%3 enumeration failed; "
+                   "Found at least %1 for '%2' (%3 enumeration failed; "
                    "results are partial)")
-            .arg(item_count)
+            .arg(leftoverItemsCount(item_count))
             .arg(program.displayName)
             .arg(failed_phases.join(QStringLiteral(", ")));
     }
-    return QStringLiteral("Found %1 leftover item(s) for '%2'")
-        .arg(item_count)
+    return QStringLiteral("Found %1 for '%2'")
+        .arg(leftoverItemsCount(item_count))
         .arg(program.displayName);
 }
 
@@ -893,10 +927,12 @@ AppActionResult scanVulnerabilities(const QJsonObject& args) {
                            {QStringLiteral("cancelled"), scan.cancelled},
                            {QStringLiteral("findings"), findings},
                            {QStringLiteral("source_errors"), source_errors}};
-    QString message = QStringLiteral("Scanned %1 app(s): %2 finding(s), %3 critical")
-                          .arg(scan.installedAppsScanned)
-                          .arg(scan.findings.size())
-                          .arg(scan.criticalCount);
+    QString message =
+        QStringLiteral("Scanned %1: %2, %3 critical")
+            .arg(countOf(scan.installedAppsScanned, QStringLiteral("app"), QStringLiteral("apps")))
+            .arg(countOf(
+                scan.findings.size(), QStringLiteral("finding"), QStringLiteral("findings")))
+            .arg(scan.criticalCount);
     if (scan.cancelled) {
         // A cancelled scan is PARTIAL: say so instead of presenting the findings as a full result.
         message += QStringLiteral(" (scan was CANCELLED; results are partial)");
@@ -1208,9 +1244,12 @@ AppActionResult scanRecoverable(const QJsonObject& args) {
     const QString suffix = scan_complete ? QString()
                                          : QStringLiteral(" (scan incomplete -- partial coverage)");
     return {true,
-            QStringLiteral("Found %1 recoverable file candidate(s) in %2%3")
-                .arg(scan.candidates.size())
-                .arg(info.fileName(), suffix),
+            QStringLiteral("Found %1 in %2%3")
+                .arg(countOf(scan.candidates.size(),
+                             QStringLiteral("recoverable file candidate"),
+                             QStringLiteral("recoverable file candidates")),
+                     info.fileName(),
+                     suffix),
             data};
 }
 
@@ -1286,8 +1325,10 @@ AppActionResult listDrives(const QJsonObject& args) {
         {QStringLiteral("enumeration_complete"), enumeration_ok},
         {QStringLiteral("drives"), listed}};
     return {true,
-            QStringLiteral("%1 physical drive(s) found (%2 removable)")
-                .arg(drives.size())
+            QStringLiteral("%1 found (%2 removable)")
+                .arg(countOf(drives.size(),
+                             QStringLiteral("physical drive"),
+                             QStringLiteral("physical drives")))
                 .arg(removable_count),
             data};
 }
@@ -1455,9 +1496,7 @@ AppActionResult searchFiles(const QJsonObject& args, const AppActionCancelCheck&
                      [file_count](const QString&, int) { ++(*file_count); });
     QObject::connect(
         &worker, &WorkerBase::finished, inv.context(), [&inv, &worker, matches, file_count, cap]() {
-            QString message = QStringLiteral("%1 match(es) across %2 file(s)")
-                                  .arg(matches->size())
-                                  .arg(*file_count);
+            QString message = searchSummary(matches->size(), *file_count);
             QJsonObject data = serializeSearch(*matches, *file_count, cap);
             // Surface files that could not be read: they produce no matches
             // indistinguishable from a clean file, so an unqualified success would
@@ -1466,9 +1505,9 @@ AppActionResult searchFiles(const QJsonObject& args, const AppActionCancelCheck&
             data[QStringLiteral("files_unreadable")] = unreadable;
             if (unreadable > 0) {
                 message += QStringLiteral(
-                               "; %1 file(s) could not be read and were skipped "
+                               "; skipped %1 that could not be read "
                                "(results may be incomplete)")
-                               .arg(unreadable);
+                               .arg(filesCount(unreadable));
             }
             inv.finish({true, message, data});
         });
@@ -1612,21 +1651,23 @@ AppActionResult findDuplicates(const QJsonObject& args, const AppActionCancelChe
         int total_dupes = 0;
         qint64 total_wasted = 0;
         QJsonObject data = serializeDuplicates(worker.duplicateGroups(), total_dupes, total_wasted);
-        QString message =
-            QStringLiteral(
-                "Found %1 duplicate group(s), %2 redundant file(s), %3 bytes reclaimable")
-                .arg(static_cast<int>(worker.duplicateGroups().size()))
-                .arg(total_dupes)
-                .arg(total_wasted);
+        QString message = QStringLiteral("Found %1, %2, %3 bytes reclaimable")
+                              .arg(countOf(static_cast<qint64>(worker.duplicateGroups().size()),
+                                           QStringLiteral("duplicate group"),
+                                           QStringLiteral("duplicate groups")),
+                                   countOf(total_dupes,
+                                           QStringLiteral("redundant file"),
+                                           QStringLiteral("redundant files")))
+                              .arg(total_wasted);
         // Surface files that could not be hashed: they were dropped from the comparison, so the
         // duplicate set is incomplete. Reporting a bare success would hide that.
         const int unhashed = worker.filesUnhashed();
         data[QStringLiteral("files_unhashed")] = unhashed;
         if (unhashed > 0) {
             message += QStringLiteral(
-                           "; %1 file(s) could not be read/hashed and were skipped "
+                           "; skipped %1 that could not be read/hashed "
                            "(results may be incomplete)")
-                           .arg(unhashed);
+                           .arg(filesCount(unhashed));
         }
         inv.finish({true, message, data});
     });
@@ -1758,10 +1799,10 @@ AppActionResult previewOrganize(const QJsonObject& args,
         const int files = static_cast<int>(worker.plannedOperations().size());
         const QString message =
             truncated ? QStringLiteral(
-                            "Preview: at least %1 file(s) would be organized (scan stopped at "
+                            "Preview: at least %1 would be organized (scan stopped at "
                             "the preview limit)")
-                            .arg(files)
-                      : QStringLiteral("Preview: %1 file(s) would be organized").arg(files);
+                            .arg(filesCount(files))
+                      : QStringLiteral("Preview: %1 would be organized").arg(filesCount(files));
         inv.finish({true, message, data});
     });
     QObject::connect(
@@ -2005,16 +2046,19 @@ AppActionResult buildDirScanResult(const QFileInfo& info,
         {QStringLiteral("scan_complete"), scan_complete},
         {QStringLiteral("timed_out"), out.timed_out},
         {QStringLiteral("entries"), entries}};
-    QString message = QStringLiteral("Scanned '%1': %2 file(s), %3 dir(s), %4 bytes")
-                          .arg(info.fileName().isEmpty() ? root : info.fileName())
-                          .arg(out.files)
-                          .arg(out.directories)
-                          .arg(out.total_size);
+    QString message =
+        QStringLiteral("Scanned '%1': %2, %3, %4 bytes")
+            .arg(info.fileName().isEmpty() ? root : info.fileName(),
+                 filesCount(out.files),
+                 countOf(out.directories, QStringLiteral("folder"), QStringLiteral("folders")))
+            .arg(out.total_size);
     if (out.timed_out) {
         message += QStringLiteral(" (scan hit the time limit; results are partial)");
     } else if (out.errors > 0) {
-        message += QStringLiteral(" (%1 subdirectorie(s) could not be read; totals are partial)")
-                       .arg(out.errors);
+        message += QStringLiteral(" (could not read %1; totals are partial)")
+                       .arg(countOf(out.errors,
+                                    QStringLiteral("subdirectory"),
+                                    QStringLiteral("subdirectories")));
     }
     return {true, message, data};
 }
@@ -2283,11 +2327,13 @@ AppActionResult previewAppDataBackup(const QJsonObject& args) {
                            {QStringLiteral("scan_complete"), scan_complete}};
     QString message = paths.isEmpty()
                           ? QStringLiteral("No app-data directories found for '%1'").arg(app_name)
-                          : QStringLiteral("'%1': %2 director(ies), %3 bytes across %4 file(s)")
-                                .arg(app_name)
-                                .arg(paths.size())
-                                .arg(out.total_size)
-                                .arg(out.file_count);
+                          : QStringLiteral("'%1': %2, %3 bytes across %4")
+                                .arg(app_name,
+                                     countOf(paths.size(),
+                                             QStringLiteral("directory"),
+                                             QStringLiteral("directories")),
+                                     QString::number(out.total_size),
+                                     filesCount(out.file_count));
     if (out.timed_out) {
         message += QStringLiteral(" (sizing hit the time limit; total is partial)");
     } else if (!out.complete) {
@@ -2477,7 +2523,10 @@ AppActionResult smartScan(const QJsonObject&) {
     const QJsonObject data{{QStringLiteral("drive_count"), drives.size()},
                            {QStringLiteral("smartctl_available"), analyzer.isSmartctlAvailable()},
                            {QStringLiteral("drives"), drives}};
-    return {true, QStringLiteral("Analyzed SMART data for %1 drive(s)").arg(drives.size()), data};
+    return {true,
+            QStringLiteral("Analyzed SMART data for %1")
+                .arg(countOf(drives.size(), QStringLiteral("drive"), QStringLiteral("drives"))),
+            data};
 }
 
 // List existing System Restore points via RestorePointManager (Get-ComputerRestorePoint through
@@ -2528,7 +2577,10 @@ AppActionResult listRestorePoints(const QJsonObject&) {
     if (!enabled) {
         message = QStringLiteral("System Restore is disabled on the system drive");
     } else {
-        message = QStringLiteral("System Restore enabled: %1 restore point(s)").arg(points.size());
+        message = QStringLiteral("System Restore enabled: %1")
+                      .arg(countOf(points.size(),
+                                   QStringLiteral("restore point"),
+                                   QStringLiteral("restore points")));
         if (!elevated && points.isEmpty()) {
             message += QStringLiteral(" (run elevated to read the full list)");
         }
@@ -2576,8 +2628,10 @@ AppActionResult readTemperatures(const QJsonObject&) {
             ? QStringLiteral(
                   "No readable thermal sensors (they may require elevation or may not "
                   "be exposed on this system)")
-            : QStringLiteral("Read %1 thermal sensor(s), max %2 C")
-                  .arg(readings.size())
+            : QStringLiteral("Read %1, max %2 C")
+                  .arg(countOf(readings.size(),
+                               QStringLiteral("thermal sensor"),
+                               QStringLiteral("thermal sensors")))
                   .arg(max_temp, 0, 'f', 1);
     return {true, message, data};
 }
@@ -2753,7 +2807,10 @@ AppActionResult listUsers(const QJsonObject&) {
                            {QStringLiteral("truncated"), users.size() > listed.size()},
                            {QStringLiteral("users"), listed}};
     return {true,
-            QStringLiteral("Found %1 local user account(s) with a profile").arg(users.size()),
+            QStringLiteral("Found %1 with a profile")
+                .arg(countOf(users.size(),
+                             QStringLiteral("local user account"),
+                             QStringLiteral("local user accounts"))),
             data};
 }
 
@@ -2857,7 +2914,10 @@ AppActionResult listEmailProfiles(const QJsonObject&) {
             ? QStringLiteral(
                   "No email client profiles found (no Outlook/Thunderbird/Windows Mail "
                   "configuration detected)")
-            : QStringLiteral("Found %1 email client profile(s)").arg(profiles.size());
+            : QStringLiteral("Found %1")
+                  .arg(countOf(profiles.size(),
+                               QStringLiteral("email client profile"),
+                               QStringLiteral("email client profiles")));
     if (!reliable) {
         message += QStringLiteral(" (partial: at least one source could not be read)");
     }
@@ -2925,7 +2985,9 @@ AppActionResult readMbox(const QJsonObject& args) {
                            {QStringLiteral("returned"), messages.size()},
                            {QStringLiteral("messages"), messages}};
     const QString summary =
-        QStringLiteral("Returned %1 of %2 message(s)").arg(messages.size()).arg(total);
+        QStringLiteral("Returned %1 of %2")
+            .arg(messages.size())
+            .arg(countOf(total, QStringLiteral("message"), QStringLiteral("messages")));
     return {true, summary, data};
 }
 
@@ -3065,9 +3127,8 @@ AppActionResult searchMbox(const QJsonObject& args) {
          outcome.hits.size() >= sak::email::kMaxSearchResults},
         {QStringLiteral("hits"), listed}};
     return {true,
-            QStringLiteral("%1 hit(s) for \"%2\" in %3")
-                .arg(outcome.hits.size())
-                .arg(query, info.fileName()),
+            QStringLiteral("%1 for \"%2\" in %3")
+                .arg(hitsCount(outcome.hits.size()), query, info.fileName()),
             data};
 }
 
@@ -3146,9 +3207,8 @@ AppActionResult searchPst(const QJsonObject& args) {
     const QString suffix =
         search_complete ? QString() : QStringLiteral(" (search incomplete -- partial coverage)");
     return {true,
-            QStringLiteral("%1 hit(s) for \"%2\" in %3%4")
-                .arg(outcome.hits.size())
-                .arg(query, info.fileName(), suffix),
+            QStringLiteral("%1 for \"%2\" in %3%4")
+                .arg(hitsCount(outcome.hits.size()), query, info.fileName(), suffix),
             data};
 }
 
@@ -3343,7 +3403,9 @@ AppActionResult readPst(const QJsonObject& args) {
     appendPstFolderItems(parser, args, data);
 
     return {true,
-            QStringLiteral("PST/OST '%1': %2 folder(s)").arg(info.fileName()).arg(total_folders),
+            QStringLiteral("PST/OST '%1': %2")
+                .arg(info.fileName(),
+                     countOf(total_folders, QStringLiteral("folder"), QStringLiteral("folders"))),
             data};
 }
 
@@ -3534,7 +3596,12 @@ AppActionResult listAdapters(const QJsonObject&) {
     const QJsonObject data{{QStringLiteral("adapter_count"), adapters.size()},
                            {QStringLiteral("truncated"), adapters.size() > listed.size()},
                            {QStringLiteral("adapters"), listed}};
-    return {true, QStringLiteral("Enumerated %1 network adapter(s)").arg(adapters.size()), data};
+    return {true,
+            QStringLiteral("Enumerated %1")
+                .arg(countOf(adapters.size(),
+                             QStringLiteral("network adapter"),
+                             QStringLiteral("network adapters"))),
+            data};
 }
 
 QJsonObject serializeConnection(const ConnectionInfo& c) {
@@ -3607,8 +3674,10 @@ AppActionResult listConnections(const QJsonObject& args) {
                            {QStringLiteral("truncated"), connections.size() > listed.size()},
                            {QStringLiteral("connections"), listed}};
     return {true,
-            QStringLiteral("Enumerated %1 connection(s): %2 TCP, %3 UDP")
-                .arg(connections.size())
+            QStringLiteral("Enumerated %1: %2 TCP, %3 UDP")
+                .arg(countOf(connections.size(),
+                             QStringLiteral("connection"),
+                             QStringLiteral("connections")))
                 .arg(tcp)
                 .arg(udp),
             data};
@@ -3697,7 +3766,11 @@ AppActionResult wifiScan(const QJsonObject&) {
                            {QStringLiteral("channels"), channels},
                            {QStringLiteral("channels_truncated"),
                             utilization.size() > channels.size()}};
-    return {true, QStringLiteral("WiFi scan: %1 network(s) found").arg(networks.size()), data};
+    return {
+        true,
+        QStringLiteral("WiFi scan: %1 found")
+            .arg(countOf(networks.size(), QStringLiteral("network"), QStringLiteral("networks"))),
+        data};
 }
 
 // List the machine's SAVED WiFi profiles (distinct from network.wifi_scan, which scans nearby
@@ -3728,7 +3801,12 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
                            {QStringLiteral("reported_count"), listed.size()},
                            {QStringLiteral("truncated"), profiles.size() > listed.size()},
                            {QStringLiteral("profiles"), listed}};
-    return {true, QStringLiteral("Found %1 saved WiFi profile(s)").arg(profiles.size()), data};
+    return {true,
+            QStringLiteral("Found %1")
+                .arg(countOf(profiles.size(),
+                             QStringLiteral("saved WiFi profile"),
+                             QStringLiteral("saved WiFi profiles"))),
+            data};
 }
 
 // Build a Windows WLAN setup .cmd for a network (the WiFi panel's "export setup script" feature,
@@ -3918,7 +3996,8 @@ AppActionResult listShares(const QJsonObject&) {
                            {QStringLiteral("access_tested"), false},
                            {QStringLiteral("shares"), listed}};
     return {true,
-            QStringLiteral("Found %1 share(s) on the local machine").arg(shares.size()),
+            QStringLiteral("Found %1 on the local machine")
+                .arg(countOf(shares.size(), QStringLiteral("share"), QStringLiteral("shares"))),
             data};
 }
 
@@ -4113,12 +4192,14 @@ AppActionResult auditFirewall(const QJsonObject& args) {
 
     const QJsonObject data =
         serializeFirewallAudit(rules, conflicts, gaps, name_filter, enabled_only);
-    return {true,
-            QStringLiteral("Firewall: %1 rule(s), %2 conflict(s), %3 coverage gap(s)")
-                .arg(rules.size())
-                .arg(conflicts.size())
-                .arg(gaps.size()),
-            data};
+    return {
+        true,
+        QStringLiteral("Firewall: %1, %2, %3")
+            .arg(countOf(rules.size(), QStringLiteral("rule"), QStringLiteral("rules")),
+                 countOf(conflicts.size(), QStringLiteral("conflict"), QStringLiteral("conflicts")),
+                 countOf(
+                     gaps.size(), QStringLiteral("coverage gap"), QStringLiteral("coverage gaps"))),
+        data};
 }
 
 QJsonObject serializeDnsResult(const DnsQueryResult& result) {
@@ -4190,9 +4271,12 @@ AppActionResult dnsQuery(const QJsonObject& args) {
     }
     const QString message =
         result.success
-            ? QStringLiteral("%1 %2: %3 answer(s)")
-                  .arg(hostname, record_type)
-                  .arg(result.answers.size())
+            ? QStringLiteral("%1 %2: %3")
+                  .arg(hostname,
+                       record_type,
+                       countOf(result.answers.size(),
+                               QStringLiteral("answer"),
+                               QStringLiteral("answers")))
             : QStringLiteral("%1 %2: %3").arg(hostname, record_type, result.errorMessage);
     return {true, message, serializeDnsResult(result)};
 }
@@ -4592,8 +4676,8 @@ AppActionResult tracerouteHost(const QJsonObject& args, const AppActionCancelChe
         const TracerouteResult& r = worker.tracerouteResult();
         const QString message =
             r.reachedTarget
-                ? QStringLiteral("%1: reached in %2 hop(s)").arg(target).arg(r.totalHops)
-                : QStringLiteral("%1: %2 hop(s), target not reached").arg(target).arg(r.totalHops);
+                ? QStringLiteral("%1: reached in %2").arg(target, hopsCount(r.totalHops))
+                : QStringLiteral("%1: %2, target not reached").arg(target, hopsCount(r.totalHops));
         return AppActionResult{true, message, serializeTracerouteResult(r)};
     });
 }
@@ -4634,11 +4718,12 @@ AppActionResult mtrHost(const QJsonObject& args, const AppActionCancelCheck& sho
             r.hops.cbegin(), r.hops.cend(), 0.0, [](double worst, const MtrHopStats& hop) {
                 return std::max(worst, hop.lossPercent);
             });
-        const QString message = QStringLiteral("%1: %2 cycle(s), %3 hop(s), worst-hop loss %4%")
-                                    .arg(target)
-                                    .arg(r.totalCycles)
-                                    .arg(r.hops.size())
-                                    .arg(worst_loss, 0, 'f', 1);
+        const QString message =
+            QStringLiteral("%1: %2, %3, worst-hop loss %4%")
+                .arg(target,
+                     countOf(r.totalCycles, QStringLiteral("cycle"), QStringLiteral("cycles")),
+                     hopsCount(r.hops.size()))
+                .arg(worst_loss, 0, 'f', 1);
         return AppActionResult{true, message, serializeMtrResult(r)};
     });
 }

@@ -551,11 +551,15 @@ void AdvancedUninstallPanel::connectStatusSignals() {
                 m_auto_cleanup_in_progress = false;
                 m_auto_cleanup_failure_reported = false;
                 setOperationRunning(false);
-                logMessage(QString("Batch complete: %1 uninstall(s) succeeded, %2 failed; cleanup "
-                                   "removed %3 item(s), %4 failed (%5 recovered)")
-                               .arg(succeeded)
+                logMessage(QString("Batch complete: %1 succeeded, %2 failed; cleanup "
+                                   "removed %3, %4 failed (%5 recovered)")
+                               .arg(countOf(succeeded,
+                                            QStringLiteral("uninstall"),
+                                            QStringLiteral("uninstalls")))
                                .arg(failed)
-                               .arg(cleanup_succeeded)
+                               .arg(countOf(cleanup_succeeded,
+                                            QStringLiteral("item"),
+                                            QStringLiteral("items")))
                                .arg(cleanup_failed)
                                .arg(formatSize(cleanup_bytes)));
             });
@@ -1308,18 +1312,22 @@ void AdvancedUninstallPanel::onDeleteSelectedLeftovers() {
         }
     }
 
-    QString msg = tr("Delete %1 selected leftover items?\n\n"
+    QString msg = tr("Delete %1?\n\n"
                      "Safe: %2  |  Review: %3  |  Risky: %4\n\n"
                      "This action cannot be undone.")
-                      .arg(leftovers.size())
+                      .arg(countOf(leftovers.size(),
+                                   tr("selected leftover item"),
+                                   tr("selected leftover items")))
                       .arg(safe)
                       .arg(review)
                       .arg(risky);
 
     if (risky > 0) {
-        msg += tr("\n\nWARNING: %1 item(s) are classified as RISKY. "
-                  "Removing them may affect system stability.")
-                   .arg(risky);
+        msg += risky == 1 ? tr("\n\nWARNING: 1 item is classified as RISKY. "
+                               "Removing it may affect system stability.")
+                          : tr("\n\nWARNING: %1 items are classified as RISKY. "
+                               "Removing them may affect system stability.")
+                                .arg(risky);
     }
 
     auto result = sak::showWarningLogged(
@@ -1832,7 +1840,8 @@ QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers(bool* all_resolv
 }
 
 void AdvancedUninstallPanel::updateStatusCounts() {
-    m_program_count_label->setText(tr("%1 programs").arg(m_filtered_programs.size()));
+    m_program_count_label->setText(
+        countOf(m_filtered_programs.size(), tr("program"), tr("programs")));
 
     qint64 total_size = 0;
     for (const auto& prog : m_filtered_programs) {

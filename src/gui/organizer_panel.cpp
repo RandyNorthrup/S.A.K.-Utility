@@ -1175,11 +1175,15 @@ void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message
 
 QString OrganizerPanel::organizerFailureReport(const QString& error_message) const {
     const QStringList& failed = m_worker->failedMoves();
-    return tr("Moved %1 file(s).\n\n%2 file(s) could not be moved and stayed where they were (%3):"
+    const QString moved = countOf(m_worker->movedCount(), tr("file"), tr("files"));
+    if (failed.size() == 1) {
+        return tr("Moved %1.\n\n1 file could not be moved and stayed where it was (%2):"
+                  "\n\n%3\n\nClose any program using it and run it again.")
+            .arg(moved, error_message, failed.first());
+    }
+    return tr("Moved %1.\n\n%2 files could not be moved and stayed where they were (%3):"
               "\n\n%4\n\nClose any program using them and run it again.")
-        .arg(m_worker->movedCount())
-        .arg(failed.size())
-        .arg(error_message, failed.join(QLatin1Char('\n')));
+        .arg(moved, QString::number(failed.size()), error_message, failed.join(QLatin1Char('\n')));
 }
 
 void OrganizerPanel::onWorkerCancelled() {
@@ -1649,7 +1653,8 @@ void OrganizerPanel::onDedupResultsReady(const QString& summary,
     }
 
     const QString results_text =
-        tr("Found %1 duplicate file(s), %2 wasted space").arg(duplicate_count).arg(size_str);
+        tr("Found %1, %2 wasted space")
+            .arg(countOf(duplicate_count, tr("duplicate file"), tr("duplicate files")), size_str);
 
     // Show persistent results label
     if (duplicate_count > 0) {

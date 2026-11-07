@@ -9,6 +9,7 @@
 #endif
 #include "sak/firewall_rule_auditor.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 
 #include <QSet>
@@ -48,6 +49,10 @@ constexpr uint16_t kRdpPort = 3389;
 constexpr uint16_t kSmbPort = 445;
 constexpr int kWildcardRuleWarningThreshold = 5;
 constexpr int kDisabledBlockRuleWarningThreshold = 10;
+
+QString firewallRulesCount(qint64 count) {
+    return countOf(count, QStringLiteral("firewall rule"), QStringLiteral("firewall rules"));
+}
 
 /// @brief RAII wrapper for COM initialization
 struct ComInitializer {
@@ -599,10 +604,9 @@ bool FirewallRuleAuditor::handleEnumerationBreak(long next_hr, int dropped) {
     // emitted over a truncated rule set (B9-12).
     if (dropped > 0) {
         m_enumerationOk = false;
-        Q_EMIT errorOccurred(
-            QStringLiteral("%1 firewall rule(s) could not be read at all and were dropped; the "
-                           "audit is incomplete.")
-                .arg(dropped));
+        Q_EMIT errorOccurred(QStringLiteral("Dropped %1 that could not be read at all; the "
+                                            "audit is incomplete.")
+                                 .arg(firewallRulesCount(dropped)));
         return true;
     }
     return false;
@@ -669,9 +673,9 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
         return !r.complete;
     });
     if (incomplete > 0) {
-        Q_EMIT errorOccurred(QStringLiteral("%1 firewall rule(s) could not be fully read; their "
+        Q_EMIT errorOccurred(QStringLiteral("%1 could not be fully read; rule "
                                             "attributes may be incomplete.")
-                                 .arg(incomplete));
+                                 .arg(firewallRulesCount(incomplete)));
     }
 
     return rules;

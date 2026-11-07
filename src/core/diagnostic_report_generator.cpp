@@ -442,7 +442,7 @@ void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const {
     if (m_data.stress_test.has_value()) {
         const auto& st = m_data.stress_test.value();
         out << "Stress Test,Passed," << (st.passed ? "Yes" : "No") << "\n";
-        out << "Stress Test,Duration (s)," << st.duration_seconds << "\n";
+        out << "Stress Test,Duration (seconds)," << st.duration_seconds << "\n";
         out << "Stress Test,Errors," << st.errors_detected << "\n";
         out << "Stress Test,Max CPU Temp (C)," << st.max_cpu_temp << "\n";
     }

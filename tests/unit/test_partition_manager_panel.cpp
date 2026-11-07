@@ -1887,7 +1887,7 @@ void PartitionManagerPanelTests::scanButtonIsStatefulAndInventorySummaryUsesStat
     // inventory summary) was invisible.
     QCOMPARE(statusSpy.count(), 1);
     const auto lastStatus = statusSpy.takeLast();
-    QCOMPARE(lastStatus.at(0).toString(), QStringLiteral("1 disk(s), layout panel-appl"));
+    QCOMPARE(lastStatus.at(0).toString(), QStringLiteral("1 disk, layout panel-appl"));
     QCOMPARE(lastStatus.at(1).toInt(), 0);
 
     auto* refresh = findToolButtonByName(&panel, QStringLiteral("Refresh Disks"));
@@ -6001,7 +6001,7 @@ void PartitionManagerPanelTests::inventoryStateIsHonestAboutFailedPartitionEnume
     // -- which is the part an operator acts on.
     QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(degraded),
              QStringLiteral("Partition Manager: inventory INCOMPLETE -- partition enumeration "
-                            "failed for disk(s) 0; operations on them are refused until a "
+                            "failed for disk 0; operations on it are refused until a "
                             "refresh succeeds"));
 }
 

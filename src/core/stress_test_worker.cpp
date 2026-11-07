@@ -532,8 +532,9 @@ bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
 
     // Error abort check
     if (m_config.abort_on_error && errors > 0) {
-        logError("Stress test aborting: {} error(s) detected", errors);
-        m_result.abort_reason = QString("%1 error(s) detected").arg(errors);
+        const QString counted = countOf(errors, QStringLiteral("error"), QStringLiteral("errors"));
+        logError("Stress test aborting: {} detected", counted.toStdString());
+        m_result.abort_reason = QString("%1 detected").arg(counted);
         m_stop_children.store(true, std::memory_order_release);
         return true;
     }

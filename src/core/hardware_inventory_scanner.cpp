@@ -6,6 +6,7 @@
 
 #include "sak/hardware_inventory_scanner.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -252,7 +253,7 @@ void HardwareInventoryScanner::scan() {
 
     Q_EMIT scanProgress(kScanProgressComplete, "Scan complete");
     if (m_wmiQueryFailed) {
-        logWarning("Hardware inventory scan completed with WMI query failure(s)");
+        logWarning("Hardware inventory scan completed with at least one WMI query failure");
     } else {
         logInfo("Hardware inventory scan completed successfully");
     }
@@ -636,7 +637,9 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
     QVector<StorageDeviceInfo> devices = queryPhysicalDisks();
     // Enrich with partition/volume info from Qt
     enrichStorageWithVolumeInfo(devices);
-    logInfo("Storage: {} device(s) detected", devices.size());
+    logInfo(
+        "Storage: {} detected",
+        countOf(devices.size(), QStringLiteral("device"), QStringLiteral("devices")).toStdString());
     return devices;
 }
 
@@ -848,7 +851,9 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
         }
     }
 
-    logInfo("GPU: {} adapter(s) detected", gpus.size());
+    logInfo(
+        "GPU: {} detected",
+        countOf(gpus.size(), QStringLiteral("adapter"), QStringLiteral("adapters")).toStdString());
     return gpus;
 }
 

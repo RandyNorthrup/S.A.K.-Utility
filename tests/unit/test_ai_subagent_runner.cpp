@@ -719,7 +719,7 @@ void AiSubagentRunnerTests::noLocalExecutionPolicyStaysSingleShot() {
     // rather than being silently accepted.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
     QCOMPARE(result.error_message,
-             QStringLiteral("Model requested 1 tool call(s) but no tool executor is "
+             QStringLiteral("Model requested 1 tool call but no tool executor is "
                             "available under this task's policy; the turn produced no "
                             "final answer"));
 }

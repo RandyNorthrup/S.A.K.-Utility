@@ -533,8 +533,9 @@ void OstConverterWidget::onConversionStarted(int total_files) {
     setConvertingState(true);
     m_total_files = total_files;
     m_files_done = 0;
-    Q_EMIT statusMessage(tr("Starting conversion of %1 file(s)...").arg(total_files),
-                         kTimerStatusMessageMs);
+    Q_EMIT statusMessage(
+        tr("Starting conversion of %1...").arg(countOf(total_files, tr("file"), tr("files"))),
+        kTimerStatusMessageMs);
     Q_EMIT progressUpdate(0, 0);  // Indeterminate while starting
 }
 

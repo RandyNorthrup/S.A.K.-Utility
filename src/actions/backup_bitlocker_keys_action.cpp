@@ -8,6 +8,7 @@
 
 #include "sak/action_constants.h"
 #include "sak/app_action_guards.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -1113,9 +1114,12 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     result.duration_ms = duration_ms;
     result.output_path = data.backup_dir_path;
 
-    result.message = QString("Backed up %1 recovery key(s) from %2 volume(s)")
-                         .arg(data.total_recovery_passwords)
-                         .arg(m_volumes.size());
+    result.message =
+        QString("Backed up %1 from %2")
+            .arg(countOf(data.total_recovery_passwords,
+                         QStringLiteral("recovery key"),
+                         QStringLiteral("recovery keys")),
+                 countOf(m_volumes.size(), QStringLiteral("volume"), QStringLiteral("volumes")));
     if (m_writing_unprotected) {
         result.warning = unprotectedResultWarning(m_unprotected_file_system);
         result.message += QStringLiteral(". ") + result.warning;

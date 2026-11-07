@@ -6,6 +6,7 @@
 
 #include "sak/partition_manager_controller.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/partition_raw_device_io.h"
@@ -44,6 +45,19 @@ QString runtimeFilesystemManifestPath() {
     // Root of trust for the elevated filesystem tools: resolve only from the trusted
     // application directory, never a CWD-relative manifest an attacker could plant.
     return PartitionFileSystemToolManifest::resolveRuntimeManifestPath();
+}
+
+// The INCOMPLETE status for the disks whose partitions could not be listed: "disk 0 ... on it"
+// for one, "disks 0, 2 ... on them" for several.
+QString incompleteInventoryMessage(const QStringList& failed_disks) {
+    const bool one = failed_disks.size() == 1;
+    return QStringLiteral(
+               "Partition Manager: inventory INCOMPLETE -- partition enumeration "
+               "failed for %1 %2; operations on %3 are refused until a "
+               "refresh succeeds")
+        .arg(one ? QStringLiteral("disk") : QStringLiteral("disks"),
+             failed_disks.join(QStringLiteral(", ")),
+             one ? QStringLiteral("it") : QStringLiteral("them"));
 }
 
 // Cancel-then-JOIN a future watcher and delete it, instead of detaching it. The
@@ -211,11 +225,7 @@ QString PartitionManagerController::inventoryStatusMessage(const PartitionInvent
         return QStringLiteral("Partition Manager: inventory ready");
     }
     if (!failed.isEmpty()) {
-        return QStringLiteral(
-                   "Partition Manager: inventory INCOMPLETE -- partition enumeration "
-                   "failed for disk(s) %1; operations on them are refused until a "
-                   "refresh succeeds")
-            .arg(failed.join(QStringLiteral(", ")));
+        return incompleteInventoryMessage(failed);
     }
     return QStringLiteral("Partition Manager: inventory PARTIAL -- %1")
         .arg(inventory.warnings.join(QStringLiteral("; ")));
@@ -875,9 +885,12 @@ PartitionManagerState PartitionManagerController::publishExecutionResult(
 }
 
 void PartitionManagerController::publishInventoryDiagnostics(const PartitionInventory& inventory) {
-    logInfo("Partition Manager inventory scan returned {} disk(s), {} warning(s)",
-            inventory.disks.size(),
-            inventory.warnings.size());
+    logInfo(
+        "Partition Manager inventory scan returned {}, {}",
+        countOf(inventory.disks.size(), QStringLiteral("disk"), QStringLiteral("disks"))
+            .toStdString(),
+        countOf(inventory.warnings.size(), QStringLiteral("warning"), QStringLiteral("warnings"))
+            .toStdString());
     for (const auto& warning : inventory.warnings) {
         logWarning("Partition Manager inventory warning: {}", warning.toStdString());
         Q_EMIT logOutput(warning);

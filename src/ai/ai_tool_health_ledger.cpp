@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_tool_health_ledger.h"
 
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QJsonArray>
@@ -116,13 +117,14 @@ AiToolAvailability AiToolHealthLedger::check(const QString& key, QDateTime now_u
         result.available = false;
         result.failure_class = QStringLiteral("health_backoff");
         result.disabled_until_utc = it->disabled_until_utc;
-        result.reason = QStringLiteral(
-                            "Tool/provider '%1' is temporarily disabled until %2 after %3 "
-                            "consecutive failure(s): %4")
-                            .arg(normalized,
-                                 iso(it->disabled_until_utc),
-                                 QString::number(it->consecutive_failures),
-                                 it->last_error_message);
+        result.reason =
+            QStringLiteral("Tool/provider '%1' is temporarily disabled until %2 after %3: %4")
+                .arg(normalized,
+                     iso(it->disabled_until_utc),
+                     countOf(it->consecutive_failures,
+                             QStringLiteral("consecutive failure"),
+                             QStringLiteral("consecutive failures")),
+                     it->last_error_message);
     }
     return result;
 }

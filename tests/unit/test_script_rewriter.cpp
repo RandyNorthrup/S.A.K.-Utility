@@ -174,7 +174,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     // Fail closed: the rejected result names the un-internalized download URL and
     // carries NO script content -- never a half-rewritten script reported as done.
     QCOMPARE(result.error_message,
-             QStringLiteral("Declared download URL(s) with no internalized local file: "
+             QStringLiteral("Declared download URL with no internalized local file: "
                             "https://example.com/real.exe"));
     QVERIFY(result.replacements.isEmpty());
     QVERIFY(result.script_content.isEmpty());

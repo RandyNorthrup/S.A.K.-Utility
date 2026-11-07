@@ -2855,8 +2855,10 @@ QString htmlList(const QStringList& items,
                      .arg(htmlText(items.at(i), kReportTranscriptExcerptMaxChars));
     }
     if (items.size() > limit) {
-        lines << QStringLiteral("<li>%1 more item(s) retained in the session trace.</li>")
-                     .arg(items.size() - limit);
+        lines << QStringLiteral("<li>%1 retained in the session trace.</li>")
+                     .arg(countOf(items.size() - limit,
+                                  QStringLiteral("more item"),
+                                  QStringLiteral("more items")));
     }
     lines << QStringLiteral("</ul>");
     return lines.join(QString());
@@ -2902,10 +2904,10 @@ QString htmlFindingCards(const QVector<PanelReportFinding>& findings) {
         cards << QStringLiteral("</article>");
     }
     if (findings.size() > limit) {
-        cards << QStringLiteral(
-                     "<p class=\"note\">%1 additional lower-priority finding(s) are retained in "
-                     "the session trace.</p>")
-                     .arg(findings.size() - limit);
+        cards << QStringLiteral("<p class=\"note\">The session trace retains %1.</p>")
+                     .arg(countOf(findings.size() - limit,
+                                  QStringLiteral("additional lower-priority finding"),
+                                  QStringLiteral("additional lower-priority findings")));
     }
     cards << QStringLiteral("</div>");
     return cards.join(QString());
@@ -5074,10 +5076,11 @@ void AiAssistantPanel::updateAgentActivityLabel() {
                                  .arg(std::max(0, m_runState.active_subagents))
                                  .arg(std::max(0, m_runState.completed_subagents));
         m_agentActivityLabel->setText(text);
-        m_agentActivityLabel->setToolTip(
-            tr("%1 active background subagent(s), %2 completed in this run.")
-                .arg(std::max(0, m_runState.active_subagents))
-                .arg(std::max(0, m_runState.completed_subagents)));
+        m_agentActivityLabel->setToolTip(tr("%1, %2 completed in this run.")
+                                             .arg(countOf(std::max(0, m_runState.active_subagents),
+                                                          tr("active background subagent"),
+                                                          tr("active background subagents")))
+                                             .arg(std::max(0, m_runState.completed_subagents)));
         const char* color = m_runState.active_subagents > 0 ? sak::ui::kStatusColorRunning
                                                             : sak::ui::kColorTextMuted;
         m_agentActivityLabel->setStyleSheet(
@@ -5528,11 +5531,12 @@ void AiAssistantPanel::applyWorkflowTemplate(const ai::WorkflowTemplate& workflo
     if (!missing_resources.isEmpty()) {
         // A workflow whose guidance did not load is NOT the workflow the user picked;
         // report the gap instead of announcing it as added.
-        const QString message = tr("Workflow %1 is incomplete: %2 resource(s) could not be "
-                                   "loaded (%3)")
-                                    .arg(workflow.title)
-                                    .arg(missing_resources.size())
-                                    .arg(missing_resources.join(QStringLiteral(", ")));
+        const QString message =
+            tr("Workflow %1 is incomplete: %2 could not be "
+               "loaded (%3)")
+                .arg(workflow.title,
+                     countOf(missing_resources.size(), tr("resource"), tr("resources")),
+                     missing_resources.join(QStringLiteral(", ")));
         appendLocalEvent(message);
         Q_EMIT statusMessage(message, sak::kTimerStatusDefaultMs);
         return;
@@ -7772,7 +7776,8 @@ static QString renderArgsConfirmPreview(const QJsonObject& args) {
 static QString renderItemsConfirmPreview(const QJsonArray& items) {
     QStringList lines;
     lines.reserve(items.size() + 1);
-    lines << QObject::tr("%1 item(s) to delete:").arg(items.size());
+    lines << QObject::tr("%1 to delete:")
+                 .arg(countOf(items.size(), QObject::tr("item"), QObject::tr("items")));
     for (int i = 0; i < items.size(); ++i) {
         const QJsonObject obj = items.at(i).toObject();
         const QString type = obj.value(QStringLiteral("type")).toString();
@@ -7828,10 +7833,14 @@ static QStringList confirmBatchWarnings(const QJsonObject& action_args, const QJ
     }
     const int permanent = countInherentlyPermanentItems(items);
     if (permanent > 0) {
-        warnings << QObject::tr(
-                        "WARNING: %1 item(s) (registry/service/task/firewall) have no Recycle Bin "
-                        "and are deleted PERMANENTLY even in Recycle-Bin mode.")
-                        .arg(permanent);
+        warnings << (permanent == 1
+                         ? QObject::tr("WARNING: 1 item (registry/service/task/firewall) has no "
+                                       "Recycle Bin and is deleted PERMANENTLY even in "
+                                       "Recycle-Bin mode.")
+                         : QObject::tr("WARNING: %1 items (registry/service/task/firewall) have "
+                                       "no Recycle Bin and are deleted PERMANENTLY even in "
+                                       "Recycle-Bin mode.")
+                               .arg(permanent));
     }
     return warnings;
 }
@@ -10766,8 +10775,10 @@ bool AiAssistantPanel::prepareWorkflowPackageTool(const ai::AiToolCallContext& t
         }
         plan->args[QStringLiteral("query")] = queries.join(QStringLiteral(", "));
         plan->args[QStringLiteral("queries")] = stringListToJsonArray(queries);
-        plan->request.command_preview =
-            QStringLiteral("search package(s): %1").arg(queries.join(QStringLiteral(", ")));
+        plan->request.command_preview = QStringLiteral("search %1: %2")
+                                            .arg(queries.size() == 1 ? QStringLiteral("package")
+                                                                     : QStringLiteral("packages"),
+                                                 queries.join(QStringLiteral(", ")));
         return true;
     }
     if (!isPackageReadOperation(operation) && !isPackageChangeOperation(operation)) {
@@ -10819,8 +10830,10 @@ bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::AiToolCallContext& t
         }
         plan->args[QStringLiteral("query")] = queries.join(QStringLiteral(", "));
         plan->args[QStringLiteral("queries")] = stringListToJsonArray(queries);
-        plan->request.command_preview =
-            QStringLiteral("search offline package(s): %1").arg(queries.join(QStringLiteral(", ")));
+        plan->request.command_preview = QStringLiteral("search offline %1: %2")
+                                            .arg(queries.size() == 1 ? QStringLiteral("package")
+                                                                     : QStringLiteral("packages"),
+                                                 queries.join(QStringLiteral(", ")));
         return true;
     }
     if (!offlineNeedsPackages(operation)) {
@@ -10844,8 +10857,11 @@ bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::AiToolCallContext& t
         resolved_packages.append(packages.at(0));
     }
     plan->args[QStringLiteral("packages")] = resolved_packages;
-    plan->request.command_preview = QStringLiteral("%1 offline package(s): %2")
-                                        .arg(operation, queries.join(QStringLiteral(", ")));
+    plan->request.command_preview = QStringLiteral("%1 offline %2: %3")
+                                        .arg(operation,
+                                             queries.size() == 1 ? QStringLiteral("package")
+                                                                 : QStringLiteral("packages"),
+                                             queries.join(QStringLiteral(", ")));
     return true;
 }
 
@@ -13085,7 +13101,9 @@ void AiAssistantPanel::onAddInstructionContextClicked() {
         addInstructionFile(path);
     }
     if (!paths.isEmpty()) {
-        Q_EMIT statusMessage(tr("Instruction file(s) added"), sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(paths.size() == 1 ? tr("Instruction file added")
+                                               : tr("Instruction files added"),
+                             sak::kTimerStatusDefaultMs);
     }
 }
 
@@ -13159,7 +13177,13 @@ QString AiAssistantPanel::blockedWorkflowStepsNotice(const ai::WorkflowTemplate&
     if (steps.isEmpty()) {
         return {};
     }
-    return tr("This workflow has %1 step(s) that need local tools: %2. This access mode turns "
+    if (steps.size() == 1) {
+        return tr("This workflow has 1 step that needs local tools: %1. This access mode turns "
+                  "those off, so it will be refused and the workflow cannot finish it. Choose "
+                  "Assisted Full Access to run it.")
+            .arg(steps.first());
+    }
+    return tr("This workflow has %1 steps that need local tools: %2. This access mode turns "
               "those off, so they will be refused and the workflow cannot finish them. Choose "
               "Assisted Full Access to run them.")
         .arg(steps.size())
@@ -13207,7 +13231,8 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
     if (m_transcriptView != nullptr) {
         QString user_block = message;
         if (!m_contextItems.isEmpty()) {
-            user_block += tr("\n\nContext attached: %1 item(s)").arg(m_contextItems.size());
+            user_block += tr("\n\nContext attached: %1")
+                              .arg(countOf(m_contextItems.size(), tr("item"), tr("items")));
         }
         appendTranscriptMessage(QStringLiteral("You"), user_block, true);
     }
@@ -13606,12 +13631,13 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
                  QStringLiteral("local_tools"),
                  QStringLiteral("queued"),
                  response_metadata);
-    appendLocalEvent(
-        tr("OpenAI requested %1 local tool call(s) (iteration %2/%3, session total %4)")
-            .arg(result.function_calls.size())
-            .arg(m_toolTurnIterations)
-            .arg(kMaxToolTurnsPerUserMessage)
-            .arg(m_toolCallsThisSession));
+    appendLocalEvent(tr("OpenAI requested %1 (iteration %2/%3, session total %4)")
+                         .arg(countOf(result.function_calls.size(),
+                                      tr("local tool call"),
+                                      tr("local tool calls")))
+                         .arg(m_toolTurnIterations)
+                         .arg(kMaxToolTurnsPerUserMessage)
+                         .arg(m_toolCallsThisSession));
     beginToolTurn(result);
     setActivityIndicator(tr("Using tools"), true);
 }

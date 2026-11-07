@@ -6,6 +6,7 @@
 #include "sak/drive_unmounter.h"
 #include "sak/flash_worker.h"
 #include "sak/flasher_policy.h"
+#include "sak/format_utils.h"
 #include "sak/input_validator.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -1376,8 +1377,9 @@ QStringList FlashCoordinator::rollbackOfflinedDrives(const QStringList& offlined
     if (offlinedPaths.isEmpty()) {
         return QStringList();
     }
-    sak::logInfo(QString("Rolling back %1 drive(s) taken offline before the failure")
-                     .arg(offlinedPaths.size())
+    sak::logInfo(QString("Rolling back %1 taken offline before the failure")
+                     .arg(sak::countOf(
+                         offlinedPaths.size(), QStringLiteral("drive"), QStringLiteral("drives")))
                      .toStdString());
     return reonlineDrives(offlinedPaths);
 }

@@ -60,8 +60,7 @@ void AiToolHealthLedgerTests::repeatedFailuresSuppressTemporarily() {
     // disabled-until instant in the middle is wall-clock-derived and left unpinned.
     QVERIFY(availability.reason.startsWith(
         QStringLiteral("Tool/provider 'provider' is temporarily disabled until ")));
-    QVERIFY(
-        availability.reason.endsWith(QStringLiteral(" after 2 consecutive failure(s): missing")));
+    QVERIFY(availability.reason.endsWith(QStringLiteral(" after 2 consecutive failures: missing")));
 }
 
 // The breaker is per chat session (owner ruling 2026-10-24): reset() must forget a tripped

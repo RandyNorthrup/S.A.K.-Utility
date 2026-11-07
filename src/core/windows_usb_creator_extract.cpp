@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/media_read_back.h"
@@ -310,8 +311,9 @@ bool WindowsUSBCreator::splitInstallImageInto(const QString& dism,
         Q_EMIT progressUpdated(kSplitProgressDismDone +
                                static_cast<int>((i + 1) * kSplitProgressCopySpan / parts.size()));
     }
-    sak::logInfo(QString("install.wim split into %1 part(s) on the USB drive")
-                     .arg(m_split_parts.size())
+    sak::logInfo(QString("install.wim split into %1 on the USB drive")
+                     .arg(sak::countOf(
+                         m_split_parts.size(), QStringLiteral("part"), QStringLiteral("parts")))
                      .toStdString());
     return true;
 }

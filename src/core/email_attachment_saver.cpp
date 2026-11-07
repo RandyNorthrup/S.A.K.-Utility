@@ -6,6 +6,7 @@
 
 #include "sak/email_attachment_saver.h"
 
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QByteArray>
@@ -200,11 +201,13 @@ bool AttachmentBatchSave::isActive() const {
 
 QString AttachmentBatchSave::summaryText() const {
     if (m_failed == 0) {
-        return QStringLiteral("Saved %1 attachment(s) to %2").arg(m_succeeded).arg(m_dir);
+        return QStringLiteral("Saved %1 to %2")
+            .arg(countOf(m_succeeded, QStringLiteral("attachment"), QStringLiteral("attachments")),
+                 m_dir);
     }
-    return QStringLiteral("Saved %1 of %2 attachment(s) (%3 failed)")
+    return QStringLiteral("Saved %1 of %2 (%3 failed)")
         .arg(m_succeeded)
-        .arg(m_expected_count)
+        .arg(countOf(m_expected_count, QStringLiteral("attachment"), QStringLiteral("attachments")))
         .arg(m_failed);
 }
 

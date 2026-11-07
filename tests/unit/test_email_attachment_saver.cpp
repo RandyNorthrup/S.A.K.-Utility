@@ -222,7 +222,7 @@ void TestEmailAttachmentSaver::batchRecordsEachExpectedRefOnce() {
     QCOMPARE(batch.failed(), 0);
     // The counters reach the user only through summaryText(); its clean arm must name
     // the SAVED count and the directory the bytes actually went to.
-    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 2 attachment(s) to ") + dir.path());
+    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 2 attachments to ") + dir.path());
 }
 
 // G22-9: a batch save must count a FAILURE by attachment identity, not off a bare
@@ -274,7 +274,7 @@ void TestEmailAttachmentSaver::batchRecordErrorRefusesDuplicate() {
     QVERIFY(batch.isComplete());
     // The failure arm of the same user-facing summary: saved / expected / failed, each
     // count in its own slot.
-    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 0 of 1 attachment(s) (1 failed)"));
+    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 0 of 1 attachment (1 failed)"));
 
     // A duplicate failure for the same ref is refused: no second increment.
     QVERIFY(!batch.recordError(only));

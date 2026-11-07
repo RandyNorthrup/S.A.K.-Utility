@@ -12,6 +12,7 @@
 #include "sak/apfs_keybag.h"
 #include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
+#include "sak/format_utils.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -20274,19 +20275,28 @@ struct GeneratedApfsLayoutContext {
     QStringList* blockers{nullptr};
 };
 
+// "1 chunk-info block", "3 chunk-info blocks": a geometry count with the noun that agrees with it.
+QString apfsCountOf(uint64_t count, const QString& singular, const QString& plural) {
+    return countOf(static_cast<qint64>(count), singular, plural);
+}
+
 QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose, uint64_t blockCount) {
     const PartitionApfsContainerGeometry geometry =
         PartitionApfsWriter::computeContainerGeometry(blockCount);
     return QStringLiteral(
                "APFS %1 currently supports S.A.K.-generated single chunk-info-block containers "
-               "(up to 126 spaceman chunks, 15.75 GiB); this %2-block target needs %3 spaceman "
-               "chunk(s) across %4 chunk-info block(s)%5, which requires multi-CIB (CAB tier) "
+               "(up to 126 spaceman chunks, 15.75 GiB); this %2-block target needs %3 "
+               "across %4%5, which requires multi-CIB (CAB tier) "
                "spaceman emission and Apple fsck validation")
         .arg(purpose)
         .arg(blockCount)
-        .arg(geometry.chunk_count)
-        .arg(geometry.cib_count)
-        .arg(geometry.multi_cib ? QStringLiteral(" (multi-CIB CAB tier)") : QString());
+        .arg(apfsCountOf(geometry.chunk_count,
+                         QStringLiteral("spaceman chunk"),
+                         QStringLiteral("spaceman chunks")),
+             apfsCountOf(geometry.cib_count,
+                         QStringLiteral("chunk-info block"),
+                         QStringLiteral("chunk-info blocks")),
+             geometry.multi_cib ? QStringLiteral(" (multi-CIB CAB tier)") : QString());
 }
 
 // Empty when S.A.K. can format a container of `blockCount` blocks, otherwise the
@@ -20331,14 +20341,15 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                "APFS %1 supports S.A.K.-generated containers up to the CAB tier whose published "
                "cib/cab-address array and single-block IP usage bitmap fit the spaceman (~553 "
                "TiB); "
-               "this %2-block target needs %3 chunk(s) across %4 chunk-info block(s) and %5 "
-               "CAB(s), "
+               "this %2-block target needs %3 across %4 and %5, "
                "which exceeds the supported ceiling")
         .arg(purpose)
         .arg(blockCount)
-        .arg(geometry.chunk_count)
-        .arg(geometry.cib_count)
-        .arg(geometry.cab_count);
+        .arg(apfsCountOf(geometry.chunk_count, QStringLiteral("chunk"), QStringLiteral("chunks")),
+             apfsCountOf(geometry.cib_count,
+                         QStringLiteral("chunk-info block"),
+                         QStringLiteral("chunk-info blocks")),
+             apfsCountOf(geometry.cab_count, QStringLiteral("CAB"), QStringLiteral("CABs")));
 }
 
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
