@@ -16,10 +16,14 @@
         <file>icons/help.svg</file>
         <file>icons/discord.svg</file>
         <file>icons/panel_app_install.svg</file>
+        <file>icons/panel_app_install-dark.svg</file>
         <file>icons/panel_backup_restore.svg</file>
+        <file>icons/panel_backup_restore-dark.svg</file>
         <file>icons/panel_diagnostic.svg</file>
+        <file>icons/panel_diagnostic-dark.svg</file>
         <file>icons/panel_help.svg</file>
         <file>icons/panel_image_flasher.svg</file>
+        <file>icons/panel_image_flasher-dark.svg</file>
         <file>icons/panel_network.svg</file>
         <file>icons/panel_organizer.svg</file>
         <file>icons/panel_organizer-dark.svg</file>

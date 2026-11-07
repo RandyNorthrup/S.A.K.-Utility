@@ -18,9 +18,12 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFont>
+#include <QFontDatabase>
 #include <QFrame>
 #include <QGraphicsEffect>
 #include <QGroupBox>
@@ -256,6 +259,7 @@ private Q_SLOTS:
     void promptsAreWideEnoughAndWrapTheirQuestion();
     void aSubTabsStatusMessageLeavesWithIt();
     void cellWidgetsFillTheirCells();
+    void cellWidgetRowsAreAsTallAsTheirCombos();
     void wizardsDrawNoAeroBackArrowOverTheTitle();
 
 private:
@@ -1048,11 +1052,16 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
                                  .arg(share, 0, 'f', 2)
                                  .arg(tab_colour.name());
         *report << line;
-        // Every icon on the dark tab. On the light tab, the two the review found faint: the others
-        // are drawn in mid tones that read as shapes beside their tab's name, and are reported, not
-        // held.
+        // Every icon on the dark tab. On the light tab, the ones the reviews found faint: File
+        // Management and Email Tools (review 2), and Benchmark and Diagnostics at 1.20:1,
+        // Application Management 1.24:1, Image Flasher 1.44:1 and Backup and Restore 1.57:1
+        // (review 3, S25), each redrawn in darker tones for the light theme.
         const bool faint_before = QSet<QString>{QStringLiteral("File Management"),
-                                                QStringLiteral("Email Tools")}
+                                                QStringLiteral("Email Tools"),
+                                                QStringLiteral("Benchmark and Diagnostics"),
+                                                QStringLiteral("Application Management"),
+                                                QStringLiteral("Image Flasher"),
+                                                QStringLiteral("Backup and Restore")}
                                       .contains(name);
         // And no part of it all but gone: the old File Management icon's bright boxes carried its
         // share while its lines stood 1.41:1 from the dark tab.
@@ -1284,6 +1293,46 @@ void AppThemeTests::cellWidgetsFillTheirCells() {
     QCoreApplication::processEvents();
     const QRect cell = table.visualRect(table.model()->index(0, 0));
     QCOMPARE(editor->geometry(), cell);
+}
+
+// Review 3 (N2): on testpc1 the Map Users combos cut their descenders ("Morgan" and "Merge" read
+// "Morqan", "Merqe"): rows of the header's default height were shorter than a themed combo box in
+// Segoe UI, the font the app runs in. This platform's own stand-in font hides it, so the test
+// draws in Segoe UI, read from Windows' fonts folder.
+void AppThemeTests::cellWidgetRowsAreAsTallAsTheirCombos() {
+    const QString segoe =
+        QDir(qEnvironmentVariable("WINDIR")).filePath(QStringLiteral("Fonts/segoeui.ttf"));
+    const int font_id = QFontDatabase::addApplicationFont(segoe);
+    QVERIFY2(font_id >= 0, qPrintable(segoe));
+    const QFont previous_font = QApplication::font();
+    const auto restore_font = qScopeGuard([&]() {
+        QApplication::setFont(previous_font);
+        QFontDatabase::removeApplicationFont(font_id);
+    });
+    constexpr int kWindowsUiPointSize = 9;
+    QApplication::setFont(QFont(QStringLiteral("Segoe UI"), kWindowsUiPointSize));
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+
+    QTableWidget table(3, 2);
+    sak::placeCellWidgetsInWholeCells(&table);
+    QList<QComboBox*> combos;
+    for (int row = 0; row < table.rowCount(); ++row) {
+        table.setItem(row, 0, new QTableWidgetItem(QStringLiteral("Alex Morgan")));
+        auto* combo = new QComboBox();
+        combo->addItem(QStringLiteral("Merge Into Destination"));
+        table.setCellWidget(row, 1, combo);
+        combos.append(combo);
+    }
+    table.resize(520, 220);
+    table.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&table));
+    QCoreApplication::processEvents();
+    for (const QComboBox* combo : combos) {
+        QVERIFY2(combo->height() >= combo->sizeHint().height(),
+                 qPrintable(QStringLiteral("combo %1 px tall, needs %2")
+                                .arg(combo->height())
+                                .arg(combo->sizeHint().height())));
+    }
 }
 
 

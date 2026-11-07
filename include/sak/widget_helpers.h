@@ -425,9 +425,15 @@ public:
     }
 };
 
-/// @brief Gives @p view's cell widgets (setCellWidget, setItemWidget) their whole cells.
+/// @brief Gives @p view's cell widgets (setCellWidget, setItemWidget) their whole cells, and a
+///        table's rows the height its cell widgets ask for.
 inline void placeCellWidgetsInWholeCells(QAbstractItemView* view) {
     view->setItemDelegate(new WholeCellWidgetDelegate(view));
+    if (auto* table = qobject_cast<QTableView*>(view)) {
+        // A row of the header's default height was a pixel or two shorter than a themed combo box
+        // in Segoe UI, and the combo cut its descenders ("Morgan", "Merge": review 3, N2).
+        table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    }
 }
 
 /// @brief Sets @p item's text colour, or clears it back to the view's own when @p color is
