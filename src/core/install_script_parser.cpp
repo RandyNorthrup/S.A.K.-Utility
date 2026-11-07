@@ -50,8 +50,13 @@ QString capturedVariableName(const QRegularExpressionMatch& match) {
 }
 
 std::optional<QString> findVariableAssignment(const QString& variable_name, const QString& script) {
+    // PowerShell variable names ignore case. adobereader assigns $MUIchecksum and passes
+    // $MUIChecksum; read case-sensitively, the checksum stayed the text "$MUIChecksum", every
+    // offline bundle refused the installer as altered, and the message blamed the vendor (review 3:
+    // the installers' SHA-256 match the package's declared values).
     const QRegularExpression assign_pattern(QString::fromLatin1(kVariableAssignmentPattern)
-                                                .arg(QRegularExpression::escape(variable_name)));
+                                                .arg(QRegularExpression::escape(variable_name)),
+                                            QRegularExpression::CaseInsensitiveOption);
     const auto assign_match = assign_pattern.match(script);
     if (!assign_match.hasMatch()) {
         return std::nullopt;

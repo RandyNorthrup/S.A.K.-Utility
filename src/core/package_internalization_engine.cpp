@@ -945,6 +945,14 @@ QString PackageInternalizationEngine::installerRefusalMessage(const QString& url
                    "cannot be verified. The package needs fixing upstream.")
             .arg(url);
     }
+    // A checksum still naming a variable is one this app could not read from the script: not the
+    // vendor's change, and not an altered file.
+    if (declared_checksum.contains(QLatin1Char('$'))) {
+        return QStringLiteral(
+                   "Not bundled: the checksum for %1 is set by %2 in the package's script, which "
+                   "S.A.K. could not resolve, so the installer cannot be verified.")
+            .arg(url, declared_checksum.trimmed());
+    }
     return QStringLiteral(
                "Not bundled: the installer at %1 does not match the checksum its package "
                "declares. The vendor has changed the file and the upstream package has not "

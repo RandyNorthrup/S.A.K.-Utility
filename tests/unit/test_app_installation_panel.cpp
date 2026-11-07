@@ -12,7 +12,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalSpy>
+#include <QTabWidget>
 #include <QTimer>
 #include <QtTest/QtTest>
 
@@ -75,6 +77,7 @@ private Q_SLOTS:
     void startupWorkRunsInEveryMode_data();
     void startupWorkRunsInEveryMode();
     void offlineBundleNamesWhatFailedAndEndsTheProgress();
+    void offlineFailureTextNeverWidensThePage();
 };
 
 void AppInstallationPanelTests::cleanup() {
@@ -135,6 +138,49 @@ void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress()
     QVERIFY(!progress.isEmpty());
     const auto last = progress.last();
     QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
+}
+
+// Review 3 (RG1): the failure named in the status label carried a download URL, and unwrapped at
+// its own width it made Offline Deploy about 2200 px wide, with its buttons off screen.
+void AppInstallationPanelTests::offlineFailureTextNeverWidensThePage() {
+    sak::AppInstallationPanel panel;
+    panel.resize(1280, 800);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    for (int index = 0; index < panel.m_tabWidget->count(); ++index) {
+        if (panel.m_tabWidget->tabText(index) == QStringLiteral("Offline Deploy")) {
+            panel.m_tabWidget->setCurrentIndex(index);
+        }
+    }
+    QCOMPARE(panel.m_tabWidget->tabText(panel.m_tabWidget->currentIndex()),
+             QStringLiteral("Offline Deploy"));
+    // The page as a scroll area holds it: its minimum width is what the horizontal bar shows.
+    QWidget* page = panel.m_offlineStatusLabel;
+    while (page->parentWidget() != nullptr &&
+           qobject_cast<QScrollArea*>(page->parentWidget()->parentWidget()) == nullptr) {
+        page = page->parentWidget();
+    }
+    const int before = page->minimumSizeHint().width();
+
+    Q_EMIT panel.m_offline_worker->operationStarted(2);
+    Q_EMIT panel.m_offline_worker->packageProgress(
+        QStringLiteral("adobereader"),
+        false,
+        QStringLiteral("Not bundled: the installer at "
+                       "https://ardownload3.adobe.com/pub/adobe/acrobat/win/AcrobatDC/2500120756/"
+                       "AcroRdrDCx642500120756_MUI.exe does not match the SHA-256 checksum the "
+                       "adobereader package declares, so it was left out of the bundle"));
+    sak::BatchStats stats;
+    stats.total = 2;
+    stats.completed = 1;
+    stats.failed = 1;
+    Q_EMIT panel.m_offline_worker->operationCompleted(stats);
+    QCoreApplication::processEvents();
+
+    QVERIFY(panel.m_offlineStatusLabel->isVisible());
+    QVERIFY(panel.m_offlineStatusLabel->toolTip().contains(QStringLiteral("AcroRdrDCx64")));
+    const int after = page->minimumSizeHint().width();
+    QVERIFY2(after <= before, qPrintable(QStringLiteral("%1 -> %2 px").arg(before).arg(after)));
 }
 
 QTEST_MAIN(AppInstallationPanelTests)

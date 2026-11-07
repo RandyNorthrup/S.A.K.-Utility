@@ -392,6 +392,12 @@ void TestPackageInternalizationEngine::anInstallerRefusalNamesTheUpstreamPackage
         PackageInternalizationEngine::installerRefusalMessage(url, QStringLiteral("  "));
     QVERIFY2(undeclared.contains(QStringLiteral("declares no checksum for ") + url),
              qPrintable(undeclared));
+    // Review 3: the checksum was a variable the parser could not read, not the vendor's change.
+    const QString unresolved =
+        PackageInternalizationEngine::installerRefusalMessage(url, QStringLiteral("$MUIChecksum"));
+    QVERIFY2(unresolved.contains(QStringLiteral("is set by $MUIChecksum in the package's script")),
+             qPrintable(unresolved));
+    QVERIFY(!unresolved.contains(QStringLiteral("upstream package has not caught up")));
 }
 
 void TestPackageInternalizationEngine::installerVerified_failsClosedOnMissingChecksum() {

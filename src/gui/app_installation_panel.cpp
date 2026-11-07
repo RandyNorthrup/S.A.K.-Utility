@@ -674,6 +674,12 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offline_layout)
     m_offlineStatusLabel = new QLabel(this);
     m_offlineStatusLabel->setVisible(false);
     m_offlineStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    // Since round 3 a failure names its package and why, which can be a download URL with no space
+    // to break at. Unwrapped, at its own width, it made Offline Deploy about 2200 px wide and put
+    // its buttons off screen (review 3, RG1). It wraps in the width the page has, and the whole
+    // text is its tooltip.
+    m_offlineStatusLabel->setWordWrap(true);
+    m_offlineStatusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     actions_layout->addWidget(m_offlineStatusLabel);
 
     m_cancelOfflineButton = new QPushButton(tr("Cancel"), this);
@@ -888,6 +894,7 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
                 status += tr("\nFailed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
             }
             m_offlineStatusLabel->setText(status);
+            m_offlineStatusLabel->setToolTip(status);
             m_offlineStatusLabel->setVisible(true);
 
             setOfflineInProgressUi(false);

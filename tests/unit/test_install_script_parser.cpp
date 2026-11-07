@@ -22,6 +22,7 @@ private Q_SLOTS:
     void parse_installChocolateyPackage_extractsUrl64();
     void parse_installChocolateyPackage_extractsChecksum();
     void parse_installChocolateyPackage_extractsChecksum64();
+    void parse_variableNamesIgnoreCase();
     void parse_installChocolateyPackage_extractsPackageType();
 
     // Install-ChocolateyZipPackage parsing
@@ -107,6 +108,41 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().checksum, QString("abc123def456"));
     QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
+}
+
+// Review 3: every offline bundle failed adobereader as "does not match the checksum its package
+// declares", but its installers' SHA-256 match the script's values. The script (adobereader
+// 2026.2.22031) assigns $MUIchecksum and passes $MUIChecksum; PowerShell ignores the case, and the
+// parser did not, so the checksum compared was the text "$MUIChecksum".
+void TestInstallScriptParser::parse_variableNamesIgnoreCase() {
+    const QString script = QStringLiteral(
+        "$allChecksumType = 'SHA256'\n"
+        "$MUIurl = 'https://ardownload3.adobe.com/pub/adobe/reader/win/AcrobatDC/2600222031/"
+        "AcroRdrDC2600222031_MUI.exe'\n"
+        "$MUIchecksum = 'D5ADBDD1860E540DDC4771D6009A3B9A2C3A649C63D6F30ADD66AADB6FCC7AE6'\n"
+        "$MUIurl64 = 'https://ardownload3.adobe.com/pub/adobe/acrobat/win/AcrobatDC/2600222031/"
+        "AcroRdrDCx642600222031_MUI.exe'\n"
+        "$MUIchecksum64 = '6FF26E9D58DF0E6AF633CED481A1EFFF97F17A30D2B1554D054C398E824E7C77'\n"
+        "   $DownloadArgs = @{\n"
+        "      packageName         = $env:ChocolateyPackageName\n"
+        "      url                 = $MUIurl\n"
+        "      checksum            = $MUIChecksum\n"
+        "      checksumType        = $allChecksumType\n"
+        "      url64bit            = $MUIurl64\n"
+        "      checksum64          = $MUIChecksum64\n"
+        "      checksumType64      = $allChecksumType\n"
+        "   }\n"
+        "   $MUIexePath = Get-ChocolateyWebFile @DownloadArgs\n");
+    sak::InstallScriptParser parser;
+    const auto parsed = parser.parse(script);
+    QVERIFY(!parsed.resources.isEmpty());
+    const auto& resource = parsed.resources.first();
+    QCOMPARE(resource.checksum,
+             QStringLiteral("D5ADBDD1860E540DDC4771D6009A3B9A2C3A649C63D6F30ADD66AADB6FCC7AE6"));
+    QCOMPARE(resource.checksum_64bit,
+             QStringLiteral("6FF26E9D58DF0E6AF633CED481A1EFFF97F17A30D2B1554D054C398E824E7C77"));
+    QCOMPARE(resource.checksum_type, QStringLiteral("SHA256"));
+    QVERIFY(resource.url_64bit.endsWith(QStringLiteral("AcroRdrDCx642600222031_MUI.exe")));
 }
 
 void TestInstallScriptParser::parse_installChocolateyPackage_extractsChecksum64() {
