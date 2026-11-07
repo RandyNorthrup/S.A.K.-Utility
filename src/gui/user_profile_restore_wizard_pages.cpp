@@ -158,16 +158,14 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_mappingTable->setAccessibleName(tr("User mapping"));
     m_mappingTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("Source User"), tr("->"), tr("Destination User"), tr("Merge Mode")});
-    // The names stretch; the check box, arrow and merge mode take what they need, and each row the
-    // height of its combos: five equal columns cut "Merge Into Destinati" and the descenders of
-    // "Morgan" (review 3, N2).
+    // The names stretch; the check box, arrow and merge mode take what they need: five equal
+    // columns cut "Merge Into Destinati" (review 3, N2).
     auto* mapping_header = m_mappingTable->horizontalHeader();
     mapping_header->setSectionResizeMode(QHeaderView::Stretch);
     for (const int column :
          {0, static_cast<int>(KMappingColumnArrow), static_cast<int>(KMappingColumnMergeMode)}) {
         mapping_header->setSectionResizeMode(column, QHeaderView::ResizeToContents);
     }
-    m_mappingTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
     // The destination and merge-mode combos are cell widgets: in the padded text area they were

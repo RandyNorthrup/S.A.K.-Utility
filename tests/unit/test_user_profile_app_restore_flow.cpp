@@ -15,6 +15,7 @@
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_restore_wizard.h"
+#include "sak/windows11_theme.h"
 #include "sak/windows_user_scanner.h"
 
 #include <QApplication>
@@ -196,6 +197,10 @@ sak::UserProfileRestoreAppRestorePage* UserProfileAppRestoreFlowTests::restorePa
 // one that found no profiles (the capture VM has no Wi-Fi adapter).
 // Review 3 (N2): five equal columns cut "Merge Into Destinati" and the descenders of "Morgan".
 void UserProfileAppRestoreFlowTests::mappingRowsShowWholeMergeModes() {
+    // The theme the app runs with: its style sheet sets the font and the combos' padding.
+    const QString previous_style = qApp->styleSheet();
+    const auto restore = qScopeGuard([previous_style]() { qApp->setStyleSheet(previous_style); });
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
     sak::BackupUserData user;
     user.username = QStringLiteral("Morgan");
     sak::BackupManifest manifest;
