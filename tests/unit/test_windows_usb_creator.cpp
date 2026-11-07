@@ -81,6 +81,7 @@ private Q_SLOTS:
     void waitForVolume_readyProbeDoesNotSleep();
     void waitForVolume_timesOutFailClosed();
     void waitForVolume_honoursCancel();
+    void volumeWait_showsItsTimeAndSaysWhatToDo();
     // ---- No bcdboot step, one "active", no fixed sleeps ----
     void bootSetupHasNoBcdbootStepOrDuplicateActiveOrFixedSleep();
 
@@ -421,6 +422,22 @@ constexpr int kNeverTimeoutMs = 600'000;
 constexpr int kSlowBoundMs = 5000;
 constexpr int kProbesUntilReady = 3;
 }  // namespace
+
+// Review 3: on the capture VM the build gave up after 60 s at "Waiting for Windows to recognize the
+// new partition...", a status that never moved, with an error that said nothing about what to do.
+void WindowsUSBCreatorTests::volumeWait_showsItsTimeAndSaysWhatToDo() {
+    QCOMPARE(WindowsUSBCreator::volumeAppearTimeoutMs(), 180'000);
+    QCOMPARE(WindowsUSBCreator::volumeWaitStatusText(25'400, 180'000),
+             QStringLiteral("Waiting for Windows to recognize the new partition... 25 s of 180 s"));
+    const QString error = WindowsUSBCreator::volumeNeverAppearedText(QStringLiteral("5"), 180'000);
+    QVERIFY2(error.startsWith(QStringLiteral("Windows did not surface the new partition's volume "
+                                             "on disk 5 within 180 seconds; nothing was "
+                                             "formatted.")),
+             qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("Unplug the drive, plug it in again, and run the flash "
+                                           "again.")),
+             qPrintable(error));
+}
 
 void WindowsUSBCreatorTests::waitForVolume_returnsAsSoonAsTheVolumeAppears() {
     int probes = 0;

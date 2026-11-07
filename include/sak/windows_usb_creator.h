@@ -67,6 +67,17 @@ public:
                                                          int timeout_ms,
                                                          int poll_interval_ms);
 
+    /// @brief The status shown while the new partition's volume is waited for, with the time
+    ///        waited and the limit. Pure; testable.
+    [[nodiscard]] static QString volumeWaitStatusText(qint64 elapsed_ms, int timeout_ms);
+
+    /// @brief The error when the volume never appears: what happened, that nothing was
+    ///        formatted, and what to do next. Pure; testable.
+    [[nodiscard]] static QString volumeNeverAppearedText(const QString& diskNumber, int timeout_ms);
+
+    /// @brief How long Windows is given to surface a new partition's volume or its drive letter.
+    [[nodiscard]] static int volumeAppearTimeoutMs();
+
     /// @brief True iff diskpart stdout contains a known hard-failure marker.
     ///        diskpart frequently exits 0 even when an individual command failed,
     ///        so a clean exit code alone is not proof of success. Pure/testable.

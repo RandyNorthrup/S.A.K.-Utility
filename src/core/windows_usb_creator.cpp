@@ -36,8 +36,13 @@ constexpr int kExtractionVerifiedProgress = 60;
 // USB stick does this in a second or two; a slow hub can take several. Past this the media is
 // not coming up and the run fails with an error that says so, instead of a fixed sleep that
 // either wastes seconds on fast hardware or gives up too early on slow hardware.
-constexpr int kVolumeAppearTimeoutMs = 60'000;
+// Three minutes: the capture VM ran out of the 60 s it had (review 3) while testpc1's stick took
+// seconds, and a slow real stick or hub can be as slow as that VM.
+constexpr int kVolumeAppearTimeoutMs = 180'000;
 constexpr int kVolumeAppearPollMs = sak::kTimerPollingFastMs;
+// Each look runs a PowerShell, which a loaded PC takes seconds to start; one that runs out of its
+// time is a look that found nothing, not a failure.
+constexpr int kVolumeProbeTimeoutMs = sak::kTimeoutProcessMediumMs;
 // How long the letter Windows gives a new volume by itself is waited for before one is assigned.
 constexpr int kAutomaticLetterGraceMs = 5000;
 
@@ -170,10 +175,15 @@ bool WindowsUSBCreator::waitForNewPartitionVolume(const QString& diskNumber) {
             "$p = Get-Partition -DiskNumber %1 -PartitionNumber 1 -ErrorAction Stop; "
             "if ($null -eq ($p | Get-Volume -ErrorAction Stop)) { exit 1 }")
             .arg(diskNumber);
+    QElapsedTimer waited;
+    waited.start();
     const auto outcome = waitForVolume(
-        [this, &probeCmd]() {
+        [this, &probeCmd, &waited]() {
+            // The page said only "Waiting for Windows to recognize the new partition..." for the
+            // whole wait, so a long one could not be told from a hang.
+            Q_EMIT statusChanged(volumeWaitStatusText(waited.elapsed(), kVolumeAppearTimeoutMs));
             return sak::runPowerShell(probeCmd,
-                                      sak::kTimeoutProcessShortMs,
+                                      kVolumeProbeTimeoutMs,
                                       true,
                                       false,
                                       [this]() { return m_cancelled.load(); })
@@ -187,12 +197,29 @@ bool WindowsUSBCreator::waitForNewPartitionVolume(const QString& diskNumber) {
     }
     setError(outcome == VolumeWaitOutcome::Cancelled
                  ? QStringLiteral("Operation cancelled")
-                 : QString("Windows did not surface the new partition's volume on disk %1 within "
-                           "%2 seconds; nothing was formatted")
-                       .arg(diskNumber)
-                       .arg(kVolumeAppearTimeoutMs / sak::kMillisecondsPerSecond));
+                 : volumeNeverAppearedText(diskNumber, kVolumeAppearTimeoutMs));
     sak::logError(lastError().toStdString());
     return false;
+}
+
+int WindowsUSBCreator::volumeAppearTimeoutMs() {
+    return kVolumeAppearTimeoutMs;
+}
+
+QString WindowsUSBCreator::volumeWaitStatusText(qint64 elapsed_ms, int timeout_ms) {
+    return QString("Waiting for Windows to recognize the new partition... %1 s of %2 s")
+        .arg(elapsed_ms / sak::kMillisecondsPerSecond)
+        .arg(timeout_ms / sak::kMillisecondsPerSecond);
+}
+
+QString WindowsUSBCreator::volumeNeverAppearedText(const QString& diskNumber, int timeout_ms) {
+    return QString(
+               "Windows did not surface the new partition's volume on disk %1 within %2 seconds; "
+               "nothing was formatted. Unplug the drive, plug it in again, and run the flash "
+               "again. If it fails the same way, try another USB port without a hub, or another "
+               "drive.")
+        .arg(diskNumber)
+        .arg(timeout_ms / sak::kMillisecondsPerSecond);
 }
 
 QString WindowsUSBCreator::waitForFormattedDriveLetter(const QString& diskNumber) {
