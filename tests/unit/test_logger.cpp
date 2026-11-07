@@ -49,6 +49,7 @@ private Q_SLOTS:
 
     // flush
     void flush_writesData();
+    void everyLineReachesTheFileWithoutAFlush();
 
     // getLogFile
     void getLogFile_afterInit();
@@ -382,6 +383,18 @@ void LoggerTests::consoleOutput_toggle() {
 // Flush
 // ============================================================================
 
+// Review 3: the session's log stayed at 0 bytes while the app ran, on testpc1 and the VM, because
+// only errors were flushed; a crash or a kill lost the whole session. Read with a handle of its
+// own, and no flush() asked for, an info line is in the file once it is logged.
+void LoggerTests::everyLineReachesTheFileWithoutAFlush() {
+    auto& log = sak::logger::instance();
+    log.log(sak::log_level::info, "UNFLUSHED_INFO_MARKER_51234");
+    QFile file(QString::fromStdWString(log.getLogFile().wstring()));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY2(file.readAll().contains("UNFLUSHED_INFO_MARKER_51234"),
+             "An info line stayed in the stream's buffer");
+}
+
 void LoggerTests::flush_writesData() {
     auto& log = sak::logger::instance();
     log.log(sak::log_level::info, "FLUSH_VERIFY_MARKER");
@@ -496,9 +509,8 @@ void LoggerTests::logLevel_toString() {
 
     // Class (G): the catalog is pinned by MEMBERSHIP only. Production depends on
     // its ORDER -- log() drops entries via `level < m_min_level`, and
-    // writeEntryToFile / writeEntryToConsole force-flush and route to stderr via
-    // `level >= log_level::error`. Pin the ranking so a reordering cannot keep
-    // every string above correct while silently changing severity semantics.
+    // writeEntryToConsole routes to stderr via `level >= log_level::error`. Pin the ranking so a
+    // reordering cannot keep every string above correct while silently changing severity semantics.
     static_assert(sak::log_level::debug < sak::log_level::info);
     static_assert(sak::log_level::info < sak::log_level::warning);
     static_assert(sak::log_level::warning < sak::log_level::error);

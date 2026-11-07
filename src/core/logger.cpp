@@ -212,7 +212,7 @@ void logger::logInternal(log_level level,
                                      loc.function_name(),
                                      safe_message);
 
-        writeEntryToFile(log_entry, level);
+        writeEntryToFile(log_entry);
         writeEntryToConsole(log_entry, level);
 
     } catch (const std::exception& e) {
@@ -224,7 +224,7 @@ void logger::logInternal(log_level level,
     }
 }
 
-void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexcept {
+void logger::writeEntryToFile(std::string_view log_entry) noexcept {
     const std::lock_guard lock(m_mutex);
 
     if (needsRotation()) {
@@ -237,10 +237,10 @@ void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexc
 
     m_file_stream << log_entry;
 
-    // Flush immediately for error and critical messages
-    if (level >= log_level::error) {
-        m_file_stream.flush();
-    }
+    // Every line reaches the file as it is written. Flushing only errors kept a session's log at
+    // 0 bytes until exit on testpc1 and the VM (review 3), so a crash or a kill lost it all, and a
+    // Windows USB run's verification line reached the file only when the app closed.
+    m_file_stream.flush();
 
     // Fail closed: only charge bytes against the rotation counter when the
     // stream is still good. A failed write/flush (full disk, revoked handle)

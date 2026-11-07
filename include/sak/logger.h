@@ -173,7 +173,7 @@ private:
     void rotateLog() noexcept;
 
     /// @brief Write a formatted log entry to the log file under lock
-    void writeEntryToFile(std::string_view log_entry, log_level level) noexcept;
+    void writeEntryToFile(std::string_view log_entry) noexcept;
 
     /// @brief Emit a one-shot stderr notice on the first file-write failure so a
     ///        persistent disk-write failure is surfaced rather than swallowed.
