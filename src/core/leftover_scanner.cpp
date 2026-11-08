@@ -8,6 +8,7 @@
 #include "sak/leftover_scanner.h"
 
 #include "sak/process_runner.h"
+#include "sak/program_enumerator.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/windows_path_policy.h"
 
@@ -18,9 +19,15 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <array>
+#include <map>
 #include <vector>
 
+#include <msi.h>
+#include <msiquery.h>
 #include <shlobj.h>
+
+#pragma comment(lib, "msi.lib")
 
 namespace sak {
 
@@ -229,6 +236,14 @@ LeftoverScanner::LeftoverScanner(const ProgramInfo& program,
     m_trustedInstallLocation = screened.trusted;
     m_installLocationRefusal = screened.refusal;
     buildExactNames();
+}
+
+LeftoverScanner::LeftoverScanner(const ProgramInfo& program,
+                                 ScanLevel level,
+                                 const QSet<QString>& registryBefore,
+                                 const QVector<ProgramInfo>& stillInstalled)
+    : LeftoverScanner(program, level, registryBefore) {
+    m_stillInstalled = stillInstalled;
 }
 
 QStringList LeftoverScanner::criticalInstallRoots() {
@@ -443,6 +458,317 @@ void LeftoverScanner::buildExactNames() {
 }
 
 // ======================================================================
+// Name-only matching: the display name without its architecture tag
+// ======================================================================
+
+namespace {
+
+// Folded names of vendors whose name alone says nothing about one product.
+const QSet<QString> kVendorNames = {
+    "microsoft",      "microsoftcorporation",
+    "google",         "googlellc",
+    "adobe",          "apple",
+    "intel",          "nvidia",
+    "oracle",         "mozilla",
+    "hewlettpackard", "dell",
+    "lenovo",         "samsung",
+    "realtek",        "logitech",
+    "autodesk",       "vmware",
+    "citrix",         "cisco",
+    "asus",           "acer",
+    "sony",
+};
+
+/// The lower-case leaf of a recorded install location, or empty.
+QString installFolderLeaf(const QString& installLocation) {
+    QString path = QDir::fromNativeSeparators(installLocation.trimmed());
+    while (path.endsWith(QLatin1Char('/'))) {
+        path.chop(1);
+    }
+    return path.isEmpty() ? QString() : QDir(path).dirName().toLower();
+}
+
+/// Whether @p other, a program still installed, carries @p name as its own.
+bool installedProgramHasName(const ProgramInfo& other, const QString& name) {
+    return other.displayName.trimmed().toLower() == name ||
+           LeftoverScanner::architectureStrippedName(other.displayName) == name ||
+           installFolderLeaf(other.installLocation) == name ||
+           LeftoverScanner::uninstallerFolderName(other) == name;
+}
+
+/// The programs still installed, from the registry; nullopt when the registry could not be read
+/// completely, so a name-only match is never allowed on a partial list.
+std::optional<QVector<ProgramInfo>> liveInstalledPrograms() {
+    ProgramEnumerator enumerator;
+    bool complete = true;
+    QObject::connect(&enumerator,
+                     &ProgramEnumerator::enumerationWarning,
+                     &enumerator,
+                     [&complete](const QString&) { complete = false; });
+    QVector<ProgramInfo> programs = enumerator.enumerateRegistryProgramsSync();
+    if (!complete) {
+        return std::nullopt;
+    }
+    return programs;
+}
+
+}  // namespace
+
+QString LeftoverScanner::architectureStrippedName(const QString& displayName) {
+    static const QRegularExpression kArchitectureTag(
+        QStringLiteral(R"(\s*\(\s*(?:x64|x86|64-bit|32-bit)(?:[\s,/]+(?:x64|x86|64-bit|32-bit))*)"
+                       R"(\s*\)\s*$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = kArchitectureTag.match(displayName);
+    if (!match.hasMatch()) {
+        return {};
+    }
+    return displayName.left(match.capturedStart()).trimmed().toLower();
+}
+
+QString LeftoverScanner::nameOnlyNameRefusal(const QString& strippedName,
+                                             const ProgramInfo& program,
+                                             const QVector<ProgramInfo>& stillInstalled) {
+    constexpr int kMinNameOnlyFoldedLen = 4;
+    const QString folded = foldedName(strippedName);
+    if (folded.size() < kMinNameOnlyFoldedLen) {
+        return QStringLiteral("it is shorter than four letters or digits");
+    }
+    if (folded == foldedName(program.publisher) || kVendorNames.contains(folded) ||
+        kGenericDirNames.contains(strippedName) || kSharedRootNames.contains(strippedName)) {
+        return QStringLiteral("it is a publisher or shared folder name");
+    }
+    for (const ProgramInfo& other : stillInstalled) {
+        const bool is_self = !program.registryKeyPath.isEmpty() &&
+                             other.registryKeyPath.compare(program.registryKeyPath,
+                                                           Qt::CaseInsensitive) == 0;
+        if (!is_self && installedProgramHasName(other, strippedName)) {
+            return QStringLiteral("%1, still installed, has that name").arg(other.displayName);
+        }
+    }
+    return {};
+}
+
+void LeftoverScanner::resolveNameOnlyName() {
+    m_nameOnlyName.clear();
+    const QString candidate = architectureStrippedName(m_program.displayName);
+    // Nothing to add when the name has no tag, or when the tagless name is already an exact
+    // name (an install or uninstaller folder named it): those matches stay exact.
+    if (candidate.isEmpty() || m_exactNames.contains(candidate)) {
+        return;
+    }
+    if (!m_stillInstalled) {
+        m_stillInstalled = liveInstalledPrograms();
+        if (!m_stillInstalled) {
+            return;  // a partial program list cannot prove nobody else uses the name
+        }
+    }
+    if (nameOnlyNameRefusal(candidate, m_program, *m_stillInstalled).isEmpty()) {
+        m_nameOnlyName = candidate;
+    }
+}
+
+LeftoverScanner::NameMatch LeftoverScanner::matchName(const QString& nameLower) const {
+    if (matchesProgramExact(nameLower)) {
+        return NameMatch::Exact;
+    }
+    if (!m_nameOnlyName.isEmpty() && nameLower == m_nameOnlyName) {
+        return NameMatch::NameOnly;
+    }
+    return NameMatch::None;
+}
+
+void LeftoverScanner::markIfNameOnly(LeftoverItem& item, NameMatch match) const {
+    if (match != NameMatch::NameOnly) {
+        return;
+    }
+    // Found through the program's name alone, not through anything Windows recorded about where
+    // it was installed: shown for the technician to judge, never pre-selected or auto-cleaned.
+    item.risk = LeftoverItem::RiskLevel::Risky;
+    item.description +=
+        QStringLiteral(" -- matched only by the name \"%1\"; check it belongs to this program")
+            .arg(m_nameOnlyName);
+}
+
+// ======================================================================
+// Windows Installer: where an MSI product put its files
+// ======================================================================
+
+namespace {
+
+constexpr int kMaxWindowsInstallerComponents = 20'000;
+constexpr DWORD kMsiPathBufferChars = 1024;
+constexpr DWORD kMsiComponentIdChars = 64;  // a component ID is a 38-character GUID
+
+/// One installed-product property (INSTALLPROPERTY_*), or empty.
+QString msiProductProperty(const std::wstring& productCode, const wchar_t* property) {
+    DWORD chars = 0;
+    if (MsiGetProductInfoW(productCode.c_str(), property, nullptr, &chars) != ERROR_SUCCESS ||
+        chars == 0) {
+        return {};
+    }
+    std::vector<wchar_t> buffer(static_cast<size_t>(chars) + 1);
+    DWORD size = chars + 1;
+    if (MsiGetProductInfoW(productCode.c_str(), property, buffer.data(), &size) != ERROR_SUCCESS) {
+        return {};
+    }
+    return QString::fromWCharArray(buffer.data(), static_cast<int>(size));
+}
+
+/// The installed path of one component of the product ("C:\...\file.exe", "C:\...\folder\", or a
+/// registry key path such as "02:\SOFTWARE\..."), or empty when it is not installed locally.
+QString msiComponentPath(const std::wstring& productCode, const std::wstring& componentId) {
+    std::vector<wchar_t> buffer(kMsiPathBufferChars);
+    DWORD size = kMsiPathBufferChars;
+    INSTALLSTATE state =
+        MsiGetComponentPathW(productCode.c_str(), componentId.c_str(), buffer.data(), &size);
+    if (state == INSTALLSTATE_MOREDATA) {
+        buffer.resize(static_cast<size_t>(size) + 1);
+        size = static_cast<DWORD>(buffer.size());
+        state =
+            MsiGetComponentPathW(productCode.c_str(), componentId.c_str(), buffer.data(), &size);
+    }
+    if (state != INSTALLSTATE_LOCAL) {
+        return {};
+    }
+    return QString::fromWCharArray(buffer.data(), static_cast<int>(size));
+}
+
+/// The component IDs in the product's cached package (read-only), at most the cap.
+std::vector<std::wstring> msiComponentIds(const QString& localPackage) {
+    std::vector<std::wstring> ids;
+    PMSIHANDLE database;
+    // A null persist mode is MSIDBOPEN_READONLY: the cached package is never written.
+    if (MsiOpenDatabaseW(reinterpret_cast<LPCWSTR>(localPackage.utf16()), nullptr, &database) !=
+        ERROR_SUCCESS) {
+        return ids;
+    }
+    PMSIHANDLE view;
+    if (MsiDatabaseOpenViewW(database, L"SELECT `ComponentId` FROM `Component`", &view) !=
+            ERROR_SUCCESS ||
+        MsiViewExecute(view, 0) != ERROR_SUCCESS) {
+        return ids;
+    }
+    while (static_cast<int>(ids.size()) < kMaxWindowsInstallerComponents) {
+        PMSIHANDLE record;  // one per row: a PMSIHANDLE closes its handle on leaving scope
+        if (MsiViewFetch(view, &record) != ERROR_SUCCESS) {
+            break;
+        }
+        std::array<wchar_t, kMsiComponentIdChars> id{};
+        DWORD size = kMsiComponentIdChars;
+        if (MsiRecordGetStringW(record, 1, id.data(), &size) == ERROR_SUCCESS && size > 0) {
+            ids.emplace_back(id.data(), size);
+        }
+    }
+    return ids;
+}
+
+/// @p path without its last "/" segment ("C:/A/B" gives "C:/A", "C:/A" gives "C:"), on the text.
+QString parentFolderText(const QString& path) {
+    const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+    return slash < 0 ? QString() : path.left(slash);
+}
+
+/// @p path's last "/" segment, on the text.
+QString lastPathSegment(const QString& path) {
+    return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
+}
+
+/// Whether @p folder ("C:/Program Files/Vendor/App", forward slashes) is named for the program:
+/// its leaf matches the folded display name (a version or architecture suffix may differ), or its
+/// "Vendor\App" pair equals it ("Google\Chrome" for "Google Chrome"). The pair must be equal, not
+/// a prefix, so a product's own subfolder ("Notepad++\plugins") never passes for it. On the text
+/// alone, so a folder that is gone still answers.
+bool folderNamesProgram(const QString& folder, const QString& displayName) {
+    const QString program = foldedName(displayName);
+    const QString leaf = foldedName(lastPathSegment(folder));
+    const QString parent = parentFolderText(folder);
+    const QString parent_leaf =
+        parent.contains(QLatin1Char('/')) ? foldedName(lastPathSegment(parent)) : QString();
+    return foldedNamesMatch(leaf, program) ||
+           (!parent_leaf.isEmpty() && !program.isEmpty() && parent_leaf + leaf == program);
+}
+
+/// The Windows Installer product code an Uninstall entry names: the GUID in an MsiExec
+/// uninstall string, else the Uninstall key's own name when that is a GUID. Empty otherwise.
+QString windowsInstallerProductCode(const ProgramInfo& program) {
+    static const QRegularExpression kGuid(QStringLiteral(R"(\{[0-9A-Fa-f\-]{36}\})"));
+    if (program.uninstallString.contains(QStringLiteral("msiexec"), Qt::CaseInsensitive)) {
+        const QRegularExpressionMatch match = kGuid.match(program.uninstallString);
+        if (match.hasMatch()) {
+            return match.captured(0);
+        }
+    }
+    const QString key_name = program.registryKeyPath.section(QLatin1Char('\\'), -1);
+    const QRegularExpressionMatch match = kGuid.match(key_name);
+    return match.hasMatch() && match.capturedLength() == key_name.size() ? key_name : QString();
+}
+
+}  // namespace
+
+QString LeftoverScanner::installFolderFromComponentPaths(const QStringList& componentPaths,
+                                                         const QString& displayName) {
+    static const QRegularExpression kRegistryPath(QStringLiteral(R"(^\d\d:)"));
+    std::map<QString, int> components_per_folder;
+    for (const QString& raw : componentPaths) {
+        if (raw.isEmpty() || kRegistryPath.match(raw).hasMatch()) {
+            continue;
+        }
+        // A folder component's path ends in a separator; a file's names the file. The walk is
+        // on the text alone (the folders need not exist) and stops above the drive root.
+        QString folder = QDir::cleanPath(QDir::fromNativeSeparators(raw));
+        if (!raw.endsWith(QLatin1Char('\\')) && !raw.endsWith(QLatin1Char('/'))) {
+            folder = parentFolderText(folder);
+        }
+        while (folder.count(QLatin1Char('/')) >= 1) {
+            if (folderNamesProgram(folder, displayName)) {
+                ++components_per_folder[QDir::toNativeSeparators(folder)];
+                break;
+            }
+            folder = parentFolderText(folder);
+        }
+    }
+    QString best;
+    int best_count = 0;
+    for (const auto& [folder, count] : components_per_folder) {
+        if (count > best_count) {
+            best = folder;
+            best_count = count;
+        }
+    }
+    return best;
+}
+
+ProgramInfo LeftoverScanner::withWindowsInstallerLocation(const ProgramInfo& program) {
+    if (!program.installLocation.trimmed().isEmpty()) {
+        return program;
+    }
+    const QString code = windowsInstallerProductCode(program);
+    if (code.isEmpty()) {
+        return program;
+    }
+    const std::wstring product = code.toStdWString();
+    if (MsiQueryProductStateW(product.c_str()) != INSTALLSTATE_DEFAULT) {
+        return program;  // not installed for this user or the machine: nothing to ask
+    }
+    ProgramInfo out = program;
+    out.installLocation = msiProductProperty(product, INSTALLPROPERTY_INSTALLLOCATION);
+    if (!out.installLocation.trimmed().isEmpty()) {
+        return out;
+    }
+    const QString package = msiProductProperty(product, INSTALLPROPERTY_LOCALPACKAGE);
+    if (package.isEmpty()) {
+        return program;
+    }
+    QStringList paths;
+    for (const std::wstring& id : msiComponentIds(package)) {
+        paths.append(msiComponentPath(product, id));
+    }
+    out.installLocation = installFolderFromComponentPaths(paths, program.displayName);
+    return out;
+}
+
+// ======================================================================
 // Scan Orchestrator
 // ======================================================================
 
@@ -453,6 +779,7 @@ QVector<LeftoverItem> LeftoverScanner::scan(
     QVector<LeftoverItem> all_items;
     int found_count = 0;
     LeftoverScanReliability rel;  // per-phase reliability, copied to the out-param at the end
+    resolveNameOnlyName();
 
     auto report = [&](const QString& path) {
         ++found_count;
@@ -620,14 +947,9 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(
         const QString dir_lower = entry.fileName().toLower();
 
         // Direct match: directory name matches program or install dir
-        if (matchesProgramExact(dir_lower)) {
-            LeftoverItem item;
-            item.type = LeftoverItem::Type::Folder;
-            item.path = QDir::toNativeSeparators(entry.absoluteFilePath());
-            item.description = QString("Leftover folder in %1").arg(basePath);
-            item.sizeBytes = calculateSize(entry.absoluteFilePath(), stopRequested);
-            item.risk = classifyRisk(item.path, item.type);
-            items.append(item);
+        if (const NameMatch match = matchName(dir_lower); match != NameMatch::None) {
+            items.append(folderLeftover(
+                entry, QString("Leftover folder in %1").arg(basePath), match, stopRequested));
             continue;
         }
 
@@ -641,20 +963,32 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(
             if (stopRequested.load()) {
                 break;
             }
-            if (!matchesProgramExact(sub.fileName().toLower())) {
+            const NameMatch match = matchName(sub.fileName().toLower());
+            if (match == NameMatch::None) {
                 continue;
             }
-            LeftoverItem item;
-            item.type = LeftoverItem::Type::Folder;
-            item.path = QDir::toNativeSeparators(sub.absoluteFilePath());
-            item.description = "Leftover folder under publisher directory";
-            item.sizeBytes = calculateSize(sub.absoluteFilePath(), stopRequested);
-            item.risk = classifyRisk(item.path, item.type);
-            items.append(item);
+            items.append(folderLeftover(sub,
+                                        QStringLiteral("Leftover folder under publisher directory"),
+                                        match,
+                                        stopRequested));
         }
     }
 
     return items;
+}
+
+LeftoverItem LeftoverScanner::folderLeftover(const QFileInfo& folder,
+                                             const QString& description,
+                                             NameMatch match,
+                                             const std::atomic<bool>& stopRequested) const {
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::Folder;
+    item.path = QDir::toNativeSeparators(folder.absoluteFilePath());
+    item.description = description;
+    item.sizeBytes = calculateSize(folder.absoluteFilePath(), stopRequested);
+    item.risk = classifyRisk(item.path, item.type);
+    markIfNameOnly(item, match);
+    return item;
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
@@ -670,7 +1004,8 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
         if (stopRequested.load()) {
             break;
         }
-        if (!matchesProgramExact(file.completeBaseName().toLower())) {
+        const NameMatch match = matchName(file.completeBaseName().toLower());
+        if (match == NameMatch::None) {
             continue;
         }
         LeftoverItem item;
@@ -679,6 +1014,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
         item.description = QString("Leftover file in %1").arg(basePath);
         item.sizeBytes = file.size();
         item.risk = classifyRisk(item.path, item.type);
+        markIfNameOnly(item, match);
         items.append(item);
     }
 
@@ -712,7 +1048,8 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>&
         if (!m_registryBefore.contains(key)) {
             continue;
         }
-        if (!registryKeyMatchesProgram(key)) {
+        const NameMatch match = registryKeyMatchesProgram(key);
+        if (match == NameMatch::None) {
             continue;
         }
         LeftoverItem item;
@@ -720,13 +1057,15 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>&
         item.path = key;
         item.description = "Registry key survived uninstallation";
         item.risk = classifyRisk(key, LeftoverItem::Type::RegistryKey);
+        markIfNameOnly(item, match);
         items.append(item);
     }
 
     return items;
 }
 
-bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
+LeftoverScanner::NameMatch LeftoverScanner::registryKeyMatchesProgram(
+    const QString& keyPath) const {
     const QString key_lower = keyPath.toLower();
 
     // Skip Windows system keys
@@ -734,7 +1073,7 @@ bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
         key_lower.contains("\\microsoft\\windows nt\\") ||
         key_lower.contains("\\currentcontrolset\\control\\") ||
         key_lower.contains("\\currentcontrolset\\enum\\")) {
-        return false;
+        return NameMatch::None;
     }
 
     static const QSet<QString> kRootComponents = {
@@ -747,14 +1086,22 @@ bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
         "services",
     };
 
-    const QStringList components = keyPath.split('\\', Qt::SkipEmptyParts);
-    return std::ranges::any_of(components, [this](const QString& component) {
+    // An exact component anywhere in the key wins over a name-only one.
+    NameMatch best = NameMatch::None;
+    for (const QString& component : keyPath.split('\\', Qt::SkipEmptyParts)) {
         const QString comp_lower = component.toLower();
         if (kRootComponents.contains(comp_lower)) {
-            return false;
+            continue;
         }
-        return matchesProgramExact(comp_lower);
-    });
+        const NameMatch match = matchName(comp_lower);
+        if (match == NameMatch::Exact) {
+            return match;
+        }
+        if (match == NameMatch::NameOnly) {
+            best = match;
+        }
+    }
+    return best;
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(

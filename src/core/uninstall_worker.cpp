@@ -209,6 +209,7 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program,
 
 auto UninstallWorker::executeStandardMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
+    locateWindowsInstallerFiles();
     reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
     captureSnapshotOrWarn(report);
 
@@ -354,6 +355,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         break;
     }
     case Mode::ForcedUninstall: {
+        locateWindowsInstallerFiles();
         report.uninstallResult = UninstallReport::UninstallResult::Skipped;
         reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
         captureSnapshotOrWarn(report);
@@ -371,6 +373,13 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
 
     // Phase 3: Leftover scanning (returns operation_cancelled if stopped mid-scan).
     return runLeftoverPhase(report);
+}
+
+void UninstallWorker::locateWindowsInstallerFiles() {
+    // An MSI product often records no InstallLocation. Ask Windows Installer where it put the
+    // files now, while it still knows the product, so the leftover scan after the uninstall can
+    // name what the product left behind.
+    m_program = LeftoverScanner::withWindowsInstallerLocation(m_program);
 }
 
 RestorePointManager::Outcome UninstallWorker::createRestorePoint() {

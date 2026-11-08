@@ -5,6 +5,7 @@
 /// @brief Unit tests for LeftoverScanner -- pattern matching, risk classification,
 ///        protected paths, file system scanning, and cancellation support
 
+#include "sak/advanced_uninstall_controller.h"
 #include "sak/leftover_scanner.h"
 
 #include <QDir>
@@ -47,6 +48,10 @@ private Q_SLOTS:
     // -- File System Scanning --
     void scan_findsMatchingFolder();
     void scan_namesAProgramWithNoInstallLocationByItsUninstallerFolder();
+    void scan_findsAnMsiProductsSettingsByItsNameWithoutTheArchitectureTag();
+    void scan_nameOnlyMatchIsRefusedWhileAnotherProgramHasThatName();
+    void scan_autoCleanLeavesNameOnlyMatchesAlone();
+    void installFolderFromComponentPaths_namesTheProductsOwnFolder();
     void scan_findsMatchingFile();
     void scan_ignoresNonMatchingFolder();
     void scan_safeLevelSkipsRegistry();
@@ -386,6 +391,200 @@ void LeftoverScannerTests::scan_namesAProgramWithNoInstallLocationByItsUninstall
     shared.uninstallString = QStringLiteral("C:\\Windows\\Installer\\setup.exe /x");
     shared.displayIcon = QStringLiteral("\"C:\\Program Files\\Common Files\\icons\\app.ico\"");
     QCOMPARE(LeftoverScanner::uninstallerFolderName(shared), QString());
+}
+
+namespace {
+
+/// The Notepad++ MSI as winget installs it (review 5, testpc2): "Notepad++ (x64)", no
+/// InstallLocation, removed by msiexec, its Uninstall key named by its product code.
+ProgramInfo notepadPlusPlusMsi() {
+    ProgramInfo prog = makeTestProgram(QStringLiteral("Notepad++ (x64)"),
+                                       QStringLiteral("Notepad++ team (MSI installer)"));
+    prog.uninstallString = QStringLiteral("MsiExec.exe /X{86486789-08F5-4212-9519-733DBB1B3B31}");
+    prog.registryKeyPath = QStringLiteral(
+        "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+        "{86486789-08F5-4212-9519-733DBB1B3B31}");
+    return prog;
+}
+
+/// An APPDATA scan root holding Notepad++'s settings folder, with the other Safe-level roots
+/// pointed at an empty folder. Returns the settings folder's native path.
+QString plantNotepadPlusPlusSettings(const QString& parent) {
+    const QString root = makeAppDataScanRoot(parent);
+    QDir(root).mkpath(QStringLiteral("Notepad++"));
+    return QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++")));
+}
+
+}  // namespace
+
+// Review 5 (testpc2): winget now installs Notepad++ from its MSI, "Notepad++ (x64)". It records
+// no InstallLocation and its uninstaller is msiexec in System32, so no exact name tied
+// %APPDATA%\Notepad++ to it, the scan found nothing and no Leftover Items list appeared. The name
+// without its architecture tag finds it now, as a Risky item a technician must choose.
+void LeftoverScannerTests::scan_findsAnMsiProductsSettingsByItsNameWithoutTheArchitectureTag() {
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++ (x64)")),
+             QStringLiteral("notepad++"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++ (64-bit x64)")),
+             QStringLiteral("notepad++"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Tool Kit (x86)")),
+             QStringLiteral("tool kit"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++")), QString());
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Editor (beta)")), QString());
+
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    const ProgramInfo prog = notepadPlusPlusMsi();
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(prog), QString());
+    // The program itself may still be listed (a preview runs before the uninstall): it is not
+    // "another program with that name".
+    LeftoverScanner scanner(prog, ScanLevel::Safe, {}, {prog});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, settings);
+    QVERIFY2(found != nullptr, qPrintable(settings));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Risky);
+    QVERIFY(found->deletable);
+    QVERIFY(!found->selected);
+    QVERIFY2(found->description.contains(QStringLiteral("matched only by the name \"notepad++\"")),
+             qPrintable(found->description));
+}
+
+// The name without its tag is a guess, so it is never used while anything still installed has
+// that name: a 32-bit Notepad++ shares the 64-bit copy's settings folder.
+void LeftoverScannerTests::scan_nameOnlyMatchIsRefusedWhileAnotherProgramHasThatName() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+    const ProgramInfo prog = notepadPlusPlusMsi();
+
+    // Each names it one way only: by its display name without the tag, its install folder, or
+    // the folder its uninstaller sits in.
+    const ProgramInfo by_display_name = makeTestProgram(QStringLiteral("Notepad++ (32-bit x86)"));
+    ProgramInfo by_install_folder = makeTestProgram(QStringLiteral("Portable Editors"),
+                                                    {},
+                                                    QStringLiteral("D:\\Tools\\Notepad++\\"));
+    ProgramInfo by_uninstaller_folder = makeTestProgram(QStringLiteral("Notepad++ Plugin Pack"));
+    by_uninstaller_folder.uninstallString =
+        QStringLiteral("\"C:\\Program Files\\Notepad++\\uninstall.exe\"");
+    for (const ProgramInfo& other : {by_display_name, by_install_folder, by_uninstaller_folder}) {
+        QVERIFY2(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("notepad++"), prog, {other})
+                      .isEmpty(),
+                 qPrintable(other.displayName));
+        LeftoverScanner scanner(prog, ScanLevel::Safe, {}, {prog, other});
+        std::atomic<bool> stop{false};
+        QVERIFY2(findByPath(scanner.scan(stop), settings) == nullptr,
+                 qPrintable(other.displayName));
+    }
+
+    // Nor is a name too short to mean anything, or a publisher's name.
+    QVERIFY(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("vlc"), prog, {}).isEmpty());
+    ProgramInfo vendor = prog;
+    vendor.displayName = QStringLiteral("Google (x64)");
+    vendor.publisher = QStringLiteral("Google LLC");
+    QVERIFY(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("google"), vendor, {}).isEmpty());
+    QVERIFY(
+        LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("notepad++"), prog, {prog}).isEmpty());
+}
+
+// A name-only match is listed for the technician and never cleaned automatically, while an exact
+// match from the same scan is.
+void LeftoverScannerTests::scan_autoCleanLeavesNameOnlyMatchesAlone() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString root = QFileInfo(settings).path();
+    QVERIFY(QDir(root).mkpath(QStringLiteral("Notepad++ (x64)")));
+    const QString exact =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++ (x64)")));
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", root);
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    LeftoverScanner scanner(notepadPlusPlusMsi(), ScanLevel::Safe, {}, {});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    QVERIFY2(findByPath(results, settings) != nullptr, qPrintable(settings));
+    QVERIFY2(findByPath(results, exact) != nullptr, qPrintable(exact));
+    const QVector<LeftoverItem> cleanable =
+        sak::AdvancedUninstallController::autoCleanableLeftovers(results);
+    QVERIFY2(findByPath(cleanable, exact) != nullptr, "the exact match is auto-cleanable");
+    QVERIFY2(findByPath(cleanable, settings) == nullptr, "a name-only match is never auto-cleaned");
+}
+
+// Windows Installer knows where an MSI product put its files even when its Uninstall entry
+// records no InstallLocation; its component paths name the folder, never a shared or vendor one.
+void LeftoverScannerTests::installFolderFromComponentPaths_namesTheProductsOwnFolder() {
+    const QStringList notepad{QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe"),
+                              QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\Config\\"),
+                              QStringLiteral(
+                                  "C:\\Program Files\\Notepad++\\localization\\english.xml"),
+                              QStringLiteral("02:\\SOFTWARE\\Notepad++\\"),
+                              QStringLiteral("C:\\Windows\\System32\\msvcp140.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\vcruntime140.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\vcruntime140_1.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\concrt140.dll")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(notepad,
+                                                              QStringLiteral("Notepad++ (x64)")),
+             QStringLiteral("C:\\Program Files\\Notepad++"));
+    // Nor one of the product's own subfolders, when the display name has no suffix at all.
+    const QStringList plugins{
+        QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\Config\\"),
+        QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\mimeTools\\mimeTools.dll")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(plugins, QStringLiteral("Notepad++")),
+             QStringLiteral("C:\\Program Files\\Notepad++"));
+    // The nearest folder that names the product, never the vendor folder above it.
+    const QStringList chrome{
+        QStringLiteral("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(chrome,
+                                                              QStringLiteral("Google Chrome")),
+             QStringLiteral("C:\\Program Files\\Google\\Chrome"));
+    // Components only in shared folders or the registry name nothing, though a registry key path
+    // may read like a folder named for the product.
+    const QStringList shared{QStringLiteral("C:\\Windows\\System32\\msvcp140.dll"),
+                             QStringLiteral("01:\\Software\\Classes\\.txt\\"),
+                             QStringLiteral("02:\\SOFTWARE\\Notepad++\\")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(shared,
+                                                              QStringLiteral("Notepad++ (x64)")),
+             QString());
+
+    // A program Windows Installer does not know passes through unchanged.
+    ProgramInfo unknown = notepadPlusPlusMsi();
+    unknown.uninstallString =
+        QStringLiteral("MsiExec.exe /X{00000000-5A4B-0000-0000-000000000000}");
+    QCOMPARE(LeftoverScanner::withWindowsInstallerLocation(unknown).installLocation, QString());
+
+    // The folder it names makes the settings folder an exact match, Safe as for the NSIS build.
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+    ProgramInfo located = notepadPlusPlusMsi();
+    located.installLocation = LeftoverScanner::installFolderFromComponentPaths(notepad,
+                                                                               located.displayName);
+    LeftoverScanner scanner(located, ScanLevel::Safe, {}, {});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, settings);
+    QVERIFY2(found != nullptr, qPrintable(settings));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
 }
 
 void LeftoverScannerTests::scan_findsMatchingFolder() {

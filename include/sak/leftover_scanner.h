@@ -9,6 +9,7 @@
 
 #include "sak/advanced_uninstall_types.h"
 
+#include <QFileInfo>
 #include <QPair>
 #include <QSet>
 #include <QStringList>
@@ -16,6 +17,7 @@
 
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <type_traits>
 
 #include <windows.h>
@@ -51,6 +53,13 @@ public:
     explicit LeftoverScanner(const ProgramInfo& program,
                              ScanLevel level,
                              const QSet<QString>& registryBefore = {});
+    /// @brief As above, with the programs still installed given rather than read from the
+    ///        registry when the scan decides whether a name-only match may be used (see
+    ///        nameOnlyNameRefusal). For tests.
+    LeftoverScanner(const ProgramInfo& program,
+                    ScanLevel level,
+                    const QSet<QString>& registryBefore,
+                    const QVector<ProgramInfo>& stillInstalled);
     ~LeftoverScanner() = default;
 
     LeftoverScanner(const LeftoverScanner&) = delete;
@@ -136,7 +145,48 @@ public:
     /// install keeps it and where this machine keeps it.
     [[nodiscard]] static bool isSharedContainerPath(const QString& path);
 
+    /// @brief @p displayName without a trailing architecture tag, lower-case: "Notepad++ (x64)"
+    ///        and "Notepad++ (64-bit x64)" give "notepad++". The tag is a parenthesized run of
+    ///        x64, x86, 64-bit and 32-bit. Empty when the name carries no such tag. Pure.
+    [[nodiscard]] static QString architectureStrippedName(const QString& displayName);
+
+    /// @brief Why @p strippedName (architectureStrippedName of @p program's display name) may
+    ///        not be used to find @p program's leftovers by name alone; empty when it may.
+    ///
+    /// Refused when it is shorter than four letters or digits, when it is the program's
+    /// publisher, a well-known vendor or a shared folder name, or when any program in
+    /// @p stillInstalled other than @p program itself (same Uninstall key) has that name: its
+    /// display name, its display name without the architecture tag, its install folder or the
+    /// folder its uninstaller sits in. A 32-bit copy that is still installed shares the 64-bit
+    /// copy's settings folder. Pure.
+    [[nodiscard]] static QString nameOnlyNameRefusal(const QString& strippedName,
+                                                     const ProgramInfo& program,
+                                                     const QVector<ProgramInfo>& stillInstalled);
+
+    /// @brief The folder Windows Installer's component paths put the program in: for each
+    ///        file or folder path (registry key paths such as "02:\SOFTWARE\..." are skipped),
+    ///        the nearest enclosing folder that installLocationMatchesProgram ties to
+    ///        @p displayName; of those, the one that holds the most components. Nearest, so a
+    ///        "Google\Chrome" install never widens to the vendor's "Google" folder. Empty when
+    ///        no path lies in such a folder. Pure.
+    [[nodiscard]] static QString installFolderFromComponentPaths(const QStringList& componentPaths,
+                                                                 const QString& displayName);
+
+    /// @brief @p program with its install location filled from Windows Installer when the
+    ///        Uninstall entry records none and the entry is a Windows Installer product (an
+    ///        MsiExec uninstall string, or an Uninstall key named by a product code): the
+    ///        product's InstallLocation, else installFolderFromComponentPaths over its
+    ///        installed components. Must run BEFORE the uninstall, while Windows Installer
+    ///        still knows the product. The filled location is screened like any other.
+    [[nodiscard]] static ProgramInfo withWindowsInstallerLocation(const ProgramInfo& program);
+
 private:
+    /// How a leftover's name was tied to the program.
+    enum class NameMatch {
+        None,
+        Exact,    ///< one of m_exactNames
+        NameOnly  ///< only m_nameOnlyName: reported Risky, never pre-selected or auto-cleaned
+    };
     /// @brief Outcome of screening the registry-supplied InstallLocation.
     struct ScreenedInstallLocation {
         /// Native, separator-normalized location that passed the SYNTACTIC screen only.
@@ -167,8 +217,18 @@ private:
     QString m_installDirName;     ///< Last component of install path (lowercase)
     QString m_installParentName;  ///< Parent dir of install path (lowercase)
     QString m_concatenatedName;   ///< Display name without separators (lowercase)
+    /// Display name without its architecture tag (lowercase), when nameOnlyNameRefusal allowed
+    /// it at the start of scan(); empty otherwise. Anything matched only by it is Risky.
+    QString m_nameOnlyName;
+    /// Programs still installed, when the caller gave them; read from the registry otherwise.
+    std::optional<QVector<ProgramInfo>> m_stillInstalled;
 
     void buildExactNames();
+    /// Decide m_nameOnlyName (called by scan(), after the uninstall).
+    void resolveNameOnlyName();
+    [[nodiscard]] NameMatch matchName(const QString& nameLower) const;
+    /// Mark @p item Risky and say why when it was found only through m_nameOnlyName.
+    void markIfNameOnly(LeftoverItem& item, NameMatch match) const;
 
     /// @brief Run both screening tiers over @p program's recorded install location.
     [[nodiscard]] static ScreenedInstallLocation screenInstallLocation(const ProgramInfo& program);
@@ -193,11 +253,15 @@ private:
                                            const std::atomic<bool>& stopRequested) const;
     QVector<LeftoverItem> scanStandardFiles(const QString& basePath,
                                             const std::atomic<bool>& stopRequested) const;
+    [[nodiscard]] LeftoverItem folderLeftover(const QFileInfo& folder,
+                                              const QString& description,
+                                              NameMatch match,
+                                              const std::atomic<bool>& stopRequested) const;
 
     // Phase 3: Registry (snapshot diff + known paths)
     QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested, bool& ok);
     QVector<LeftoverItem> scanKnownRegistryPaths(const std::atomic<bool>& stopRequested);
-    [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
+    [[nodiscard]] NameMatch registryKeyMatchesProgram(const QString& keyPath) const;
 
     // Phase 4: System objects (Advanced only). The shell-out phases take an out bool& set FALSE if
     // the underlying process failed (so an empty result is not misread as an honest "none found").

@@ -828,7 +828,8 @@ AppActionResult scanLeftovers(const QJsonObject& args) {
     // now fills a LeftoverScanReliability so a FAILED phase is reported as scan_complete=false +
     // named in failed_system_phases, never as an honest empty scan.
     const bool advanced = args.value(QStringLiteral("advanced")).toBool(false);
-    LeftoverScanner scanner(program, advanced ? ScanLevel::Advanced : ScanLevel::Moderate);
+    LeftoverScanner scanner(LeftoverScanner::withWindowsInstallerLocation(program),
+                            advanced ? ScanLevel::Advanced : ScanLevel::Moderate);
 
     // Run the synchronous scan on this (worker) thread under a wall-time deadline. The scanner
     // polls stopRequested between phases + items AND inside calculateSize's subtree walk, so the

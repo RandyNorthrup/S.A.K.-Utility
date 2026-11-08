@@ -168,6 +168,9 @@ private:
 
     // Helpers
     [[nodiscard]] bool isMsiInstaller() const;
+    /// Fill m_program's install location from Windows Installer when its Uninstall entry records
+    /// none (LeftoverScanner::withWindowsInstallerLocation). Before the native uninstaller runs.
+    void locateWindowsInstallerFiles();
     [[nodiscard]] QString buildMsiUninstallCommand() const;
     [[nodiscard]] QString extractGuidFromUninstallString() const;
 };

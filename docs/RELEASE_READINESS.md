@@ -2437,6 +2437,29 @@ line, and one worker message put back; all four again on the final code, after t
   gitleaks and trufflehog use it; secret-scan.yml's curl retries the same outages. test_pinned_download (tooling)
   holds the helper's rules against a stand-in for Invoke-WebRequest, five guards drilled red; the workflows
   themselves are proved by T2 once GitHub's downloads answer.
+- Leftovers after an MSI uninstall. winget now installs Notepad++ from its MSI: "Notepad++ (x64)", an Uninstall
+  key named by its product code, no InstallLocation, UninstallString "MsiExec.exe /X{...}". On testpc2, with the
+  restore point and auto-clean unticked, S.A.K. removed it and its scan reported nothing ("0 programs", "Ready", no
+  Leftover Items) while %APPDATA%\Notepad++ (8 entries) stayed: review 3's fallback names a program by the folder
+  its uninstaller sits in, for an MSI System32, and "notepad++ (x64)" is no folder's name. Two changes. Before
+  the native uninstaller runs (Standard and Forced), and in the assistant's
+  leftover preview, LeftoverScanner::withWindowsInstallerLocation asks Windows Installer for the product's
+  InstallLocation and, when that is empty too, the installed paths of the components listed in its cached package
+  (opened read-only): the nearest folder above each that is named for the product (its leaf, or a "Vendor\App"
+  pair equal to the name, so "Google\Chrome" never widens to "Google" and "Notepad++\plugins" never stands for
+  "Notepad++"), the one holding the most components; registry key paths are skipped. That folder becomes the
+  install location and is screened like any other. Second, the display name without a trailing architecture tag
+  ("(x64)", "(x86)", "(64-bit)", "(32-bit)", alone or together) is a name-only match: at least four letters or
+  digits, not the publisher, a well-known vendor or a shared folder name, and unused while any other installed
+  program has that name (its display name with or without the tag, its install folder or its uninstaller's
+  folder, read from the registry when the scan starts; an incomplete read refuses it). Anything found only through
+  it is Risky with "matched only by the name ..." in its description, so it is never ticked and never
+  auto-cleaned. Four tests in test_leftover_scanner, nine guards drilled red (the match, self not counted as
+  another program, each of the three ways another program has the name, Risky, the pair rule, the nearest folder,
+  registry paths skipped), all nine again after the code was reshaped for the magic-number and lizard gates.
+  The labels at -j 6 then failed test_stage_portable_release and test_windows_runtime_dependencies on the new
+  msi.dll import until windows_runtime_dlls.ps1 listed it as a System32 DLL; with it, 337 of 337 and the static
+  gates green.
 - Judgement, not changed (Y20's rest): Compare Panes' message box still wraps "staff-list.csv" at its hyphen. Y28's
   word joiners keep a path whole in the Details pane because every way out of the pane strips them; a message box's
   text is also logged and copied with Ctrl+C, so marks put there would leave with it. A hyphen is an ordinary break

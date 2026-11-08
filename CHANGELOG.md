@@ -144,6 +144,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Leftovers of programs that record no install folder** - Notepad++ records none, and its uninstaller's kept
   settings folder was not found, so no Leftover Items list appeared. The folder its own uninstaller sits in now
   names it.
+- **Leftovers of programs installed from an MSI** - Notepad++'s MSI build ("Notepad++ (x64)") records no install
+  folder either and is removed by msiexec, so after uninstalling it the scan found nothing. Before the uninstall
+  the app now asks Windows Installer where the program put its files. A folder named like the program without
+  "(x64)", "(x86)", "(64-bit)" or "(32-bit)" is also listed, as Risky for you to check, never ticked or cleaned
+  automatically, and not at all while another installed program has that name.
 - **The log reaches its file as it is written** - The session log stayed at 0 bytes until the app closed, so a
   crash or a forced close lost it.
 - **Smaller fixes** - A stress test you stop reads "STOPPED", not "FAILED", and every finished run shows its whole

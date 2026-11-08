@@ -45,6 +45,9 @@ function Test-IsSystemDll {
         "kernel32.dll",
         # Windows network-provider routing API (winnetwk.h / Mpr.lib).
         "mpr.dll",
+        # Windows Installer API (MsiGetProductInfoW / Msi.lib): the leftover scan asks it where an
+        # MSI product put its files. System32 only.
+        "msi.dll",
         "msimg32.dll",
         # Windows Color System (ICM) API, imported by Qt's Windows platform plugin (qwindows.dll)
         # for monitor color profiles. System32 only.
