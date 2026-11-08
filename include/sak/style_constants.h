@@ -389,6 +389,12 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
         QMenu::item:disabled {
             color: %14;
         }
+
+        /* A disabled row of a list, table or tree too: File Explorer's command palette listed
+           "Compare Panes - Enable dual pane first." as dark as the commands that run (review 5). */
+        QAbstractItemView::item:disabled {
+            color: %14;
+        }
     )SAK";
 
 inline constexpr auto kWindows11ThemeTabAndButtonStyles = R"SAK(
@@ -693,6 +699,10 @@ inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
         }
 
         QMenu::item:disabled {
+            color: %7;
+        }
+
+        QAbstractItemView::item:disabled {
             color: %7;
         }
     )SAK";

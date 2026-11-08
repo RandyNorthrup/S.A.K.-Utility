@@ -5967,6 +5967,17 @@ private Q_SLOTS:
         dualPane = actionStartingWith(view->menu(), QStringLiteral("Dual Pane"));
         QVERIFY(dualPane);
         QVERIFY(dualPane->isChecked());
+        // Review 5: the state has to show. Under the theme a checked entry with an icon draws the
+        // icon where the tick goes, and Dual Pane read the same on and off; every on/off toggle in
+        // the view menu is drawn with a tick, so none carries an icon. (The layouts are one
+        // exclusive choice, and the view button shows the current one with its icon.)
+        for (QAction* action : view->menu()->actions()) {
+            const bool layout = action->actionGroup() != nullptr &&
+                                action->actionGroup()->isExclusive();
+            if (action->isCheckable() && !layout) {
+                QVERIFY2(action->icon().isNull(), qPrintable(action->text()));
+            }
+        }
     }
 
     void duplicateTabClonesCurrentTab() {

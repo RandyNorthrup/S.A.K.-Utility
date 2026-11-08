@@ -65,6 +65,8 @@ constexpr int kSubmenuArrowGapPx = 10;
 constexpr int kTextDarknessThreshold = 160;
 // A glyph stem one pixel wide or more paints the text colour itself, give or take rounding.
 constexpr int kInkTolerance = 24;
+// Room for a probe list's two rows with their whole text.
+constexpr int kListProbeSidePx = 480;
 
 double channel(int value) {
     const double c = value / 255.0;
@@ -239,6 +241,9 @@ private Q_SLOTS:
     void disabledMenuEntriesLookDisabled_data();
     void disabledMenuEntriesLookDisabled();
     void theSearchPreviewIsSetInAFixedWidthFont();
+    // Review 5.
+    void disabledListRowsLookDisabled_data();
+    void disabledListRowsLookDisabled();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -1323,6 +1328,53 @@ void ThemeWidgetStatesTests::theSearchPreviewIsSetInAFixedWidthFont() {
         preview->ensurePolished();
         QCOMPARE(preview->font().family(), QStringLiteral("Consolas"));
     }
+}
+
+void ThemeWidgetStatesTests::disabledListRowsLookDisabled_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// Review 5: Y1's rule for a list, table or tree. File Explorer's command palette lists a command
+// that cannot run yet as a disabled row ("Compare Panes - Enable dual pane first."), and under the
+// theme it was drawn as dark as the commands that run (#0f172a light, #f8fafc dark). Its text is
+// the disabled label's colour now, as a disabled menu entry's is, and still readable.
+void ThemeWidgetStatesTests::disabledListRowsLookDisabled() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    const bool dark = mode == AppThemeMode::Dark;
+    QListWidget list;
+    auto* const runnable = new QListWidgetItem(QStringLiteral("New Tab (Ctrl+T)"), &list);
+    auto* const blocked =
+        new QListWidgetItem(QStringLiteral("Compare Panes - Enable dual pane first."), &list);
+    blocked->setFlags(Qt::NoItemFlags);
+    list.resize(kListProbeSidePx, kListProbeSidePx);
+    list.ensurePolished();
+    const QImage image = list.grab().toImage();
+    const QRect viewport = list.viewport()->geometry();
+    const QRect on_row =
+        list.visualItemRect(runnable).translated(viewport.topLeft()).intersected(viewport);
+    const QRect off_row =
+        list.visualItemRect(blocked).translated(viewport.topLeft()).intersected(viewport);
+    // The row's own background, past its text and inside the list (a row can be wider than it).
+    const QColor surface(image.pixel(off_row.right() - 2, off_row.center().y()));
+    const QColor on_ink = dark ? lightestPixel(image, on_row) : darkestPixel(image, on_row);
+    const QColor off_ink = dark ? lightestPixel(image, off_row) : darkestPixel(image, off_row);
+    const QColor expected = token(dark ? sak::ui::kColorDarkTextSecondary
+                                       : sak::ui::kColorTextMuted);
+    const int gap = std::abs(on_ink.lightness() - off_ink.lightness());
+    QVERIFY2(
+        gap >= kDisabledLightnessGap,
+        qPrintable(
+            QStringLiteral("runnable row %1, disabled row %2").arg(on_ink.name(), off_ink.name())));
+    const int off_by = std::abs(off_ink.red() - expected.red()) +
+                       std::abs(off_ink.green() - expected.green()) +
+                       std::abs(off_ink.blue() - expected.blue());
+    QVERIFY2(off_by <= kInkTolerance,
+             qPrintable(QStringLiteral("disabled row %1, the disabled label colour %2")
+                            .arg(off_ink.name(), expected.name())));
+    QVERIFY2(contrast(off_ink, surface) >= kWcagAaNormalText,
+             qPrintable(
+                 QStringLiteral("disabled row %1 on %2").arg(off_ink.name(), surface.name())));
 }
 QTEST_MAIN(ThemeWidgetStatesTests)
 #include "test_theme_widget_states.moc"

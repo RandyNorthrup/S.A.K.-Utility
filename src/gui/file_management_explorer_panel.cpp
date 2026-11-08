@@ -5166,8 +5166,11 @@ void FileManagementExplorerPanel::buildViewMenu(const FileExplorerCommandContext
     appendViewToggleActions(menu, context);
     menu->addSeparator();
     // A toggle shows its state, as Show Hidden Items does: unmarked, a click on Dual Pane with two
-    // panes open (as a restored session leaves them) closed the second one.
-    addViewMenuCommand(menu, FileExplorerCommandId::ToggleDualPane, context, true);
+    // panes open (as a restored session leaves them) closed the second one. It shows it as a tick:
+    // under the theme a checked entry with an icon draws the icon where the tick goes, and Dual
+    // Pane read the same on and off (review 5).
+    addViewMenuCommand(menu, FileExplorerCommandId::ToggleDualPane, context, true)
+        ->setIcon(QIcon());
     m_view_stack_action = menu->addAction(tr("Stack Panes Vertically"));
     m_view_stack_action->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
     m_view_stack_action->setCheckable(true);
