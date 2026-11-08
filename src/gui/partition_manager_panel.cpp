@@ -5452,6 +5452,13 @@ QWidget* createQuickPartitionPresetRow(PartitionOperationDialog& dialog,
     widgets.preset_save->setAccessibleName(QObject::tr("Save quick partition preset"));
     widgets.preset_delete = new QPushButton(QObject::tr("Delete"), &dialog);
     widgets.preset_delete->setAccessibleName(QObject::tr("Delete quick partition preset"));
+    // Add to Queue is the dialog's one primary action; the preset buttons beside the preset
+    // list are secondary. Save took the theme's primary tone, a second strong button (review 4,
+    // Y12, left over until review 5's pictures).
+    for (QPushButton* preset_button :
+         {widgets.preset_load, widgets.preset_save, widgets.preset_delete}) {
+        preset_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    }
 
     auto* preset_row = new QWidget(&dialog);
     auto* preset_layout = new QHBoxLayout(preset_row);

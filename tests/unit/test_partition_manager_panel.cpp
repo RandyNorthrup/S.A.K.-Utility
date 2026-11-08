@@ -191,6 +191,7 @@ private Q_SLOTS:
     void applyPreviewUsesTheMapColoursAndReadableLabels();
     void formatDialogHidesWholeRowsAndShowsTheWholeConfirmation();
     void quickPartitionRowsFitTheirEditors();
+    void quickPartitionHasOnePrimaryButton();
     void changeClusterSizeQueuesVerifiedReformatOperation();
     void allocateFreeSpaceQueuesAdjacentDonorOperation();
     void destructiveBackupIsRevalidatedAfterModal();
@@ -5707,6 +5708,38 @@ void PartitionManagerPanelTests::quickPartitionRowsFitTheirEditors() {
     QVERIFY(quickPartition != nullptr);
     pressAction(quickPartition);
     QVERIFY(inspected);
+}
+
+// Review 4 (Y12), seen again in review 5's pictures: Quick Partition's preset Save was drawn in
+// the primary tone beside Add to Queue. The preset buttons are secondary.
+void PartitionManagerPanelTests::quickPartitionHasOnePrimaryButton() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(0);
+    QApplication::processEvents();
+    QStringList secondary;
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Quick Partition dialog should open");
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            if (button->styleSheet() == sak::ui::kSecondaryButtonStyle) {
+                secondary.append(button->text());
+            }
+        }
+        inspected = true;
+    });
+    auto* quickPartition = findToolButtonByName(&panel, QStringLiteral("Quick Partition"));
+    QVERIFY(quickPartition != nullptr);
+    pressAction(quickPartition);
+    QVERIFY(inspected);
+    for (const QString& preset :
+         {QStringLiteral("Load"), QStringLiteral("Save"), QStringLiteral("Delete")}) {
+        QVERIFY2(secondary.contains(preset), qPrintable(secondary.join(QStringLiteral(", "))));
+    }
 }
 
 void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperation() {
