@@ -6,6 +6,7 @@
 
 #include "sak/app_installation_panel.h"
 #include "sak/offline_deployment_worker.h"
+#include "sak/style_constants.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -78,6 +79,7 @@ private Q_SLOTS:
     void startupWorkRunsInEveryMode();
     void offlineBundleNamesWhatFailedAndEndsTheProgress();
     void offlineFailureTextNeverWidensThePage();
+    void offlineDeployFillsOnlyItsBuildButton();
 };
 
 void AppInstallationPanelTests::cleanup() {
@@ -181,6 +183,15 @@ void AppInstallationPanelTests::offlineFailureTextNeverWidensThePage() {
     QVERIFY(panel.m_offlineStatusLabel->toolTip().contains(QStringLiteral("AcroRdrDCx64")));
     const int after = page->minimumSizeHint().width();
     QVERIFY2(after <= before, qPrintable(QStringLiteral("%1 -> %2 px").arg(before).arg(after)));
+}
+
+// Review 5 (Z6e): Offline Deploy's "Install from Bundle" was a second filled button, green with
+// white at 4.2:1, beside the filled Build Offline Bundle. Build is the tab's one filled button;
+// Direct Download and Install from Bundle are secondary, enabled or not.
+void AppInstallationPanelTests::offlineDeployFillsOnlyItsBuildButton() {
+    sak::AppInstallationPanel panel;
+    QCOMPARE(panel.m_buildBundleButton->styleSheet(), sak::ui::kPrimaryButtonStyle);
+    QCOMPARE(panel.m_installFromBundleButton->styleSheet(), sak::ui::kSecondaryButtonStyle);
 }
 
 QTEST_MAIN(AppInstallationPanelTests)

@@ -3925,12 +3925,14 @@ QString AiAssistantPanel::statusDetails() const {
     // The access box's own words: "Access: Research" beside a box reading "Chat and Research"
     // (review 5, Z16).
     const QString access = currentAccessModeLabel();
-    const QString turn = m_tokenTracker
-                             ? ai::TokenUsageTracker::formatTurn(m_tokenTracker->lastTurn())
-                             : tr("0 total");
+    // "none" until there is a turn: at 1280 px the idle line still ran past the status bar on
+    // "0 total (0 in, 0 cached, 0 out, 0 reasoning)" (review 6).
+    const bool any_turn = m_tokenTracker && m_tokenTracker->sessionTotal().total_tokens > 0;
+    const QString turn = any_turn ? ai::TokenUsageTracker::formatTurn(m_tokenTracker->lastTurn())
+                                  : tr("none");
     const QString session =
-        m_tokenTracker ? ai::TokenUsageTracker::formatSession(m_tokenTracker->sessionTotal())
-                       : tr("0 total");
+        any_turn ? ai::TokenUsageTracker::formatSession(m_tokenTracker->sessionTotal())
+                 : tr("none");
     const QString phase = m_runState.phase_id.isEmpty() ? tr("none") : m_runState.phase_id;
     const QString context = contextWindowStatusText();
     // The last turn's and the session's counts each say which they are: "Tokens: 0 in / 0 cached /

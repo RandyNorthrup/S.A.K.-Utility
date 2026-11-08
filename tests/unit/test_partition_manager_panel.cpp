@@ -123,6 +123,7 @@ private Q_SLOTS:
     void bottomDiskMapCanResizeIntoTableSpace();
     void theDiskDrawingFollowsTheTheme();
     void reviewBarsNameAndDivideEveryPartition();
+    void copyDiskReviewDividesItsPartitionsInTheWizard();
     void finalApplyReviewContainsLayoutDiff();
     void applyReviewRejectsQueueMutation();
     void applyPreviewPreservesTrailingFreeSpan();
@@ -2644,9 +2645,9 @@ void PartitionManagerPanelTests::reviewBarsNameAndDivideEveryPartition() {
     const QImage drawn = sak::partitionCopyPreviewForTest(
         disk, disk.size_bytes * 2, kBarWidth, &source_bar, &target_bar);
     const int y = source_bar.top() + 2;
-    const QColor under = drawn.pixelColor(source_bar.left() - 2, y);
-    QVERIFY2(segmentRunsAlong(drawn, source_bar, y, under) == 4,
-             qPrintable(rowColours(drawn, source_bar, y, under)));
+    const QColor base = QApplication::palette().color(QPalette::Base);
+    QVERIFY2(segmentRunsAlong(drawn, source_bar, y, base) == 4,
+             qPrintable(rowColours(drawn, source_bar, y, base)));
 
     // The target is twice the source: its last segment is free space, drawn in the map's grey.
     const QColor bar_free = drawn.pixelColor(target_bar.right() - 10, target_bar.top() + 2);
@@ -4436,6 +4437,43 @@ void PartitionManagerPanelTests::migrateWizardFinishWaitsForTheAcknowledgement()
     checkFinishWaitsFor(
         &panel, "onMigrateOs", QStringLiteral("Confirm target disk overwrite"), &inspected);
     QVERIFY(inspected);
+}
+
+// Review 6's first picture (Z7): in the real Copy Disk wizard the review bars had no line between
+// EFI and MSR, or MSR and C:. The line took the preview's own Base colour, which a wizard page's
+// style sheet makes transparent. In the wizard, under the theme, in both themes: a line of the
+// application's base colour between the two partitions of the source bar.
+void PartitionManagerPanelTests::copyDiskReviewDividesItsPartitionsInTheWizard() {
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(migrationInventoryFixture(512 * kMigrationGiB));
+        panel.findChild<QTableWidget*>()->selectRow(0);
+        int runs = 0;
+        QString colours;
+        const ScopedModalInspection inspection([&]() {
+            auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(wizard);
+            QVERIFY(wizard != nullptr);
+            while (wizard->currentPage()->nextId() != -1) {
+                wizard->next();
+            }
+            QCoreApplication::processEvents();
+            auto* preview = wizard->findChild<QWidget*>(QStringLiteral("diskCopyLayoutPreview"));
+            QVERIFY(preview != nullptr);
+            const QImage drawn = preview->grab().toImage();
+            const QRect bar = sak::partitionCopySourceBarForTest(preview->width());
+            const QColor base = QApplication::palette().color(QPalette::Base);
+            runs = segmentRunsAlong(drawn, bar, bar.top() + 2, base);
+            colours = rowColours(drawn, bar, bar.top() + 2, base);
+            wizard->reject();
+        });
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onCloneDisk", Qt::DirectConnection));
+        // The fixture's source: an EFI partition and C:, so two runs with one line between.
+        QVERIFY2(runs == 2, qPrintable(colours));
+    }
 }
 
 void PartitionManagerPanelTests::copyDiskWizardFinishWaitsForTheAcknowledgement() {

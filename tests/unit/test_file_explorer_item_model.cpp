@@ -12,12 +12,16 @@
 #include <QDateTime>
 #include <QLocale>
 #include <QMimeData>
-#include <QMimeDatabase>
 #include <QSet>
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
 #include <memory>
+#include <string>
+
+#include <windows.h>
+
+#include <shellapi.h>
 
 namespace {
 
@@ -53,6 +57,20 @@ sak::FileManagementEntry directoryEntry(const QString& name) {
     entry.identifier = QStringLiteral("dir-%1").arg(name);
     entry.directory = true;
     return entry;
+}
+
+/// What Windows itself calls files with @p dotted_suffix, asked as File Explorer asks.
+QString shellTypeName(const QString& dotted_suffix) {
+    SHFILEINFOW info{};
+    const std::wstring probe = (QStringLiteral("x") + dotted_suffix).toStdWString();
+    if (SHGetFileInfoW(probe.c_str(),
+                       FILE_ATTRIBUTE_NORMAL,
+                       &info,
+                       sizeof(info),
+                       SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES) == 0) {
+        return QString();
+    }
+    return QString::fromWCharArray(info.szTypeName).trimmed();
 }
 
 }  // namespace
@@ -195,15 +213,13 @@ private Q_SLOTS:
     // kind from the extension, as Windows Explorer does, and a folder "File folder".
     void typeNamesWhatKindOfFileItIs() {
         using Model = sak::FileExplorerItemModel;
-        // The name Qt's MIME database gives the type, as Qt ships it: "PNG image" or "Portable
-        // Network Graphics" by its version.
-        QString png = QMimeDatabase()
-                          .mimeTypeForFile(QStringLiteral("photo.png"),
-                                           QMimeDatabase::MatchExtension)
-                          .comment();
+        // The name Windows gives the type, as File Explorer shows it ("PNG File" on a PC with no
+        // image app registered); never a MIME name such as "Image/png".
+        const QString png = shellTypeName(QStringLiteral(".png"));
         QVERIFY(!png.isEmpty());
-        png[0] = png.at(0).toUpper();
         QCOMPARE(Model::typeText(fileEntry(QStringLiteral("photo.png"), 1)), png);
+        QCOMPARE(Model::typeText(fileEntry(QStringLiteral("PHOTO.PNG"), 1)), png);
+        QVERIFY2(!png.contains(QLatin1Char('/')), qPrintable(png));
         QCOMPARE(Model::typeText(directoryEntry(QStringLiteral("Docs"))),
                  QStringLiteral("File folder"));
         QCOMPARE(Model::typeText(fileEntry(QStringLiteral("README"), 1)), QStringLiteral("File"));
@@ -215,7 +231,10 @@ private Q_SLOTS:
         QSet<QString> kinds;
         for (const char* name : {"staff-list.csv", "report.pdf", "notes.md", "letter.docx"}) {
             const QString kind = Model::typeText(fileEntry(QString::fromLatin1(name), 1));
-            QVERIFY2(kind != QStringLiteral("File") && kind.at(0).isUpper(), qPrintable(kind));
+            QVERIFY2(kind != QStringLiteral("File") && !kind.contains(QLatin1Char('/')) &&
+                         kind == shellTypeName(QStringLiteral(".") +
+                                               QFileInfo(QString::fromLatin1(name)).suffix()),
+                     qPrintable(kind));
             kinds.insert(kind);
         }
         QCOMPARE(kinds.size(), 4);

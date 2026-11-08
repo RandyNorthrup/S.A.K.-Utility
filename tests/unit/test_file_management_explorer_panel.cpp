@@ -1154,6 +1154,8 @@ private Q_SLOTS:
         model.setEntries({testEntry(QStringLiteral("docs"), true)});
         sak::FileExplorerDetailsView view;
         view.setModel(&model);
+        // Wide enough for the set: a narrow view drops columns for room (review 5, Z9).
+        view.resize(1000, 400);
         view.show();
         QVERIFY(QTest::qWaitForWindowExposed(&view));
 
@@ -4395,6 +4397,58 @@ private Q_SLOTS:
         settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
         settings.remove(QString());
         settings.endGroup();
+    }
+
+    // Review 5 (Z9): side by side with the details pane open, each pane was about 320 px and Type,
+    // Size and Modified sat past its edge. A narrow view drops the least needed columns, Tags first
+    // and Type last, keeps Name readable and every shown column inside it, takes them back when it
+    // widens, and never saves a column it dropped for room as hidden.
+    void narrowDetailsDropColumnsAndTakeThemBack() {
+        QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
+        QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        const auto clear = []() {
+            sak::PortableSettings settings;
+            settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
+            settings.remove(QString());
+            settings.endGroup();
+        };
+        clear();
+        const auto cleanup = qScopeGuard(clear);
+        using Model = sak::FileExplorerItemModel;
+        Model source;
+        source.setEntries({testEntry(QStringLiteral("Docs"), true),
+                           testEntry(QStringLiteral("note.txt"), false)});
+        sak::FileExplorerSortFilterModel proxy;
+        proxy.setSourceModel(&source);
+        sak::FileExplorerDetailsView view;
+        view.setModel(&proxy);
+        view.resize(320, 400);
+        view.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+        QCoreApplication::processEvents();
+        QVERIFY(view.horizontalHeader()->length() <= view.viewport()->width());
+        QVERIFY(view.columnWidth(Model::NameColumn) >= 160);
+        QVERIFY(view.isColumnHidden(Model::TagsColumn));
+        QVERIFY(!view.isColumnHidden(Model::TypeColumn));
+        view.saveColumnState();
+
+        view.resize(1000, 400);
+        QCoreApplication::processEvents();
+        for (const int column :
+             {Model::TypeColumn, Model::SizeColumn, Model::ModifiedColumn, Model::TagsColumn}) {
+            QVERIFY2(!view.isColumnHidden(column), qPrintable(QString::number(column)));
+        }
+        QVERIFY(view.columnsDroppedForRoom().isEmpty());
+
+        // Saved while narrow, restored wide: every column the technician chose is back.
+        sak::FileExplorerDetailsView restored;
+        restored.setModel(&proxy);
+        restored.resize(1000, 400);
+        restored.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&restored));
+        QCoreApplication::processEvents();
+        QVERIFY(!restored.isColumnHidden(Model::TagsColumn));
+        QVERIFY(!restored.isColumnHidden(Model::ModifiedColumn));
     }
 
     void doubleClickDirectoryOpensFolderWhenAvailable() {

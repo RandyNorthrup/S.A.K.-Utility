@@ -63,6 +63,7 @@ private Q_SLOTS:
     void theNameColoursHaveAKey();
     void theBatchDialogHasOneStrongButtonAndCountsItsPrograms();
     void aRefreshSaysLoadingOnlyOverAnEmptyList();
+    void theToolbarAndListToolsAreSecondary();
 };
 
 // Review 3 (X10): Remove Selected and Clear Queue were primary blue beside the danger-toned Start
@@ -232,6 +233,22 @@ void AdvancedUninstallPanelTests::remoteInstallFolderOffersNoMeasurement() {
 // removed program's selected row, and "Leftover Items" was a bold label of its own under the
 // Installed Programs group box. The loading line only over an empty list; the leftovers in a group
 // box of that name.
+// Review 5 (Z6, Z6a): Refresh, Batch and Settings were three filled buttons on one page, and Select
+// All and Deselect All were filled on one page and slate on another. They are the page's tools: all
+// five secondary, enabled or not, so the page's one strong action is Uninstall (red).
+void AdvancedUninstallPanelTests::theToolbarAndListToolsAreSecondary() {
+    sak::AdvancedUninstallPanel panel;
+    for (const QPushButton* button : {panel.m_refresh_button,
+                                      panel.m_batch_button,
+                                      panel.m_settings_button,
+                                      panel.m_select_all_button,
+                                      panel.m_deselect_all_button}) {
+        QVERIFY(button != nullptr);
+        QVERIFY2(button->styleSheet() == sak::ui::kSecondaryButtonStyle,
+                 qPrintable(button->text()));
+    }
+}
+
 void AdvancedUninstallPanelTests::aRefreshSaysLoadingOnlyOverAnEmptyList() {
     sak::AdvancedUninstallPanel panel;
     panel.onEnumerationStarted();

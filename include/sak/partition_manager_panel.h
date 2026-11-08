@@ -351,6 +351,8 @@ private:
                                                  int width,
                                                  QRect* source_bar,
                                                  QRect* target_bar);
+/// Where Copy Disk's source bar is drawn in its preview @p preview_width wide.
+[[nodiscard]] QRect partitionCopySourceBarForTest(int preview_width);
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
 /// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
 [[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(

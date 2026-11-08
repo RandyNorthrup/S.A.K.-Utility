@@ -555,7 +555,10 @@ private Q_SLOTS:
         QVERIFY2(details.contains(
                      QStringLiteral("Access: %1 |").arg(panel.m_accessModeCombo->currentText())),
                  qPrintable(details));
-        QVERIFY2(details.contains(QStringLiteral("Last turn: 0 total")), qPrintable(details));
+        // Until there is a turn, the counts say so in one word (review 6: the idle line still ran
+        // past the status bar at 1280 px).
+        QVERIFY2(details.contains(QStringLiteral("Last turn: none | Session: none")),
+                 qPrintable(details));
         QCOMPARE(ai::TokenUsageTracker::formatTurn({}),
                  QStringLiteral("0 total (0 in, 0 cached, 0 out, 0 reasoning)"));
         QVERIFY2(!details.contains(QStringLiteral(" / ")), qPrintable(details));

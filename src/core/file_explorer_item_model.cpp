@@ -11,14 +11,19 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHash>
-#include <QMimeDatabase>
-#include <QMimeType>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPalette>
 #include <QStringList>
 
 #include <algorithm>
 #include <array>
+#include <string>
 #include <utility>
+
+#include <windows.h>
+
+#include <shellapi.h>
 
 namespace sak {
 
@@ -498,6 +503,36 @@ bool FileExplorerItemModel::showFileExtensions() const {
     return m_show_file_extensions;
 }
 
+namespace {
+
+/// The name Windows gives files with @p suffix ("Text Document", "PNG File"), as File Explorer
+/// shows it, or empty when the shell has none. Asked once per suffix: SHGetFileInfo with
+/// SHGFI_USEFILEATTRIBUTES reads the registry only, never a file.
+QString shellTypeName(const QString& suffix) {
+    static QMutex mutex;
+    static QHash<QString, QString> names;
+    const QString key = suffix.toLower();
+    const QMutexLocker lock(&mutex);
+    const auto known = names.constFind(key);
+    if (known != names.constEnd()) {
+        return known.value();
+    }
+    const std::wstring probe = (QStringLiteral("probe.") + key).toStdWString();
+    SHFILEINFOW info{};
+    QString name;
+    if (SHGetFileInfoW(probe.c_str(),
+                       FILE_ATTRIBUTE_NORMAL,
+                       &info,
+                       sizeof(info),
+                       SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES) != 0) {
+        name = QString::fromWCharArray(info.szTypeName).trimmed();
+    }
+    names.insert(key, name);
+    return name;
+}
+
+}  // namespace
+
 QString FileExplorerItemModel::typeText(const FileManagementEntry& entry) {
     if (entry.directory) {
         return tr("File folder");
@@ -511,14 +546,10 @@ QString FileExplorerItemModel::typeText(const FileManagementEntry& entry) {
     if (suffix.isEmpty()) {
         return tr("File");
     }
-    static const QMimeDatabase kMimeTypes;
-    const QMimeType mime = kMimeTypes.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension);
-    QString comment = (mime.isValid() && !mime.isDefault()) ? mime.comment() : QString();
-    if (comment.isEmpty()) {
-        return tr("%1 File").arg(suffix.toUpper());
-    }
-    comment[0] = comment.at(0).toUpper();
-    return comment;
+    // Windows' own name for the type, as File Explorer shows it; Qt's MIME database said
+    // "Text/csv" and "Portable Document Format" on Windows. Windows' own fallback otherwise.
+    const QString shell = shellTypeName(suffix);
+    return shell.isEmpty() ? tr("%1 File").arg(suffix.toUpper()) : shell;
 }
 
 QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry) {

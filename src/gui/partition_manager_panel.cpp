@@ -2483,13 +2483,15 @@ private:
             drawSegment(painter, segment_rect, segments.at(i));
         }
         // A line between neighbours: partitions share one colour here, and EFI and MSR, or E: and
-        // F:, read as one block (review 5, Z7).
+        // F:, read as one block (review 5, Z7). In the application's base colour: inside a wizard
+        // page the style sheet makes this widget's own Base transparent, and the line drew nothing.
+        const QColor divider = QApplication::palette().color(QPalette::Base);
         for (qsizetype i = 1; i < segments.size() && i < spans.size(); ++i) {
             painter->fillRect(QRect(bar.left() + spans.at(i).first,
                                     bar.top(),
                                     kSegmentDividerWidth,
                                     bar.height()),
-                              palette().color(QPalette::Base));
+                              divider);
         }
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawPath(track_path);
@@ -9161,6 +9163,12 @@ QImage partitionCopyPreviewForTest(const PartitionDiskInfo& source,
                                                           source_row.width(),
                                                           kClonePreviewRowHeight));
     return preview.grab().toImage();
+}
+
+QRect partitionCopySourceBarForTest(int preview_width) {
+    const int row_width = preview_width - (ui::kMarginSmall * 2);
+    return CloneLayoutPreviewWidget::barRect(
+        QRect(ui::kMarginSmall, ui::kMarginSmall, row_width, kClonePreviewRowHeight));
 }
 
 QString partitionCopyTargetSizeTextForTest(uint64_t target_size) {

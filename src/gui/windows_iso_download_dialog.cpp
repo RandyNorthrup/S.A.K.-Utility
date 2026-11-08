@@ -172,7 +172,8 @@ void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* main_layout) {
     config_layout->setColumnStretch(1, 1);
 
     m_fetchBuildsButton = new QPushButton("Fetch Builds", config_group);
-    m_fetchBuildsButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Download & Build ISO is the dialog's work; Fetch Builds and Browse are its tools (review 6).
+    m_fetchBuildsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     config_layout->addWidget(m_fetchBuildsButton,
                              0,
                              kFetchBuildsGridColumn,
@@ -237,7 +238,7 @@ void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* main_layout) {
     save_layout->addWidget(m_saveLocationEdit);
 
     m_browseSaveButton = new QPushButton("Browse...", save_group);
-    m_browseSaveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_browseSaveButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     save_layout->addWidget(m_browseSaveButton);
 
     main_layout->addWidget(save_group);

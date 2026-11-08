@@ -26,25 +26,27 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   shows each path whole (the list scrolls sideways when a path is wider than the page).
 - **System partitions named everywhere** - Partition Manager's table and disk map name a partition with no letter
   "EFI", "MSR", "Recovery" or "Partition N" (they said "*:"); the Copy Disk and Migrate OS bars give every partition
-  room for its name and a line between neighbours, and free space is one grey on the map and the bars.
+  room for its name and a line between neighbours (in the wizards too, where the line had drawn nothing), and free
+  space is one grey on the map and the bars.
 - **Page icons at one weight** - In the light theme the page icons of File Explorer, Advanced Search, Duplicate
   Finder, Advanced Uninstall, the Vulnerability Scanner, Network Adapters, Wi-Fi Manager and Benchmarks are drawn as
   dark as the other pages' (most of them had been too pale to read on the page); the dark theme keeps their drawings.
 - **Dark tables** - In the dark theme a table's header is set apart from its rows and a selected row is a clear blue.
 - **One filled button per page** - Advanced Uninstall, Network Adapters, Advanced Search, Offline Deploy, the
-  bandwidth and LAN transfer tests and the backup and restore wizards keep one filled button for the page's work;
-  Reset Network is red, as a destructive action is.
+  bandwidth and LAN transfer tests, Wi-Fi Manager, the AI page's browser extension, the Windows ISO dialog and the
+  backup and restore wizards keep one filled button for their work; Reset Network is red, as a destructive action is.
 - **Store apps by name** - Advanced Uninstall lists Store apps by the name Settings shows ("Windows Calculator"),
   not by their package identity.
-- **File Explorer** - The Type column names what a file is ("PNG image", "CSV document", "File folder"); the Name
-  column takes the room the others leave, so side by side both panes show every column, and the two panes end at one
-  height. A selected file's icon stays visible on the light selection, the preview's caption sits one gap below the
+- **File Explorer** - The Type column names a file's type as Windows does ("Text Document", "PNG File", "File
+  folder"); the Name column takes the room the others leave, and a pane too narrow for all of them, as each is side by
+  side with the details pane open, leaves out Tags, then Modified, then Size until it widens again, so no column sits
+  past its edge; the two panes end at one height. A selected file's icon stays visible on the light selection, the preview's caption sits one gap below the
   Details/Preview switch, the View menu's "Item size" reads as the menu does, and the command palette is opaque and
   as tall as its results.
 - **Smaller fixes** - A finished restore shows only Finish, and its summary uses round bullets; Benchmarks' Run
   buttons sit one gap below their bars with the result lines evenly spaced; Image Flasher's and the other tools' Log
-  rows sit on the page colour; the AI status line puts Context first, names the access mode as its box does and gives
-  the last turn and the session in one form; the AI chips share one fill and their close X follows the theme;
+  rows sit on the page colour; the AI status line puts Context first, names the access mode as its box does, gives
+  the last turn and the session in one form and says "none" until there is a turn, so it fits the status bar; the AI chips share one fill and their close X follows the theme;
   Advanced Uninstall's leftovers are a "Leftover Items" group and "Loading installed programs..." shows only over an
   empty list; Email Inspector's page arrows sit together and its list starts unsorted; Advanced Search's wrapped
   preview lines go on under their text; the Vulnerability Scanner gives its findings most of the room; Screenshot

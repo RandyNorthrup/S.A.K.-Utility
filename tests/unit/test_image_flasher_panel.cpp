@@ -379,6 +379,15 @@ private Q_SLOTS:
                  qPrintable(QStringLiteral("%1 px tall and scrolling, with %2 px of room")
                                 .arg(dialog.height())
                                 .arg(screen_room)));
+        // One filled button, Download & Build ISO; Fetch Builds and Browse are secondary (review
+        // 6: two filled buttons beside a disabled third).
+        QStringList filled;
+        for (const auto* button : dialog.findChildren<QPushButton*>()) {
+            if (button->styleSheet() == sak::ui::kPrimaryButtonStyle) {
+                filled << button->text();
+            }
+        }
+        QCOMPARE(filled, QStringList{QStringLiteral("Download && Build ISO")});
         // With room for all of it, as on a 1080-line screen, nothing scrolls.
         constexpr int kTallRoom = 1040;
         dialog.fitToHeight(kTallRoom);

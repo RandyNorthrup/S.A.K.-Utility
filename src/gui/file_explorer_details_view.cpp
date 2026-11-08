@@ -21,6 +21,19 @@ namespace {
 constexpr const char* kExplorerDetailsViewGroup = "FileExplorerDetailsView";
 constexpr const char* kHeaderStateKey = "HeaderState";
 constexpr const char* kColumnWidthsKey = "ColumnWidths";
+constexpr const char* kDroppedForRoomKey = "DroppedForRoom";
+
+// The order columns leave a pane too narrow for them: the least needed first. Name never leaves.
+constexpr std::array kRoomDropOrder = {
+    static_cast<int>(sak::FileExplorerItemModel::PathColumn),
+    static_cast<int>(sak::FileExplorerItemModel::AttributesColumn),
+    static_cast<int>(sak::FileExplorerItemModel::IdentifierColumn),
+    static_cast<int>(sak::FileExplorerItemModel::CreatedColumn),
+    static_cast<int>(sak::FileExplorerItemModel::TagsColumn),
+    static_cast<int>(sak::FileExplorerItemModel::ModifiedColumn),
+    static_cast<int>(sak::FileExplorerItemModel::SizeColumn),
+    static_cast<int>(sak::FileExplorerItemModel::TypeColumn),
+};
 
 // Files-style default column set: Name/Type/Size/Modified/Tags visible, the
 // power columns opt-in through the header context menu.
@@ -72,10 +85,13 @@ void FileExplorerDetailsView::showColumnMenu(const QPoint& position) {
         const QString title = model()->headerData(column, Qt::Horizontal).toString();
         QAction* action = menu.addAction(title);
         action->setCheckable(true);
-        action->setChecked(!isColumnHidden(column));
+        // A column dropped for room is still one the technician chose: it comes back with room.
+        action->setChecked(!isColumnHidden(column) || m_dropped_for_room.contains(column));
         connect(action, &QAction::toggled, this, [this, column](const bool visible) {
+            m_dropped_for_room.remove(column);
             setColumnHidden(column, !visible);
             saveColumnState();
+            fitNameColumn();
         });
     }
     // Files DetailsLayoutPage header menu ends with the auto-fit command
@@ -125,16 +141,37 @@ void FileExplorerDetailsView::fitNameColumn() {
     if (model() == nullptr || m_fitting_name || isColumnHidden(FileExplorerItemModel::NameColumn)) {
         return;
     }
+    // Side by side with the details pane open, a pane is about 320 px: Type, Size and Modified sat
+    // past its edge behind a scroll bar. It drops Tags, then Modified, then Size, as Name needs.
+    m_fitting_name = true;
+    const int room = viewport()->width();
+    const int others = dropColumnsForRoom(room);
+    setColumnWidth(FileExplorerItemModel::NameColumn, std::max(kNameMinWidthPx, room - others));
+    m_fitting_name = false;
+}
+
+int FileExplorerDetailsView::dropColumnsForRoom(int room) {
+    for (const int column : std::as_const(m_dropped_for_room)) {
+        setColumnHidden(column, false);
+    }
+    m_dropped_for_room.clear();
     int others = 0;
     for (int column = 0; column < model()->columnCount(); ++column) {
         if (column != FileExplorerItemModel::NameColumn && !isColumnHidden(column)) {
             others += columnWidth(column);
         }
     }
-    m_fitting_name = true;
-    setColumnWidth(FileExplorerItemModel::NameColumn,
-                   std::max(kNameMinWidthPx, viewport()->width() - others));
-    m_fitting_name = false;
+    for (const int column : kRoomDropOrder) {
+        if (room - others >= kNameMinWidthPx) {
+            break;
+        }
+        if (column < model()->columnCount() && !isColumnHidden(column)) {
+            others -= columnWidth(column);
+            setColumnHidden(column, true);
+            m_dropped_for_room.insert(column);
+        }
+    }
+    return others;
 }
 
 void FileExplorerDetailsView::showEvent(QShowEvent* event) {
@@ -151,7 +188,9 @@ void FileExplorerDetailsView::showEvent(QShowEvent* event) {
                     }
                 });
         connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this]() {
-            saveColumnState();
+            if (!m_fitting_name) {
+                saveColumnState();
+            }
         });
         connect(horizontalHeader(), &QHeaderView::sectionMoved, this, [this]() {
             saveColumnState();
@@ -194,6 +233,12 @@ void FileExplorerDetailsView::saveColumnState() const {
         widths.append(columnWidth(column));
     }
     settings.setValue(QString::fromLatin1(kColumnWidthsKey), widths);
+    // Hidden only while the view was narrow: restored, they show again.
+    QVariantList dropped;
+    for (const int column : m_dropped_for_room) {
+        dropped.append(column);
+    }
+    settings.setValue(QString::fromLatin1(kDroppedForRoomKey), dropped);
     settings.endGroup();
     settings.sync();
 }
@@ -206,6 +251,7 @@ void FileExplorerDetailsView::restoreColumnState() {
     settings.beginGroup(QString::fromLatin1(kExplorerDetailsViewGroup));
     const QByteArray state = settings.value(QString::fromLatin1(kHeaderStateKey)).toByteArray();
     const QVariantList widths = settings.value(QString::fromLatin1(kColumnWidthsKey)).toList();
+    const QVariantList dropped = settings.value(QString::fromLatin1(kDroppedForRoomKey)).toList();
     settings.endGroup();
     if (state.isEmpty()) {
         // First run (no saved layout): apply the Files-style default set.
@@ -217,6 +263,9 @@ void FileExplorerDetailsView::restoreColumnState() {
         }
     } else {
         horizontalHeader()->restoreState(state);
+        for (const QVariant& column : dropped) {
+            setColumnHidden(column.toInt(), false);
+        }
     }
     for (int column = 0; column < widths.size() && column < model()->columnCount(); ++column) {
         const int width = widths.at(column).toInt();
