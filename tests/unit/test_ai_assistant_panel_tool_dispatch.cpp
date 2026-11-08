@@ -313,6 +313,49 @@ private Q_SLOTS:
         }
     }
 
+    // Review 5, found in the first picture: with a glyph's light fills left out as holes, the
+    // disabled Rename Chat icon lost its pale blue field and read as an "!". A button's glyph
+    // keeps its pale fills and leaves out only what is drawn white, as Run Details' "i" is.
+    void buttonGlyphsKeepTheirPaleFills() {
+        AiAssistantPanel panel;
+        const auto opaque = [](const QImage& image) {
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    count += qAlpha(image.pixel(x, y)) >= 128 ? 1 : 0;
+                }
+            }
+            return count;
+        };
+        const auto image_of = [](const QIcon& icon, QIcon::Mode mode) {
+            return icon.pixmap(QSize(20, 20), mode)
+                .toImage()
+                .convertToFormat(QImage::Format_ARGB32);
+        };
+        QVERIFY(panel.m_renameSessionButton != nullptr && panel.m_runDetailsButton != nullptr);
+        // icons8-rename.svg draws a white field, a pale blue selection in it (x 8-52, y 32-48 of
+        // 80) and a text cursor. At 20 px the selection is x 2-13, y 8-12; inside its edges, the
+        // disabled glyph is ink.
+        const QImage rename = image_of(panel.m_renameSessionButton->icon(), QIcon::Disabled);
+        int inside = 0;
+        int inked = 0;
+        for (int y = 9; y < 11; ++y) {
+            for (int x = 3; x < 12; ++x) {
+                ++inside;
+                inked += qAlpha(rename.pixel(x, y)) >= 128 ? 1 : 0;
+            }
+        }
+        QVERIFY2(inked * 5 >= inside * 4,
+                 qPrintable(QStringLiteral("Rename Chat's selection: %1 of %2 pixels inked")
+                                .arg(inked)
+                                .arg(inside)));
+        // Run Details' "i" is still a hole in its disc.
+        const int disc =
+            opaque(image_of(QIcon(QStringLiteral(":/icons/icons/panel_about.svg")), QIcon::Normal));
+        const int glyph = opaque(image_of(panel.m_runDetailsButton->icon(), QIcon::Normal));
+        QVERIFY2(disc - glyph >= 10, qPrintable(QStringLiteral("%1 of %2").arg(glyph).arg(disc)));
+    }
+
     // Review 3 (F21): the popups had a fixed 420 px minimum, so the access-mode list ran to x=1358
     // in a 1280 px window for entries about 170 px long.
     void comboPopupsTakeTheWidthTheirEntriesNeed() {

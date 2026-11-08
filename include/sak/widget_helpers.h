@@ -156,20 +156,27 @@ inline QIcon themedGlyphIcon(const QString& path) {
     return tinted;
 }
 
+/// A selected tab's white drawing leaves out the light fills of the artwork, its holes: at 20 px
+/// a 1 px white stroke is blended with what is around it, and About's "i" came out near
+/// (197, 219, 248) on its (139, 183, 240) bubble.
+inline constexpr int kTabGlyphNearWhite = 185;
+/// A button's glyph leaves out only what is drawn white (Run Details' "i"): a pale fill is part of
+/// the drawing, and leaving out Rename Chat's pale blue field (#c2e8ff) left only its text
+/// cursor, an "!". The palest fill a button icon uses is Send's #e1ebf2.
+inline constexpr int kButtonGlyphNearWhite = 240;
+
 /// @brief @p drawn as a one-colour glyph in @p color: every part of it in that colour, except the
-///        parts drawn in white, which are left out, so a white page or question mark shows as a
-///        hole. A plain silhouette made Help's and About's tab icons blank discs.
-inline QPixmap toneGlyphPixmap(const QPixmap& drawn, QColor color) {
-    // A channel floor, not pure white: at 20 px a 1 px white stroke is blended with what is
-    // around it, and About's "i" came out near (197, 219, 248) on its (139, 183, 240) bubble.
-    constexpr int kNearWhite = 185;
+///        parts at least @p near_white in every channel, which are left out, so a white page or
+///        question mark shows as a hole. A plain silhouette made Help's and About's tab icons
+///        blank discs.
+inline QPixmap toneGlyphPixmap(const QPixmap& drawn, QColor color, int near_white) {
     QImage image = drawn.toImage().convertToFormat(QImage::Format_ARGB32);
     const QRgb left_out = QColor(Qt::transparent).rgba();
     for (int y = 0; y < image.height(); ++y) {
         auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
         for (int x = 0; x < image.width(); ++x) {
             const QRgb pixel = line[x];
-            const bool white = std::min({qRed(pixel), qGreen(pixel), qBlue(pixel)}) >= kNearWhite;
+            const bool white = std::min({qRed(pixel), qGreen(pixel), qBlue(pixel)}) >= near_white;
             color.setAlpha(qAlpha(pixel));
             line[x] = white ? left_out : color.rgba();
         }
@@ -192,11 +199,20 @@ public:
     explicit ButtonIconEngine(QString path) : m_path(std::move(path)), m_source(m_path) {}
 
     QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
-        const QPixmap drawn = m_source.pixmap(size, QIcon::Normal, state);
-        if (mode == QIcon::Disabled) {
-            return toneGlyphPixmap(drawn, ui::themedColor(ui::kColorTextMuted));
-        }
-        return toneGlyphPixmap(drawn, QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
+        // What is white is decided on the drawing, not on its anti-aliased button-size pixels:
+        // at 20 px Run Details' white "i" is nowhere a whole pixel wide, so read at that size it
+        // is no whiter than a pale fill. Toned at four times the size, then scaled down.
+        constexpr int kOversample = 4;
+        const QPixmap drawn = m_source.pixmap(size * kOversample, QIcon::Normal, state);
+        const QColor color = mode == QIcon::Disabled
+                                 ? ui::themedColor(ui::kColorTextMuted)
+                                 : QColor(QString::fromLatin1(ui::kColorButtonTextOnTone));
+        // As many device pixels as the drawing would have had at the size asked for.
+        QPixmap glyph =
+            toneGlyphPixmap(drawn, color, kButtonGlyphNearWhite)
+                .scaled(drawn.size() / kOversample, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        glyph.setDevicePixelRatio(drawn.devicePixelRatio());
+        return glyph;
     }
 
     void paint(QPainter* painter,
@@ -286,7 +302,9 @@ inline QString themedIconPath(const QString& path) {
 ///        its colours lost. A part drawn in white (Help's question mark, About's "i") is left out,
 ///        so it shows in the tab's blue; a plain white silhouette made those two blank discs.
 inline QPixmap selectedTabPixmap(const QPixmap& drawn) {
-    return toneGlyphPixmap(drawn, QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
+    return toneGlyphPixmap(drawn,
+                           QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)),
+                           kTabGlyphNearWhite);
 }
 
 /// @brief @p path as a tab icon: on unselected tabs the theme's drawing of it, and in white when

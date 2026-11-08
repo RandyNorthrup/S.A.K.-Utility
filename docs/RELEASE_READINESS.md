@@ -2374,6 +2374,17 @@ both themes, and the selected Help and About tabs gone to blank discs once their
 hooks' cppcheck then asked for a pointer to const in the File Explorer test's Safety-pane helper; that test was
 rebuilt and rerun before the commit.
 
+**Found by review 5's first picture.** T2 run 42439404645 on efd9ea3a passed. The light app_main_window from that
+commit's package then showed the disabled Rename Chat icon as an "!". Y4's glyph rule had taken the selected tab's:
+every pale part of a drawing (every channel 185 or more) is left out as a hole. Rename Chat's drawing is a white
+field holding a pale blue selection (#c2e8ff) and a thin cursor, so only the cursor was left. A button's glyph now
+leaves out only what is drawn white (every channel 240 or more), and it decides that on the drawing at four times
+its size, then scales the glyph down: read at button size, Run Details' white "i" is nowhere a whole pixel wide, no
+whiter than a pale fill, and it would have been filled in. buttonGlyphsKeepTheirPaleFills checks both, and three
+guards went red: the old floor, no oversampling, and enabled icons left in their own colours (Y4's guard, moved to
+the new code). The selected tab keeps its own floor, 185, under which the artwork's light fills are its holes. Then
+the labels three times at -j 6 (336 each, the first beside the static gates), green.
+
 **What no test here covers.** Whether each reworded line reads well is review, not test. The icon readings are
 offscreen at 20 px; the pictures are the real tab. A list opening beside its field is measured on the offscreen
 platform's screen; review 5's ai_workflow_list and ai_access_options show it on the real one.
