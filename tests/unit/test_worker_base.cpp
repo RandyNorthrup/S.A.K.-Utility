@@ -30,6 +30,11 @@ constexpr unsigned long kWorkerStopPollMs = 10;
 constexpr int kShortStopDeadlineMs = 200;
 // Bound for custody to reap a released thread after it is allowed to finish.
 constexpr int kCustodyReapTimeoutMs = 5000;
+// What the direct-destruction probe may take beside its 15 s stop deadline: starting a Qt process,
+// and Windows' fail-fast handling of its qFatal. The bound only has to catch a destructor that
+// never stops. It was the 5 s reap bound, and the probe outlived it (20 s) in a -j 6 suite run
+// with the whole-tree static gates beside it (round 9 finish, 2026-11-07).
+constexpr int kProbeStartAndStopAllowanceMs = 45'000;
 constexpr auto kChildSwitch = "--worker-base-child";
 constexpr int kChildUnexpectedReturn = 71;
 
@@ -593,7 +598,7 @@ void WorkerBaseTests::directDestructionPastDeadlineStopsInsteadOfTerminating() {
     child.start(QCoreApplication::applicationFilePath(),
                 {QString::fromLatin1(kChildSwitch), QStringLiteral("direct-destruction")});
     QVERIFY(child.waitForStarted(kWorkerStartTimeoutMs));
-    const int lifetime_ms = sak::kTimeoutThreadShutdownMs + kCustodyReapTimeoutMs;
+    const int lifetime_ms = sak::kTimeoutThreadShutdownMs + kProbeStartAndStopAllowanceMs;
     const bool finished = child.waitForFinished(lifetime_ms);
     if (!finished) {
         child.kill();
