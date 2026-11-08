@@ -162,6 +162,7 @@ private Q_SLOTS:
     void controllerBatchQueueRefusalIsAtomic();
     void onlyApplyScansWithElevation();
     void applyRefusesOnWhatItsOwnScanFinds();
+    void applyDecidesDefragOnTheDrivesOwnRotationRate();
     void applyStopsAndSaysWhyWithoutTheHelper();
     void queueRefusalGivesItsReasons();
     void logTextIsPlainAndWhole();
@@ -369,6 +370,46 @@ void PartitionManagerControllerTests::applyRefusesOnWhatItsOwnScanFinds() {
                 .toStringList()
                 .join(QLatin1Char(' '))
                 .contains(QStringLiteral("BitLocker volume is locked")));
+}
+
+// A drive Windows cannot name queues on "unknown until Apply", and Apply's scan asks it.
+void PartitionManagerControllerTests::applyDecidesDefragOnTheDrivesOwnRotationRate() {
+    for (const int rotation_rate : {5425, 0}) {
+        sak::PartitionManagerController controller;
+        auto browsing_view = volumeInventory();
+        browsing_view.disks[0].media_type = QStringLiteral("Unspecified");
+        browsing_view.disks[0].rotation_rate_pending = true;
+        controller.setTestInventory(browsing_view);
+        auto apply_view = volumeInventory();
+        apply_view.disks[0].media_type = QStringLiteral("Unspecified");
+        apply_view.disks[0].rotation_rate_rpm = rotation_rate;
+        controller.setApplyInventoryScannerForTesting(
+            [apply_view](const sak::CancelCheck&) { return inventoryResult(apply_view); });
+        bool executed = false;
+        controller.setApplyExecutorForTesting([&executed](const QVector<sak::PartitionOperation>&,
+                                                          bool,
+                                                          bool,
+                                                          const sak::CancelCheck&) {
+            executed = true;
+            return sak::PartitionExecutionResult{};
+        });
+        QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+
+        QVERIFY2(controller.queueOperation(
+                     sak::PartitionOperationType::DefragVolume, volumeTarget(), QJsonObject{}),
+                 "a drive the scan could not ask queues");
+        QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+        QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+        QCOMPARE(executed, rotation_rate > 0);
+        QCOMPARE(refused.size(), rotation_rate > 0 ? 0 : 1);
+        if (rotation_rate == 0) {
+            QVERIFY(refused.first()
+                        .first()
+                        .toStringList()
+                        .join(QLatin1Char(' '))
+                        .contains(QStringLiteral("reported as HDD")));
+        }
+    }
 }
 
 // With the prompt declined the inventory carries the reason, and Apply stops on it.

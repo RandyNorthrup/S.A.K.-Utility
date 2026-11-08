@@ -39,6 +39,14 @@ struct PartitionScript {
 /// both run it, so they cannot disagree about which disk is which.
 [[nodiscard]] QString dynamicDiskFunctionsScript();
 
+/// PowerShell function Get-SakRotationRateRpm: the rotation rate a drive reports through the tool
+/// at @p tool_path, or 0 when it reports none, or the tool is absent, fails, or takes too long.
+/// The scan and the defrag script both run it, so they cannot disagree. It takes the path so a
+/// test can run it against a stand-in that reads no disk.
+[[nodiscard]] QString driveRotationRateFunctionScript(const QString& tool_path);
+/// The same, for the smartctl this application ships.
+[[nodiscard]] QString bundledDriveRotationRateFunctionScript();
+
 class PartitionScriptBuilder {
 public:
     [[nodiscard]] PartitionScript buildScript(const PartitionOperation& operation) const;

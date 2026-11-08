@@ -2217,6 +2217,18 @@ sample files and folders on C:, D: and E: (D:\SAK-Samples held the BitLocker key
 the sample backups and the Settings screenshots with the real SSID), C:\Program Files\SAK-Test, the round's job
 folder and job task. The capture VM was not used and its snapshot was not touched.
 
+### Partition Manager: a USB hard disk Windows cannot name, and the defrag row (2026-11-08)
+
+The final certification's preflight found the defrag row could not pass on the rig's hard drive, and that a technician could not defrag it either. Windows reports the Seagate Expansion Desk 8 TB as `Unspecified`, because the USB bridge hides its type, and the validator, the defrag script and the matrix each required HDD. Windows' other sources do not settle it: `Win32_DiskDrive` says "External hard disk media" for SSDs in USB enclosures too, and the seek-penalty query fails on this bridge. smartctl does settle it, read-only on the PC: the Seagate reports 5425 rpm, and the Best Buy NVMe enclosure reports no rate. Owner's ruling, the same day: accept the drive's own rotation rate.
+
+**The product.** A drive Windows reports as `Unspecified` counts as a hard disk only if it reports a nonzero rotation rate through the bundled smartctl. No rate stays not-HDD and is refused. A rate never overrules any other answer from Windows, and a model naming it an SSD still wins. Reading the rate takes administrator rights, so a standard-user scan leaves the drive pending: Media type and Optimization mode say "Unknown until Apply" and Queue Defrag is on, the same treatment as BitLocker. Apply's own scan asks the drive and the validator decides on that. One function, `Get-SakRotationRateRpm`, serves the scan and the defrag script, bounded at 30 s, and anything but a rate is 0. The on-screen strings are not new.
+
+**The certification rule.** Changed only through `scripts/generate_partition_manager_matrix.py`. The check `windows_reports_a_hard_disk` is now `drive_reports_it_spins`: Windows reports HDD, or Windows reports `Unspecified` and the drive reports a nonzero rate. The row records Windows' media type exactly as Windows gives it and smartctl's `rotation_rate_rpm` as separate fields, and the verifier decides from both. No derived value goes in the Windows field. The rig stages the bundled smartctl with the binaries, because both the app and the rows now read it. A VirtualBox disk is still not accepted at all.
+
+**Proof.** Added: `safetyValidator_defragTrustsTheDrivesOwnRotationRate` (USB hard disk allowed, USB SSD with no rate refused, Windows SSD with a rate refused, other Windows answers and a model naming an SSD not overruled), `safetyValidator_defragWaitsForApplyWhenTheScanCouldNotAsk`, `standardUserScanLeavesOnlyAnUnspecifiedDrivePending`, `scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay`, `driveRotationRateFunction_readsWhatTheToolReports` (it runs the function against a stand-in that reads no disk), `applyDecidesDefragOnTheDrivesOwnRotationRate`, `diskDefragWaitsForApplyOnADriveWindowsCannotName`, and the `drive_reports_it_spins` cases in `test_partition_manager_row_evidence`, including a device with no rate failing. Sixteen drills, one guard each, each red in the named test, the sources restored byte for byte and rebuilt green.
+
+**Not covered.** No test here runs smartctl against a real drive: the rows do that on the PC. The rate is what the drive says of itself, through its bridge, and a bridge that hides it leaves a real hard disk refused, as before.
+
 ### UI review round 10: review 5's findings, Cancel during a flash, and review 6 (2026-11-08)
 
 From the independent review of round 9's pictures (`ui-review\recheck5.md`: 148 of 150 pictures read, five

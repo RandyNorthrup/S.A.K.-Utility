@@ -1909,6 +1909,11 @@ private Q_SLOTS:
     void scriptBuilder_buildsBitLockerMutationScripts();
     void scriptBuilder_buildsDirectDefragScript();
     void safetyValidator_allowsHddDefragOnlyOnReportedHdd();
+    void safetyValidator_defragTrustsTheDrivesOwnRotationRate();
+    void safetyValidator_defragWaitsForApplyWhenTheScanCouldNotAsk();
+    void standardUserScanLeavesOnlyAnUnspecifiedDrivePending();
+    void scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay();
+    void driveRotationRateFunction_readsWhatTheToolReports();
     void diskMediaHeuristics_readTheModelStringToo();
     void jsonUInt64_clampsNegativesInsteadOfWrapping();
     void scriptBuilder_buildsBiosBootRepairScript();
@@ -22695,6 +22700,209 @@ void PartitionManagerCoreTests::safetyValidator_allowsHddDefragOnlyOnReportedHdd
     inventory.disks.first().model = QStringLiteral("Disposable HDD");
     preview = planner.previewOperation(inventory, operation);
     QVERIFY(preview.canApply());
+}
+
+namespace {
+
+struct DefragFixture {
+    PartitionInventory inventory;
+    PartitionOperation operation;
+};
+
+DefragFixture defragOnAUsbDrive() {
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(&inventory);
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = inventory.disks.first().partitions.at(1).size_bytes;
+    target.drive_letter = QStringLiteral("C");
+    inventory.disks.first().bus_type = QStringLiteral("USB");
+    inventory.disks.first().model = QStringLiteral("Seagate Expansion Desk");
+    return {std::move(inventory),
+            PartitionOperationPlanner::makeOperation(PartitionOperationType::DefragVolume, target)};
+}
+
+}  // namespace
+
+// A USB bridge often hides a hard drive from Windows, which then says Unspecified. The drive's own
+// rotation rate settles it. No rate stays not-HDD, and what Windows does report is never overruled.
+void PartitionManagerCoreTests::safetyValidator_defragTrustsTheDrivesOwnRotationRate() {
+    auto [inventory, operation] = defragOnAUsbDrive();
+    auto& disk = inventory.disks.first();
+    PartitionOperationPlanner planner;
+
+    // The USB hard disk: Windows says nothing, and the drive says it spins.
+    disk.media_type = QStringLiteral("Unspecified");
+    disk.rotation_rate_rpm = 5425;
+    QVERIFY(sak::diskLooksHdd(disk));
+    QVERIFY(!sak::diskMediaUnknownUntilApply(disk));
+    QVERIFY(planner.previewOperation(inventory, operation).canApply());
+
+    // The USB SSD: the same bridge, and no rate.
+    disk.rotation_rate_rpm = 0;
+    QVERIFY(!sak::diskLooksHdd(disk));
+    auto preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("reported as HDD")));
+
+    // Windows says SSD. A rate does not overrule it.
+    disk.media_type = QStringLiteral("SSD");
+    disk.rotation_rate_rpm = 5425;
+    QVERIFY(!sak::diskLooksHdd(disk));
+    preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("SSD/NVMe")));
+
+    // Nor does a rate overrule any other answer Windows gives, or no answer at all.
+    for (const auto& answer : {QStringLiteral("SCM"), QString()}) {
+        disk.media_type = answer;
+        QVERIFY2(!sak::diskLooksHdd(disk), qPrintable(answer));
+    }
+
+    // The model saying SSD still wins over a rate.
+    disk.media_type = QStringLiteral("Unspecified");
+    disk.model = QStringLiteral("Portable SSD T5");
+    QVERIFY(!sak::diskLooksHdd(disk));
+}
+
+// BitLocker's treatment: a scan that could not ask lets the defrag queue, and Apply's scan decides.
+void PartitionManagerCoreTests::safetyValidator_defragWaitsForApplyWhenTheScanCouldNotAsk() {
+    auto [inventory, operation] = defragOnAUsbDrive();
+    auto& disk = inventory.disks.first();
+    PartitionOperationPlanner planner;
+    disk.media_type = QStringLiteral("Unspecified");
+
+    disk.rotation_rate_pending = true;
+    QVERIFY(sak::diskMediaUnknownUntilApply(disk));
+    QVERIFY(!sak::diskLooksHdd(disk));
+    QVERIFY2(planner.previewOperation(inventory, operation).canApply(),
+             "a drive this scan could not ask queues");
+
+    // Apply's scan asked, and the drive had no answer.
+    disk.rotation_rate_pending = false;
+    QVERIFY(!sak::diskMediaUnknownUntilApply(disk));
+    const auto preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("reported as HDD")));
+
+    // Pending never covers a drive something else already answers for.
+    disk.rotation_rate_pending = true;
+    disk.media_type = QStringLiteral("SSD");
+    QVERIFY(!sak::diskMediaUnknownUntilApply(disk));
+    QVERIFY(!planner.previewOperation(inventory, operation).canApply());
+}
+
+void PartitionManagerCoreTests::standardUserScanLeavesOnlyAnUnspecifiedDrivePending() {
+    const auto scanned = [](bool standard_user, const QString& media, int rate) {
+        auto disk = standardUserInventoryDisk();
+        disk[QStringLiteral("MediaType")] = media;
+        disk[QStringLiteral("RotationRateRpm")] = rate;
+        const QByteArray json = QJsonDocument(QJsonArray{disk}).toJson();
+        const auto inventory = standard_user
+                                   ? StorageInventoryWorker::parseStandardUserInventoryJson(json)
+                                   : StorageInventoryWorker::parseInventoryJson(json);
+        return inventory.disks.first();
+    };
+
+    QVERIFY(scanned(true, QStringLiteral("Unspecified"), 0).rotation_rate_pending);
+    for (const auto& known : {QStringLiteral("HDD"), QStringLiteral("SSD"), QString()}) {
+        QVERIFY2(!scanned(true, known, 0).rotation_rate_pending, qPrintable(known));
+    }
+
+    // Apply's scan has its answer, whatever it was.
+    const auto apply = scanned(false, QStringLiteral("Unspecified"), 5425);
+    QVERIFY(!apply.rotation_rate_pending);
+    QCOMPARE(apply.rotation_rate_rpm, 5425);
+    QCOMPARE(scanned(false, QStringLiteral("Unspecified"), -1).rotation_rate_rpm, 0);
+
+    // A rate in the JSON does not change what is hashed: browsing and Apply must agree.
+    auto standard_user = standardUserInventoryDisk();
+    auto administrator = standard_user;
+    administrator[QStringLiteral("RotationRateRpm")] = 5425;
+    QCOMPARE(StorageInventoryWorker::parseStandardUserInventoryJson(
+                 QJsonDocument(QJsonArray{standard_user}).toJson())
+                 .layout_hash,
+             StorageInventoryWorker::parseInventoryJson(
+                 QJsonDocument(QJsonArray{administrator}).toJson())
+                 .layout_hash);
+
+    // The question takes administrator rights, and the scan asks it only for Unspecified.
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript(true);
+    QVERIFY(script.contains(QStringLiteral("function Get-SakRotationRateRpm")));
+    QVERIFY(script.indexOf(QStringLiteral("function Get-SakRotationRateRpm")) <
+            script.indexOf(QStringLiteral("$disks = @(@(Get-Disk)")));
+    QVERIFY(
+        script.contains(QStringLiteral("if ($sakReadAdministratorState -and $physical -and "
+                                       "\"$($physical.MediaType)\" -ceq 'Unspecified')")));
+    QVERIFY(script.contains(QStringLiteral("RotationRateRpm = $rotationRateRpm")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.drive_letter = QStringLiteral("T");
+    PartitionScriptBuilder builder;
+    const QString script = builder
+                               .buildScript(PartitionOperationPlanner::makeOperation(
+                                   PartitionOperationType::DefragVolume, target))
+                               .script;
+    QVERIFY(script.contains(QStringLiteral("function Get-SakRotationRateRpm")));
+    QVERIFY(script.contains(QStringLiteral("smartctl.exe")));
+    QVERIFY(script.contains(QStringLiteral("\"$($physical.MediaType)\" -ceq 'Unspecified'")));
+    QVERIFY(script.contains(QStringLiteral("-not $reportedNoMedia -or")));
+    QVERIFY(
+        script.contains(QStringLiteral("(Get-SakRotationRateRpm -DiskNumber $disk.Number) "
+                                       "-le 0")));
+    // Windows saying SSD is refused before the drive is asked anything.
+    QVERIFY(script.indexOf(QStringLiteral("Refusing HDD defrag on SSD/NVMe media")) <
+            script.indexOf(QStringLiteral("$reportedNoMedia =")));
+    // The rate is the only way past: a defrag follows it, not the other way around.
+    QVERIFY(script.indexOf(QStringLiteral("Could not confirm HDD media classification")) <
+            script.indexOf(QStringLiteral("Optimize-Volume -DriveLetter $driveLetter -Defrag")));
+}
+
+// The function both the scan and the script run, against a stand-in that prints what a drive's
+// answer looks like and reads no disk. It must return the rate, and 0 for anything that is not one.
+void PartitionManagerCoreTests::driveRotationRateFunction_readsWhatTheToolReports() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto standIn = [&dir](const QString& name, const QString& line) {
+        const QString path = QDir::toNativeSeparators(dir.filePath(name + QStringLiteral(".cmd")));
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return QString();
+        }
+        file.write("@echo off\r\n");
+        file.write(line.toUtf8());
+        file.write("\r\n");
+        return path;
+    };
+    const auto rateFrom = [](const QString& tool) {
+        const QString script = driveRotationRateFunctionScript(tool) +
+                               QStringLiteral(
+                                   "Write-Output ('rate=' + "
+                                   "(Get-SakRotationRateRpm -DiskNumber 2))\n");
+        const ProcessResult proc = sak::runPowerShell(script, 60'000);
+        return proc.succeeded() ? proc.std_out.trimmed()
+                                : QStringLiteral("failed: ") + proc.std_err;
+    };
+    QCOMPARE(rateFrom(standIn(QStringLiteral("spinning"),
+                              QStringLiteral("echo {\"rotation_rate\":5425}"))),
+             QStringLiteral("rate=5425"));
+    QCOMPARE(rateFrom(
+                 standIn(QStringLiteral("solid"), QStringLiteral("echo {\"rotation_rate\":0}"))),
+             QStringLiteral("rate=0"));
+    QCOMPARE(rateFrom(standIn(QStringLiteral("silent"), QStringLiteral("echo {\"device\":{}}"))),
+             QStringLiteral("rate=0"));
+    QCOMPARE(rateFrom(standIn(QStringLiteral("garbage"), QStringLiteral("echo not json"))),
+             QStringLiteral("rate=0"));
+    QCOMPARE(rateFrom(QDir::toNativeSeparators(dir.filePath(QStringLiteral("absent.cmd")))),
+             QStringLiteral("rate=0"));
+    QCOMPARE(rateFrom(QString()), QStringLiteral("rate=0"));
 }
 
 void PartitionManagerCoreTests::jsonUInt64_clampsNegativesInsteadOfWrapping() {

@@ -6162,6 +6162,12 @@ QString dirtyBitProperty(const PartitionVolumeInfo& volume) {
                : QObject::tr("Unknown (%1)").arg(volume.dirty_bit_error.trimmed());
 }
 
+// Windows' answer as Windows gives it, unless this scan could not finish the question.
+QString mediaTypeProperty(const PartitionDiskInfo& disk) {
+    return sak::diskMediaUnknownUntilApply(disk) ? QObject::tr("Unknown until Apply")
+                                                 : disk.media_type;
+}
+
 QString bitLockerStateProperty(const PartitionVolumeInfo& volume, bool value) {
     if (volume.bitlocker_state_known) {
         return propertyYesNo(value);
@@ -6213,7 +6219,7 @@ void appendDiskProperties(QVector<PropertyRow>* rows, const PartitionDiskInfo& d
     addProperty(rows, QObject::tr("Serial number"), disk.serial_number);
     addProperty(rows, QObject::tr("Device path"), disk.device_path);
     addProperty(rows, QObject::tr("Bus type"), disk.bus_type);
-    addProperty(rows, QObject::tr("Media type"), disk.media_type);
+    addProperty(rows, QObject::tr("Media type"), mediaTypeProperty(disk));
     addProperty(rows, QObject::tr("Partition style"), disk.partition_style);
     addProperty(rows, QObject::tr("Disk size"), disk.size_bytes);
     addProperty(rows, QObject::tr("Health"), disk.health_status);
@@ -7585,12 +7591,19 @@ bool diskLooksHdd(const PartitionDiskInfo* disk) {
     return disk != nullptr && sak::diskLooksHdd(*disk);
 }
 
+bool diskMediaUnknownUntilApply(const PartitionDiskInfo* disk) {
+    return disk != nullptr && sak::diskMediaUnknownUntilApply(*disk);
+}
+
 QString optimizeModeText(const PartitionDiskInfo* disk) {
     if (diskLooksSsd(disk)) {
         return QObject::tr("SSD/NVMe ReTrim");
     }
     if (diskLooksHdd(disk)) {
         return QObject::tr("HDD analyze and defrag");
+    }
+    if (diskMediaUnknownUntilApply(disk)) {
+        return QObject::tr("Unknown until Apply");
     }
     return QObject::tr("Analyze first, then choose ReTrim or defrag");
 }
@@ -7621,7 +7634,7 @@ QStringList optimizeCommandLines(const PartitionDiskInfo* disk, const PartitionV
         commands
             << QStringLiteral("fsutil behavior query DisableDeleteNotify")
             << QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose").arg(drive_letter);
-    } else if (diskLooksHdd(disk)) {
+    } else if (diskLooksHdd(disk) || diskMediaUnknownUntilApply(disk)) {
         commands
             << QStringLiteral("Optimize-Volume -DriveLetter %1 -Defrag -Verbose").arg(drive_letter);
     }
@@ -7639,13 +7652,15 @@ QVector<PropertyRow> optimizeRows(const PartitionDiskInfo* disk, const Partition
                                              .arg(partition->partition_number.value())
                                        : QObject::tr("No partition selected"));
     addProperty(&rows, QObject::tr("Mount point"), optimizeMountPoint(volume));
-    addProperty(&rows, QObject::tr("Media type"), (disk != nullptr) ? disk->media_type : QString());
+    addProperty(&rows,
+                QObject::tr("Media type"),
+                (disk != nullptr) ? mediaTypeProperty(*disk) : QString());
     addProperty(&rows, QObject::tr("Optimization mode"), optimizeModeText(disk));
     addProperty(&rows,
                 QObject::tr("In-app optimization"),
                 (volume == nullptr) || optimizeMountPoint(volume).isEmpty()
                     ? QObject::tr("Select a mounted volume before queueing optimization")
-                : diskLooksHdd(disk)
+                : diskLooksHdd(disk) || diskMediaUnknownUntilApply(disk)
                     ? QObject::tr("Queue HDD defrag through cancellable elevated Apply")
                 : diskLooksSsd(disk)
                     ? QObject::tr("Queue SSD ReTrim through cancellable elevated Apply")
@@ -7780,7 +7795,9 @@ QVector<PropertyRow> secureEraseRows(const PartitionDiskInfo* disk) {
                 QObject::tr("Serial number"),
                 (disk != nullptr) ? disk->serial_number : QString());
     addProperty(&rows, QObject::tr("Bus type"), (disk != nullptr) ? disk->bus_type : QString());
-    addProperty(&rows, QObject::tr("Media type"), (disk != nullptr) ? disk->media_type : QString());
+    addProperty(&rows,
+                QObject::tr("Media type"),
+                (disk != nullptr) ? mediaTypeProperty(*disk) : QString());
     addProperty(&rows, QObject::tr("Device class"), secureEraseDeviceClass(disk));
     addProperty(&rows, QObject::tr("Erase status"), secureEraseGateText(disk));
     addProperty(&rows,
@@ -11866,7 +11883,8 @@ void PartitionManagerPanel::onOpenOptimizeDrives() {
                                                   .command_lines = commands,
                                                   .can_queue = can_queue,
                                                   .ssd_mode = diskLooksSsd(disk),
-                                                  .hdd_mode = diskLooksHdd(disk)});
+                                                  .hdd_mode = diskLooksHdd(disk) ||
+                                                              diskMediaUnknownUntilApply(disk)});
     if (action == OptimizeDialogAction::None) {
         Q_EMIT statusMessage(tr("Reviewed disk optimization guidance"), sak::kTimerStatusDefaultMs);
         return;

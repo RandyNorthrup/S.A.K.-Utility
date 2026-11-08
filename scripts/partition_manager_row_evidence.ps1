@@ -180,6 +180,19 @@ function Test-PmValueSame {
     return "$Left" -ceq "$Right"
 }
 
+function Get-PmDriveSpinRefusal {
+    # Windows calling a drive HDD settles it. Windows saying Unspecified is no answer, and only then
+    # does the drive's own rotation rate count. Windows saying anything else is not overruled.
+    param([AllowNull()] [object]$MediaType, [AllowNull()] [object]$RotationRate)
+    if ("$MediaType" -ceq 'HDD') { return '' }
+    if ("$MediaType" -cne 'Unspecified') { return "Windows reports '$MediaType'" }
+    $rate = [decimal]0
+    if ($null -eq $RotationRate -or -not [decimal]::TryParse("$RotationRate", [ref]$rate) -or $rate -le 0) {
+        return "Windows reports 'Unspecified' and the drive reports no rotation rate"
+    }
+    return ''
+}
+
 function Test-PmCheck {
     <#
     .SYNOPSIS
@@ -194,6 +207,12 @@ function Test-PmCheck {
         $other = Resolve-PmPath -Root $Independent -Path $Check.minus_path
         if (-not $other.found) { return "$($Check.contract): nothing was read back at $($Check.minus_path)" }
         $value = [decimal]"$value" - [decimal]"$($other.value)"
+    }
+    if ($names -contains 'spins_by_rotation_path') {
+        $rate = Resolve-PmPath -Root $Independent -Path $Check.spins_by_rotation_path
+        $why = Get-PmDriveSpinRefusal -MediaType $value -RotationRate $(if ($rate.found) { $rate.value } else { $null })
+        if ($why) { return "$($Check.contract): $why" }
+        return ''
     }
     if ($names -contains 'equals') {
         if (-not (Test-PmValueSame -Left $value -Right $Check.equals)) { return "$($Check.contract): $($Check.path) is '$value', not '$($Check.equals)'" }

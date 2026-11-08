@@ -707,6 +707,7 @@ $Script:CertRowBodies['external.hdd-defrag-execution'] = {
     Start-Sleep -Seconds 5
     $result = [ordered]@{
         media_type = $media.media_type
+        rotation_rate_rpm = $media.rotation_rate_rpm
         defrag_logged = ((Get-CertWindowsEvents -Since $since -Pattern 'defrag') -gt 0)
         files_before = $filesBefore; files_after = (Get-RbFileManifest -Root $root)
         health = (Test-RbVolumeHealth -Letter $volume.letter)

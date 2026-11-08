@@ -1658,7 +1658,8 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  operation.type == PartitionOperationType::DefragVolume && diskLooksSsd(disk),
                  QStringLiteral("HDD defrag is blocked on SSD/NVMe media"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::DefragVolume && !diskLooksHdd(disk),
+                 operation.type == PartitionOperationType::DefragVolume && !diskLooksHdd(disk) &&
+                     !diskMediaUnknownUntilApply(disk),
                  QStringLiteral("HDD defrag requires media reported as HDD"));
     addBlockerIf(result,
                  backupRestoreMissingMountedVolume(partition, operation),
@@ -2063,9 +2064,20 @@ bool diskLooksSsd(const PartitionDiskInfo& disk) {
     return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
 }
 
+bool diskMediaIsUnspecified(const PartitionDiskInfo& disk) {
+    return disk.media_type.compare(QStringLiteral("Unspecified"), Qt::CaseInsensitive) == 0;
+}
+
 bool diskLooksHdd(const PartitionDiskInfo& disk) {
     const QString media = QStringLiteral("%1 %2").arg(disk.media_type, disk.model).toUpper();
-    return media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"));
+    if (media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"))) {
+        return true;
+    }
+    return diskMediaIsUnspecified(disk) && disk.rotation_rate_rpm > 0 && !diskLooksSsd(disk);
+}
+
+bool diskMediaUnknownUntilApply(const PartitionDiskInfo& disk) {
+    return disk.rotation_rate_pending && !diskLooksSsd(disk) && !diskLooksHdd(disk);
 }
 
 

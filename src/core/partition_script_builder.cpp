@@ -3506,6 +3506,53 @@ QString movePartitionPayloadError(const MovePartitionScriptPayload& payload,
 
 }  // namespace
 
+QString driveRotationRateFunctionScript(const QString& tool_path) {
+    // Bounded, because a drive behind a USB bridge can sit on a query while a person waits for
+    // Apply. Anything but a rate is not a rate, and the caller then does not call it a hard disk.
+    static constexpr int kDriveRotationRateTimeoutMs = 30'000;
+    return QStringLiteral(R"PS(
+$sakDriveToolPath = %1
+function Get-SakRotationRateRpm {
+  param([int]$DiskNumber)
+  if ([string]::IsNullOrEmpty($sakDriveToolPath) -or
+      -not (Test-Path -LiteralPath $sakDriveToolPath -PathType Leaf)) { return 0 }
+  $start = New-Object System.Diagnostics.ProcessStartInfo
+  $start.FileName = $sakDriveToolPath
+  $start.Arguments = "-i --json=c /dev/pd$DiskNumber"
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardOutput = $true
+  $process = $null
+  try {
+    $process = [System.Diagnostics.Process]::Start($start)
+    $output = $process.StandardOutput.ReadToEndAsync()
+    if (-not $process.WaitForExit(%2)) {
+      $process.Kill()
+      return 0
+    }
+    $reported = ($output.Result | ConvertFrom-Json).rotation_rate
+    if ($null -ne $reported -and [int]$reported -gt 0) { return [int]$reported }
+    return 0
+  } catch {
+    return 0
+  } finally {
+    if ($null -ne $process) { $process.Dispose() }
+  }
+}
+)PS")
+        .arg(PartitionScriptBuilder::quotePowerShell(tool_path),
+             QString::number(kDriveRotationRateTimeoutMs));
+}
+
+QString bundledDriveRotationRateFunctionScript() {
+    // The trusted application directory only, as for the file-system writers: no CWD fallback.
+    const QString appDir = QCoreApplication::applicationDirPath().trimmed();
+    return driveRotationRateFunctionScript(
+        appDir.isEmpty() ? QString()
+                         : QDir::toNativeSeparators(QDir(appDir).filePath(
+                               QStringLiteral("tools/smartmontools/smartctl.exe"))));
+}
+
 struct ExternalFileSystemToolScriptRequest {
     QString operation_name;
     QString preview;
@@ -6145,7 +6192,7 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Run HDD defrag on %1:").arg(letter.toUpper());
-    out.script = commonHeader(out.preview) +
+    out.script = commonHeader(out.preview) + bundledDriveRotationRateFunctionScript() +
                  QStringLiteral(
                      "$driveLetter = %1\n"
                      "$partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop\n"
@@ -6161,7 +6208,13 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
                      "$hddText = \"$($disk.FriendlyName) $($disk.Model) $($disk.MediaType)\"\n"
                      "if ($physical) { $hddText = \"$hddText $($physical.MediaType)\" }\n"
                      "if ($hddText -notmatch '(?i)HDD|HARD') {\n"
-                     "    throw \"Could not confirm HDD media classification: $mediaText\"\n"
+                     // Windows could not say, so the drive may. Windows saying SSD stopped above.
+                     "    $reportedNoMedia = $physical -and "
+                     "\"$($physical.MediaType)\" -ceq 'Unspecified'\n"
+                     "    if (-not $reportedNoMedia -or "
+                     "(Get-SakRotationRateRpm -DiskNumber $disk.Number) -le 0) {\n"
+                     "        throw \"Could not confirm HDD media classification: $mediaText\"\n"
+                     "    }\n"
                      "}\n"
                      "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n"
                      "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose\n"

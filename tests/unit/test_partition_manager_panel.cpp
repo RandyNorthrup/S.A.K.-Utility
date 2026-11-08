@@ -183,6 +183,7 @@ private Q_SLOTS:
     void theTableHeaderReachesTheRightEdge();
     void manageBitLockerReadsWhatAStandardScanCannot();
     void diskDefragShowsOptimizeDialog();
+    void diskDefragWaitsForApplyOnADriveWindowsCannotName();
     void ssdSecureEraseShowsQueueDialog();
     void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
@@ -5641,6 +5642,56 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
                     dialog, QStringLiteral("Copy Optimize commands")) != nullptr);
         QVERIFY(findAccessibleWidget<QPushButton>(
                     dialog, QStringLiteral("Open Windows Optimize Drives")) != nullptr);
+        inspected = true;
+        dialog->reject();
+    });
+
+    pressAction(button);
+    QVERIFY(inspected);
+}
+
+// Windows calls this drive Unspecified and a standard scan cannot ask it, so the dialog says so and
+// lets the defrag queue. Apply's scan asks the drive, and that answer decides.
+void PartitionManagerPanelTests::diskDefragWaitsForApplyOnADriveWindowsCannotName() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    inventory.disks[0].model = QStringLiteral("Seagate Expansion Desk");
+    inventory.disks[0].bus_type = QStringLiteral("USB");
+    inventory.disks[0].media_type = QStringLiteral("Unspecified");
+    inventory.disks[0].rotation_rate_pending = true;
+    panel.setTestInventoryForReview(inventory);
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Disk Defrag"));
+    QVERIFY2(button != nullptr, "Disk Defrag action should exist");
+
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Optimize Drives dialog should open");
+        auto* status =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionOptimizeStatusTable"));
+        QVERIFY2(status != nullptr, "Optimize status table should exist");
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Media type")),
+                 QStringLiteral("Unknown until Apply"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Optimization mode")),
+                 QStringLiteral("Unknown until Apply"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app optimization")),
+                 QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Safe commands")),
+                 QStringLiteral("Optimize-Volume -DriveLetter T -Analyze -Verbose\n"
+                                "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
+        auto* defragButton = findAccessibleWidget<QPushButton>(dialog,
+                                                               QStringLiteral("Queue HDD defrag"));
+        QVERIFY(defragButton != nullptr);
+        QVERIFY(defragButton->isEnabled());
+        auto* retrimButton = findAccessibleWidget<QPushButton>(dialog,
+                                                               QStringLiteral("Queue SSD ReTrim"));
+        QVERIFY(retrimButton != nullptr);
+        QVERIFY(!retrimButton->isEnabled());
         inspected = true;
         dialog->reject();
     });

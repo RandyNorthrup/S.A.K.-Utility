@@ -370,6 +370,11 @@ function New-RigStage {
         $source = Join-Path $release "$dll.dll"
         if (Test-Path -LiteralPath $source) { Copy-Item $source $stage }
     }
+    # The app asks a drive Windows cannot name for its rotation rate, and the rows read it too.
+    $smartctl = Join-Path $release 'tools\smartmontools\smartctl.exe'
+    if (-not (Test-Path -LiteralPath $smartctl -PathType Leaf)) { throw "No smartctl in $release" }
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage 'tools\smartmontools') | Out-Null
+    Copy-Item $smartctl (Join-Path $stage 'tools\smartmontools')
     $described = & python (Join-Path $ProjectRoot 'scripts\partition_manager_code_digest.py') --root $ProjectRoot | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'The code digest could not be worked out' }
     $receipt = [ordered]@{

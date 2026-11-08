@@ -238,6 +238,12 @@ struct PartitionDiskInfo {
     QString serial_number;
     QString bus_type;
     QString media_type;
+    /// What the drive itself reports through the bundled smartctl. Asked only when Windows says
+    /// "Unspecified", and only with administrator rights. Zero means it reported none.
+    int rotation_rate_rpm{0};
+    /// This scan could not ask the drive, because it ran without administrator rights. Apply's own
+    /// scan asks, and only that answer decides whether the drive can be defragmented.
+    bool rotation_rate_pending{false};
     QString partition_style;
     QString health_status;
     QString operational_status;

@@ -136,6 +136,19 @@ function Get-CertPin {
     }
 }
 
+function Get-CertRotationRate {
+    # What the drive itself says, through the same smartctl the app ships. Kept apart from what
+    # Windows says, which goes in media_type exactly as Windows gives it. Zero means none reported.
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+    $smartctl = Join-Path $StageRoot 'tools\smartmontools\smartctl.exe'
+    if (-not (Test-Path -LiteralPath $smartctl -PathType Leaf)) { throw "The stage has no smartctl at $smartctl" }
+    $ErrorActionPreference = 'Continue'
+    $raw = & $smartctl -i --json=c "/dev/pd$DiskNumber" 2>$null | Out-String
+    $reported = try { ($raw | ConvertFrom-Json).rotation_rate } catch { $null }
+    if ($null -eq $reported) { return 0 }
+    return [int]$reported
+}
+
 function Get-CertMedia {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber, [Parameter(Mandatory = $true)] [string]$Class, [string]$Kind = '')
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
@@ -146,6 +159,7 @@ function Get-CertMedia {
         model = "$($disk.FriendlyName)"
         bus_type = "$($disk.BusType)"
         media_type = if ($physical) { "$($physical.MediaType)" } else { '' }
+        rotation_rate_rpm = (Get-CertRotationRate -DiskNumber $DiskNumber)
         size_bytes = "$([uint64]$disk.Size)"
         serial_sha256 = (Get-CertSha256OfText "$($disk.SerialNumber)".Trim())
     }

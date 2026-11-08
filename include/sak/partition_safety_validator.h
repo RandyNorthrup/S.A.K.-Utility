@@ -71,7 +71,18 @@ struct PartitionPathVolumeIdentity {
 /// @note The validator requires this to be true before allowing a defrag, so the panel shares it
 ///       for the same reason as diskLooksSsd. Not simply the negation: a drive that reports
 ///       neither is UNKNOWN, and a defrag is refused on an unknown drive rather than attempted.
+/// @note A drive Windows reports as "Unspecified" also counts when the drive itself reports a
+///       nonzero rotation rate: a USB bridge often hides a hard disk from Windows. Windows
+///       reporting anything else is final, and a rate never overrules it.
 [[nodiscard]] bool diskLooksHdd(const PartitionDiskInfo& disk);
+
+/// @brief Whether Windows reports no media type for @p disk.
+[[nodiscard]] bool diskMediaIsUnspecified(const PartitionDiskInfo& disk);
+
+/// @brief Whether this scan could not say if @p disk is a hard disk, and Apply's scan will.
+/// @note Windows reports it as "Unspecified" and the scan had no administrator rights, so the drive
+///       was not asked. A defrag may queue, and the validator decides again on Apply's own scan.
+[[nodiscard]] bool diskMediaUnknownUntilApply(const PartitionDiskInfo& disk);
 
 class PartitionSafetyValidator {
 public:

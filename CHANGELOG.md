@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **USB hard disks can be defragmented** - Windows often cannot see through a USB bridge and reports the drive's
+  media type as Unspecified, so Disk Defrag refused the hard disk behind it. S.A.K. now asks the drive itself: when
+  Windows reports Unspecified and the drive reports a rotation rate, it counts as a hard disk. A standard scan cannot
+  ask, so Media type and Optimization mode say "Unknown until Apply" and Queue Defrag is on; Apply asks the drive and
+  refuses if it reports no rate. Windows reporting SSD always wins.
 - **Cancel a flash from its page** - Image Flasher's Step 3 page shows a red Cancel while it writes and while it
   waits for Windows to see a new Windows USB, and no Back. Cancel asks first, then says "Stopping the write..." until
   the writer stops, and the page that follows says "Flash cancelled" and what the drive holds now: nothing was

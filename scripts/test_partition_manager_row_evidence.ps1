@@ -278,6 +278,23 @@ try {
         Remove-Item -LiteralPath (Join-Path $d 'one.client.json')
     } -KeepHashes
 
+    # What says a drive spins: Windows' own word, or a rate only when Windows has none.
+    $spins = [pscustomobject]@{ contract = 'drive_reports_it_spins'; path = 'media_type'; spins_by_rotation_path = 'rotation_rate_rpm' }
+    $spinCases = @(
+        @{ name = 'Windows says HDD, and no rate is needed'; media = 'HDD'; rate = 0; want = '' },
+        @{ name = 'Windows says Unspecified, and the drive reports a rate'; media = 'Unspecified'; rate = 5425; want = '' },
+        @{ name = 'Windows says Unspecified, and the drive reports no rate'; media = 'Unspecified'; rate = 0; want = 'no rotation rate' },
+        @{ name = 'Windows says SSD, and a rate does not overrule it'; media = 'SSD'; rate = 5425; want = "Windows reports 'SSD'" },
+        @{ name = 'Windows gives no answer at all, and a rate does not stand in for one'; media = ''; rate = 5425; want = "Windows reports ''" }
+    )
+    foreach ($case in $spinCases) {
+        $why = Test-PmCheck -Check $spins -Independent ([pscustomobject]@{ media_type = $case.media; rotation_rate_rpm = $case.rate })
+        $held = if ($case.want) { "$why".Contains($case.want) } else { "$why" -ceq '' }
+        if ($held) { $Script:Passes++ } else { $Script:Failures.Add("Spins: $($case.name): '$why'") }
+    }
+    $noRate = Test-PmCheck -Check $spins -Independent ([pscustomobject]@{ media_type = 'Unspecified' })
+    if ("$noRate".Contains('no rotation rate')) { $Script:Passes++ } else { $Script:Failures.Add("Spins: a readback with no rate at all: '$noRate'") }
+
     # What it ran on.
     Assert-Refused 'nothing about the media' 'what it ran on' { param($d) Set-Report $d { param($r) $r.media = $null } }
     Assert-Refused 'a class the matrix does not accept' 'matrix accepts' { param($d) Set-Report $d { param($r) $r.media.class = 'virtual_machine' } }

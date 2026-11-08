@@ -25,7 +25,7 @@ function Assert-Condition {
     if (-not $Condition) { throw $Message }
 }
 
-$knownTests = @('equals', 'equals_path', 'differs_from_path', 'at_least', 'is_true', 'is_false', 'contains')
+$knownTests = @('equals', 'equals_path', 'differs_from_path', 'spins_by_rotation_path', 'at_least', 'is_true', 'is_false', 'contains')
 $knownClasses = @('virtual_disk', 'virtual_machine', 'physical')
 $knownExpectations = @('success', 'refused', 'failed')
 

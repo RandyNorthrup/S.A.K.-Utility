@@ -405,15 +405,18 @@ EXTERNAL_ROWS = [
         [PHYSICAL],
         [step("defrag", "DefragVolume")],
         [
-            check("windows_reports_a_hard_disk", "media_type", equals="HDD"),
+            # Windows says HDD, or says Unspecified and the drive itself reports a nonzero rate.
+            check("drive_reports_it_spins", "media_type", spins_by_rotation_path="rotation_rate_rpm"),
             check("windows_logged_a_defrag", "defrag_logged", is_true=True),
             *files_unchanged("files_survived", "files_before", "files_after"),
             *healthy("defragged", "health"),
         ],
-        "Fragmentation dropping on any given volume: Windows decides how much it moves. Windows "
-        "reports a VirtualBox disk's media type as Unspecified, so this row runs only on a real hard drive.",
+        "Fragmentation dropping on any given volume: Windows decides how much it moves. That the "
+        "drive spins rests on Windows reporting HDD, or on Windows reporting Unspecified and the "
+        "drive itself reporting a nonzero rotation rate through smartctl. A VirtualBox disk is not "
+        "accepted at all, so this row runs only on a physical device.",
         physical_claim=True,
-        physical_requirement={"media_type": ["HDD"]},
+        physical_requirement={"media_type": ["HDD", "Unspecified"]},
     ),
     row(
         "external.ssd-secure-erase",

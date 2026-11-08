@@ -531,6 +531,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
     disk.media_type = object.value(QStringLiteral("MediaType")).toString();
+    disk.rotation_rate_rpm = std::max(0, object.value(QStringLiteral("RotationRateRpm")).toInt(0));
     QString partitionStyleText = object.value(QStringLiteral("PartitionStyle")).toString();
     if (partitionStyleText.isEmpty()) {
         partitionStyleText = object.value(QStringLiteral("PartitionScheme")).toString();
@@ -610,6 +611,7 @@ void appendPartitionEnumerationWarnings(PartitionInventory* inventory) {
 void markAdministratorStatePending(PartitionInventory* inventory) {
     for (auto& disk : inventory->disks) {
         disk.reliability_query_succeeded = true;
+        disk.rotation_rate_pending = diskMediaIsUnspecified(disk);
         for (auto& partition : disk.partitions) {
             if (!partition.volume || !partition.volume->hasDriveLetter()) {
                 continue;
@@ -1009,6 +1011,12 @@ $disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
       $reliabilityError = "$($_.Exception.Message)"
     }
   }
+  # A USB bridge can hide a drive's type from Windows, which then says Unspecified. That is the
+  # only case that asks the drive, and asking it takes administrator rights.
+  $rotationRateRpm = 0
+  if ($sakReadAdministratorState -and $physical -and "$($physical.MediaType)" -ceq 'Unspecified') {
+    $rotationRateRpm = Get-SakRotationRateRpm -DiskNumber $disk.Number
+  }
   $partitionQuery = if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions') {
     [pscustomobject]@{ Failed = $false; Error = ''; Items = @($disk.DynamicPartitions) }
   } else {
@@ -1024,6 +1032,7 @@ $disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
     BusType = "$($disk.BusType)"
     # Get-Disk has no media type. Only the physical disk says HDD, SSD or Unspecified.
     MediaType = if ($physical) { "$($physical.MediaType)" } else { '' }
+    RotationRateRpm = $rotationRateRpm
     PartitionScheme = "$($disk.PartitionStyle)"
     SmartSummary = if ($reliability) { 'Storage reliability counters available' } else { '' }
     ReliabilityQuerySucceeded = [bool]$reliability
@@ -1185,8 +1194,9 @@ QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrato
                .arg(read_administrator_state ? QStringLiteral("$true") : QStringLiteral("$false")) +
            inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
            inventoryPowerShellPartitionQueryScript() + dynamicDiskFunctionsScript() +
-           inventoryPowerShellDiskPrefixScript() + inventoryPowerShellPartitionProbeScript() +
-           inventoryPowerShellPartitionResultScript() + inventoryPowerShellFooterScript();
+           bundledDriveRotationRateFunctionScript() + inventoryPowerShellDiskPrefixScript() +
+           inventoryPowerShellPartitionProbeScript() + inventoryPowerShellPartitionResultScript() +
+           inventoryPowerShellFooterScript();
 }
 
 }  // namespace sak
