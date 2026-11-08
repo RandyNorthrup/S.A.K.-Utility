@@ -2479,6 +2479,61 @@ minute, and the build compiled and fingerprinted that mix. AGENTS.md now lists t
 offscreen at 20 px; the pictures are the real tab. A list opening beside its field is measured on the offscreen
 platform's screen; review 5's ai_workflow_list and ai_access_options show it on the real one.
 
+**Review 5: pictures of what round 9 changed, and of the screens no picture had covered.** 75 shots in both themes,
+150 rows: 148 pictures (74 light, 74 dark), each passed through the harness's privacy gate and looked at by eye, in
+E:\SAK-Utility-Test-Scratch\capture\review5 with an index.json in review 4's form that names the item or items each
+picture proves and the run, machine and package it came from. Every package was built from lane2's build tree at a
+pushed head and installed by the harness: r9b (1c532c64, SHA-256 E7529BA7...A7CD) for 88 pictures, the first
+session's runs and this session's first testpc2 runs; r9c (5e10f6d7, 177F31BF...D609) for 50, the retakes after the
+Y24, Y19, palette and Dual Pane fixes; r9d (d0862b35, 112DCD96...482C) for 8, Quick Partition and the light
+benchmark, USB wait and NSIS leftovers retakes; r9e (555e2d38, CB936969...C42B) for the 2 MSI leftovers pictures.
+Machines: testpc2 for 82, the capture VM for 42 (the restore wizard, the pages that list accounts, Rig A), testpc1
+for 24 (the first session's, before it stopped). 67 rows ran variants, named in each row: testpc2's spare
+Samsung NVMe as W: WORK for the benchmark, its disposable Samsung Flash Drive (serial AA00000000000489, pinned
+before every write, large-drive threshold 512 GB) for the flasher and Quick Partition, a 1.2 MB test image labelled
+WIN11_SAK_TEST for the USB wait (testpc2 has no Windows ISO), a 2 GB random image so the flasher is pictured
+mid-write, the tenths shot taken 2 s into a real UUP download, and on the VM a copy of the sample backup with one
+folder taken out so the restore ends with problems without touching the network. What round 9's items show: the
+restore's two option boxes one width, "Network adapters (1)" and "Wi-Fi & Network Adapters" (Y24, Y19); the backup's
+last page with Finish only (Y27); "Restore Finished with Problems" with one verdict (RG3/N10); the command palette's
+"Compare Panes - Enable dual pane first." greyed and Dual Pane's tick; Offline Deploy with no bar held at 100%; the
+flasher at 6% of a 2 GB image; "0.0%" and "0.1%" on the UUP download bar (X19); the disk benchmark on W: and its log
+"Starting disk benchmark on W:\..." with one backslash; "Waiting for Windows to recognize the new partition... 0 s of
+180 s"; Quick Partition's Load, Save and Delete secondary beside Add to Queue (r9d); Notepad++'s leftovers listed
+for its NSIS build (r9d) and its MSI build (r9e, through the folder Windows Installer gave), both
+%APPDATA%\Notepad++ and HKLM\SOFTWARE\WOW6432Node\Notepad++, Safe. Not captured, in either theme:
+partition_manager_no_disks (the message needs a disk scan that fails and finds no disks; no test machine fails its
+storage scan without breaking its storage stack; test_partition_manager_panel aScanThatFoundNoDisksSaysWhy holds
+it). The gate masked addresses and MACs in net_adapters_table and backup_wizard_ethernet and the saved networks'
+names in backup_wizard_wifi. Found while capturing, not defects of the app: the harness runs a shot elevated only
+when its notes name administrator rights, so the USB wait and tenths shots first ran unelevated; a "Cancel" step
+matched a disabled control of that name (the button is "Cancel Flash"); NSIS draws its buttons as Win32 buttons
+that UI Automation lists as panes, so the uninstaller's prompts were answered by class name and BM_CLICK; winget
+now installs Notepad++ from its MSI, which is how the MSI gap above was found; the VM did not sign in by itself
+after a restart.
+
+**Seen in the pictures, not changed.** For the next review to judge: Advanced Uninstall's list page has three
+primary buttons (Refresh, Batch, Settings; Y12 named other pages); the finished restore still offers "< Back" and
+"Cancel" beside Finish; Partition Manager's main table and disk map label a partition with no letter "*:" (RG5
+named them in the review dialogs only); the flasher's page during the partition wait shows one line and no Cancel;
+a benchmark run as a standard user logs "ERROR: Failed to read SMART data for PhysicalDrive2" for the USB stick;
+the leftovers pictures are taken while the program list refreshes, so the removed program's row shows under
+"Loading installed programs..."; File Explorer's Name column cuts the settings screenshots' names while Type says
+"File" for a PNG; and Screenshot Settings still names its Wi-Fi file "WiFi_Settings" and says so in its "Not on
+this PC" line.
+
+**Left behind.** On testpc2: W: and its build tree; the harness's standing setup (C:\SAKCapture's scripts and its
+SAKCapture tasks, C:\SAK with the r9e package, C:\SakWork's setup scripts); C:\SAK-Samples, empty; the Balanced
+power plan; the console at Intel primary 1600x900 again (it had drifted during the round to the virtual display as
+primary at 1920x1080 with the Intel output at 1024x768 beside it, and display.ps1 set put back the README's layout);
+and the disposable Samsung Flash Drive as Disk 2, cleared (Clear-Disk leaves it MBR with no partitions), its media
+loaded. Removed: Notepad++ (both builds), its settings, registry keys and the uninstallers' temp files, the
+samples and outputs, C:\SampleBackup, the round's job folders (C:\SAKCapture\r9, C:\SakWork\r9f) and job task, and
+the claim lines. The capture VM is back at its pre-round8 snapshot, powered off, its clone disks detached and
+deleted; ~/sak-capture-r9 stays on the Mac for its owner to remove. On testpc1 this session removed what the round
+had put there, C:\SakIso with it, though the brief kept that for the final capture and the VM smoke; testpc1 was
+then left as it was, and the final capture copies the ISO there again.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
