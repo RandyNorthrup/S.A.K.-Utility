@@ -2334,7 +2334,7 @@ Migrate OS name a disk "Disk 1 (\\.\PhysicalDrive1)" in both the bar and the sum
   with no group boxes.
 - Y23: until Scan SMART has run, the Thermal drive row says "N/A - not read yet; Scan SMART reads it", not "not
   reported by this PC".
-- Y24: the restore's two option boxes share one width.
+- Y24: the restore's two option boxes share one width (made good after review 5's first pictures; below).
 - Y25: the workflow pane's document no longer repeats the pane's title as its H1.
 - Y26: a score bar is blank until there is a score and no longer names the baseline; the Score line names it
   ("baseline Samsung 980 PRO = 1000"); CPU lists its two results one a line.
@@ -2384,6 +2384,61 @@ whiter than a pale fill, and it would have been filled in. buttonGlyphsKeepTheir
 guards went red: the old floor, no oversampling, and enabled icons left in their own colours (Y4's guard, moved to
 the new code). The selected tab keeps its own floor, 185, under which the artwork's light fills are its holes. Then
 the labels three times at -j 6 (336 each, the first beside the static gates), green.
+
+**Found by review 5's light pictures, before the dark ones.** T2 run 42447591779 on 1c532c64 passed. Looking at the
+light restore pictures from that commit's package found two of this round's own items not done. Y24:
+restore_wizard_permissions still showed the two option boxes 145 px and 115 px wide. The fix had set both to the
+wider one's size hint when the page was built, before the theme's style sheet had polished them, so the hints lacked
+its padding and each box took its own larger hint on screen; the test compared those same unpolished hints and
+passed. The page now gives both boxes one width when it is entered, read after polishing them, and the test shows
+the page in the theme and compares the boxes' real widths. Y19: the restore's plan on that page said "Ethernet
+adapters (4)" for four adapters of which two were Wi-Fi and Bluetooth, and the restore welcome page ("Networks &
+Ethernet"), the network page's integrity message, the backup's log ("Saved 4 Ethernet configurations") and the
+restore worker's messages said Ethernet for the same settings. They say "network adapters" and "network adapter
+settings" now, and test_user_text_spelling refuses "Ethernet" in any string literal of the user-profile backup and
+restore sources. Four guards went red: the widths set without polishing, the widths not set on entry, the plan's old
+line, and one worker message put back; all four again on the final code, after the session that wrote them stopped
+(VS Code crashed late on 2026-11-07 and took the round's agent with it; a second session finished the round).
+
+**Found by review 5's pictures, and by the label runs.**
+- File Explorer's command palette listed a command that cannot run yet ("Compare Panes - Enable dual pane first.")
+  in full-contrast text, #0f172a and #f8fafc, as dark as the commands that run. Round 6 had made it a disabled row,
+  and its test checked the row's flags, not how it is drawn: the theme's text colour overrode Qt's disabled palette,
+  as it had for menu entries (Y1). QAbstractItemView::item:disabled now takes the disabled label's colour in both
+  themes, beside Y1's rule, so every list, table and tree draws a row it cannot use greyed (Partition Manager's
+  boot-disk entry in a target list and the restore's unmatched applications were already meant to read that way).
+  disabledListRowsLookDisabled reads a themed list's two rows as Y1's test reads a menu's.
+- The view menu's Dual Pane read the same on and off: under the theme a checked entry with an icon draws the icon
+  where the tick goes. Round 6's "Dual Pane shows a check" held for the action's state, which its test read, and not
+  on screen. The entry has no icon now and shows a tick, as Hidden Items and File Extensions do; the layouts keep
+  their icons (one exclusive choice, which the view button shows with its own icon). dualPaneMenuItemShowsItsState
+  also checks that no on/off toggle in the menu carries an icon.
+- test_worker_base failed once in the label run beside the static gates: its direct-destruction probe, a child that
+  must wait out the 15 s stop deadline and then stop through qFatal, was allowed 5 s for starting a Qt process and
+  Windows' fail-fast handling, and took more. The bound only has to catch a destructor that never stops, so it allows
+  45 s now. A guard that makes the destructor wait forever still goes red.
+- The last label run before this one (suite9e) timed out test_partition_manager_panel at 155.65 s (120 s limit; 7 to
+  12 s in every other run). Its log stops after scanFileSystemsIsDiskLevelOnly passed, so it stalled in
+  spaceAnalyzerExposesCommercialViews, which only writes, scans and removes two files in a temporary folder, or in its
+  cleanup. The process took 35 s to die after ctest's kill, as one held in the kernel does, not one looping in the
+  test. At that minute Windows Update failed a Store install and deleted the oldest C: shadow copy, and the machine
+  logged GPU and network-driver live kernel dumps shortly after (VS Code crashed then). It did not happen again: 25
+  runs idle and 25 beside 16 busy threads, with QtTest's own watchdog set to name a stalled function, all passed in 7
+  to 13 s, as did every label run since. No code change; recorded as not reproduced.
+- Judgement, not changed (Y20's rest): Compare Panes' message box still wraps "staff-list.csv" at its hyphen. Y28's
+  word joiners keep a path whole in the Details pane because every way out of the pane strips them; a message box's
+  text is also logged and copied with Ctrl+C, so marks put there would leave with it. A hyphen is an ordinary break
+  point in a message.
+- The whole-tree lizard gate run from lane2 reported 17 parse desyncs in files nobody had changed: lane2 has no .venv,
+  so run_lizard.py ran the first lizard on PATH, the user site's 1.21.2 (AGENTS.local.md: broken). With the main
+  tree's 1.24.3 first on PATH it passes. Not a code issue; the desync check made the wrong tool fail loudly.
+
+Then the labels at -j 6, 336 tests a run: before the last three fixes, one run beside the static gates
+(test_worker_base red, above) and one green; with them, two runs, the first beside the static gates, green; and,
+after cppcheck asked for the two option boxes to be named rather than looped over, one run, green. The run
+before that one failed test_partition_manager_live_certifier ("Raw source sidecar hash mismatch") only because
+commits were made while its build ran: pre-commit put the committed versions of the unstaged files back for a
+minute, and the build compiled and fingerprinted that mix. AGENTS.md now lists the trap.
 
 **What no test here covers.** Whether each reworded line reads well is review, not test. The icon readings are
 offscreen at 20 px; the pictures are the real tab. A list opening beside its field is measured on the offscreen

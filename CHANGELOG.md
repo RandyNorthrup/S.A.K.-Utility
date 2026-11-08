@@ -14,7 +14,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   progress bars and the log give sizes the same way.
 - **Greyed menu entries look greyed** - A menu entry that cannot be used now shows its label in the disabled colour
   in every menu and context menu (Partition Manager's "Convert Dynamic Disk to Basic" on a basic disk looked as
-  usable as its neighbours).
+  usable as its neighbours), and so does a row of a list, table or tree that cannot be used (File Explorer's
+  command palette listed "Compare Panes - Enable dual pane first." as dark as the commands that run).
 - **Drop-down lists show their entries whole** - The AI page's pickers open as wide as their longest entry and
   stay inside the window, and a name too long for the field ends in "...".
 - **Every tab icon reads on its tab** - In the light theme, AI Assistant, Help and Support, About, Partition
@@ -26,7 +27,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   green, readable in both themes.
 - **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the
   adapter list and the restore wizard said "WiFi"). The backup and restore pages that keep every adapter's settings
-  say "network adapters", not "ethernet adapters", and the backup's button is "Scan Adapters".
+  say "network adapters", not "ethernet adapters", and the backup's button is "Scan Adapters". The restore's plan
+  no longer counts Wi-Fi and Bluetooth adapters as "Ethernet adapters", and its welcome page, the backup's log and
+  the restore's messages say "network adapter settings" for the same settings.
 - **Columns size to what they hold** - Names are no longer cut beside half-empty columns in the backup and restore
   wizards, Advanced Uninstall's Publisher, the SMART table and the Vulnerability Scanner; check-box columns are
   narrow. The Vulnerability Scanner shows the published day ("2009-04-24") and its recommendations whole.
@@ -39,7 +42,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **File Explorer** - The details pane's text, headings and preview start at one inset. A path wraps after a
   backslash rather than inside "SAK-Samples", and copying it still gives the path as it is. Only the active pane's
   footer says "Active pane". Advanced Search's preview is set in a fixed-width font so its line numbers line up.
-  Compare Panes lists only what differs.
+  Compare Panes lists only what differs. The view menu's Dual Pane shows a tick while two panes are open (its
+  icon used to stand where the tick goes, so it read the same on and off).
 - **Partition Manager** - The Copy Disk and Migrate OS bars name partitions without a letter ("EFI", "MSR",
   "Recovery", "Partition 5") instead of "*:", and the review names disks `Disk 1 (\\.\PhysicalDrive1)`.
   Resize/Move says what a move does once. Space Analyzer hides a Type column that says the same on every row.
