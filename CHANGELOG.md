@@ -8,6 +8,54 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **One way to show a size** - Every size the app shows uses one style: "512 B", "1.5 KB", "4.88 GB", "7.28 TB".
+  The AI page said "(3 KB)" for 3.5 KB, the backup wizard "4.9 GB" and "0.0 GB" for profiles the restore showed as
+  "4.88 GB" and "252.1 KB", and Advanced Search's file details "242 bytes" beside its list's "242 B". Messages,
+  progress bars and the log give sizes the same way.
+- **Greyed menu entries look greyed** - A menu entry that cannot be used now shows its label in the disabled colour
+  in every menu and context menu (Partition Manager's "Convert Dynamic Disk to Basic" on a basic disk looked as
+  usable as its neighbours).
+- **Drop-down lists show their entries whole** - The AI page's pickers open as wide as their longest entry and
+  stay inside the window, and a name too long for the field ends in "...".
+- **Every tab icon reads on its tab** - In the light theme, AI Assistant, Help and Support, About, Partition
+  Manager, Email Tools and Network Management are drawn in darker tones, Help's question mark and About's "i" are
+  bolder, and Network Management's outline is a whole pixel wide. In the dark theme, Partition Manager and Network
+  Management are lighter, Backup and Restore's arrowhead is a lighter blue and Benchmark and Diagnostics'
+  stethoscope tube is drawn in light grey. Panel headers follow the theme too.
+- **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
+  green, readable in both themes.
+- **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the
+  adapter list and the restore wizard said "WiFi"). The backup and restore pages that keep every adapter's settings
+  say "network adapters", not "ethernet adapters", and the backup's button is "Scan Adapters".
+- **Columns size to what they hold** - Names are no longer cut beside half-empty columns in the backup and restore
+  wizards, Advanced Uninstall's Publisher, the SMART table and the Vulnerability Scanner; check-box columns are
+  narrow. The Vulnerability Scanner shows the published day ("2009-04-24") and its recommendations whole.
+- **Store apps name their publisher** - Advanced Uninstall names a Store app's publisher as the Store does instead
+  of its certificate ID ("CN=5699BA41-...").
+- **One primary button per page** - File Organizer, Duplicate Finder, Application Management and the email file
+  scan have one strong button, the one that does the page's work. Image Flasher's Settings and Back are secondary,
+  its steps have a row of their own above the Log switch, its pages are only as tall as they need, and the erase
+  confirmation's Yes is red.
+- **File Explorer** - The details pane's text, headings and preview start at one inset. A path wraps after a
+  backslash rather than inside "SAK-Samples", and copying it still gives the path as it is. Only the active pane's
+  footer says "Active pane". Advanced Search's preview is set in a fixed-width font so its line numbers line up.
+  Compare Panes lists only what differs.
+- **Partition Manager** - The Copy Disk and Migrate OS bars name partitions without a letter ("EFI", "MSR",
+  "Recovery", "Partition 5") instead of "*:", and the review names disks `Disk 1 (\\.\PhysicalDrive1)`.
+  Resize/Move says what a move does once. Space Analyzer hides a Type column that says the same on every row.
+  Copy Partition's review says a raw device or image target is "as large as the source", not "custom/unknown".
+- **One inset on every page** - Benchmark and Diagnostics, the network adapters and tools, Wi-Fi Manager, File
+  Organizer, the Vulnerability Scanner and App Installation's two tabs now start their group boxes and tables 12 px
+  inside the page, as the other pages do.
+- **Smaller fixes** - Check Disk says one sentence per drive. Power settings name Windows' "High performance"
+  plan as Windows does. The AI status bar says "Last turn" and "Session". The workflow pane names a workflow once.
+  The ISO builds list always shows four whole rows. The flasher settings have one field column and give each unit
+  once. The restore's last step has its two options one width. Benchmark scores name their baseline one way, CPU
+  lists its results one a line, and a score bar is blank until there is a score. Diagnostics says a drive's
+  temperature is "not read yet" until Scan SMART has run. A finished backup leaves only Finish. Email search says
+  "results" as its list does, and the backup's Wi-Fi scan says "Found 1 saved Wi-Fi profile" without a stray full
+  stop. The File Explorer sub-tab no longer posts to the status bar while another sub-tab shows.
+
 - **Counts read as words** - "1 drive(s)", "9 package(s)", "3 item(s)" and about 260 more messages now say
   "1 drive", "9 packages", "3 items", across every panel, the AI assistant's results and the log. Labels with no
   count say what they mean ("Target drives", "Export formats").

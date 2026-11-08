@@ -2217,6 +2217,167 @@ sample files and folders on C:, D: and E: (D:\SAK-Samples held the BitLocker key
 the sample backups and the Settings screenshots with the real SSID), C:\Program Files\SAK-Test, the round's job
 folder and job task. The capture VM was not used and its snapshot was not touched.
 
+### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
+
+From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
+the coordinator's item list, on dev at a4049894. Every item was confirmed on that commit first. Every fix has a
+test, and every test was drilled red with its fix broken in the source, one guard at a time, by a script that
+restores every byte and touches the file. 78 guards, each red in the end. Eight did not go red on their first run.
+Y2's pending suite steps survived because the change was not one (see Mediums); it and its test were taken out. Y9
+survived because offscreen, without the theme, a row is short enough that the old list's minimum height held three;
+the test now applies the theme first, and the old code then shows two whole rows in 74 px. Y13 survived because the
+target list fitted the offscreen window even with the page stack as tall as its tallest page; the test now also
+checks that the stack asks for the height of the page it shows. Three Y3 guards changed one colour of a redrawn icon
+and the rest of the drawing carried it (light AI Assistant, dark Backup and Restore, dark Partition Manager); each
+now restores the whole old drawing and goes red. The dark stethoscope tube's guard survived even with the whole old
+drawing restored (56% of the icon's pixels at 3:1), which is why the quarter rule below was added; with it, red. One
+guard (light Partition Manager) first failed to build because the test executable was still locked by the run before
+it; rerun, red. The guards of the functions split for lizard (Y13's page fitting, Y17's two checks, Y18, Y21 and
+Y23) ran on the split code.
+
+**Mediums.**
+- RG4, the AI workflow picker's list. Qt's Windows styles open a combo box's list at the box's own width, and
+  round 7 had taken out the 420 px minimum, so the list cut its names behind its scroll bar and its 18 rows ran
+  39 px past the window. The AI page's five pickers are now WindowFittedComboBox: the list opens at its widest
+  entry's width (the view's own measure of its items, its frame and, when the rows scroll, its scroll bar), capped
+  at the window, and keeps inside the window, beside the field where it fits and otherwise on the roomier side, cut
+  to fit. The field ends a name too long for it in an ellipsis (DF11's rest: with the side panel's scroll bar
+  beside it the picker cut "Technician Service Report (5 phas" through a glyph); the whole name is in the list and
+  the tooltip.
+- Y1, disabled menu entries. The theme's QWidget colour applied to every menu entry, so a disabled one kept the
+  enabled label and only its icon faded; Convert Dynamic Disk to Basic on a basic disk read as usable. QMenu::item:
+  disabled now takes the disabled label's colour, #606f85 on the light menu and #94a3b8 on the dark one, as a
+  disabled button's label does. It is in the application's style sheet, so every menu and context menu has it.
+- Y2, "Downloading Windows UUP files..." in emerald #059669, 3.60:1 and 3.89:1. Both ISO dialogs' download phase
+  takes the success text token (#117f3a light, #16a54b dark); the emerald token had no other user and is gone.
+  The purple and running-blue phase colours reach AA in both themes and are now held by the test with it. The
+  sweep of raw colour tokens used as text found the benchmark suite's pending steps in the disabled-text token,
+  which looked like #94a3b8 (2.56:1) on the light page. Not a defect: a style sheet takes that token as
+  palette(midlight), the muted colour, as it takes the muted token, so the steps already read at the muted
+  colour. A change to the muted token and its test survived the drill for that reason and were taken out.
+
+**Byte formatting (Y10, X7).** Six formatters became one: sak::formatBytes in format_utils.h ("512 B", "1.5 KB",
+"4.88 GB", "7.28 TB": KB and MB to one decimal, GB and TB to two), with a qint64 overload that shows a negative
+size as such. formatBytesCompact, the backup wizard's own GB formatter ("4.9 GB", "0.0 GB"), the AI page's integer
+"(3 KB)", Advanced Search's "242 bytes", Partition Manager's own precision constant and a dozen local
+QString::number(.../1024...) sites in the workers, the ISO tools, the flasher and the reports now call it.
+test_one_byte_format reads every string literal under src/ and include/, comments left out, and refuses one that
+puts a byte unit after a placeholder ("%1 MB") or after a number built in code (" MB"), which is how a size is
+formatted by hand, so a seventh cannot appear; rates ("MB/s"), spin box suffixes and nine messages that name a
+setting in the unit it is set in ("File limit: %1 MB") are listed in it with the reason. Tests that pinned the
+old wording ("0 bytes", "500 bytes/s", "Total size: 42 bytes", "60 bytes / 100 bytes") pin the one style now.
+
+**Wording (Y11, Y19, Y20).** "WiFi" was in 88 string literals; it reads "Wi-Fi" in all of them, and the adapter
+type the data keeps ("WiFi" in JSON exports, the AI tools' arguments and comparisons) is shown through
+sak::adapterTypeLabel. The backup and restore pages that keep every adapter's IP settings say "Network Adapter
+Settings" and "network adapters", the backup's button is "Scan Adapters", and the restore says "network settings
+for 'Wi-Fi'". test_user_text_spelling refuses "WiFi" and a lowercase "ethernet" in any string literal (a Settings
+address such as ms-settings:network-ethernet is not wording). Y20's rest: "Found 1 saved Wi-Fi profile" has no
+full stop; Email Inspector says "3 results" as its list does; Compare Panes lists only the sections with entries
+and says when both panes match; Space Analyzer hides a Type column with one value in every row; Copy Partition's
+review says a raw device or image target is "as large as the source" (was "custom/unknown"); and Copy Disk and
+Migrate OS name a disk "Disk 1 (\\.\PhysicalDrive1)" in both the bar and the summary.
+
+**Lows.**
+- RG5: a partition with no letter showed "*:" in its floor-width segment. The review bars name it as Windows
+  does: "EFI", "MSR", "Recovery", else "Partition N".
+- Y3: every tab icon now has most of its pixels at 3:1 on its tab in both themes, read pixel by pixel as the
+  reviewer reads them; round 8's test held only four on the light tab. Light: AI Assistant (0% at 3:1 offscreen; the
+  reviewer never saw it unselected), Help and Support, About, Partition Manager, Email Tools and Network Management
+  are drawn in darker tones, with the old drawings kept as the "-dark" files the dark theme picks. Help's question
+  mark and About's "i" are drawn bolder so the selected tab's white drawing still has a glyph-shaped hole (with the
+  darker discs, the anti-aliased glyph fell under the near-white floor and the selected icons became blank discs,
+  which the test caught). Network Management's outline was a quarter pixel wide at 20 px, all anti-aliased edge; it
+  is a whole pixel. Dark: Partition Manager and Network Management lighter, Backup and Restore's arrowhead a lighter
+  blue (its share was 50%), and Benchmark and Diagnostics' stethoscope tube drawn in light grey at the light
+  drawing's width (it was #36404d, about 1.3:1 on the dark tab). The tube is a small part: with the old drawing the
+  whole icon still had 56% of its pixels at 3:1, and its drill survived. The test now also reads each quarter of an
+  icon that holds a tenth of its ink and wants a third or more of that quarter's pixels at 3:1, so no part of a
+  drawing can be mostly lost behind the rest: the old tube's quarter read 0.15, and every drawing now reads 0.41 or
+  more (light Benchmark and Diagnostics 0.41 and Partition Manager 0.42 are the least). A third, not a half, is a
+  judgement: a quarter's share is not the whole icon's, and half would ask round 8's approved light drawings to be
+  redrawn again. Offscreen readings (whole icon, weakest quarter), light then dark: light AI Assistant 0.79 and
+  0.70, Backup and Restore 0.65 and 0.58, File Management 0.96 and 0.93, Partition Manager 0.61 and 0.42, Image
+  Flasher 0.81 and 0.75, Benchmark and Diagnostics 0.62 and 0.41, Email Tools 0.57 and 0.55, Application Management
+  0.58 and 0.50, Network Management 0.86 and 0.83, Help and Support 0.75 and 0.68, About 0.88 and 0.87; dark AI
+  Assistant 0.81 and 0.70, Backup and Restore 0.51 and 0.47, File Management 1.00 and 1.00, Partition Manager 0.88
+  and 0.81, Image Flasher 0.82 and 0.75, Benchmark and Diagnostics 0.71 and 0.51, Email Tools 0.61 and 0.60,
+  Application Management 0.88 and 0.83, Network Management 0.89 and 0.88, Help and Support 0.87 and 0.87, About 0.80
+  and 0.78. Dark Backup and Restore is the closest to the bar; its remaining misses are the anti-aliased edges of
+  its ring. Panel headers follow the theme as the tabs do.
+- Y4: an enabled button icon is a one-colour glyph in its button's label colour (white on the toned buttons),
+  through the same toneGlyphPixmap the selected tab uses, so Attach, Instructions and Clear look alike.
+- Y5: the File Explorer details pane's text, headings and preview start at one inset, 12 px; a styled label
+  indents its text by half an "x" unless told not to, which put the headings 6 px right of their lines.
+- Y6: only the active pane's footer says "Active pane"; the other is reset to its own summary.
+- Y7: Advanced Search's preview is set in Consolas, so its line numbers line up.
+- Y8 and Y16: tables size their columns to what they hold and give one column the rest (fitColumnsToContents):
+  the backup's Installed Applications, App Data and network adapters, the restore's folders, network adapters
+  and applications, Advanced Uninstall's Publisher, the SMART table and the Vulnerability Scanner, whose
+  Published column shows the day and whose recommendations wrap whole (a word-wrapping delegate sizes the row).
+- Y9: the ISO builds list shows four whole rows in every state.
+- Y12: one primary button per surface: File Organizer's and Duplicate Finder's pages, Application Management,
+  the email file scan (Open Selected) and the flasher, whose Settings and Back are secondary. The raw flash's erase
+  confirmation has a red Yes and No as its default, as Batch Uninstall's destructive action is red.
+- Y13: Image Flasher's step buttons have their own row above the Log switch, and the page stack is as tall as the
+  page it shows, so the target list ends above the row.
+- Y14: Check Disk says one sentence per drive (the raw "NoErrorsFound" is gone); Optimize Power names Windows'
+  "High performance" plan as Windows does.
+- Y15: the AI status bar says "Last turn: ..." and "Session: ...".
+- Y17: Resize/Move says the Support text once, full width, with no label beside it.
+- Y18: the flasher settings have one field column, the widest label's, and give each unit once ("Buffer size:"
+  with "64 MB").
+- Y21: every page's first group box or table sits 12 px inside its pane. The four the review named (Benchmark and
+  Diagnostics, the network adapters, File Organizer, the Vulnerability Scanner) and, found by the same test, the
+  eleven network tool pages, Wi-Fi Manager and App Installation's Online Install and Offline Deploy tabs. The File
+  Explorer is left out: it is a file manager's shell (sidebar, panes, details pane) laid out to its own 8 px gaps,
+  with no group boxes.
+- Y23: until Scan SMART has run, the Thermal drive row says "N/A - not read yet; Scan SMART reads it", not "not
+  reported by this PC".
+- Y24: the restore's two option boxes share one width.
+- Y25: the workflow pane's document no longer repeats the pane's title as its H1.
+- Y26: a score bar is blank until there is a score and no longer names the baseline; the Score line names it
+  ("baseline Samsung 980 PRO = 1000"); CPU lists its two results one a line.
+- Y27: a finished backup leaves only Finish (no Cancel, no spent Start Backup); going back from the page gives
+  the earlier pages their Cancel again.
+- Y28: a path in the Details pane carries a zero-width break chance after each backslash and a word joiner after
+  each hyphen, so "C:\SAK-Samples\Docs" breaks after a backslash, not at "SAK-"; detailsText() and a copy strip
+  them, so what is copied is the path as given (round 8's "no character is inserted" no longer holds on screen,
+  and holds for everything that leaves the pane). The data recovery review's path takes the same marks.
+- N9: a Store app with no O= in its certificate's subject is named by its package manifest's
+  PublisherDisplayName, as the Store names it, not "CN=5699BA41-...".
+- S22: the hidden File Explorer sub-tab no longer posts "Explorer loaded 32 items" to the status bar while File
+  Organizer shows; a panel forwards status only while visible.
+- DF11's rest is under RG4.
+
+**Not defects, and judgement calls.** Y22 (a 100% bar beside finished messages): the bar holds at 100% for 1.5 s
+and then hides; the pictures were taken inside that hold, and the disk-menu shot follows a right-click that came
+within it. No change; review 5's pictures are taken after the hold. One byte style app-wide, "B", short as the
+lists already were, and a progress line's "60 B / 100 B" with it. The download phase is success green, as the item
+list said, rather than a new informational colour. "*:" is replaced by real names rather than left blank: a
+technician reading a migrate bar needs to know which sliver is the EFI partition. The Support text is full width
+without a label rather than top-aligned beside one: it is a sentence, not a value. Y28's marks are invisible
+characters in the text shown, not a custom text layout: Qt's line breaker follows Unicode's rules, which allow a
+break after a hyphen and none after a backslash, so the marks are the smallest change that breaks a path where a
+person would, and they never leave the pane. Y12: one primary per surface, the action that does the surface's
+work; Clear All and other destructive or secondary actions are secondary or danger-toned.
+
+**Before the push.** The suites these changes reach, then the T2 labels three times at -j 6, 336 tests each
+(test_startup_budget and test_single_instance_app skip themselves), the second and third with the whole-tree static
+gates running beside them: all green, and the 19 static gates clean. The first label run, on the build before the
+function splits for lizard, had eight suites red: six pinned the old byte wording and now pin the one style; the
+Details test compared the shown path without taking out its break marks; one test read CPU's two result lines on a
+hidden tab, where nothing is laid out. The rest were real and are fixed, each with a guard above: the details
+headings' 6 px indent, the 8 px insets of Wi-Fi Manager, the network tool pages and App Installation's inner tabs,
+the light AI Assistant tab icon at 0% (never seen unselected in a review picture), Network Management under half in
+both themes, and the selected Help and About tabs gone to blank discs once their discs were darkened. The commit
+hooks' cppcheck then asked for a pointer to const in the File Explorer test's Safety-pane helper; that test was
+rebuilt and rerun before the commit.
+
+**What no test here covers.** Whether each reworded line reads well is review, not test. The icon readings are
+offscreen at 20 px; the pictures are the real tab. A list opening beside its field is measured on the offscreen
+platform's screen; review 5's ai_workflow_list and ai_access_options show it on the real one.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
