@@ -164,7 +164,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_autoMapButton->setToolTip(
         tr("Pairs each backup user to a local account with the same "
            "username"));
-    m_autoMapButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_autoMapButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_autoMapButton);
     button_layout->addStretch(1);
     layout->addLayout(button_layout);
@@ -468,7 +468,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_selectAllButton);
     button_layout->addWidget(m_selectNoneButton);
@@ -708,7 +708,7 @@ void UserProfileRestoreAppDataPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1015,7 +1015,7 @@ void UserProfileRestoreNetworksPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1246,7 +1246,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1577,10 +1577,10 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
     const QString summary = QString(
                                 "<b>This restore will:</b><br>%1%2"
                                 "<br><b>Settings:</b><br>"
-                                "* Permission Mode: %3<br>"
-                                "* Conflict Resolution: %4<br>"
-                                "* Verify Integrity: %5<br>"
-                                "* Backup Existing: %6<br><br>"
+                                "\u2022 Permission Mode: %3<br>"
+                                "\u2022 Conflict Resolution: %4<br>"
+                                "\u2022 Verify Integrity: %5<br>"
+                                "\u2022 Backup Existing: %6<br><br>"
                                 "%7")
                                 .arg(mappingSummary(),
                                      selectionSummary(),
@@ -1603,16 +1603,16 @@ QString UserProfileRestorePermissionSettingsPage::mappingSummary() const {
         const QString source = mapping.source_username.toHtmlEscaped();
         switch (mapping.mode) {
         case MergeMode::ReplaceDestination:
-            lines += tr("* %1 to %2: <b>overwrite</b> files that are already there<br>")
+            lines += tr("\u2022 %1 to %2: <b>overwrite</b> files that are already there<br>")
                          .arg(source, mapping.destination_username.toHtmlEscaped());
             break;
         case MergeMode::MergeIntoDestination:
-            lines += tr("* %1 to %2: files already there follow the conflict rule below<br>")
+            lines += tr("\u2022 %1 to %2: files already there follow the conflict rule below<br>")
                          .arg(source, mapping.destination_username.toHtmlEscaped());
             break;
         case MergeMode::CreateNewUser:
-            lines +=
-                tr("* %1: make a new folder under Users, with no Windows account<br>").arg(source);
+            lines += tr("\u2022 %1: make a new folder under Users, with no Windows account<br>")
+                         .arg(source);
             break;
         }
     }
@@ -1629,16 +1629,17 @@ QString UserProfileRestorePermissionSettingsPage::selectionSummary() const {
     const auto selected_app_data = std::ranges::count_if(
         app_data, [](const AppDataSourceInfo& source) { return source.selected; });
     if (selected_app_data > 0) {
-        lines += tr("* Application data (%1): replaces what is there, keeping each old file with "
-                    ".sakbak on the end of its name<br>")
-                     .arg(selected_app_data);
+        lines +=
+            tr("\u2022 Application data (%1): replaces what is there, keeping each old file with "
+               ".sakbak on the end of its name<br>")
+                .arg(selected_app_data);
     }
     const auto wifi = wiz->wifiProfiles();
     const auto selected_wifi = std::ranges::count_if(wifi, [](const WifiProfileInfo& profile) {
         return profile.selected;
     });
     if (selected_wifi > 0) {
-        lines += tr("* Wi-Fi networks (%1): added to this PC<br>").arg(selected_wifi);
+        lines += tr("\u2022 Wi-Fi networks (%1): added to this PC<br>").arg(selected_wifi);
     }
     const auto ethernet = wiz->ethernetConfigs();
     const auto selected_ethernet = std::ranges::count_if(
@@ -1646,7 +1647,7 @@ QString UserProfileRestorePermissionSettingsPage::selectionSummary() const {
     if (selected_ethernet > 0) {
         // Every adapter's settings, Wi-Fi and Bluetooth ones too, as the adapter page says
         // (review 4, Y19; review 5 found this line).
-        lines += tr("* Network adapters (%1): settings changed, which can drop this PC's "
+        lines += tr("\u2022 Network adapters (%1): settings changed, which can drop this PC's "
                     "connection<br>")
                      .arg(selected_ethernet);
     }
@@ -1803,7 +1804,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,

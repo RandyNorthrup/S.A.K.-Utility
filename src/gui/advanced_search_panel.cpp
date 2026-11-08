@@ -28,6 +28,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontMetricsF>
 #include <QFormLayout>
 #include <QFrame>
 #include <QFutureWatcher>
@@ -43,6 +44,10 @@
 #include <QSpinBox>
 #include <QtConcurrent>
 #include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextEdit>
 #include <QTextStream>
 #include <QTreeWidget>
 #include <QUrl>
@@ -133,6 +138,33 @@ QString buildTextPreview(QTextStream& stream,
     return preview_text;
 }
 
+/// The lines buildTextPreview writes before the file's first line: "File:", "Total matches:",
+/// the separator and a blank line.
+constexpr int kPreviewHeaderLines = 4;
+
+/// A wrapped preview line goes on under its text, not under its ">>>" and number: the gutter is
+/// each numbered line's hanging indent (review 5, Z21).
+void hangWrappedPreviewLines(QTextEdit* preview) {
+    QTextDocument* doc = preview->document();
+    const QTextBlock first = doc->findBlockByNumber(kPreviewHeaderLines);
+    if (!first.isValid()) {
+        return;
+    }
+    const QString separator = QStringLiteral("| ");
+    const qsizetype gutter = first.text().indexOf(separator);
+    if (gutter < 0) {
+        return;
+    }
+    const qreal indent = QFontMetricsF(preview->font())
+                             .horizontalAdvance(first.text().left(gutter + separator.size()));
+    QTextCursor cursor(first);
+    cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    QTextBlockFormat format;
+    format.setLeftMargin(indent);
+    format.setTextIndent(-indent);
+    cursor.mergeBlockFormat(format);
+}
+
 struct SearchBarRow1Ui {
     QComboBox* search_combo = nullptr;
     QPushButton* search_button = nullptr;
@@ -201,7 +233,7 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
     row->addWidget(ui.context_lines_combo);
 
     ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns \u25BE"), panel);
-    ui.regex_patterns_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    ui.regex_patterns_button->setStyleSheet(ui::kSecondaryButtonStyle);
     ui.regex_patterns_button->setToolTip(QObject::tr("Select built-in or custom regex patterns"));
     setAccessible(ui.regex_patterns_button,
                   QObject::tr("Regex Patterns"),
@@ -718,13 +750,13 @@ void AdvancedSearchPanel::createSearchTargetRow(QVBoxLayout* search_layout) {
     m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
     m_target_scan_button->setAccessibleName(tr("Scan Disks"));
     m_target_scan_button->setAccessibleDescription(tr("Scan disk and partition search targets"));
-    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_target_scan_button->setStyleSheet(ui::kSecondaryButtonStyle);
     target_row->addWidget(m_target_scan_button);
 
     m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
     m_target_manual_button->setAccessibleName(tr("Add Raw/Image"));
     m_target_manual_button->setAccessibleDescription(tr("Add raw or image search target"));
-    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_target_manual_button->setStyleSheet(ui::kSecondaryButtonStyle);
     target_row->addWidget(m_target_manual_button);
     search_layout->addLayout(target_row);
 }
@@ -982,7 +1014,7 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
     m_preferences_button = new QPushButton(tr("Settings"), this);
     m_preferences_button->setToolTip(tr("Search settings (max results, file sizes, etc.)"));
     m_preferences_button->setAccessibleName(tr("Search settings"));
-    m_preferences_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_preferences_button->setStyleSheet(ui::kSecondaryButtonStyle);
     status_row->addWidget(m_preferences_button);
     connect(m_preferences_button,
             &QPushButton::clicked,
@@ -1671,15 +1703,7 @@ void AdvancedSearchPanel::showFilePreview(const QString& file_path,
         }
         QString content = QString::fromUtf8(read.data);
         QTextStream stream(&content, QIODevice::ReadOnly);
-        m_preview_edit->setPlainText(buildTextPreview(stream, file_path, matches));
-        highlightMatches();
-        updateMatchCounter();
-        const bool has_matches = !matches.isEmpty();
-        m_prev_match_button->setEnabled(has_matches);
-        m_next_match_button->setEnabled(has_matches);
-        if (has_matches) {
-            navigateToMatch(0);
-        }
+        showTextPreview(stream, file_path, matches);
         return;
     }
 
@@ -1702,7 +1726,14 @@ void AdvancedSearchPanel::showFilePreview(const QString& file_path,
 
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
+    showTextPreview(stream, file_path, matches);
+}
+
+void AdvancedSearchPanel::showTextPreview(QTextStream& stream,
+                                          const QString& file_path,
+                                          const QVector<SearchMatch>& matches) {
     m_preview_edit->setPlainText(buildTextPreview(stream, file_path, matches));
+    hangWrappedPreviewLines(m_preview_edit);
 
     highlightMatches();
     updateMatchCounter();

@@ -21,6 +21,7 @@
 #include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
 #include "sak/image_flasher_settings_dialog.h"
+#include "sak/layout_constants.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/style_constants.h"
@@ -46,6 +47,9 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QTemporaryDir>
@@ -100,15 +104,23 @@ double contrastRatio(const QColor& a, const QColor& b) {
 class ModalAnswerer {
 public:
     QString seen;
+    /// Every box answered, in order.
+    QStringList titles;
 
-    ModalAnswerer() {
+    /// @p answer is clicked when the box has it; otherwise the box is accepted.
+    explicit ModalAnswerer(QMessageBox::StandardButton answer = QMessageBox::NoButton) {
         m_timer.setInterval(kModalPollIntervalMs);
-        QObject::connect(&m_timer, &QTimer::timeout, &m_timer, [this]() {
+        QObject::connect(&m_timer, &QTimer::timeout, &m_timer, [this, answer]() {
             if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
                 if (seen.isEmpty()) {
                     seen = box->text();
                 }
-                box->accept();
+                titles.append(box->windowTitle());
+                if (QAbstractButton* button = box->button(answer)) {
+                    button->click();
+                } else {
+                    box->accept();
+                }
             }
         });
         m_timer.start();
@@ -326,6 +338,53 @@ private Q_SLOTS:
                                 .arg(rows_shown)
                                 .arg(builds->viewport()->height())));
     }
+    // Review 5 (RG9): with four whole rows of builds the dialog was 933 px tall, taller than a
+    // 1600x900 or 1366x768 screen, and its buttons ran off the foot of the screen. It fits the
+    // screen it opens on (the offscreen platform's is 800x600), its groups scroll, and its
+    // buttons are whole inside it.
+    void theIsoDialogFitsItsScreenWithItsButtons() {
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+        WindowsISODownloader downloader;
+        WindowsISODownloadDialog dialog(&downloader);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        QCoreApplication::processEvents();
+        const QRect room = dialog.screen()->availableGeometry();
+        QVERIFY2(dialog.height() + sak::kDialogWindowFrameAllowance <= room.height(),
+                 qPrintable(QStringLiteral("%1 px tall on a screen with %2 px free")
+                                .arg(dialog.height())
+                                .arg(room.height())));
+        int buttons = 0;
+        for (const auto* button : dialog.findChildren<QPushButton*>()) {
+            const QString text = button->text();
+            if (text != QStringLiteral("Close") && text != QStringLiteral("Cancel") &&
+                !text.startsWith(QStringLiteral("Download"))) {
+                continue;
+            }
+            ++buttons;
+            const int bottom = button->mapTo(&dialog, QPoint(0, button->height())).y();
+            QVERIFY2(bottom <= dialog.height(),
+                     qPrintable(QStringLiteral("%1 ends at y=%2 in a dialog %3 px tall")
+                                    .arg(text)
+                                    .arg(bottom)
+                                    .arg(dialog.height())));
+        }
+        QCOMPARE(buttons, 3);
+        // It opens as tall as its groups need, or as tall as the screen lets it: left at its own
+        // size hint, the groups scrolled in a short window on a screen with room to spare.
+        auto* form = dialog.findChild<QScrollArea*>();
+        QVERIFY(form != nullptr);
+        const int screen_room = room.height() - sak::kDialogWindowFrameAllowance;
+        QVERIFY2(form->verticalScrollBar()->maximum() == 0 || dialog.height() == screen_room,
+                 qPrintable(QStringLiteral("%1 px tall and scrolling, with %2 px of room")
+                                .arg(dialog.height())
+                                .arg(screen_room)));
+        // With room for all of it, as on a 1080-line screen, nothing scrolls.
+        constexpr int kTallRoom = 1040;
+        dialog.fitToHeight(kTallRoom);
+        QCoreApplication::processEvents();
+        QCOMPARE(form->verticalScrollBar()->maximum(), 0);
+    }
     // Review 4 (Y12): the raw flash's "ALL DATA ... PERMANENTLY ERASED" confirmation offered a
     // blue Yes, while Batch Uninstall's destructive action is red. Yes is the danger tone, and No
     // stays the default.
@@ -336,6 +395,12 @@ private Q_SLOTS:
         QCOMPARE(box->windowTitle(), QStringLiteral("Confirm Flash - Data Loss Warning"));
         QCOMPARE(box->button(QMessageBox::Yes)->styleSheet(), sak::ui::kDangerButtonStyle);
         QCOMPARE(box->defaultButton(), box->button(QMessageBox::No));
+        // Review 5 asked to see No as the default: Enter, as a technician presses it without
+        // reading, answers No and erases nothing.
+        box->show();
+        QVERIFY(QTest::qWaitForWindowExposed(box.get()));
+        QTest::keyClick(box.get(), Qt::Key_Return);
+        QCOMPARE(box->clickedButton(), box->button(QMessageBox::No));
     }
     // Review 3 (X19): the Windows ISO download bar read "0%" with 0.09 of 8.70 GB down.
     void theWindowsIsoDownloadBarShowsTenthsBelowOnePercent() {
@@ -465,6 +530,9 @@ private Q_SLOTS:
     void anImageThatCannotBeLookedInsideStopsTheFlash();
     void aDriveThatChangedSaysToReselectIt();
     void categoryListShowsOneAmpersand();
+    void aWriteOffersCancelAndNoBack();
+    void cancelWaitsForTheWriterAndSaysWhatTheDriveHolds();
+    void aCancelledRawRunSaysWhetherItHadWritten();
 
 private:
     QPushButton* flashButton() const;
@@ -631,6 +699,124 @@ void ImageFlasherPanelTests::readingACompressedImageIsNotShownAsWriting() {
     };
     QVERIFY(shows(QStringLiteral("Read: ")));
     QVERIFY(!shows(QStringLiteral("Written: ")));
+}
+
+// Review 5 (Z1): a raw flash and the Windows USB wait showed no Cancel and a disabled Back. The
+// buttons were chosen for drive selection, before the switch to the progress page, so a technician
+// who had picked the wrong drive could not stop the write from the page. Z3: the bar showed no work
+// when the first step's message went out, so the message left the status bar after 5 s.
+void ImageFlasherPanelTests::aWriteOffersCancelAndNoBack() {
+    const QString image = writeImage("payload.img", QByteArray(4096, '\x5A'));
+    QVERIFY(m_panel->loadImageFile(image));
+    // Two rows naming one disk: the coordinator says it is validating, then refuses them as one
+    // disk named twice, before it opens anything.
+    m_panel->m_selectedDrives = {QString::fromLatin1(kFakeDevicePath),
+                                 QString::fromLatin1(kFakeDevicePath)};
+    bool seen = false;
+    bool on_progress_page = false;
+    bool cancel_shown = false;
+    bool cancel_enabled = false;
+    bool back_shown = true;
+    connect(m_panel->m_flashCoordinator.get(),
+            &FlashCoordinator::stateChanged,
+            this,
+            [&](FlashState /*state*/, const QString& /*message*/) {
+                if (seen) {
+                    return;
+                }
+                seen = true;
+                on_progress_page = m_panel->m_stackedWidget->currentWidget() ==
+                                   m_panel->m_flashProgressPage;
+                cancel_shown = m_panel->m_cancelButton->isVisibleTo(m_panel.get());
+                cancel_enabled = m_panel->m_cancelButton->isEnabled();
+                back_shown = m_panel->m_backButton->isVisibleTo(m_panel.get());
+            });
+    QStringList order;
+    connect(m_panel.get(), &ImageFlasherPanel::progressUpdate, this, [&order](int value, int max) {
+        order.append(QStringLiteral("bar %1/%2").arg(value).arg(max));
+    });
+    connect(m_panel.get(),
+            &ImageFlasherPanel::statusMessage,
+            this,
+            [&order](const QString& message, int /*timeout*/) { order.append(message); });
+    ModalAnswerer refusal;
+
+    m_panel->beginConfirmedFlash(false);
+
+    QVERIFY2(seen, "the coordinator never reported a state");
+    QVERIFY(on_progress_page);
+    QVERIFY2(cancel_shown, "no Cancel on the progress page while the write starts");
+    QVERIFY(cancel_enabled);
+    QVERIFY2(!back_shown, "Back is shown on the progress page while the write starts");
+    QVERIFY2(!order.isEmpty() && order.first() == QStringLiteral("bar 0/100"),
+             qPrintable(order.join(QStringLiteral(" | "))));
+}
+
+// Z1: Cancel stops the writer; the page says the write is stopping until the writer reports, then
+// what the drive holds. A Windows USB creation stopped before it erased anything left the drive as
+// it was, and is not a failure dialog.
+void ImageFlasherPanelTests::cancelWaitsForTheWriterAndSaysWhatTheDriveHolds() {
+    const QString image = writeImage("payload.img", QByteArray(4096, '\x5A'));
+    QVERIFY(m_panel->loadImageFile(image));
+    selectOneDrive();
+    auto* creator = new WindowsUSBCreator();
+    auto* thread = new QThread();
+    m_panel->m_windowsUsbCreator = creator;
+    m_panel->m_windowsUsbThread = thread;
+    m_panel->connectWindowsUSBCreatorSignals(creator, thread);
+    // An idle thread stands in for a creator still inside a step that has not reached a cancel
+    // point.
+    thread->start();
+    const auto stop = qScopeGuard([thread]() {
+        thread->quit();
+        thread->wait();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    });
+    m_panel->m_isFlashing = true;
+    m_panel->m_stackedWidget->setCurrentWidget(m_panel->m_flashProgressPage);
+    m_panel->updateNavigationButtons();
+    QVERIFY(m_panel->m_cancelButton->isEnabled());
+    ModalAnswerer yes(QMessageBox::Yes);
+
+    m_panel->onCancelClicked();
+
+    QCOMPARE(yes.titles, QStringList{QStringLiteral("Cancel Flash")});
+    QVERIFY2(m_panel->m_stackedWidget->currentWidget() == m_panel->m_flashProgressPage,
+             "the page left the write before the writer stopped");
+    QCOMPARE(m_panel->m_flashStateLabel->text(), QStringLiteral("Stopping the write..."));
+    QVERIFY2(!m_panel->m_cancelButton->isEnabled(), "Cancel can be asked twice");
+    QVERIFY(m_panel->m_isFlashing);
+
+    Q_EMIT creator->failed(QStringLiteral("Operation cancelled"));
+
+    QCOMPARE(yes.titles, QStringList{QStringLiteral("Cancel Flash")});
+    QVERIFY(m_panel->m_stackedWidget->currentWidget() == m_panel->m_completionPage);
+    QCOMPARE(m_panel->m_completionGroup->title(), QStringLiteral("Flash Cancelled"));
+    QVERIFY2(m_panel->m_completionMessageLabel->text().endsWith(QStringLiteral("Flash cancelled")),
+             qPrintable(m_panel->m_completionMessageLabel->text()));
+    QCOMPARE(m_panel->m_completionDetailsLabel->text(),
+             QStringLiteral("Nothing was written: the target drive is as it was."));
+    QVERIFY(!m_panel->m_isFlashing);
+}
+
+// Z1: a raw run stopped mid-write reports the bytes its writer wrote, and the page says the drive
+// is not usable as it is; one stopped before its first block says the drive is as it was.
+void ImageFlasherPanelTests::aCancelledRawRunSaysWhetherItHadWritten() {
+    for (const qint64 written : {qint64{0}, qint64{64} * 1024 * 1024}) {
+        m_panel->m_isFlashing = true;
+        m_panel->m_cancelRequested = true;
+        FlashResult result;
+        result.success = false;
+        result.bytesWritten = written;
+        result.failedDrives = {QString::fromLatin1(kFakeDevicePath)};
+        m_panel->onFlashCompleted(result);
+        QCOMPARE(m_panel->m_completionGroup->title(), QStringLiteral("Flash Cancelled"));
+        const QString details = m_panel->m_completionDetailsLabel->text();
+        const QString expected = written > 0 ? QStringLiteral("Writing had started")
+                                             : QStringLiteral("Nothing was written");
+        QVERIFY2(details.startsWith(expected), qPrintable(details));
+        QVERIFY2(details.contains(QStringLiteral("Failed: 1")), qPrintable(details));
+    }
 }
 
 void ImageFlasherPanelTests::initTestCase() {

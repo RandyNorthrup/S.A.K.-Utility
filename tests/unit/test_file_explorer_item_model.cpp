@@ -12,6 +12,8 @@
 #include <QDateTime>
 #include <QLocale>
 #include <QMimeData>
+#include <QMimeDatabase>
+#include <QSet>
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
@@ -187,6 +189,40 @@ private Q_SLOTS:
         QCOMPARE(sak::FileExplorerItemModel::attributeSummary(
                      symlinkEntry(QStringLiteral("latest"), QStringLiteral("/notes.txt"))),
                  QStringLiteral("Symlink -> /notes.txt"));
+    }
+
+    // Review 5 (Z9): Type said "File" for a PNG, a CSV, a PDF and a Word file alike. It names the
+    // kind from the extension, as Windows Explorer does, and a folder "File folder".
+    void typeNamesWhatKindOfFileItIs() {
+        using Model = sak::FileExplorerItemModel;
+        // The name Qt's MIME database gives the type, as Qt ships it: "PNG image" or "Portable
+        // Network Graphics" by its version.
+        QString png = QMimeDatabase()
+                          .mimeTypeForFile(QStringLiteral("photo.png"),
+                                           QMimeDatabase::MatchExtension)
+                          .comment();
+        QVERIFY(!png.isEmpty());
+        png[0] = png.at(0).toUpper();
+        QCOMPARE(Model::typeText(fileEntry(QStringLiteral("photo.png"), 1)), png);
+        QCOMPARE(Model::typeText(directoryEntry(QStringLiteral("Docs"))),
+                 QStringLiteral("File folder"));
+        QCOMPARE(Model::typeText(fileEntry(QStringLiteral("README"), 1)), QStringLiteral("File"));
+        QCOMPARE(Model::typeText(fileEntry(QStringLiteral("blob.qqz7"), 1)),
+                 QStringLiteral("QQZ7 File"));
+        auto result = fileEntry(QStringLiteral("hit.txt"), 1);
+        result.type = QStringLiteral("Search result");
+        QCOMPARE(Model::typeText(result), QStringLiteral("Search result"));
+        QSet<QString> kinds;
+        for (const char* name : {"staff-list.csv", "report.pdf", "notes.md", "letter.docx"}) {
+            const QString kind = Model::typeText(fileEntry(QString::fromLatin1(name), 1));
+            QVERIFY2(kind != QStringLiteral("File") && kind.at(0).isUpper(), qPrintable(kind));
+            kinds.insert(kind);
+        }
+        QCOMPARE(kinds.size(), 4);
+        // And the column shows it.
+        Model model;
+        model.setEntries({fileEntry(QStringLiteral("photo.png"), 1)});
+        QCOMPARE(model.data(model.index(0, Model::TypeColumn), Qt::DisplayRole).toString(), png);
     }
 
     void sortsDirectoriesFirstAndFilesBySelectedColumn() {

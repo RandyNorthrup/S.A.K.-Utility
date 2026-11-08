@@ -525,10 +525,19 @@ void SmartDiskAnalyzerTests::unreadableDrive_keepsARowAndSaysWhy() {
     ScriptedSmartAnalyzer analyzer;
     analyzer.failure = QStringLiteral("Reading it needs administrator rights.");
     QSignalSpy analyzed(&analyzer, &sak::SmartDiskAnalyzer::driveAnalyzed);
+    QSignalSpy errors(&analyzer, &sak::SmartDiskAnalyzer::errorOccurred);
+    QSignalSpy warnings(&analyzer, &sak::SmartDiskAnalyzer::driveWarning);
 
     analyzer.analyzeDrive(7);
 
     QCOMPARE(analyzed.count(), 1);
+    // Review 5 (Z23): the log said "ERROR: Failed to read SMART data for PhysicalDrive2" for a USB
+    // stick the table showed as an adapter's limit. It says the table's warning, as a warning.
+    QCOMPARE(errors.count(), 0);
+    QCOMPARE(warnings.count(), 1);
+    QCOMPARE(warnings.first().first().toString(),
+             QStringLiteral("PhysicalDrive7: SMART health could not be determined. "
+                            "Reading it needs administrator rights."));
     QCOMPARE(analyzer.reports().size(), 1);
     const sak::SmartReport& report = analyzer.reports().first();
     QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive7"));

@@ -284,18 +284,69 @@ private:
     QString m_full;
 };
 
-/// @brief @p path, or its dark-theme drawing ("panel_email-dark.svg" beside "panel_email.svg")
-///        while the dark theme shows and the drawing exists. Artwork drawn for a light surface
-///        loses its lines on a dark one: the Linux card's black penguin, the File Management tab's
-///        grey lines at 1.41:1 (UI review DN4, DN5).
-inline QString themedIconPath(const QString& path) {
+/// @brief The dark-theme drawing of @p path ("panel_email-dark.svg" beside "panel_email.svg") when
+///        there is one, else @p path.
+inline QString darkIconPath(const QString& path) {
     const QString suffix = QStringLiteral(".svg");
-    if (!ui::usingDarkUiTheme() || !path.endsWith(suffix)) {
+    if (!path.endsWith(suffix)) {
         return path;
     }
     QString dark = path;
     dark.insert(dark.size() - suffix.size(), QStringLiteral("-dark"));
     return QFileInfo::exists(dark) ? dark : path;
+}
+
+/// @brief @p path, or its dark-theme drawing while the dark theme shows and the drawing exists.
+///        Artwork drawn for a light surface loses its lines on a dark one: the Linux card's black
+///        penguin, the File Management tab's grey lines at 1.41:1 (UI review DN4, DN5).
+inline QString themedIconPath(const QString& path) {
+    return ui::usingDarkUiTheme() ? darkIconPath(path) : path;
+}
+
+/// @brief An icon in the theme's drawing of @p path (themedIconPath), chosen each time it is drawn,
+///        so it follows a change of theme. Partition Manager's table, action list, menus and disk
+///        map built QIcon(path) and showed the light disk drawing on the dark theme, at 1.3-2.1:1
+///        (review 5, RG7).
+class ThemedIconEngine final : public QIconEngine {
+public:
+    explicit ThemedIconEngine(QString path)
+        : m_path(std::move(path)), m_light(m_path), m_dark(darkIconPath(m_path)) {}
+
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        return current().pixmap(size, mode, state);
+    }
+
+    QPixmap scaledPixmap(const QSize& size,
+                         QIcon::Mode mode,
+                         QIcon::State state,
+                         qreal scale) override {
+        return current().pixmap(size, scale, mode, state);
+    }
+
+    QSize actualSize(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        return current().actualSize(size, mode, state);
+    }
+
+    void paint(QPainter* painter,
+               const QRect& rect,
+               QIcon::Mode mode,
+               QIcon::State state) override {
+        current().paint(painter, rect, Qt::AlignCenter, mode, state);
+    }
+
+    [[nodiscard]] QIconEngine* clone() const override { return new ThemedIconEngine(m_path); }
+
+private:
+    [[nodiscard]] const QIcon& current() const { return ui::usingDarkUiTheme() ? m_dark : m_light; }
+
+    QString m_path;
+    QIcon m_light;
+    QIcon m_dark;
+};
+
+/// @brief @p path as an icon that follows the theme (ThemedIconEngine).
+inline QIcon themedIcon(const QString& path) {
+    return QIcon(new ThemedIconEngine(path));
 }
 
 /// @brief A tab's icon when its tab is selected: the artwork in white on the blue gradient, where
@@ -343,6 +394,9 @@ public:
         m_path = std::move(path);
         refresh();
     }
+
+    /// The drawing shown, as given (before the theme picks its variant).
+    [[nodiscard]] const QString& path() const { return m_path; }
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override {

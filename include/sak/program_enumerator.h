@@ -102,6 +102,12 @@ public:
     [[nodiscard]] static QString packagePublisher(const QString& subject,
                                                   const QString& display_name);
 
+    /// A Store package's name in the list: the display name Windows resolved for it, as Settings
+    /// shows it, or the package name when Windows gives none (or only an unresolved resource
+    /// reference).
+    [[nodiscard]] static QString packageDisplayName(const QString& name,
+                                                    const QString& display_name);
+
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);

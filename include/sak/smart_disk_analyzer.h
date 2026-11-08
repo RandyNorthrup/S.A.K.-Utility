@@ -120,6 +120,11 @@ Q_SIGNALS:
     /// @param message Description of the error
     void errorOccurred(const QString& message);
 
+    /// @brief A drive whose SMART data could not be read: kept in the results with this same
+    ///        warning, and said at the same level. A USB stick behind an adapter that does not
+    ///        pass SMART through is a limit, not a failure of the run (review 5, Z23).
+    void driveWarning(const QString& message);
+
 protected:
     /// @brief Run smartctl and capture JSON output for a specific drive
     /// @param disk_number Physical drive number

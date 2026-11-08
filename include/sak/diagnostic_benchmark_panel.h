@@ -146,6 +146,8 @@ private Q_SLOTS:
     // -- Common --------------------------------------------------
     void onOperationProgress(int percent, const QString& message);
     void onErrorOccurred(const QString& message);
+    /// A drive kept with a warning: logged as one, not as an error.
+    void onDriveWarning(const QString& message);
 
 private:
     void fillSmartRow(int row, const sak::SmartReport& report, const SmartRowIdentity& identity);

@@ -471,9 +471,12 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
 
     QString final_report = report;
     final_report += QString("-").repeated(kDiskReportWidth) + "\n";
+    // One sentence a line: as one line it ran past the log window's edge, and what showed read
+    // "0 could not be checked, Network drives are not checked." (review 5, Z23).
     final_report += QString(
-                        "Summary: %1 of %2 scanned, %3 could not be checked, "
-                        "%4 found, %5 recommended\n")
+                        "Summary: %1 of %2 scanned.\n"
+                        "Could not be checked: %3.\n"
+                        "%4 found, %5 recommended.\n")
                         .arg(totals.drives_scanned)
                         .arg(drivesCount(totals.total_drives + unsupported))
                         .arg(not_checked)

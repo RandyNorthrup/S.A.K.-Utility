@@ -765,6 +765,14 @@ inline constexpr auto kWindows11DarkProgressStyles = R"SAK(
             border: 1px solid %1;
             background: %2;
         }
+
+        /* The deep fill under the dark theme's white label; the light theme's fill is light, for
+           its dark label. */
+        QProgressBar::chunk {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 %3,
+                stop:1 %4);
+        }
     )SAK";
 
 inline constexpr auto kWindows11DarkContainerAndViewStyles = R"SAK(
@@ -1919,19 +1927,19 @@ inline QString aiConversationHeaderStyle() {
         .arg(cssColor(kColorBorderDefault));
 }
 
+/// The fill and the label's colour are the theme's, as every other bar's: blue-600 under the body
+/// text was 3.4:1 in the light theme (review 5, Z2).
 inline QString aiWorkflowProgressStyle() {
     return QStringLiteral(
                "QProgressBar { background: %1; border: %2px solid %3; "
-               "border-radius: %4px; color: %5; text-align: center; "
-               "font-size: %6pt; font-weight: 600; }"
-               "QProgressBar::chunk { background: %7; border-radius: %8px; }")
+               "border-radius: %4px; text-align: center; "
+               "font-size: %5pt; font-weight: 600; }"
+               "QProgressBar::chunk { border-radius: %6px; }")
         .arg(cssColor(kColorBgWhite))
         .arg(kCssBorderWidthDefaultPx)
         .arg(cssColor(kColorBorderDefault))
         .arg(kCssRadiusTinyPx)
-        .arg(cssColor(kColorTextBody))
         .arg(kFontSizeSmall)
-        .arg(QString::fromLatin1(kColorPrimaryDark))
         .arg(kCssPaddingTinyPx);
 }
 

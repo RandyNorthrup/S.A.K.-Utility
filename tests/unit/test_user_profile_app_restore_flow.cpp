@@ -12,6 +12,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/per_user_customization_dialog.h"
+#include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_restore_wizard.h"
@@ -185,6 +186,8 @@ private Q_SLOTS:
     void theAdapterPageScansAdaptersByThatName();
     void aWifiScanCountsWithoutAFullStop();
     void restoreTablesGiveTheirRoomToOneColumn();
+    void backupListsShowPublishersAndPathsWhole();
+    void wizardPagesLeaveTheFilledButtonToTheirWork();
     void theRestoreOptionsShareOneWidth();
 
 private:
@@ -286,6 +289,104 @@ void UserProfileAppRestoreFlowTests::restoreTablesGiveTheirRoomToOneColumn() {
     auto* apps = restore_wizard.findChild<sak::UserProfileRestoreAppRestorePage*>();
     QVERIFY(apps != nullptr);
     check(apps->m_appTree->header(), apps->m_appTree->columnCount() - 1, "applications");
+}
+
+// Review 5 (RG8): the backup's Installed Applications gave the Publisher what the longest names
+// left, so every row read "Micr..."; (Y8) App Data cut a Store app's path in the middle. In a page
+// as narrow as review 5's, the publisher and the path are whole, however long the longest name: a
+// name from a few words to one wider than the page, each leaving the Publisher less room.
+void UserProfileAppRestoreFlowTests::backupListsShowPublishersAndPathsWhole() {
+    const QString previous_style = qApp->styleSheet();
+    const auto restore = qScopeGuard([previous_style]() { qApp->setStyleSheet(previous_style); });
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+    constexpr int kPageWidth = 700;
+    constexpr int kPageHeight = 600;
+    const auto whole = [](QTreeWidget* tree, int column, const QString& text) {
+        const int needed = tree->fontMetrics().horizontalAdvance(text);
+        const int shown = tree->header()->sectionSize(column);
+        return shown >= needed ? QString()
+                               : QStringLiteral("\"%1\" needs %2 px, its column is %3 px")
+                                     .arg(text)
+                                     .arg(needed)
+                                     .arg(shown);
+    };
+
+    sak::UserProfileBackupWizard apps_wizard;
+    apps_wizard.setStartId(sak::UserProfileBackupWizard::Page_InstalledApps);
+    apps_wizard.resize(kPageWidth, kPageHeight);
+    apps_wizard.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&apps_wizard));
+    auto* apps = qobject_cast<sak::UserProfileBackupInstalledAppsPage*>(
+        apps_wizard.page(sak::UserProfileBackupWizard::Page_InstalledApps));
+    QVERIFY(apps != nullptr);
+    sak::InstalledAppInfo app;
+    app.version = QStringLiteral("10.0.26100.1");
+    app.publisher = QStringLiteral("Microsoft Corporation");
+    app.category = QStringLiteral("Browsers");
+    constexpr int kLongestName = 16;
+    QString name = QStringLiteral("Microsoft Windows App");
+    for (int words = 0; words < kLongestName; ++words) {
+        name += QStringLiteral(" Preview");
+        app.name = name;
+        apps->populateTree({app});
+        apps->m_appTree->expandAll();
+        QCoreApplication::processEvents();
+        const QString publisher = whole(apps->m_appTree, 2, app.publisher);
+        QVERIFY2(publisher.isEmpty(),
+                 qPrintable(QStringLiteral("%1 beside a %2 px name")
+                                .arg(publisher)
+                                .arg(apps->m_appTree->fontMetrics().horizontalAdvance(name))));
+    }
+
+    sak::UserProfileBackupWizard data_wizard;
+    data_wizard.setStartId(sak::UserProfileBackupWizard::Page_AppData);
+    data_wizard.resize(kPageWidth, kPageHeight);
+    data_wizard.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&data_wizard));
+    auto* data = qobject_cast<sak::UserProfileBackupAppDataPage*>(
+        data_wizard.page(sak::UserProfileBackupWizard::Page_AppData));
+    QVERIFY(data != nullptr);
+    sak::AppDataSourceInfo source;
+    source.name = QStringLiteral("Windows Terminal Settings");
+    source.category = QStringLiteral("Utilities");
+    source.relative_path =
+        QStringLiteral("AppData/Local/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState");
+    source.exists = true;
+    data->populateTree({source});
+    data->m_appDataTree->expandAll();
+    QCoreApplication::processEvents();
+    const QString path =
+        whole(data->m_appDataTree, 1, QDir::toNativeSeparators(source.relative_path));
+    QVERIFY2(path.isEmpty(), qPrintable(path));
+}
+
+// Review 5 (Z6): the wizards' pages paired a filled Scan and a filled Select All with the filled
+// Next. Scanning, selecting, customizing, browsing and auto-mapping are the page's tools, not its
+// work: they are secondary, and Next (or the page's one action, Start Backup) is filled.
+void UserProfileAppRestoreFlowTests::wizardPagesLeaveTheFilledButtonToTheirWork() {
+    sak::UserProfileBackupWizard backup_wizard;
+    sak::UserProfileRestoreWizard restore_wizard;
+    int checked = 0;
+    for (QWizard* wizard :
+         {static_cast<QWizard*>(&backup_wizard), static_cast<QWizard*>(&restore_wizard)}) {
+        for (const int id : wizard->pageIds()) {
+            for (const QPushButton* button : wizard->page(id)->findChildren<QPushButton*>()) {
+                const QString text = button->text().remove(QLatin1Char('&'));
+                const bool tool = text.startsWith(QStringLiteral("Scan")) ||
+                                  text.startsWith(QStringLiteral("Select")) ||
+                                  text.startsWith(QStringLiteral("Customize")) ||
+                                  text.startsWith(QStringLiteral("Browse")) ||
+                                  text.startsWith(QStringLiteral("Auto"));
+                if (!tool) {
+                    continue;
+                }
+                ++checked;
+                QVERIFY2(button->styleSheet() != sak::ui::kPrimaryButtonStyle,
+                         qPrintable(QStringLiteral("%1: %2").arg(wizard->windowTitle(), text)));
+            }
+        }
+    }
+    QVERIFY(checked > 5);
 }
 
 // Review 4 (Y24): the last step's two option boxes were 205 px and 159 px wide.
@@ -417,7 +518,13 @@ void UserProfileAppRestoreFlowTests::backupWizardSaysBackUpAsAVerb() {
     sak::UserProfileBackupWizard backup_wizard;
     for (const int id : backup_wizard.pageIds()) {
         const QWizardPage* page = backup_wizard.page(id);
-        for (const QString& text : {page->title(), page->subTitle()}) {
+        // And the pages' own lines: Select Users said "which users you want to backup" (review 5,
+        // Z23).
+        QStringList texts{page->title(), page->subTitle()};
+        for (const QLabel* label : page->findChildren<QLabel*>()) {
+            texts << label->text();
+        }
+        for (const QString& text : texts) {
             QVERIFY2(!text.contains(QStringLiteral("to Backup")) &&
                          !text.contains(QStringLiteral("to backup")),
                      qPrintable(text));
@@ -898,6 +1005,9 @@ void UserProfileAppRestoreFlowTests::lastStepNotesHaveNoStandInMarks() {
         for (const QString mark : {QStringLiteral("[OK]"), QStringLiteral("(!)")}) {
             QVERIFY2(!summary.contains(mark), qPrintable(summary));
         }
+        // Review 5 (Z13): the summary's lines began "* ", the welcome page's list round bullets.
+        QVERIFY2(!summary.contains(QStringLiteral("* ")), qPrintable(summary));
+        QVERIFY2(summary.contains(QChar(0x2022)), qPrintable(summary));
     }
 }
 
@@ -1210,6 +1320,17 @@ void UserProfileAppRestoreFlowTests::restorePageTellsFinishedWithProblemsFromSto
     QCOMPARE(both.m_statusLabel->text(),
              QStringLiteral("Restore finished with problems: 3 files or folders could not be "
                             "restored; 2 network settings were not applied"));
+
+    // Review 5 (Z13): a finished restore kept "< Back", "Cancel" and "Cancel Restore", disabled,
+    // beside Finish; a finished backup shows Finish only.
+    sak::UserProfileRestoreWizard wizard;
+    auto* execute = wizard.findChild<sak::UserProfileRestoreExecutePage*>();
+    QVERIFY(execute != nullptr);
+    execute->onRestoreRanToEnd(0, 0);
+    execute->onRestoreComplete(true, QString());
+    QVERIFY(execute->m_cancelButton->isHidden());
+    QVERIFY(wizard.testOption(QWizard::NoCancelButton));
+    QVERIFY(wizard.testOption(QWizard::NoBackButtonOnLastPage));
 
     sak::UserProfileRestoreExecutePage stopped;
     stopped.onRestoreComplete(false, QStringLiteral("Restore cancelled"));

@@ -152,7 +152,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     m_customizeButton = new QPushButton(tr("Customize Selected User"), this);
     m_customizeButton->setIcon(QIcon::fromTheme("configure"));
     m_customizeButton->setEnabled(false);
-    m_customizeButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_customizeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_customizeButton,
             &QPushButton::clicked,
             this,
@@ -605,7 +605,7 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
             &UserProfileBackupSettingsPage::updateSummary);
     dest_layout->addWidget(m_destinationEdit, 1);
     m_browseButton = new QPushButton(tr("Browse..."), this);
-    m_browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_browseButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
@@ -974,7 +974,7 @@ void UserProfileBackupInstalledAppsPage::setupScanControls(QVBoxLayout* layout) 
     auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Applications"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
-    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_scanButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupInstalledAppsPage::onScanApps);
     scan_layout->addWidget(m_scanButton);
@@ -994,7 +994,10 @@ void UserProfileBackupInstalledAppsPage::setupAppsTree(QVBoxLayout* layout) {
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Publisher")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
-    sak::fitColumnsToContents(m_appTree->header(), kInstalledAppColumnPublisher);
+    // Version and Publisher as wide as they read; the name takes the rest. With the Publisher
+    // given the rest, the longest names took the width and every row read "Micr..." (review 5,
+    // RG8).
+    sak::fitColumnsToContents(m_appTree->header(), kInstalledAppColumnName);
     m_appTree->setEnabled(false);
     connect(m_appTree,
             &QTreeWidget::itemChanged,
@@ -1007,7 +1010,7 @@ void UserProfileBackupInstalledAppsPage::setupSelectionControls(QVBoxLayout* lay
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1464,7 +1467,7 @@ void UserProfileBackupAppDataPage::setupUi() {
 
     auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan App Data"), this);
-    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_scanButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onScanAppData);
     scan_layout->addWidget(m_scanButton);
@@ -1481,9 +1484,10 @@ void UserProfileBackupAppDataPage::setupUi() {
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
-    sak::fitColumnsToContents(m_appDataTree->header(), kAppDataColumnPath);
-    // A path cut short keeps its start and its end: "AppData\Local\...\User Data".
-    m_appDataTree->setTextElideMode(Qt::ElideMiddle);
+    // The name and the path whole, the size taking what is left; a path wider than the page
+    // scrolls the list sideways rather than losing its middle ("AppData\Local\Package...kyb3d8bbwe
+    // \LocalState", review 5, Y8).
+    sak::fitColumnsToContents(m_appDataTree->header(), kAppDataColumnSize);
     m_appDataTree->setEnabled(false);
     connect(m_appDataTree,
             &QTreeWidget::itemChanged,
@@ -1494,7 +1498,7 @@ void UserProfileBackupAppDataPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(
         m_selectAllButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onSelectAll);
     button_layout->addWidget(m_selectAllButton);
@@ -1790,7 +1794,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
 
     auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Networks"), this);
-    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_scanButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
@@ -1823,7 +1827,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -2027,7 +2031,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
 
     auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Adapters"), this);
-    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_scanButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
@@ -2076,7 +2080,7 @@ void UserProfileBackupEthernetSettingsPage::setupSelectionButtons(QVBoxLayout* l
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,

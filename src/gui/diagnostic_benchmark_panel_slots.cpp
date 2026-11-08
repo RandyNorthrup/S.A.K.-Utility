@@ -385,6 +385,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
             .arg(result.aes_throughput_mbps, 0, 'f', 1)
             .arg(result.thread_scaling_efficiency * sak::kPercentMaxF, 0, 'f', 1)
             .arg(baseline_pct, 0, 'f', 0));
+    m_cpu_details_label->setVisible(true);
 
     logMessage(QString("CPU benchmark complete -- Score: %1 (ST) / %2 (MT)")
                    .arg(result.single_thread_score)
@@ -1038,6 +1039,11 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message) {
 
     logMessage(QString("ERROR: %1").arg(message));
     Q_EMIT statusMessage("Error: " + message, sak::kTimerStatusDefaultMs);
+}
+
+void DiagnosticBenchmarkPanel::onDriveWarning(const QString& message) {
+    Q_ASSERT(!message.isEmpty());
+    logMessage(QString("WARNING: %1").arg(message));
 }
 
 }  // namespace sak

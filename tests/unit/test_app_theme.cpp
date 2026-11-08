@@ -35,6 +35,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -245,11 +246,16 @@ private Q_SLOTS:
     void subTabPagesKeepAMarginInsideTheirPane();
     void everyToolTabHasOneLogSwitchInOnePlace_data();
     void everyToolTabHasOneLogSwitchInOnePlace();
+    void everyLogRowSitsOnThePageColour();
+    void everyPageHasAtMostOnePrimaryButton();
     void windowTextUsesOneDashStyle();
     void selectedTabIconsAreWhite();
     void dialogButtonsTakeTheToneOfTheirRole();
     void everyActionCardHasOneLayout();
     void tabIconsReadOnTheirTabsInBothThemes();
+    void everyProgressLabelReadsOverItsFill();
+    void headerIconsReadOnThePageInBothThemes();
+    void darkTablesTellTheHeaderAndTheSelectionApart();
     void theLinuxCardsPenguinReadsInDark();
     void aTabsStatusMessageLeavesWithIt();
     void aRunningJobsMessageStaysUntilItEnds();
@@ -667,6 +673,48 @@ QList<sak::LogToggleSwitch*> visibleLogSwitches(const QWidget& page) {
     return found;
 }
 
+/// True for an action card's logo (createActionCard): a brand or product mark in its own colours,
+/// not a page header's drawing.
+bool onActionCard(const QObject& refresher) {
+    const auto* label = qobject_cast<const QLabel*>(refresher.parent());
+    return label != nullptr && label->parentWidget() != nullptr &&
+           label->parentWidget()->property("sakCard").toBool();
+}
+
+/// The group box @p widget sits in below @p surface, or @p surface itself.
+const QWidget* enclosingGroup(const QWidget* widget, const QWidget& surface) {
+    for (const QWidget* up = widget->parentWidget(); up != nullptr && up != &surface;
+         up = up->parentWidget()) {
+        if (qobject_cast<const QGroupBox*>(up) != nullptr) {
+            return up;
+        }
+    }
+    return &surface;
+}
+
+/// The buttons on @p surface drawn filled (enabled primary blue or success green; disabled ones
+/// are drawn grey), by the group box each sits in: each group is a surface of its own.
+QHash<const QWidget*, QStringList> filledButtonsByGroup(const QWidget& surface) {
+    QHash<const QWidget*, QStringList> groups;
+    for (const QPushButton* button : surface.findChildren<QPushButton*>()) {
+        const QString sheet = button->styleSheet();
+        const bool strong = sheet == sak::ui::kPrimaryButtonStyle ||
+                            sheet == sak::ui::kSuccessButtonStyle;
+        if (button->isVisible() && button->isEnabled() && strong) {
+            groups[enclosingGroup(button, surface)] << button->text().remove(QLatin1Char('&'));
+        }
+    }
+    return groups;
+}
+
+/// Shows @p sub's page @p sub_index and returns it, or nullptr when the sub-tab stays hidden.
+QWidget* shownSubPage(QTabWidget* sub, int sub_index) {
+    revealTabWidget(sub);
+    sub->setCurrentIndex(sub_index);
+    QCoreApplication::processEvents();
+    return sub->isVisible() ? sub->widget(sub_index) : nullptr;
+}
+
 }  // namespace
 
 void AppThemeTests::everyToolTabHasOneLogSwitchInOnePlace_data() {
@@ -711,6 +759,85 @@ void AppThemeTests::everyToolTabHasOneLogSwitchInOnePlace() {
         }
     }
     m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("\n"))));
+}
+
+// Review 5 (Z15): the Image Flasher's step and Log rows sat on the window's #eef2f7 (dark #111827)
+// while every other Log row sat on the page colour: a panel class of its own painted no background.
+// So did Partition Manager's and File Management's. Beside every tab's Log switch, both themes, is
+// the page colour.
+void AppThemeTests::everyLogRowSitsOnThePageColour() {
+    const auto back_to_light = qScopeGuard([this] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+        QCoreApplication::processEvents();
+    });
+    constexpr int kBesideTheSwitch = 4;
+    m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr);
+    QStringList wrong;
+    int checked = 0;
+    for (const ThemePreference theme : {ThemePreference::Light, ThemePreference::Dark}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        // The page colour, the palette's Window; the main window itself is drawn in #eef2f7.
+        const QColor page = QApplication::palette().color(QPalette::Window);
+        for (int index = 0; index < tabs->count(); ++index) {
+            tabs->setCurrentIndex(index);
+            QCoreApplication::processEvents();
+            for (const auto* toggle : visibleLogSwitches(*tabs->widget(index))) {
+                ++checked;
+                const QPoint beside =
+                    toggle->mapTo(m_window.get(), QPoint(-kBesideTheSwitch, toggle->height() / 2));
+                const QColor drawn =
+                    m_window->grab(QRect(beside, QSize(1, 1))).toImage().pixelColor(0, 0);
+                if (drawn.rgb() != page.rgb()) {
+                    wrong << QStringLiteral("%1, %2: %3 beside the Log switch, the page is %4")
+                                 .arg(theme == ThemePreference::Dark ? QStringLiteral("dark")
+                                                                     : QStringLiteral("light"),
+                                      tabs->tabText(index),
+                                      drawn.name(),
+                                      page.name());
+                }
+            }
+        }
+    }
+    QVERIFY(checked > 0);
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+
+// Review 5 (Z6): Y12's rule, one primary button per surface, held where review 4 had named it and
+// not elsewhere: Advanced Uninstall had Refresh, Batch and Settings filled blue, Network Adapters
+// three, Advanced Search five, and Offline Deploy a green "Install from Bundle" (white on it at
+// 4.2:1). Every page and sub-tab of the window, as shown: at most one filled primary or green
+// button in each group box, and in what sits outside them.
+void AppThemeTests::everyPageHasAtMostOnePrimaryButton() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+    QCoreApplication::processEvents();
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr);
+    QStringList wrong;
+    for (int index = 0; index < tabs->count(); ++index) {
+        tabs->setCurrentIndex(index);
+        QCoreApplication::processEvents();
+        QWidget* page = tabs->widget(index);
+        for (const auto& [sub, sub_index] : pageViews(*page)) {
+            QWidget* surface = sub == nullptr ? page : shownSubPage(sub, sub_index);
+            if (surface == nullptr) {
+                continue;
+            }
+            const QString where = sub == nullptr ? tabs->tabText(index)
+                                                 : tabs->tabText(index) + QStringLiteral(" > ") +
+                                                       sub->tabText(sub_index);
+            for (const QStringList& strong : filledButtonsByGroup(*surface)) {
+                if (strong.size() > 1) {
+                    wrong << QStringLiteral("%1: %2").arg(where, strong.join(QStringLiteral(", ")));
+                }
+            }
+        }
+    }
     QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("\n"))));
 }
 
@@ -1269,6 +1396,188 @@ void AppThemeTests::tabIconsReadOnTheirTabsInBothThemes() {
     qInfo().noquote() << report.join(QStringLiteral("\n"));
     QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
 }
+namespace {
+
+/// A bar drawn with @p own_sheet over the theme showing now, at @p value of 100: the contrast
+/// between its label and what the label is drawn over, read off the drawing. The fill is the
+/// pixel above the label; the label is the pixel in the middle third that differs most from it.
+double progressLabelContrast(const QString& own_sheet, int value, QString* reading) {
+    constexpr int kBarWidth = 240;
+    constexpr int kAboveTheLabel = 2;
+    QProgressBar bar;
+    bar.setStyleSheet(own_sheet);
+    bar.setRange(0, sak::kPercentMax);
+    bar.setValue(value);
+    bar.setTextVisible(true);
+    bar.setFormat(QStringLiteral("%p%"));
+    bar.resize(kBarWidth, sak::ui::kUiProgressBarHeight);
+    bar.ensurePolished();
+    const QImage image = bar.grab().toImage();
+    const QColor fill = image.pixelColor(image.width() / 2, kAboveTheLabel);
+    double best = 1.0;
+    QColor ink = fill;
+    for (int y = kAboveTheLabel; y < image.height() - kAboveTheLabel; ++y) {
+        for (int x = image.width() / 3; x < (2 * image.width()) / 3; ++x) {
+            const double ratio = contrastRatio(image.pixelColor(x, y), fill);
+            if (ratio > best) {
+                best = ratio;
+                ink = image.pixelColor(x, y);
+            }
+        }
+    }
+    *reading = QStringLiteral("%1 on %2 at %3%").arg(ink.name(), fill.name()).arg(value);
+    return best;
+}
+
+}  // namespace
+
+// Review 5 (Z4): in the dark theme a table's header had the alternate rows' fill (#1e293b) and read
+// as a row, and a selected row (#243247) stood 1.13:1 from an alternate row and 1.37:1 from a
+// plain one. Read off a drawn table: the header stands apart from both kinds of row, and the
+// selection more so.
+void AppThemeTests::darkTablesTellTheHeaderAndTheSelectionApart() {
+    constexpr double kHeaderApart = 1.3;
+    constexpr double kSelectionApart = 1.5;
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    sak::ui::setThemePreference(*qApp, ThemePreference::Dark);
+    QCoreApplication::processEvents();
+    QTableWidget table(4, 2);
+    table.setAlternatingRowColors(true);
+    table.setHorizontalHeaderLabels({QStringLiteral("Name"), QStringLiteral("Value")});
+    table.resize(400, 220);
+    table.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&table));
+    table.selectRow(2);
+    QCoreApplication::processEvents();
+    const QImage drawn = table.grab().toImage();
+    const auto at_row = [&](int row) {
+        const QRect cell = table.visualRect(table.model()->index(row, 1));
+        const QPoint point = table.viewport()->mapTo(&table, cell.center());
+        return drawn.pixelColor(point.x(), point.y());
+    };
+    const QPoint header_point =
+        table.horizontalHeader()->mapTo(&table,
+                                        QPoint(table.horizontalHeader()->sectionPosition(1) + 4,
+                                               table.horizontalHeader()->height() / 2));
+    const QColor header = drawn.pixelColor(header_point);
+    const QColor plain = at_row(0);
+    const QColor alternate = at_row(1);
+    const QColor selected = at_row(2);
+    const QString colours =
+        QStringLiteral("header %1, rows %2 and %3, selected %4")
+            .arg(header.name(), plain.name(), alternate.name(), selected.name());
+    QVERIFY2(contrastRatio(header, plain) >= kHeaderApart, qPrintable(colours));
+    QVERIFY2(contrastRatio(header, alternate) >= kHeaderApart, qPrintable(colours));
+    QVERIFY2(contrastRatio(selected, plain) >= kSelectionApart, qPrintable(colours));
+    QVERIFY2(contrastRatio(selected, alternate) >= kSelectionApart, qPrintable(colours));
+}
+
+// Review 5 (Z2): in the light theme a bar's label, #0f172a, sat over a blue-500 to blue-700 fill at
+// 3.2-4.2:1 (backup and restore progress, the thermal and SMART bars, the status bar's). A bar's
+// label is one colour over its fill and its track, so each must carry it at 4.5:1: every bar of the
+// window, the AI workflow bar's own sheet with them, both themes, all fill and all track.
+void AppThemeTests::everyProgressLabelReadsOverItsFill() {
+    constexpr double kTextContrast = 4.5;
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    QStringList wrong;
+    QStringList report;
+    for (const ThemePreference theme : {ThemePreference::Light, ThemePreference::Dark}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        QSet<QString> sheets{QString(), sak::ui::aiWorkflowProgressStyle()};
+        for (const QProgressBar* bar : m_window->findChildren<QProgressBar*>()) {
+            sheets.insert(bar->styleSheet());
+        }
+        for (const QString& sheet : sheets) {
+            for (const int value : {0, sak::kPercentMax}) {
+                QString reading;
+                const double ratio = progressLabelContrast(sheet, value, &reading);
+                const QString line =
+                    QStringLiteral("%1 %2: %3:1 (%4)")
+                        .arg(theme == ThemePreference::Dark ? QStringLiteral("dark")
+                                                            : QStringLiteral("light"),
+                             sheet.isEmpty() ? QStringLiteral("theme") : sheet.left(40),
+                             QString::number(ratio, 'f', 2),
+                             reading);
+                report << line;
+                if (ratio < kTextContrast) {
+                    wrong << line;
+                }
+            }
+        }
+    }
+    qInfo().noquote() << report.join(QStringLiteral("\n"));
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+
+// Review 5 (Z18): the light pages' header icons were drawn at many weights: File Explorer's at 0%
+// of its pixels at 3:1 on the page, Advanced Uninstall's and Network Adapters' 8%, Benchmarks'
+// 23% and the Vulnerability Scanner's shield faint, beside Diagnostics' 85%, Email's 87% and the
+// Flasher's 96%. Every page header's drawing, on the page colour, in both themes, as the tab
+// icons are read: most of its pixels at 3:1, and no quarter of it mostly lost.
+void AppThemeTests::headerIconsReadOnThePageInBothThemes() {
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    constexpr int kHeaderIcon = 48;
+    // Every header drawing the window shows: a sub-tabbed page's header changes with its sub-tab.
+    QSet<QString> paths;
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr);
+    for (int index = 0; index < tabs->count(); ++index) {
+        tabs->setCurrentIndex(index);
+        QCoreApplication::processEvents();
+        for (const auto& [sub, sub_index] : pageViews(*tabs->widget(index))) {
+            if (sub != nullptr) {
+                revealTabWidget(sub);
+                sub->setCurrentIndex(sub_index);
+                QCoreApplication::processEvents();
+            }
+            // The refresher has no Q_OBJECT of its own, so it is found as a QObject.
+            for (const QObject* object : m_window->findChildren<QObject*>()) {
+                const auto* refresher = dynamic_cast<const sak::ThemedIconLabelRefresher*>(object);
+                if (refresher != nullptr && !onActionCard(*refresher)) {
+                    paths.insert(refresher->path());
+                }
+            }
+        }
+    }
+    tabs->setCurrentIndex(0);
+    QVERIFY2(paths.size() > 10, qPrintable(QString::number(paths.size())));
+    QStringList wrong;
+    QStringList report;
+    for (const ThemePreference theme : {ThemePreference::Light, ThemePreference::Dark}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        const QColor page = QApplication::palette().color(QPalette::Window);
+        for (const QString& path : paths) {
+            const QImage drawn = QIcon(sak::themedIconPath(path))
+                                     .pixmap(kHeaderIcon, kHeaderIcon)
+                                     .toImage()
+                                     .convertToFormat(QImage::Format_ARGB32);
+            const double share = pixelsAtThreeToOne(drawn, page);
+            const double quarter = weakestQuarterAtThreeToOne(drawn, page);
+            const QString line = QStringLiteral("%1 %2: %3 (weakest quarter %4)")
+                                     .arg(theme == ThemePreference::Dark ? QStringLiteral("dark")
+                                                                         : QStringLiteral("light"),
+                                          path.section(QLatin1Char('/'), -1),
+                                          QString::number(share, 'f', 2),
+                                          QString::number(quarter, 'f', 2));
+            report << line;
+            wrong << mostPixelsUnderThreeToOne(share, quarter, line);
+        }
+    }
+    qInfo().noquote() << report.join(QStringLiteral("\n"));
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+
 // UI review DN5: the Linux ISO card's penguin is black, and its body and outline all but vanished
 // on the dark card. In dark it is drawn in a light grey, switched with the theme.
 void AppThemeTests::theLinuxCardsPenguinReadsInDark() {

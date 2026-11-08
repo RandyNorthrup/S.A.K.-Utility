@@ -132,7 +132,7 @@ void addToolbarActions(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, Tool
     toolbar->addSpacing(ui::kSpacingMedium);
 
     controls->refresh_button = new QPushButton(QObject::tr("Refresh"), panel);
-    controls->refresh_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    controls->refresh_button->setStyleSheet(ui::kSecondaryButtonStyle);
     controls->refresh_button->setToolTip(QObject::tr("Refresh the list of installed programs"));
     setAccessible(controls->refresh_button,
                   QObject::tr("Refresh programs"),
@@ -162,7 +162,7 @@ void addToolbarActions(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, Tool
     toolbar->addWidget(controls->forced_uninstall_button);
 
     controls->batch_button = new QPushButton(QObject::tr("Batch"), panel);
-    controls->batch_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    controls->batch_button->setStyleSheet(ui::kSecondaryButtonStyle);
     controls->batch_button->setToolTip(
         QObject::tr("Queue multiple programs for sequential uninstall"));
     controls->batch_button->setEnabled(false);
@@ -271,9 +271,8 @@ struct LeftoverTableColumns {
 };
 
 struct LeftoverSectionUi {
-    QWidget* section = nullptr;
+    QGroupBox* section = nullptr;
     QTableWidget* table = nullptr;
-    QLabel* header_label = nullptr;
     QLabel* count_label = nullptr;
     QPushButton* select_all_button = nullptr;
     QPushButton* select_safe_button = nullptr;
@@ -284,13 +283,9 @@ struct LeftoverSectionUi {
 void addLeftoverHeader(AdvancedUninstallPanel* panel,
                        QVBoxLayout* section_layout,
                        LeftoverSectionUi* ui) {
+    // The section's name is its group box's title, as Installed Programs' is: a bold label of
+    // its own read as another kind of section (review 5, Z19). The count stays at the right.
     auto* header_row = new QHBoxLayout();
-    ui->header_label = new QLabel(QObject::tr("Leftover Items"), panel);
-    QFont header_font = ui->header_label->font();
-    header_font.setBold(true);
-    header_font.setPointSize(ui::kFontSizeStatus);
-    ui->header_label->setFont(header_font);
-    header_row->addWidget(ui->header_label);
     header_row->addStretch();
 
     ui->count_label = new QLabel(panel);
@@ -339,7 +334,7 @@ void addLeftoverButtons(AdvancedUninstallPanel* panel,
                         LeftoverSectionUi* ui) {
     auto* button_row = new QHBoxLayout();
     ui->select_all_button = new QPushButton(QObject::tr("Select All"), panel);
-    ui->select_all_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    ui->select_all_button->setStyleSheet(ui::kSecondaryButtonStyle);
     ui->select_all_button->setToolTip(
         QObject::tr("Select all leftover items regardless of risk level"));
     setAccessible(ui->select_all_button, QObject::tr("Select all items"));
@@ -353,7 +348,7 @@ void addLeftoverButtons(AdvancedUninstallPanel* panel,
     button_row->addWidget(ui->select_safe_button);
 
     ui->deselect_all_button = new QPushButton(QObject::tr("Deselect All"), panel);
-    ui->deselect_all_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    ui->deselect_all_button->setStyleSheet(ui::kSecondaryButtonStyle);
     ui->deselect_all_button->setToolTip(QObject::tr("Deselect all leftover items"));
     setAccessible(ui->deselect_all_button, QObject::tr("Deselect all"));
     button_row->addWidget(ui->deselect_all_button);
@@ -377,10 +372,8 @@ LeftoverSectionUi buildLeftoverSectionUi(AdvancedUninstallPanel* panel,
                                          const LeftoverTableColumns& cols) {
     LeftoverSectionUi ui;
 
-    ui.section = new QWidget(panel);
+    ui.section = new QGroupBox(QObject::tr("Leftover Items"), panel);
     auto* section_layout = new QVBoxLayout(ui.section);
-    section_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     section_layout->setSpacing(ui::kSpacingSmall);
 
     addLeftoverHeader(panel, section_layout, &ui);
@@ -740,7 +733,7 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
         tr("Configure uninstall preferences - recycle bin, restore points, "
            "default scan level, and more"));
     m_settings_button->setAccessibleName(tr("Uninstall settings"));
-    m_settings_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_settings_button->setStyleSheet(ui::kSecondaryButtonStyle);
     status_row->addWidget(m_settings_button);
     connect(m_settings_button,
             &QPushButton::clicked,
@@ -851,7 +844,12 @@ void AdvancedUninstallPanel::onViewFilterChanged(int index) {
 
 void AdvancedUninstallPanel::onEnumerationStarted() {
     setOperationRunning(true);
-    m_program_empty_state->setLoading(tr("Loading installed programs..."));
+    // On an empty list only: over the rows of the last scan it was drawn across the removed
+    // program's selected row (review 5, Z19). A refresh keeps those rows until it ends, as the
+    // status bar says.
+    if (m_program_table->rowCount() == 0) {
+        m_program_empty_state->setLoading(tr("Loading installed programs..."));
+    }
     Q_EMIT statusMessage(tr("Scanning installed programs..."), 0);
     Q_EMIT progressUpdate(0, 0);
     logMessage("Program enumeration started.");

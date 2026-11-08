@@ -11,6 +11,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHash>
+#include <QMimeDatabase>
+#include <QMimeType>
 #include <QPalette>
 #include <QStringList>
 
@@ -41,7 +43,7 @@ QString displayText(const FileManagementEntry& entry,
     case FileExplorerItemModel::NameColumn:
         return displayName(entry, showFileExtensions);
     case FileExplorerItemModel::TypeColumn:
-        return entry.type;
+        return FileExplorerItemModel::typeText(entry);
     case FileExplorerItemModel::SizeColumn:
         return entry.directory ? QString() : FileExplorerItemModel::sizeText(entry.size_bytes);
     case FileExplorerItemModel::ModifiedColumn:
@@ -97,7 +99,8 @@ int compareEntries(const FileManagementEntry& left,
     case FileExplorerItemModel::CreatedColumn:
         return compareDateTime(left.created_time, right.created_time, left.name, right.name);
     case FileExplorerItemModel::TypeColumn:
-        return QString::localeAwareCompare(left.type, right.type);
+        return QString::localeAwareCompare(FileExplorerItemModel::typeText(left),
+                                           FileExplorerItemModel::typeText(right));
     case FileExplorerItemModel::IdentifierColumn:
         return QString::localeAwareCompare(left.identifier, right.identifier);
     case FileExplorerItemModel::PathColumn:
@@ -493,6 +496,29 @@ bool FileExplorerItemModel::hasEntry(const int row) const {
 
 bool FileExplorerItemModel::showFileExtensions() const {
     return m_show_file_extensions;
+}
+
+QString FileExplorerItemModel::typeText(const FileManagementEntry& entry) {
+    if (entry.directory) {
+        return tr("File folder");
+    }
+    // A host file is "File" to the listing; the column says what kind, as Windows Explorer does.
+    // It said "File" for a PNG, a CSV and a PDF alike (review 5, Z9).
+    if (entry.type.compare(QStringLiteral("File"), Qt::CaseInsensitive) != 0) {
+        return entry.type;
+    }
+    const QString suffix = QFileInfo(entry.name).suffix();
+    if (suffix.isEmpty()) {
+        return tr("File");
+    }
+    static const QMimeDatabase kMimeTypes;
+    const QMimeType mime = kMimeTypes.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension);
+    QString comment = (mime.isValid() && !mime.isDefault()) ? mime.comment() : QString();
+    if (comment.isEmpty()) {
+        return tr("%1 File").arg(suffix.toUpper());
+    }
+    comment[0] = comment.at(0).toUpper();
+    return comment;
 }
 
 QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry) {

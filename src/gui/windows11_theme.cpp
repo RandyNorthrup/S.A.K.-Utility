@@ -153,8 +153,8 @@ QString themeProgressStyles() {
         .arg(kCssRadiusXLargePx - kCssBorderWidthDefaultPx)
         .arg(colorWithAlpha(kColorBorderDefault, kChromeProgressTrackAlpha))
         .arg(kUiProgressBarHeight)
-        .arg(colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha))
-        .arg(colorWithAlpha(kColorPrimaryPressed, kPrimaryGradientChunkAlpha))
+        .arg(QString::fromLatin1(kColorProgressFillStart))
+        .arg(QString::fromLatin1(kColorProgressFillEnd))
         .arg(kCssRadiusLargePx);
 }
 
@@ -231,13 +231,15 @@ QString darkTabAndInputStyles() {
 }
 
 QString darkContainerAndViewStyles() {
+    // The header takes the border shade: on the alternate rows' #1e293b it read as one more row
+    // (review 5, Z4).
     return QString::fromLatin1(kWindows11DarkContainerAndViewStyles)
         .arg(QString::fromLatin1(kColorDarkBorderDefault))
         .arg(QString::fromLatin1(kColorDarkTextHeading))
-        .arg(QString::fromLatin1(kColorDarkBgSurface))
+        .arg(QString::fromLatin1(kColorDarkBorderDefault))
         .arg(QString::fromLatin1(kColorDarkBgInput))
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
-        .arg(QString::fromLatin1(kColorDarkBgHover))
+        .arg(QString::fromLatin1(kColorDarkSelection))
         .arg(QString::fromLatin1(kColorDarkBorderMuted))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorDarkBgSurface));
@@ -250,7 +252,9 @@ QString darkShadowedRules() {
                "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
            QString::fromLatin1(kWindows11DarkProgressStyles)
                .arg(QString::fromLatin1(kColorDarkBorderDefault),
-                    QString::fromLatin1(kColorDarkBgInput));
+                    QString::fromLatin1(kColorDarkBgInput),
+                    colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha),
+                    colorWithAlpha(kColorPrimaryPressed, kPrimaryGradientChunkAlpha));
 }
 
 QString darkThemeOverrideStyles() {
@@ -371,7 +375,7 @@ QPalette themePalette(AppThemeMode mode) {
 }  // namespace
 
 QString itemSelectionColor() {
-    return usingDarkUiTheme() ? QString::fromLatin1(kColorDarkBgHover)
+    return usingDarkUiTheme() ? QString::fromLatin1(kColorDarkSelection)
                               : blendedOver(kColorPrimary, kSelectionStrongAlpha, kColorBgWhite);
 }
 

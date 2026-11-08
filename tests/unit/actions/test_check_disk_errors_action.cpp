@@ -121,7 +121,8 @@ void CheckDiskErrorsActionTests::aFat32StickIsNamedAsNotCheckedNotFailed() {
              qPrintable(result.log));
     QVERIFY2(result.log.contains(QStringLiteral("chkdsk U:")), qPrintable(result.log));
     // Counted where it is named: the summary said "0 could not be checked" under this drive.
-    QVERIFY2(result.log.contains(QStringLiteral("1 of 2 drives scanned, 1 could not be checked")),
+    QVERIFY2(result.log.contains(
+                 QStringLiteral("1 of 2 drives scanned.\nCould not be checked: 1.\n")),
              qPrintable(result.log));
     QVERIFY2(result.message.contains(QStringLiteral("(U: is FAT32)")), qPrintable(result.message));
     QVERIFY(Action::fileSystemIsScannable(QStringLiteral("NTFS")));
@@ -184,6 +185,16 @@ void CheckDiskErrorsActionTests::reportSaysNetworkDrivesAreNotChecked() {
     QVERIFY2(action.lastExecutionResult().log.contains(
                  QStringLiteral("Network drives are not checked.")),
              qPrintable(action.lastExecutionResult().log));
+    // Review 5 (Z23): the summary was one line, ", " between its parts, that ran past the log
+    // window, so what showed read "0 could not be checked, Network drives are not checked.". Each
+    // line of the summary is a sentence of its own.
+    const QString log = action.lastExecutionResult().log;
+    const QStringList lines =
+        log.mid(log.lastIndexOf(QStringLiteral("Summary: "))).split(QLatin1Char('\n'));
+    QVERIFY(lines.size() >= 4);
+    for (const QString& line : lines.mid(0, 4)) {
+        QVERIFY2(line.endsWith(QLatin1Char('.')), qPrintable(line));
+    }
 }
 
 // The process's own word that it was stopped is enough, whatever the action's flag says by then.

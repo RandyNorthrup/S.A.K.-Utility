@@ -94,11 +94,13 @@ public:
 private:
     [[nodiscard]] static QColor tintColor(const QIcon::Mode mode) {
         const QPalette palette = QApplication::palette();
+        // A selected row keeps the text colour: the theme's selection is a pale tint under the
+        // ordinary text, and the white HighlightedText drawing vanished on it (#d4e4fd, 1.18:1,
+        // review 5, Z5).
         switch (mode) {
         case QIcon::Disabled:
             return palette.color(QPalette::Disabled, QPalette::WindowText);
         case QIcon::Selected:
-            return palette.color(QPalette::HighlightedText);
         case QIcon::Active:
         case QIcon::Normal:
             break;

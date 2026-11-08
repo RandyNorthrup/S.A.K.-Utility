@@ -120,8 +120,18 @@ const auto kUwpPackagesCommand = QStringLiteral(
     // so for a subject with no organisation the manifest's PublisherDisplayName is read too: the
     // name the Store and Settings show (review 4, N9). It is a label for the list; a manifest that
     // cannot be read leaves it empty and the list shows the subject.
+    //
+    // A package is named in the list as Settings names it: its display name, resolved from its
+    // resources by Windows' own PackageManager ("Windows Calculator", not
+    // "Microsoft.WindowsCalculator" or "1527c705-..."; review 5, Z8). It is a label too: when
+    // Windows gives none, the list shows the package's name.
+    "$names=@{}; try {$null=[Windows.Management.Deployment.PackageManager,"
+    "Windows.Management.Deployment,ContentType=WindowsRuntime]; foreach ($p in "
+    "(New-Object Windows.Management.Deployment.PackageManager).FindPackagesForUser('')) "
+    "{try {$names[$p.Id.FullName]=[string]$p.DisplayName} catch {}}} catch {}; "
     "Get-AppxPackage -ErrorAction Stop | Select-Object Name, PackageFamilyName, "
     "PackageFullName, Publisher, Version, InstallLocation, IsFramework, SignatureKind, "
+    "@{n='DisplayName';e={$names[$_.PackageFullName]}}, "
     "@{n='PublisherDisplayName';e={if ($_.Publisher -notmatch '(^|,)\\s*O=') "
     "{try {[string](Get-AppxPackageManifest -Package $_.PackageFullName -ErrorAction Stop)"
     ".Package.Properties.PublisherDisplayName} catch {''}} else {''}}} | "
@@ -658,7 +668,7 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     }
 
     ProgramInfo prog;
-    prog.displayName = obj["Name"].toString();
+    prog.displayName = packageDisplayName(obj["Name"].toString(), obj["DisplayName"].toString());
     prog.packageFamilyName = obj["PackageFamilyName"].toString();
     prog.packageFullName = obj["PackageFullName"].toString();
     // The list showed "CN=Microsoft Corporation, O=Micro..." (review 2, N9), and for a
@@ -738,6 +748,14 @@ QString ProgramEnumerator::packagePublisher(const QString& subject, const QStrin
     const QString name = display_name.trimmed();
     if (shown == subject && !name.isEmpty() &&
         !name.startsWith(QStringLiteral("ms-resource:"), Qt::CaseInsensitive)) {
+        return name;
+    }
+    return shown;
+}
+
+QString ProgramEnumerator::packageDisplayName(const QString& name, const QString& display_name) {
+    const QString shown = display_name.trimmed();
+    if (shown.isEmpty() || shown.startsWith(QStringLiteral("ms-resource:"), Qt::CaseInsensitive)) {
         return name;
     }
     return shown;

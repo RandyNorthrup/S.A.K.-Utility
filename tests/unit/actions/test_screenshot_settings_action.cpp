@@ -164,7 +164,7 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
     CaptureResult capture;
     capture.captured_pages << QStringLiteral("Display_Settings")
                            << QStringLiteral("Sound_Settings");
-    capture.failed_pages << QStringLiteral("WiFi_Settings");
+    capture.failed_pages << QStringLiteral("Wi-Fi_Settings");
     capture.screenshots_taken = 5;
     capture.failed_attempts = 4;
 
@@ -200,7 +200,7 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
         bar,
         QStringLiteral("| FAILED PAGES |"),
         bar,
-        QStringLiteral("| [ ] WiFi_Settings |"),  // failed page -> [ ], never [x]
+        QStringLiteral("| [ ] Wi-Fi_Settings |"),  // failed page -> [ ], never [x]
         bar,
         QStringLiteral("| Output Location: %1 |")
             .arg(QDir::toNativeSeparators(QDir(QStringLiteral("C:/out")).absolutePath())),
@@ -727,7 +727,7 @@ void ScreenshotSettingsActionTests::settingsPagesUsePublishedNames() {
             QVERIFY2(published.contains(uri) || windows11_too.contains(uri), qPrintable(uri));
         }
         names.insert(page.name);
-        QCOMPARE(page.needs_wifi, page.name == QStringLiteral("WiFi_Settings"));
+        QCOMPARE(page.needs_wifi, page.name == QStringLiteral("Wi-Fi_Settings"));
     }
     QCOMPARE(names.size(), pages.size());
 
@@ -750,7 +750,7 @@ void ScreenshotSettingsActionTests::buildExecutionResult_namesPagesThisPcDoesNot
     CaptureResult cap;
     cap.captured_pages << QStringLiteral("a") << QStringLiteral("b");
     cap.screenshots_taken = 2;
-    cap.absent_pages << QStringLiteral("WiFi_Settings: this PC has no Wi-Fi adapter");
+    cap.absent_pages << QStringLiteral("Wi-Fi_Settings: this PC has no Wi-Fi adapter");
     CaptureContext ctx = contextWith(true);
     ctx.total_pages = 2;
     ctx.monitor_count = 2;
@@ -759,14 +759,14 @@ void ScreenshotSettingsActionTests::buildExecutionResult_namesPagesThisPcDoesNot
     QVERIFY2(result.success, "a page this PC does not have is not a failed capture");
     QCOMPARE(result.message,
              QStringLiteral("Captured 2/2 settings pages (2 monitors detected). Not on this PC: "
-                            "WiFi_Settings: this PC has no Wi-Fi adapter"));
+                            "Wi-Fi_Settings: this PC has no Wi-Fi adapter"));
     QVERIFY(result.log.contains(
-        QStringLiteral("\nNOT_ON_THIS_PC:WiFi_Settings: this PC has no Wi-Fi adapter\n")));
+        QStringLiteral("\nNOT_ON_THIS_PC:Wi-Fi_Settings: this PC has no Wi-Fi adapter\n")));
 
     const QString text = Action::buildScreenshotReportText(
         1, cap, QStringLiteral("C:/out"), QStringLiteral("20261106_010203"));
     QVERIFY(text.contains(QStringLiteral("NOT ON THIS PC")));
-    QVERIFY(text.contains(QStringLiteral("| [-] WiFi_Settings: this PC has no Wi-Fi adapter")));
+    QVERIFY(text.contains(QStringLiteral("| [-] Wi-Fi_Settings: this PC has no Wi-Fi adapter")));
 }
 
 // Eight pages saved as eight 1024x768 pictures of one colour: copying the pixels of a window the

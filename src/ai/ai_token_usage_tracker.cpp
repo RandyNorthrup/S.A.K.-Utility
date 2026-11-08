@@ -91,12 +91,14 @@ TokenUsage TokenUsageTracker::fromJson(const QJsonObject& usage_json) noexcept {
 }
 
 QString TokenUsageTracker::formatTurn(const TokenUsage& usage) {
-    return QStringLiteral("%1 in / %2 cached / %3 out / %4 reasoning / %5 total")
-        .arg(n(usage.input_tokens),
+    // In the session's form, total first and the parts in parentheses: the turn used slashes and
+    // the session parentheses, side by side in one line (review 5, Z16).
+    return QStringLiteral("%1 total (%2 in, %3 cached, %4 out, %5 reasoning)")
+        .arg(n(usage.total_tokens),
+             n(usage.input_tokens),
              n(usage.cached_input_tokens),
              n(usage.output_tokens),
-             n(usage.reasoning_tokens),
-             n(usage.total_tokens));
+             n(usage.reasoning_tokens));
 }
 
 QString TokenUsageTracker::formatSession(const TokenUsage& usage) {

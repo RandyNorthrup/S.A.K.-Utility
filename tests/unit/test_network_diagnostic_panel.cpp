@@ -9,6 +9,7 @@
 #include "sak/network_diagnostic_panel.h"
 #include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
+#include "sak/style_constants.h"
 #include "sak/windows11_theme.h"
 
 #include <QAbstractButton>
@@ -19,6 +20,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHash>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -337,6 +339,20 @@ class NetworkDiagnosticPanelTests : public QObject {
 
 private Q_SLOTS:
     void cleanup();
+    // Review 5 (Z6): Reset Network, which resets the PC's whole network stack, was drawn as
+    // neutral as Copy Config, beside three filled buttons. It takes the danger tone, and Backup
+    // and Restore Settings are not filled.
+    void resetNetworkLooksDestructive() {
+        sak::QuickActionController quick_actions;
+        sak::NetworkDiagnosticPanel panel(quick_actions);
+        QHash<QString, QString> sheets;
+        for (const QPushButton* button : panel.findChildren<QPushButton*>()) {
+            sheets.insert(button->text(), button->styleSheet());
+        }
+        QCOMPARE(sheets.value(QStringLiteral("Reset Network")), sak::ui::kDangerButtonStyle);
+        QCOMPARE(sheets.value(QStringLiteral("Backup Settings")), sak::ui::kSecondaryButtonStyle);
+        QCOMPARE(sheets.value(QStringLiteral("Restore Settings")), sak::ui::kSecondaryButtonStyle);
+    }
     void aListeningConnectionUsesTheTablesTextColour();
     void everyColumnFitsItsHeaderLabel();
     void aDisconnectedAdapterReadsWhole();

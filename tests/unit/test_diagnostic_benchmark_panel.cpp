@@ -230,6 +230,67 @@ private Q_SLOTS:
             nullptr);
     }
 
+    // Review 5 (Z14): CPU's Run button sat 32 px below its bar and Disk's 6 px (an empty details
+    // label between them), and Disk's result lines were 17 px apart inside Random 4K and 23 px
+    // between labels. One gap from bar to button in every group, before and after a CPU run, and
+    // every result line one line below the last.
+    void benchmarkGroupsKeepOneGapAndOneLinePitch() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        panel.resize(1280, 860);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        showSubTab(panel, QStringLiteral("Benchmarks"));
+        QHash<QString, QWidget*> named;
+        for (auto* widget : panel.findChildren<QWidget*>()) {
+            if (!widget->accessibleName().isEmpty()) {
+                named.insert(widget->accessibleName(), widget);
+            }
+        }
+        const auto top = [&panel](const QWidget* widget) {
+            return widget->mapTo(&panel, QPoint(0, 0)).y();
+        };
+        const auto gaps = [&]() {
+            QList<int> found;
+            for (const auto& [bar, button] :
+                 {std::pair{"CPU Benchmark Score", "Run CPU Benchmark"},
+                  std::pair{"Disk Benchmark Score", "Run Disk Benchmark"},
+                  std::pair{"Memory Benchmark Score", "Run Memory Benchmark"}}) {
+                const QWidget* b = named.value(QString::fromLatin1(bar));
+                const QWidget* r = named.value(QString::fromLatin1(button));
+                found << (b != nullptr && r != nullptr ? top(r) - (top(b) + b->height()) : -1);
+            }
+            return found;
+        };
+        QTRY_VERIFY(named.value(QStringLiteral("Run CPU Benchmark"))->isVisible());
+        QList<int> before = gaps();
+        QVERIFY2(before.count(before.first()) == before.size() && before.first() >= 0,
+                 qPrintable(QStringLiteral("bar to button: %1")
+                                .arg(QStringList({QString::number(before.at(0)),
+                                                  QString::number(before.at(1)),
+                                                  QString::number(before.at(2))})
+                                         .join(QStringLiteral(", ")))));
+        auto* controller = panel.findChild<sak::DiagnosticController*>();
+        QVERIFY(controller != nullptr);
+        sak::CpuBenchmarkResult cpu;
+        cpu.multi_thread_score = 1500;
+        Q_EMIT controller->cpuBenchmarkComplete(cpu);
+        QCoreApplication::processEvents();
+        QCOMPARE(gaps(), before);
+
+        const QStringList lines = {QStringLiteral("Sequential: --"),
+                                   QStringLiteral("Random 4K: --"),
+                                   QStringLiteral("Latency: --")};
+        QList<QLabel*> results;
+        for (const QString& text : lines) {
+            results << labelReading(panel, text);
+            QVERIFY2(results.last() != nullptr, qPrintable(text));
+        }
+        for (qsizetype i = 1; i < results.size(); ++i) {
+            QCOMPARE(top(results.at(i)), top(results.at(i - 1)) + results.at(i - 1)->height());
+        }
+    }
+
     // UI review F17: before any sensor answered, and for one that never does, Thermal read
     // "0 C" with a bar of "0 / 100 C", where the other views said N/A.
     void thermalSaysNotAvailableUntilASensorAnswers() {

@@ -6,6 +6,7 @@
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_status_center_widget.h"
+#include "sak/file_explorer_style_constants.h"
 #include "sak/style_constants.h"
 
 #include <QEvent>
@@ -16,6 +17,8 @@
 #include <QMenu>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace sak {
 
@@ -278,6 +281,10 @@ void FileExplorerOmnibar::ensureSuggestionPopup() {
     m_suggestion_frame->setObjectName(QStringLiteral("fileExplorerOmnibarSuggestionFrame"));
     m_suggestion_frame->setFrameShape(QFrame::StyledPanel);
     m_suggestion_frame->setAutoFillBackground(true);
+    // Opaque in both themes: the theme draws a plain frame transparent, and in the light theme the
+    // listing showed through the palette's results (#f5f5f6, 1.09:1; review 5, Z12).
+    // The list draws no frame or padding of its own inside it, so the popup's height is its rows'.
+    m_suggestion_frame->setStyleSheet(ui::omnibarSuggestionPopupStyleSheet());
     auto* layout = new QVBoxLayout(m_suggestion_frame);
     layout->setContentsMargins(
         ui::kMarginHairline, ui::kMarginHairline, ui::kMarginHairline, ui::kMarginHairline);
@@ -288,6 +295,15 @@ void FileExplorerOmnibar::ensureSuggestionPopup() {
     m_suggestion_list->setSelectionMode(QAbstractItemView::SingleSelection);
     layout->addWidget(m_suggestion_list);
     m_suggestion_frame->hide();
+    // A live search fills the list after it shows: the popup follows its rows.
+    const auto refit = [this]() {
+        if (suggestionsVisible()) {
+            positionSuggestionPopup();
+        }
+    };
+    connect(m_suggestion_list->model(), &QAbstractItemModel::rowsInserted, this, refit);
+    connect(m_suggestion_list->model(), &QAbstractItemModel::rowsRemoved, this, refit);
+    connect(m_suggestion_list->model(), &QAbstractItemModel::modelReset, this, refit);
     connect(m_suggestion_list, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         Q_EMIT suggestionActivated(item);
     });
@@ -298,10 +314,21 @@ void FileExplorerOmnibar::positionSuggestionPopup() {
         return;
     }
     const QPoint anchor = m_address_stack->mapTo(window(), m_address_stack->rect().bottomLeft());
+    // As tall as its results, up to the most it shows: one result filled a 312 px box (review 5,
+    // Z12).
+    const QMargins frame = m_suggestion_frame->contentsMargins() +
+                           m_suggestion_frame->layout()->contentsMargins();
+    int rows = 0;
+    for (int row = 0; row < m_suggestion_list->count(); ++row) {
+        rows += m_suggestion_list->isRowHidden(row) ? 0 : m_suggestion_list->sizeHintForRow(row);
+    }
+    // An empty list (a search still running) keeps one line's room.
+    const int wanted = std::max(rows, m_suggestion_list->fontMetrics().height()) + frame.top() +
+                       frame.bottom();
     m_suggestion_frame->setGeometry(anchor.x(),
                                     anchor.y() + kSuggestionPopupGapPx,
                                     m_address_stack->width(),
-                                    kSuggestionPopupMaxHeight);
+                                    std::min(wanted, kSuggestionPopupMaxHeight));
 }
 
 QListWidget* FileExplorerOmnibar::suggestionList() const {

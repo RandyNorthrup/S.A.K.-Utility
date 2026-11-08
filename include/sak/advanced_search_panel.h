@@ -137,6 +137,10 @@ private:
 
     // -- Preview Helpers --
     void showFilePreview(const QString& file_path, const QVector<SearchMatch>& matches);
+    /// The numbered lines of @p stream in the preview, matches highlighted, at the first match.
+    void showTextPreview(QTextStream& stream,
+                         const QString& file_path,
+                         const QVector<SearchMatch>& matches);
     void showMetadataPreview(const QString& file_path, const QVector<SearchMatch>& matches);
     void showMetadataDialog(const QString& file_path);
     void showMetadataTreeDialog(const QString& title, const QMap<QString, QString>& metadata);

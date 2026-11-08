@@ -9,8 +9,10 @@
 #include "sak/partition_manager_controller.h"
 
 #include <QColor>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRect>
 #include <QStringList>
 #include <QVector>
 #include <QWidget>
@@ -343,6 +345,12 @@ private:
 [[nodiscard]] QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
                                                            uint64_t target_bytes,
                                                            int bar_width);
+/// Copy Disk's source and target bars as drawn @p width wide, and where each bar is drawn.
+[[nodiscard]] QImage partitionCopyPreviewForTest(const PartitionDiskInfo& source,
+                                                 uint64_t target_bytes,
+                                                 int width,
+                                                 QRect* source_bar,
+                                                 QRect* target_bar);
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
 /// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
 [[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(

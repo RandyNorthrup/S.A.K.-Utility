@@ -367,7 +367,8 @@ void WifiManagerPanel::setupFormActionButtons(QFormLayout* layout) {
         "Show a QR code of the current network for phone/tablet "
         "scanning");
     m_connect_phone_btn->setAccessibleName(m_connect_phone_btn->text());
-    m_connect_phone_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // The form's work is Add to Table; one filled button per group (review 5, Z6).
+    m_connect_phone_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_add_table_btn = new QPushButton("Add to Table", m_form_group);
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
     m_add_table_btn->setAccessibleName(QStringLiteral("Add to Table"));
@@ -517,7 +518,8 @@ void WifiManagerPanel::setupActionButtons() {
     m_export_macos_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_scan_networks_btn = new QPushButton("Scan Known Networks", this);
     m_scan_networks_btn->setAccessibleName(QStringLiteral("Scan Known Networks"));
-    m_scan_networks_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // Generate QR Code is the row's one filled button, the others its tools (review 5, Z6).
+    m_scan_networks_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
 
     m_generate_qr_btn->setToolTip(
         "Export the current network as a QR code image (PNG, PDF, JPG, "

@@ -317,7 +317,7 @@ void ScreenshotSettingsAction::execute() {
 
 namespace {
 
-/// ". Not on this PC: WiFi_Settings: this PC has no Wi-Fi adapter", or nothing.
+/// ". Not on this PC: Wi-Fi_Settings: this PC has no Wi-Fi adapter", or nothing.
 QString notOnThisPcNote(const QStringList& absent_pages) {
     return absent_pages.isEmpty()
                ? QString()
@@ -409,7 +409,7 @@ QList<ScreenshotSettingsAction::SettingsPage> ScreenshotSettingsAction::settings
         {.name = QStringLiteral("Network_Status"),
          .uris = {QStringLiteral("network-status"), QStringLiteral("network")}},
         {.name = QStringLiteral("Ethernet_Settings"), .uris = {QStringLiteral("network-ethernet")}},
-        {.name = QStringLiteral("WiFi_Settings"),
+        {.name = QStringLiteral("Wi-Fi_Settings"),
          .uris = {QStringLiteral("network-wifi")},
          .needs_wifi = true},
         {.name = QStringLiteral("Installed_Apps"),

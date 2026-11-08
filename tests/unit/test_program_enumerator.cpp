@@ -552,6 +552,16 @@ void TestProgramEnumerator::storePackagesAreNamedByTheirManifest() {
     QCOMPARE(ProgramEnumerator::packagePublisher(store, QStringLiteral("ms-resource:Publisher")),
              store);
     QCOMPARE(ProgramEnumerator::packagePublisher(store, QString()), store);
+    // Review 5 (Z8): the list showed packages by their identity ("1527c705-...",
+    // "22094SynapticsIncorporate.AudioControls"). They are named as Settings names them.
+    QCOMPARE(ProgramEnumerator::packageDisplayName(QStringLiteral("Microsoft.WindowsCalculator"),
+                                                   QStringLiteral("Windows Calculator")),
+             QStringLiteral("Windows Calculator"));
+    QCOMPARE(ProgramEnumerator::packageDisplayName(QStringLiteral("1527c705-839a"), QString()),
+             QStringLiteral("1527c705-839a"));
+    QCOMPARE(ProgramEnumerator::packageDisplayName(QStringLiteral("App"),
+                                                   QStringLiteral("ms-resource:AppName")),
+             QStringLiteral("App"));
     // A subject with an organisation keeps it.
     QCOMPARE(ProgramEnumerator::packagePublisher(
                  QStringLiteral("CN=Microsoft Corporation, O=Microsoft Corporation, C=US"),
@@ -564,10 +574,12 @@ void TestProgramEnumerator::storePackagesAreNamedByTheirManifest() {
         QJsonObject{{QStringLiteral("Name"), QStringLiteral("SpotifyAB.SpotifyMusic")},
                     {QStringLiteral("Publisher"), store},
                     {QStringLiteral("PublisherDisplayName"), QStringLiteral("Spotify AB")},
+                    {QStringLiteral("DisplayName"), QStringLiteral("Spotify")},
                     {QStringLiteral("IsFramework"), false}},
         results);
     QCOMPARE(results.size(), 1);
     QCOMPARE(results.first().publisher, QStringLiteral("Spotify AB"));
+    QCOMPARE(results.first().displayName, QStringLiteral("Spotify"));
 }
 
 QTEST_MAIN(TestProgramEnumerator)

@@ -242,6 +242,9 @@ Q_SIGNALS:
     /// @brief Error from any worker
     void errorOccurred(const QString& message);
 
+    /// @brief A drive the SMART scan kept with a warning (SmartDiskAnalyzer::driveWarning)
+    void driveWarning(const QString& message);
+
     /// @brief Reports generated successfully
     void reportsGenerated(const QString& output_dir);
 

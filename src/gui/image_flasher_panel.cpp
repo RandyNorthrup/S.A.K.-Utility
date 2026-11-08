@@ -654,6 +654,7 @@ void ImageFlasherPanel::createCompletionPage() {
     auto* layout = new QVBoxLayout(m_completionPage);
 
     auto* group_box = new QGroupBox("Flash Complete", m_completionPage);
+    m_completionGroup = group_box;
     auto* group_layout = new QVBoxLayout(group_box);
 
     m_completionMessageLabel = new QLabel("", group_box);
@@ -901,6 +902,11 @@ void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
 
 void ImageFlasherPanel::onFlashStateChanged(FlashState new_state, const QString& message) {
     (void)new_state;
+    if (m_cancelRequested) {
+        // "Stopping the write..." stays until the writer reports how it ended.
+        logInfo(QString("Flash state: %1").arg(message).toStdString());
+        return;
+    }
     m_flashStateLabel->setText(message);
     // In the status bar as well, as the Windows USB steps are: a raw flash read "Ready" beside its
     // bar at 95% (review 3, S22).
@@ -911,8 +917,20 @@ void ImageFlasherPanel::onFlashStateChanged(FlashState new_state, const QString&
 void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
     Q_ASSERT(m_completionDetailsLabel);
     Q_ASSERT(m_completionMessageLabel);
+    if (m_cancelRequested && !result.success) {
+        // Workers that had written report the bytes they wrote; a run stopped before its first
+        // block (still reading a compressed image, or queued) reports none.
+        showCancelledOutcome(cancelledDriveState(result.bytesWritten > 0
+                                                     ? CancelledWrite::Written
+                                                     : CancelledWrite::NothingWritten,
+                                                 result.totalDrives()),
+                             &result);
+        return;
+    }
     m_isFlashing = false;
+    m_cancelRequested = false;
     m_settingsButton->setEnabled(true);
+    m_completionGroup->setTitle(tr("Flash Complete"));
 
     if (result.success) {
         m_completionMessageLabel->setText(QString::fromUtf8(sak::ui::kStatusPrefixSuccess) +
@@ -1019,6 +1037,7 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
 void ImageFlasherPanel::showFlashFailure(const QString& error, const QString& drive_state) {
     Q_ASSERT(m_stackedWidget);
     m_isFlashing = false;
+    m_cancelRequested = false;
     m_settingsButton->setEnabled(true);
 
     // The message crosses a boundary from FlashCoordinator or from the Windows USB
@@ -1058,47 +1077,88 @@ void ImageFlasherPanel::onCancelClicked() {
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
 
-    if (reply == QMessageBox::Yes) {
-        // This panel drives two independent destructive writers: FlashCoordinator for raw
-        // image writes, and a separate WindowsUSBCreator worker for Windows ISO media.
-        // Cancel previously signalled only the coordinator, so cancelling a Windows USB
-        // creation asked nothing to stop: the worker kept writing the disk while the UI
-        // reported "Flash cancelled by user" and re-enabled the controls, letting the user
-        // start another operation against a drive that was still being written.
-        //
-        // Signal every writer that currently exists. Both cancels set an atomic flag the
-        // worker polls, and both are already invoked this way from the destructor.
-        bool cancel_signalled = false;
-        if (m_windowsUsbCreator != nullptr) {
-            m_windowsUsbCreator->cancel();
-            cancel_signalled = true;
-        }
-        if (m_flashCoordinator) {
-            m_flashCoordinator->cancel();
-            cancel_signalled = true;
-        }
-        if (!cancel_signalled) {
-            // Nothing to cancel means the UI state and the worker state disagree. Refuse to
-            // report a cancellation that never happened.
-            logError("Cancel Flash: no active writer to cancel; refusing to report cancelled");
-            return;
-        }
-
-        m_isFlashing = false;
-        m_settingsButton->setEnabled(true);
-
-        m_flashStateLabel->setText("Flash cancelled by user");
-        m_flashDetailsLabel->clear();
-        m_flashSpeedLabel->clear();
-
-        // Return to drive selection so the user can retry
-        m_stackedWidget->setCurrentIndex(1);
-        updateNavigationButtons();
-
-        Q_EMIT flashCancelled();
-        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
-        Q_EMIT statusMessage("Image Flasher: Flash cancelled", sak::kTimerStatusDefaultMs);
+    if (reply != QMessageBox::Yes || !m_isFlashing) {
+        return;  // Declined, or the run ended while the question was open.
     }
+
+    // Until the writer stops, the run is still on: the page says so, Cancel is spent, and
+    // nothing else may start against the drive. The outcome comes from the writer's own
+    // terminal report (onFlashCompleted, or the Windows USB creator's failed), which says
+    // whether anything had been written. Set before signalling: a coordinator with nothing
+    // left running reports its outcome inside cancel().
+    m_cancelRequested = true;
+    m_flashStateLabel->setText(tr("Stopping the write..."));
+    m_flashSpeedLabel->clear();
+    updateNavigationButtons();
+    Q_EMIT statusMessage(tr("Image Flasher: Stopping the write..."), sak::kTimerStatusDefaultMs);
+
+    // This panel drives two independent destructive writers: FlashCoordinator for raw
+    // image writes, and a separate WindowsUSBCreator worker for Windows ISO media.
+    // Cancel previously signalled only the coordinator, so cancelling a Windows USB
+    // creation asked nothing to stop. Signal every writer that currently exists. Both
+    // cancels set an atomic flag the worker polls.
+    if (m_windowsUsbCreator != nullptr) {
+        m_windowsUsbCreator->cancel();
+    }
+    m_flashCoordinator->cancel();
+
+    // Nothing left running will ever report, so say what is known now rather than leave the
+    // page on "Stopping" for good.
+    if (m_isFlashing && !writerStillRunning()) {
+        logError("Cancel Flash: no writer was running to report the outcome");
+        showCancelledOutcome(cancelledDriveState(CancelledWrite::Unknown, m_selectedDrives.size()),
+                             nullptr);
+    }
+}
+
+bool ImageFlasherPanel::writerStillRunning() const {
+    return m_flashCoordinator->isFlashing() || m_flashCoordinator->hasRunningWriters() ||
+           (m_windowsUsbThread != nullptr && m_windowsUsbThread->isRunning());
+}
+
+QString ImageFlasherPanel::cancelledDriveState(CancelledWrite written, qsizetype drive_count) {
+    const bool one = drive_count == 1;
+    switch (written) {
+    case CancelledWrite::NothingWritten:
+        return one ? tr("Nothing was written: the target drive is as it was.")
+                   : tr("Nothing was written: the target drives are as they were.");
+    case CancelledWrite::Written:
+        return one ? tr("Writing had started, so the target drive is not usable as it is. Flash "
+                        "it again or reformat it before using it.")
+                   : tr("Writing had started, so a target drive that did not finish is not "
+                        "usable as it is. Flash it again or reformat it before using it.");
+    case CancelledWrite::Unknown:
+    default:
+        return one ? tr("The target drive may have been partly written. Flash it again or "
+                        "reformat it before using it.")
+                   : tr("The target drives may have been partly written. Flash them again or "
+                        "reformat them before using them.");
+    }
+}
+
+void ImageFlasherPanel::showCancelledOutcome(const QString& drive_state,
+                                             const FlashResult* result) {
+    Q_ASSERT(m_completionMessageLabel);
+    m_isFlashing = false;
+    m_cancelRequested = false;
+    m_settingsButton->setEnabled(true);
+
+    m_completionGroup->setTitle(tr("Flash Cancelled"));
+    m_completionMessageLabel->setText(QString::fromUtf8(sak::ui::kStatusPrefixWarning) +
+                                      tr("Flash cancelled"));
+    m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
+    m_completionDetailsLabel->setText(
+        result == nullptr
+            ? drive_state
+            : QStringLiteral("%1\n\n%2").arg(drive_state, buildCompletionDetails(*result)));
+
+    m_stackedWidget->setCurrentWidget(m_completionPage);
+    updateNavigationButtons();
+
+    logWarning(("Flash cancelled: " + drive_state).toStdString());
+    Q_EMIT flashCancelled();
+    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    Q_EMIT statusMessage(tr("Image Flasher: Flash cancelled"), kImageFlasherStatusTimeoutMs);
 }
 
 void ImageFlasherPanel::updateNavigationButtons() {
@@ -1128,6 +1188,10 @@ void ImageFlasherPanel::updateNavigationButtons() {
         break;
     }
 
+    updateFlashAndCancelButtons(current_index);
+}
+
+void ImageFlasherPanel::updateFlashAndCancelButtons(int current_index) {
     // Flash button: only visible and enabled on drive selection page when not flashing
     m_flashButton->setVisible(current_index == kDriveSelectionPageIndex && !m_isFlashing);
     // An image is as necessary as a target. This used to gate on the drive list
@@ -1135,9 +1199,9 @@ void ImageFlasherPanel::updateNavigationButtons() {
     m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_selectedImagePath.isEmpty() &&
                               !m_isFlashing);
 
-    // Cancel button: visible during flashing
+    // Cancel button: visible during flashing, spent once asked while the writer stops
     m_cancelButton->setVisible(current_index == kFlashProgressPageIndex);
-    m_cancelButton->setEnabled(m_isFlashing);
+    m_cancelButton->setEnabled(m_isFlashing && !m_cancelRequested);
 }
 
 bool ImageFlasherPanel::validateImageFile(const QString& file_path) {
@@ -1449,13 +1513,20 @@ std::unique_ptr<QMessageBox> ImageFlasherPanel::eraseConfirmation(QWidget* paren
 void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {
     // Disable UI immediately upon confirmation
     m_isFlashing = true;
+    m_cancelRequested = false;
     m_flashButton->setEnabled(false);
     m_flashButton->setVisible(false);
     m_settingsButton->setEnabled(false);
+
+    // The progress page first, then its buttons: they are chosen by the page shown, and chosen
+    // before the switch they were drive selection's, so a write had no Cancel (review 5, Z1).
+    m_stackedWidget->setCurrentWidget(m_flashProgressPage);
     updateNavigationButtons();
 
-    // Switch to progress page
-    m_stackedWidget->setCurrentWidget(m_flashProgressPage);
+    // The bar shows the run from its start, so each step's message stays in the status bar
+    // while the write runs: sent before the bar showed work, "Writing to 1 drive..." went after
+    // 5 s and the bar read "Ready" beside 6% (review 5, Z3).
+    Q_EMIT progressUpdate(0, kPercentMax);
 
     if (is_windows_iso) {
         createWindowsUSB();
@@ -1488,6 +1559,9 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
     Q_ASSERT(creator);
     Q_ASSERT(thread);
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
+        if (m_cancelRequested) {
+            return;  // "Stopping the write..." stays until the creator reports how it ended.
+        }
         m_flashStateLabel->setText(status);
         // testpc1: the status bar read "Ready" beside its progress bar for a whole Windows USB
         // run, because each step reached only this page.
@@ -1518,19 +1592,8 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
 
     const QPointer<WindowsUSBCreator> tracked(creator);
     connect(creator, &WindowsUSBCreator::failed, this, [this, tracked](const QString& error) {
-        m_isFlashing = false;
-        m_flashButton->setEnabled(true);
-        m_flashButton->setVisible(true);
-        updateNavigationButtons();
-        // This writer erases the drive first, so a failure after that may leave it with nothing
-        // usable on it. One before it, a safety check that could not answer, left it as it was,
-        // and the warning had a technician reformat a stick that was fine. With the creator
-        // gone, nothing says which, so the warning stays.
-        showFlashFailure(error,
-                         tracked.isNull() || tracked->targetWasWritten()
-                             ? QStringLiteral("The target drive may be left unusable. You may "
-                                              "need to reformat it before it can be used again.")
-                             : QStringLiteral("The target drive was not changed."));
+        // With the creator gone, nothing says whether it had written, so assume it had.
+        onWindowsUsbFailed(error, tracked.isNull() || tracked->targetWasWritten());
     });
 
     // Clean up thread and creator when thread finishes
@@ -1544,6 +1607,29 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
     });
     connect(thread, &QThread::finished, creator, &QObject::deleteLater);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+}
+
+void ImageFlasherPanel::onWindowsUsbFailed(const QString& error, bool target_written) {
+    if (m_cancelRequested) {
+        // The technician stopped it: say what the drive holds now, not that the run failed.
+        showCancelledOutcome(cancelledDriveState(target_written ? CancelledWrite::Written
+                                                                : CancelledWrite::NothingWritten,
+                                                 1),
+                             nullptr);
+        return;
+    }
+    m_isFlashing = false;
+    m_flashButton->setEnabled(true);
+    m_flashButton->setVisible(true);
+    updateNavigationButtons();
+    // This writer erases the drive first, so a failure after that may leave it with nothing
+    // usable on it. One before it, a safety check that could not answer, left it as it was,
+    // and the warning had a technician reformat a stick that was fine.
+    showFlashFailure(error,
+                     target_written
+                         ? QStringLiteral("The target drive may be left unusable. You may "
+                                          "need to reformat it before it can be used again.")
+                         : QStringLiteral("The target drive was not changed."));
 }
 
 QString ImageFlasherPanel::parseDiskNumberFromDevicePath(const QString& device_path) {

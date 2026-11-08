@@ -142,8 +142,6 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
             return;  // Not a failure of this drive; the run is ending.
         }
-        Q_EMIT errorOccurred(
-            QString("Failed to read SMART data for PhysicalDrive%1").arg(disk_number));
         // Keep the drive in the results. Left out, an unreadable drive looks like no drive at all,
         // and with none readable the table is simply empty.
         SmartReport unreadable;
@@ -153,12 +151,15 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
         unreadable.overall_health = SmartHealthStatus::Unknown;
         // One wording for every drive with no verdict, then why: a drive smartctl could not read
         // and one it read with nothing to judge by said it two ways (review 2, observation 31).
-        unreadable.warnings.append(
-            QString("PhysicalDrive%1: SMART health could not be determined. %2")
-                .arg(disk_number)
-                .arg(m_last_read_failure.isEmpty()
-                         ? QStringLiteral("Its SMART data could not be read.")
-                         : m_last_read_failure));
+        const QString warning = QString("PhysicalDrive%1: SMART health could not be determined. %2")
+                                    .arg(disk_number)
+                                    .arg(m_last_read_failure.isEmpty()
+                                             ? QStringLiteral("Its SMART data could not be read.")
+                                             : m_last_read_failure);
+        unreadable.warnings.append(warning);
+        // Said once, as the table says it: "ERROR: Failed to read SMART data" in the log for a
+        // drive the table showed as a USB adapter's limit (review 5, Z23).
+        Q_EMIT driveWarning(warning);
         unreadable.scan_timestamp = QDateTime::currentDateTime();
         m_reports.append(unreadable);
         Q_EMIT driveAnalyzed(unreadable);

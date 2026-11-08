@@ -367,6 +367,8 @@ constexpr int kMinimumSegmentPixels = 24;
 constexpr int kSegmentLabelInsetPx = ui::kSpacingTight * 2;
 /// The room around Copy Disk's "Copy of Disk N" beyond its own width: the inset, and a little air.
 constexpr int kCopySegmentLabelRoomPx = kSegmentLabelInsetPx + (ui::kSpacingSmall * 2);
+/// The line between two neighbouring segments of a review bar.
+constexpr int kSegmentDividerWidth = 1;
 
 /// Each of @p sizes' share of @p width, none under its floor in @p floors.
 QVector<double> flooredShares(const QVector<uint64_t>& sizes,
@@ -1541,7 +1543,7 @@ QAction* addContextMenuAction(QMenu& menu,
                               QObject* receiver,
                               const ContextActionSpec& spec,
                               Callback callback) {
-    auto* action = menu.addAction(QIcon(spec.icon_path), spec.text);
+    auto* action = menu.addAction(sak::themedIcon(spec.icon_path), spec.text);
     action->setEnabled(spec.enabled);
     if (!spec.enabled && !spec.disabled_reason.isEmpty()) {
         action->setToolTip(spec.disabled_reason);
@@ -1865,6 +1867,8 @@ protected:
     }
 };
 
+QColor segmentFill(const QColor& color);
+
 class PartitionLegendSwatch : public QFrame {
 public:
     PartitionLegendSwatch(const QString& role, const QColor& color, QWidget* parent)
@@ -1888,7 +1892,7 @@ protected:
                             kPartitionLegendSwatchRadius);
         // The shades the disk map paints: used space on the left, free space on the right
         // (unallocated space is all free).
-        painter.fillPath(path, m_color.lighter(kPartitionSegmentFillLightness));
+        painter.fillPath(path, segmentFill(m_color));
         if (property("colorRole").toString() != QStringLiteral("Unallocated")) {
             painter.save();
             painter.setClipPath(path);
@@ -1960,6 +1964,12 @@ QColor readableSegmentFill(const QColor& fill) {
     return adjusted;
 }
 
+/// The free-space shade of @p color, as every bar and the disk map draw it: one unallocated grey,
+/// where the map drew #707d8d and the review bars #6a7685 (review 5, Z7).
+QColor segmentFill(const QColor& color) {
+    return readableSegmentFill(color.lighter(kPartitionSegmentFillLightness));
+}
+
 struct PartitionSegmentSpec {
     QString text;
     QString tooltip;
@@ -2028,7 +2038,7 @@ protected:
                            kPartitionSegmentTrackHeight);
         QPainterPath track_path;
         track_path.addRoundedRect(track, kPartitionSegmentRadius, kPartitionSegmentRadius);
-        painter.fillPath(track_path, m_color.lighter(kPartitionSegmentFillLightness));
+        painter.fillPath(track_path, segmentFill(m_color));
         painter.setPen(
             QPen(m_color.darker(kPartitionSegmentBorderDarkness), kTableDiskSeparatorWidth));
         painter.drawPath(track_path);
@@ -2427,10 +2437,14 @@ private:
     [[nodiscard]] ClonePreviewSegment partitionSegment(const PartitionInfoEx& partition) const {
         // The disk map's partition colour: the success green lightened to a neon no token names.
         const QColor color = kPartitionColorGptPrimary;
-        return {.label = reviewSegmentName(partition),
+        const QString label = reviewSegmentName(partition);
+        // Wide enough for its name while the bar has room: at the bars' 24 px floor only "EFI"
+        // fitted, and MSR and Recovery were unnamed slivers (review 5, RG5).
+        return {.label = label,
                 .bytes = partition.size_bytes,
                 .color = color,
-                .used_percent = partitionUsedPercent(partition)};
+                .used_percent = partitionUsedPercent(partition),
+                .min_px = fontMetrics().horizontalAdvance(label) + kCopySegmentLabelRoomPx};
     }
 
     [[nodiscard]] static int partitionUsedPercent(const PartitionInfoEx& partition) {
@@ -2468,6 +2482,15 @@ private:
                 bar.left() + spans.at(i).first, bar.top(), spans.at(i).second, bar.height());
             drawSegment(painter, segment_rect, segments.at(i));
         }
+        // A line between neighbours: partitions share one colour here, and EFI and MSR, or E: and
+        // F:, read as one block (review 5, Z7).
+        for (qsizetype i = 1; i < segments.size() && i < spans.size(); ++i) {
+            painter->fillRect(QRect(bar.left() + spans.at(i).first,
+                                    bar.top(),
+                                    kSegmentDividerWidth,
+                                    bar.height()),
+                              palette().color(QPalette::Base));
+        }
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
         painter->drawPath(track_path);
     }
@@ -2476,8 +2499,7 @@ private:
         if (rect.width() <= 0) {
             return;
         }
-        const QColor fill =
-            readableSegmentFill(segment.color.lighter(kPartitionSegmentFillLightness));
+        const QColor fill = segmentFill(segment.color);
         painter->fillRect(rect, fill);
         if (segment.used_percent > 0) {
             QRect used = rect;
@@ -8406,10 +8428,13 @@ public:
                                  parseWizardUInt64(m_widgets->size_bytes),
                                  m_widgets->type_id->text().trimmed());
         }
-        m_widgets->candidate_status->setText(
-            m_blockers.isEmpty() ? QString()
-                                 : QObject::tr("This candidate cannot be written back: %1.")
-                                       .arg(m_blockers.join(QStringLiteral("; "))));
+        // Each reason a sentence of its own: "This candidate cannot be written back: Recovered
+        // partition candidate overlaps..." said "candidate" twice and went on in capitals after
+        // its colon (review 5, Z23).
+        m_widgets->candidate_status->setText(m_blockers.isEmpty()
+                                                 ? QString()
+                                                 : QObject::tr("It cannot be written back. %1.")
+                                                       .arg(m_blockers.join(QStringLiteral(". "))));
         m_widgets->candidate_status->setVisible(!m_blockers.isEmpty());
         Q_EMIT completeChanged();
     }
@@ -9118,6 +9143,24 @@ QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
     const QFontMetrics metrics(preview.font());
     return CloneLayoutPreviewWidget::shownLabels(
         metrics, preview.targetSegmentsFor(metrics, bar_width), target_bytes, bar_width);
+}
+
+QImage partitionCopyPreviewForTest(const PartitionDiskInfo& source,
+                                   uint64_t target_bytes,
+                                   int width,
+                                   QRect* source_bar,
+                                   QRect* target_bar) {
+    CloneLayoutPreviewWidget preview;
+    preview.configure(&source, target_bytes);
+    preview.resize(width, preview.minimumHeight());
+    const int row_width = width - (ui::kMarginSmall * 2);
+    const QRect source_row(ui::kMarginSmall, ui::kMarginSmall, row_width, kClonePreviewRowHeight);
+    *source_bar = CloneLayoutPreviewWidget::barRect(source_row);
+    *target_bar = CloneLayoutPreviewWidget::barRect(QRect(source_row.left(),
+                                                          source_row.bottom() + ui::kSpacingMedium,
+                                                          source_row.width(),
+                                                          kClonePreviewRowHeight));
+    return preview.grab().toImage();
 }
 
 QString partitionCopyTargetSizeTextForTest(uint64_t target_size) {
@@ -9887,7 +9930,7 @@ QToolButton* PartitionManagerPanel::createActionLink(QWidget* parent,
     auto* button = new QToolButton(parent);
     button->setText(text);
     button->setObjectName(QStringLiteral("partitionActionTextLink"));
-    button->setIcon(QIcon(icon_path));
+    button->setIcon(sak::themedIcon(icon_path));
     button->setIconSize(QSize(kActionIconSize, kActionIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     button->setAutoRaise(true);
@@ -10281,7 +10324,7 @@ QWidget* PartitionManagerPanel::createDiskTile(const PartitionDiskInfo& disk) {
     DiskTileSpec spec;
     spec.name = tr("Disk %1").arg(disk.disk_number.value());
     spec.detail = tr("%1\n%2").arg(disk.partition_style, formatPartitionBytes(disk.size_bytes));
-    spec.icon = QIcon(kIconDisk);
+    spec.icon = sak::themedIcon(kIconDisk);
     spec.accessible = tr("Disk %1, %2, %3")
                           .arg(disk.disk_number.value())
                           .arg(disk.partition_style, formatPartitionBytes(disk.size_bytes));
@@ -10361,7 +10404,7 @@ void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     const QVariantMap row_data{{QStringLiteral("kind"), rowKindName(TableRowKind::Disk)},
                                {QStringLiteral("disk"), static_cast<int>(disk.disk_number.value())},
                                {QStringLiteral("size"), QString::number(disk.size_bytes)}};
-    auto* target = new QTableWidgetItem(QIcon(kIconDisk),
+    auto* target = new QTableWidgetItem(sak::themedIcon(kIconDisk),
                                         tr("Disk %1").arg(disk.disk_number.value()));
     auto font = target->font();
     font.setBold(true);
@@ -13509,13 +13552,9 @@ uint64_t PartitionManagerPanel::usedBytes(const PartitionInfoEx& partition) {
 }
 
 QString PartitionManagerPanel::partitionLabel(const PartitionInfoEx& partition) {
-    if (partition.volume && !partition.volume->drive_letter.isEmpty()) {
-        return tr("%1:").arg(partition.volume->drive_letter);
-    }
-    if (partition.is_efi || partition.is_msr || partition.is_recovery) {
-        return tr("*:");
-    }
-    return tr("Partition %1").arg(partition.partition_number.value());
+    // The table and the disk map name a partition as the review bars do: "*:" there said only
+    // that EFI, MSR and Recovery had no letter (review 5, Z7).
+    return reviewSegmentName(partition);
 }
 
 QColor PartitionManagerPanel::partitionColor(const PartitionDiskInfo& disk,

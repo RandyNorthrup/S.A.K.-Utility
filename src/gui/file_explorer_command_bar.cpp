@@ -45,6 +45,7 @@ QToolButton* makeFlyoutButton(QWidget* parent,
 
 QFrame* makeSeparator(QWidget* parent) {
     auto* separator = new QFrame(parent);
+    separator->setObjectName(QStringLiteral("fileExplorerCommandSeparator"));
     separator->setFrameShape(QFrame::VLine);
     separator->setFrameShadow(QFrame::Plain);
     return separator;

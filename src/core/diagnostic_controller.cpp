@@ -108,6 +108,10 @@ void DiagnosticController::connectSmartAnalyzer() {
             &SmartDiskAnalyzer::errorOccurred,
             this,
             &DiagnosticController::errorOccurred);
+    connect(m_smart_analyzer.get(),
+            &SmartDiskAnalyzer::driveWarning,
+            this,
+            &DiagnosticController::driveWarning);
 }
 
 void DiagnosticController::connectCpuBenchmark() {

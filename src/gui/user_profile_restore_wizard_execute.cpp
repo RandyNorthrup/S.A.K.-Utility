@@ -10,6 +10,7 @@
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
 
+#include <QAbstractButton>
 #include <QFile>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -382,10 +383,17 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
         m_logText->append(tr("[ERROR] Restore failed"));
     }
 
-    // The header and the wizard's own Cancel said the restore was still running after it ended.
+    // Done, either way: Finish closes the wizard, as a finished backup's does (review 4, Y27). A
+    // spent "< Back", "Cancel" and "Cancel Restore" stood disabled beside it (review 5, Z13); the
+    // result is latched, so there is nothing to go back to.
     m_cancelButton->setEnabled(false);
-    if (wizard() != nullptr && wizard()->button(QWizard::CancelButton) != nullptr) {
-        wizard()->button(QWizard::CancelButton)->setEnabled(false);
+    m_cancelButton->hide();
+    if (QWizard* owner = wizard()) {
+        if (QAbstractButton* cancel = owner->button(QWizard::CancelButton)) {
+            cancel->setEnabled(false);
+        }
+        owner->setOption(QWizard::NoCancelButton, true);
+        owner->setOption(QWizard::NoBackButtonOnLastPage, true);
     }
     m_viewLogButton->setEnabled(true);
 

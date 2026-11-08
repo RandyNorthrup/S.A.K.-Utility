@@ -29,6 +29,7 @@
 #include "sak/ai/ai_workflow_store.h"
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
+#include "sak/ai_transcript_view.h"
 #include "sak/app_action_service.h"
 #include "sak/app_mutating_actions.h"
 #include "sak/app_paths.h"
@@ -119,6 +120,38 @@ public:
 private:
     std::atomic<bool>* m_invoked{nullptr};
 };
+
+namespace {
+
+/// How solid a drawn glyph is: the share of the pixels it touches that are solid ink, and how
+/// much of its own solid bounds that ink fills (a block fills all of them).
+struct GlyphInk {
+    double solid_share{0.0};
+    double bounds_filled{1.0};
+};
+
+GlyphInk measureGlyphInk(const QImage& glyph) {
+    constexpr int kOpaque = 128;
+    int touched = 0;
+    int solid = 0;
+    QRect bounds;
+    for (int y = 0; y < glyph.height(); ++y) {
+        for (int x = 0; x < glyph.width(); ++x) {
+            const int alpha = qAlpha(glyph.pixel(x, y));
+            touched += alpha > 0 ? 1 : 0;
+            if (alpha >= kOpaque) {
+                ++solid;
+                bounds = bounds.united(QRect(x, y, 1, 1));
+            }
+        }
+    }
+    GlyphInk ink;
+    ink.solid_share = touched > 0 ? double(solid) / touched : 0.0;
+    ink.bounds_filled = bounds.isEmpty() ? 1.0 : double(solid) / (bounds.width() * bounds.height());
+    return ink;
+}
+
+}  // namespace
 
 // Friend of AiAssistantPanel: reaches the private tool dispatcher, run token, and
 // async-in-flight state so the certification can drive and observe the real loop.
@@ -315,7 +348,8 @@ private Q_SLOTS:
 
     // Review 5, found in the first picture: with a glyph's light fills left out as holes, the
     // disabled Rename Chat icon lost its pale blue field and read as an "!". A button's glyph
-    // keeps its pale fills and leaves out only what is drawn white, as Run Details' "i" is.
+    // leaves out only what is drawn white, as Run Details' "i" is; Rename Chat has a one-colour
+    // drawing now (everyButtonGlyphIsASolidMark).
     void buttonGlyphsKeepTheirPaleFills() {
         AiAssistantPanel panel;
         const auto opaque = [](const QImage& image) {
@@ -332,28 +366,144 @@ private Q_SLOTS:
                 .toImage()
                 .convertToFormat(QImage::Format_ARGB32);
         };
-        QVERIFY(panel.m_renameSessionButton != nullptr && panel.m_runDetailsButton != nullptr);
-        // icons8-rename.svg draws a white field, a pale blue selection in it (x 8-52, y 32-48 of
-        // 80) and a text cursor. At 20 px the selection is x 2-13, y 8-12; inside its edges, the
-        // disabled glyph is ink.
-        const QImage rename = image_of(panel.m_renameSessionButton->icon(), QIcon::Disabled);
-        int inside = 0;
-        int inked = 0;
-        for (int y = 9; y < 11; ++y) {
-            for (int x = 3; x < 12; ++x) {
-                ++inside;
-                inked += qAlpha(rename.pixel(x, y)) >= 128 ? 1 : 0;
-            }
-        }
-        QVERIFY2(inked * 5 >= inside * 4,
-                 qPrintable(QStringLiteral("Rename Chat's selection: %1 of %2 pixels inked")
-                                .arg(inked)
-                                .arg(inside)));
+        QVERIFY(panel.m_runDetailsButton != nullptr);
         // Run Details' "i" is still a hole in its disc.
         const int disc =
             opaque(image_of(QIcon(QStringLiteral(":/icons/icons/panel_about.svg")), QIcon::Normal));
         const int glyph = opaque(image_of(panel.m_runDetailsButton->icon(), QIcon::Normal));
         QVERIFY2(disc - glyph >= 10, qPrintable(QStringLiteral("%1 of %2").arg(glyph).arg(disc)));
+    }
+
+    // Review 5 (Z17): in dark an 8 px band of the page (#0f172a) ran between the transcript and the
+    // composer, faint in light; a context chip's close X was icons8's light drawing, a pale square,
+    // in dark; and the Workflow chip had a fill of its own. One surface down to the composer's
+    // line, a close X in the theme's text colour, one chip fill.
+    void theTranscriptAndChipsKeepOneLookInBothThemes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            const char* theme = mode == sak::ui::AppThemeMode::Dark ? "dark" : "light";
+            AiAssistantPanel panel;
+            const QString fill =
+                panel.contextChipPalette(AiAssistantPanel::ContextItem::Type::Workflow).background;
+            for (const auto type : {AiAssistantPanel::ContextItem::Type::Instruction,
+                                    AiAssistantPanel::ContextItem::Type::Skill,
+                                    AiAssistantPanel::ContextItem::Type::DocumentFile,
+                                    AiAssistantPanel::ContextItem::Type::TextFile}) {
+                QVERIFY2(panel.contextChipPalette(type).background == fill, theme);
+            }
+
+            panel.resize(1280, 860);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            QCoreApplication::processEvents();
+            const QImage view = panel.m_transcriptView->grab().toImage();
+            const QColor surface = view.pixelColor(4, 4);
+            const QColor bottom = view.pixelColor(view.width() / 2, view.height() - 3);
+            QVERIFY2(bottom.rgb() == surface.rgb(),
+                     qPrintable(QStringLiteral("%1: %2 under the transcript's %3")
+                                    .arg(QLatin1String(theme), bottom.name(), surface.name())));
+
+            AiAssistantPanel::ContextItem item;
+            item.type = AiAssistantPanel::ContextItem::Type::Instruction;
+            item.display_name = QStringLiteral("evidence_policy.md");
+            item.path = QStringLiteral(":/ai/instructions/evidence_policy.md");
+            item.text = QStringLiteral("text");
+            panel.m_contextItems.append(item);
+            panel.refreshContextList();
+            QPushButton* remove = nullptr;
+            for (auto* button : panel.m_contextList->findChildren<QPushButton*>()) {
+                if (button->toolTip().startsWith(QStringLiteral("Remove"))) {
+                    remove = button;
+                }
+            }
+            QVERIFY2(remove != nullptr, theme);
+            const QImage x = remove->icon()
+                                 .pixmap(QSize(16, 16))
+                                 .toImage()
+                                 .convertToFormat(QImage::Format_ARGB32);
+            const QColor text = sak::ui::themedColor(sak::ui::kColorTextBody);
+            int inked = 0;
+            for (int py = 0; py < x.height(); ++py) {
+                for (int px = 0; px < x.width(); ++px) {
+                    const QRgb pixel = x.pixel(px, py);
+                    if (qAlpha(pixel) < 200) {
+                        continue;
+                    }
+                    ++inked;
+                    const int off = std::abs(qRed(pixel) - text.red()) +
+                                    std::abs(qGreen(pixel) - text.green()) +
+                                    std::abs(qBlue(pixel) - text.blue());
+                    const QColor black(Qt::black);
+                    const int off_black = std::abs(qRed(pixel) - black.red()) +
+                                          std::abs(qGreen(pixel) - black.green()) +
+                                          std::abs(qBlue(pixel) - black.blue());
+                    // Light: the glyph's own black; dark: the theme's body text.
+                    QVERIFY2(mode == sak::ui::AppThemeMode::Dark ? off <= 6 : off_black <= 6,
+                             qPrintable(QStringLiteral("%1: close X drawn %2")
+                                            .arg(QLatin1String(theme), QColor(pixel).name())));
+                }
+            }
+            QVERIFY2(inked > 0, theme);
+        }
+    }
+
+    // Review 5 (RG6): drawn by the one-colour rule, icons8's framed artwork lost its marks. Close
+    // (and Send's Stop) became a blank white square, its pale field filled with its X; disabled
+    // Send and Rename Chat became faint hairline outlines (28% and 33% of their pixels at 3:1)
+    // beside the solid disabled Clear and Add. Each button glyph, enabled and disabled, in both
+    // themes: most of the pixels it touches are solid ink (a hairline a quarter of a pixel wide
+    // touches pixels it hardly colours), and it is a mark, not a block filling its own bounds.
+    void everyButtonGlyphIsASolidMark() {
+        constexpr int kGlyph = 20;
+        constexpr double kMost = 0.5;
+        constexpr double kBlock = 0.95;
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        QStringList wrong;
+        QStringList report;
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            AiAssistantPanel panel;
+            // The Stop state's X is the close button's drawing.
+            for (QPushButton* button : {panel.m_sendButton,
+                                        panel.m_workflowDetailsCloseButton,
+                                        panel.m_renameSessionButton,
+                                        panel.m_newSessionButton,
+                                        panel.m_addWorkflowButton,
+                                        panel.m_artifactsButton,
+                                        panel.m_generateReportButton,
+                                        panel.m_addContextFilesButton,
+                                        panel.m_addInstructionButton,
+                                        panel.m_clearContextButton}) {
+                QVERIFY(button != nullptr && !button->icon().isNull());
+                for (const bool enabled : {true, false}) {
+                    const QImage glyph = button->icon()
+                                             .pixmap(QSize(kGlyph, kGlyph),
+                                                     enabled ? QIcon::Normal : QIcon::Disabled)
+                                             .toImage()
+                                             .convertToFormat(QImage::Format_ARGB32);
+                    const GlyphInk ink = measureGlyphInk(glyph);
+                    const double share = ink.solid_share;
+                    const double filled = ink.bounds_filled;
+                    const QString line =
+                        QStringLiteral("%1 %2 %3: %4 of its pixels solid, fills %5 of its bounds")
+                            .arg(mode == sak::ui::AppThemeMode::Dark ? QStringLiteral("dark")
+                                                                     : QStringLiteral("light"),
+                                 button->accessibleName(),
+                                 enabled ? QStringLiteral("enabled") : QStringLiteral("disabled"),
+                                 QString::number(share, 'f', 2),
+                                 QString::number(filled, 'f', 2));
+                    report << line;
+                    if (share <= kMost || filled > kBlock) {
+                        wrong << line;
+                    }
+                }
+            }
+        }
+        qInfo().noquote() << report.join(QStringLiteral("\n"));
+        QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
     }
 
     // Review 3 (F21): the popups had a fixed 420 px minimum, so the access-mode list ran to x=1358
@@ -399,6 +549,20 @@ private Q_SLOTS:
         QVERIFY2(details.contains(QStringLiteral("| Last turn: ")), qPrintable(details));
         QVERIFY2(details.contains(QStringLiteral("| Session: ")), qPrintable(details));
         QVERIFY2(!details.contains(QStringLiteral("Tokens: ")), qPrintable(details));
+        // Review 5 (Z16): "Access: Research" beside a box reading "Chat and Research"; the turn
+        // in slashes beside the session in parentheses; and at 1280 px the line ran out before
+        // "Context", which now comes before the counts, with no idle "Phase: none".
+        QVERIFY2(details.contains(
+                     QStringLiteral("Access: %1 |").arg(panel.m_accessModeCombo->currentText())),
+                 qPrintable(details));
+        QVERIFY2(details.contains(QStringLiteral("Last turn: 0 total")), qPrintable(details));
+        QCOMPARE(ai::TokenUsageTracker::formatTurn({}),
+                 QStringLiteral("0 total (0 in, 0 cached, 0 out, 0 reasoning)"));
+        QVERIFY2(!details.contains(QStringLiteral(" / ")), qPrintable(details));
+        QVERIFY2(details.indexOf(QStringLiteral("Context: ")) <
+                     details.indexOf(QStringLiteral("Last turn: ")),
+                 qPrintable(details));
+        QVERIFY2(!details.contains(QStringLiteral("Phase: none")), qPrintable(details));
     }
 
     // Review 3 (S22): the status bar squeezed the AI status label and cut it mid-word at

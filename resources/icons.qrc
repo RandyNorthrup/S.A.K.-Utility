@@ -30,8 +30,11 @@
         <file>icons/panel_organizer.svg</file>
         <file>icons/panel_organizer-dark.svg</file>
         <file>icons/panel_search.svg</file>
+        <file>icons/panel_search-dark.svg</file>
         <file>icons/panel_uninstall.svg</file>
+        <file>icons/panel_uninstall-dark.svg</file>
         <file>icons/panel_wifi.svg</file>
+        <file>icons/panel_wifi-dark.svg</file>
         <file>icons/panel_about.svg</file>
         <file>icons/panel_about-dark.svg</file>
         <file>icons/panel_email.svg</file>
@@ -39,10 +42,13 @@
         <file>icons/panel_ai.svg</file>
         <file>icons/panel_ai-dark.svg</file>
         <file>icons/icons8-benchmark.svg</file>
+        <file>icons/icons8-benchmark-dark.svg</file>
         <file>icons/icons8-duplicate.svg</file>
+        <file>icons/icons8-duplicate-dark.svg</file>
         <file>icons/icons8-settings_help.svg</file>
         <file>icons/icons8-source.svg</file>
         <file>icons/icons8-network-card.svg</file>
+        <file>icons/icons8-network-card-dark.svg</file>
         <file>icons/icons8-address-book.svg</file>
         <file>icons/icons8-attachment.svg</file>
         <file>icons/icons8-calendar.svg</file>
@@ -60,12 +66,17 @@
         <file>icons/icons8-new-chat.svg</file>
         <file>icons/icons8-rename.svg</file>
         <file>icons/icons8-trash.svg</file>
+        <file>icons/button-close.svg</file>
+        <file>icons/button-send.svg</file>
+        <file>icons/button-rename.svg</file>
+        <file>icons/button-attach.svg</file>
         <file>icons/icons8-spam.svg</file>
         <file>icons/icons8-star.svg</file>
         <file>icons/icons8-folder.svg</file>
         <file>icons/icons8-clock.svg</file>
         <file>icons/icons8-keyhole-shield.svg</file>
         <file>icons/icons8-warning-shield.svg</file>
+        <file>icons/icons8-warning-shield-dark.svg</file>
         <file>icons/icons8-lock.svg</file>
         <file>icons/icons8-selector-chevron-down.svg</file>
         <file>icons/icons8-selector-chevron-down-dark.svg</file>

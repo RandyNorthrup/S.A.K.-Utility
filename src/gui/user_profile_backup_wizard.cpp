@@ -201,7 +201,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
     auto* instruction_label = new QLabel(
         tr("Click <b>Scan Users</b> to detect all Windows user accounts on this computer. "
-           "Then select which users you want to backup."),
+           "Then select the users to back up."),
         this);
     instruction_label->setWordWrap(true);
     layout->addWidget(instruction_label);
@@ -221,7 +221,7 @@ void UserProfileBackupSelectUsersPage::setupScanControls(QVBoxLayout* layout) {
     auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
-    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_scanButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
@@ -264,7 +264,7 @@ void UserProfileBackupSelectUsersPage::setupSelectionControls(QVBoxLayout* layou
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectAllButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,

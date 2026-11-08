@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QFile>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -156,6 +157,9 @@ private Q_SLOTS:
     // Review 4 (Y20): the status bar said "3 hits" beside the list's "3 search results", and
     // "1 hits" for one.
     void aFinishedSearchCountsResultsAsTheListDoes();
+    // Review 5 (Z20): the pager's ">" sat 120 px from its "<", with the page between them in the
+    // middle of the pane, and the list's sort arrow stood over the check-box column.
+    void thePagerArrowsSitTogetherAndNoArrowIsOnTheChecks();
 
 private:
     void openMailbox();
@@ -623,6 +627,22 @@ void EmailInspectorPanelTests::clearAndClosingTurnFiltersOff() {
     QVERIFY(m_panel->m_filter_row->isHidden());
     QVERIFY(!m_panel->m_filter_button->isEnabled());
     QVERIFY(m_panel->m_filter_mbox_note->isHidden());
+}
+
+void EmailInspectorPanelTests::thePagerArrowsSitTogetherAndNoArrowIsOnTheChecks() {
+    m_panel->resize(1280, 860);
+    m_panel->show();
+    QVERIFY(QTest::qWaitForWindowExposed(m_panel.get()));
+    QCoreApplication::processEvents();
+    const QWidget* previous = m_panel->m_prev_page_button;
+    const QWidget* next = m_panel->m_next_page_button;
+    const int previous_right = previous->mapTo(m_panel.get(), QPoint(previous->width(), 0)).x();
+    const int next_left = next->mapTo(m_panel.get(), QPoint(0, 0)).x();
+    QVERIFY2(next_left - previous_right <= sak::ui::kSpacingLarge,
+             qPrintable(
+                 QStringLiteral("%1 px between the arrows").arg(next_left - previous_right)));
+    QVERIFY(m_panel->m_item_list->horizontalHeader()->sortIndicatorSection() !=
+            sak::EmailInspectorPanel::ColSelect);
 }
 
 QTEST_MAIN(EmailInspectorPanelTests)

@@ -715,7 +715,7 @@ QVBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
 
     m_page_label = new QLabel(group);
     m_page_label->setMinimumWidth(email::kPageIndicatorMinWidth);
-    m_page_label->setAlignment(Qt::AlignCenter);
+    m_page_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
     m_next_page_button = new QToolButton(group);
     m_next_page_button->setIcon(ui::selectorChevronRightToolButtonIcon());
@@ -733,10 +733,12 @@ QVBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
         }
     });
 
+    // The two arrows side by side, the page after them: with the page between them ">" sat 120 px
+    // from "<" in the middle of the pane (review 5, Z20).
     auto* paging_row = new QHBoxLayout();
     paging_row->addWidget(m_prev_page_button);
-    paging_row->addWidget(m_page_label);
     paging_row->addWidget(m_next_page_button);
+    paging_row->addWidget(m_page_label);
     paging_row->addStretch(1);
     paging_row->addWidget(new QLabel(tr("Per page:"), group));
     paging_row->addWidget(m_page_size_combo);
@@ -747,6 +749,13 @@ QVBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     rows->addLayout(paging_row);
     return rows;
 }
+
+namespace {
+
+/// No column sorted: the header's "none" section.
+constexpr int kNoSortSection = -1;
+
+}  // namespace
 
 void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list = new QTableWidget(group);
@@ -764,6 +773,9 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_item_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_item_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // In the order the file holds them until a column is clicked: sorting on, the header put its
+    // arrow over the check-box column (review 5, Z20).
+    m_item_list->horizontalHeader()->setSortIndicator(kNoSortSection, Qt::AscendingOrder);
     m_item_list->setSortingEnabled(true);
     m_item_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_item_list->horizontalHeader()->setStretchLastSection(true);

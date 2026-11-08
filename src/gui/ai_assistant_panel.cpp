@@ -3922,21 +3922,9 @@ QString AiAssistantPanel::statusDetails() const {
     const QString task = m_taskStatus.isEmpty() ? tr("Idle") : m_taskStatus;
     const QString key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("Loaded")
                                                                              : tr("No key");
-    QString access;
-    switch (currentAccessMode()) {
-    case ai::AiAccessMode::ChatAndResearch:
-        access = tr("Research");
-        break;
-    case ai::AiAccessMode::UnattendedFullAccess:
-        access = tr("Unattended");
-        break;
-    case ai::AiAccessMode::AssistedFullAccess:
-        access = tr("Assisted");
-        break;
-    case ai::AiAccessMode::Invalid:
-        access = tr("Disabled");
-        break;
-    }
+    // The access box's own words: "Access: Research" beside a box reading "Chat and Research"
+    // (review 5, Z16).
+    const QString access = currentAccessModeLabel();
     const QString turn = m_tokenTracker
                              ? ai::TokenUsageTracker::formatTurn(m_tokenTracker->lastTurn())
                              : tr("0 total");
@@ -3947,14 +3935,19 @@ QString AiAssistantPanel::statusDetails() const {
     const QString context = contextWindowStatusText();
     // The last turn's and the session's counts each say which they are: "Tokens: 0 in / 0 cached /
     // 0 out / 0 reasoning / 0 total / 0 total (0 in, 0 out)" ran them together (review 4, Y15).
-    return tr("AI: %1 | Key: %2 | Access: %3 | Phase: %4 | Last turn: %5 | Session: %6 | "
-              "Context: %7 | Tools: %8 (%9 active) | Agents: %10/%11")
-        .arg(task, key, access, phase, turn, session)
-        .arg(context)
-        .arg(m_toolCallsThisSession)
-        .arg(m_runState.active_tools)
-        .arg(m_runState.active_subagents)
-        .arg(m_runState.completed_subagents);
+    // What a technician reads first comes first, and the phase only while there is one: at
+    // 1280 px the line ran out before "Context" (review 5, Z16). The whole line is the tooltip.
+    QString line =
+        tr("AI: %1 | Key: %2 | Access: %3 | Context: %4").arg(task, key, access, context);
+    if (!m_runState.phase_id.isEmpty()) {
+        line += tr(" | Phase: %1").arg(phase);
+    }
+    return line + tr(" | Last turn: %1 | Session: %2 | Tools: %3 (%4 active) | Agents: %5/%6")
+                      .arg(turn, session)
+                      .arg(m_toolCallsThisSession)
+                      .arg(m_runState.active_tools)
+                      .arg(m_runState.active_subagents)
+                      .arg(m_runState.completed_subagents);
 }
 
 bool AiAssistantPanel::filterMessageEditKeyPress(QEvent* event) {
@@ -4115,6 +4108,9 @@ void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layo
     title_row->addStretch();
     m_browserExtensionButton = new QPushButton(tr("Install extension"), pane);
     configureCompactButton(m_browserExtensionButton);
+    // An optional setup step, and an uninstall once set up: Load Key is the rail's one filled
+    // button (review 5, Z6).
+    m_browserExtensionButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_browserExtensionButton->setToolTip(
         tr("Set up (or remove) the Chrome extension the assistant uses to drive the browser. "
            "This changes only your own Chrome policy and needs no administrator rights."));
@@ -4230,7 +4226,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
 
     m_renameSessionButton = new QPushButton(tr("Rename Chat"), pane);
     configureCompactButton(m_renameSessionButton,
-                           QStringLiteral(":/icons/icons/icons8-rename.svg"));
+                           QStringLiteral(":/icons/icons/button-rename.svg"));
     m_renameSessionButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_renameSessionButton->setToolTip(
         tr("Rename the current chat session and its active artifact folder"));
@@ -4400,7 +4396,7 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     details_header_row->addWidget(m_workflowDetailsTitle, 1);
     m_workflowDetailsCloseButton = new QPushButton(tr("Close"), m_workflowDetailsPanel);
     configureCompactButton(m_workflowDetailsCloseButton,
-                           QStringLiteral(":/icons/icons/icons8-close-window.svg"));
+                           QStringLiteral(":/icons/icons/button-close.svg"));
     // Close only hides the pane: the secondary tone, as every dialog's Close (review 3, F27).
     m_workflowDetailsCloseButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_workflowDetailsCloseButton->setToolTip(tr("Hide workflow details panel"));
@@ -4687,7 +4683,7 @@ void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* compos
 void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWidget* composer) {
     m_addContextFilesButton = new QPushButton(tr("Attach"), composer);
     configureCompactButton(m_addContextFilesButton,
-                           QStringLiteral(":/icons/icons/icons8-attachment.svg"));
+                           QStringLiteral(":/icons/icons/button-attach.svg"));
     m_addContextFilesButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_addContextFilesButton->setToolTip(tr(
         "Attach files, screenshots, logs, scripts, or documents as evidence for the next request"));
@@ -4738,7 +4734,7 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* action_row, QWidget
     action_row->addWidget(m_contextWindowLabel);
 
     m_sendButton = new QPushButton(tr("Send"), composer);
-    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
+    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/button-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     m_sendButton->setMinimumHeight(sak::ui::kUiButtonHeightMini);
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -4994,8 +4990,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
 
     if (isAiBusy()) {
         m_sendButton->setText(tr("Stop"));
-        m_sendButton->setIcon(
-            sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
+        m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/button-close.svg")));
         m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
         m_sendButton->setToolTip(tr("Stop the active AI request or running local command"));
         m_sendButton->setStyleSheet(sak::ui::kDangerButtonStyle);
@@ -5008,7 +5003,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
 
     const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
     m_sendButton->setText(tr("Send"));
-    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
+    m_sendButton->setIcon(sak::buttonIcon(QStringLiteral(":/icons/icons/button-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     m_sendButton->setToolTip(tr("Send the message to the AI assistant"));
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -9286,7 +9281,9 @@ void AiAssistantPanel::addContextListItem(int index, int max_chip_width) {
     chip_layout->addWidget(text, 1);
 
     auto* remove = new QPushButton(chip);
-    remove->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
+    // A plain X in the theme's text colour: icons8's framed drawing kept its pale field and dark
+    // X in the dark theme (review 5, Z17).
+    remove->setIcon(sak::themedGlyphIcon(QStringLiteral(":/icons/icons/button-close.svg")));
     remove->setIconSize(QSize(sak::ui::kUiIconTiny, sak::ui::kUiIconTiny));
     remove->setFixedSize(sak::ui::kUiButtonSizeMicro, sak::ui::kUiButtonSizeMicro);
     remove->setToolTip(tr("Remove %1").arg(kind_label));
@@ -9316,7 +9313,10 @@ void AiAssistantPanel::refreshContextList() {
 
 AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
     ContextItem::Type type) const {
-    ContextChipPalette palette{.background = QString::fromLatin1(sak::ui::kColorBgWhite),
+    // One fill for every chip; its kind is its border. The Workflow chip was white where the others
+    // were the surface or the info tint, and in dark a shade of its own (review 5, Z17). An image
+    // keeps the warning tint it is sent with.
+    ContextChipPalette palette{.background = QString::fromLatin1(sak::ui::kColorBgSurface),
                                .border = QString::fromLatin1(sak::ui::kColorBorderDefault),
                                .text_color = QString::fromLatin1(sak::ui::kColorTextBody)};
     switch (type) {
@@ -9325,13 +9325,11 @@ AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
         palette.text_color = QString::fromLatin1(sak::ui::kColorTextHeading);
         break;
     case ContextItem::Type::Instruction:
-        palette.background = QString::fromLatin1(sak::ui::kColorBgInfoPanel);
         palette.border = QString::fromLatin1(sak::ui::kColorPrimaryDark);
         palette.text_color = QString::fromLatin1(sak::ui::kColorTextHeading);
         break;
     case ContextItem::Type::Skill:
     case ContextItem::Type::DocumentFile:
-        palette.background = QString::fromLatin1(sak::ui::kColorBgSurface);
         palette.border = QString::fromLatin1(sak::ui::kColorSuccess);
         palette.text_color = QString::fromLatin1(sak::ui::kColorTextHeading);
         break;

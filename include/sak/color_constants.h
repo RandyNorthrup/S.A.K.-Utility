@@ -53,6 +53,10 @@ constexpr auto kColorDarkBgPanel = "#172033";
 constexpr auto kColorDarkBgInput = "#111827";
 constexpr auto kColorDarkBgInputFocus = "#0b1220";
 constexpr auto kColorDarkBgHover = "#243247";
+// A selected row in the dark theme. The hover shade stood 1.13:1 from an alternate row and 1.37:1
+// from a plain one, and read as one more row (review 5, Z4); blue-800 stands 1.7:1 and 2.0:1 from
+// them in the accent's hue, with the dark theme's text on it at 8.7:1.
+constexpr auto kColorDarkSelection = "#1e40af";
 constexpr auto kColorDarkBgPressed = "#29384f";
 constexpr auto kColorDarkNoteBlue = "#1e3a5f";
 constexpr auto kColorDarkNoteGreen = "#14532d";
@@ -92,6 +96,12 @@ constexpr auto kColorPrimaryPressed = "#1d4ed8";  ///< blue-700 -- pressed state
 // middle; these are both stops darkened the least, same hue, that gives 4.5:1 there.
 constexpr auto kColorSelectedTabTop = "#1c6ef5";
 constexpr auto kColorSelectedTabBottom = "#1452db";
+// The light theme's progress fill. A bar's label is one colour over its fill and its track, so the
+// fill is light enough for the dark label: blue-500 to blue-700 put #0f172a at 3.2-4.2:1 over it
+// (review 5, Z2); blue-300 to blue-400 give 7.0:1 and more. The dark theme keeps the deep fill
+// under its white label.
+constexpr auto kColorProgressFillStart = "#93c5fd";  ///< blue-300
+constexpr auto kColorProgressFillEnd = "#60a5fa";    ///< blue-400
 
 // Success (Green)
 // Status text colours below were darkened the least, same hue, to reach WCAG AA 4.5:1 on the light

@@ -10,8 +10,10 @@
 #include <QAbstractItemView>
 #include <QHeaderView>
 #include <QMenu>
+#include <QResizeEvent>
 #include <QSettings>
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -28,6 +30,9 @@ constexpr std::array kDefaultHiddenColumns = {
     static_cast<int>(sak::FileExplorerItemModel::AttributesColumn),
     static_cast<int>(sak::FileExplorerItemModel::PathColumn),
 };
+
+/// The narrowest the Name column is made to fit the view.
+constexpr int kNameMinWidthPx = 160;
 
 constexpr std::array<std::pair<int, int>, 4> kDefaultColumnWidths = {{
     {static_cast<int>(sak::FileExplorerItemModel::NameColumn), 280},
@@ -108,10 +113,43 @@ void FileExplorerDetailsView::setModel(QAbstractItemModel* model) {
     restoreColumnState();
 }
 
+void FileExplorerDetailsView::resizeEvent(QResizeEvent* event) {
+    QTableView::resizeEvent(event);
+    fitNameColumn();
+}
+
+void FileExplorerDetailsView::fitNameColumn() {
+    // Name takes what Type, Size and Modified leave, never under kNameMinWidthPx. At the default
+    // widths a dual pane ran past its view, Type read "Dire" and Size and Modified sat off behind a
+    // scroll bar; in one wide pane Name was cut while room went spare (review 5, Z9).
+    if (model() == nullptr || m_fitting_name || isColumnHidden(FileExplorerItemModel::NameColumn)) {
+        return;
+    }
+    int others = 0;
+    for (int column = 0; column < model()->columnCount(); ++column) {
+        if (column != FileExplorerItemModel::NameColumn && !isColumnHidden(column)) {
+            others += columnWidth(column);
+        }
+    }
+    m_fitting_name = true;
+    setColumnWidth(FileExplorerItemModel::NameColumn,
+                   std::max(kNameMinWidthPx, viewport()->width() - others));
+    m_fitting_name = false;
+}
+
 void FileExplorerDetailsView::showEvent(QShowEvent* event) {
     QTableView::showEvent(event);
     restoreColumnState();
+    fitNameColumn();
     if (!m_save_connections_installed) {
+        connect(horizontalHeader(),
+                &QHeaderView::sectionResized,
+                this,
+                [this](int section, int /*old_size*/, int /*new_size*/) {
+                    if (section != FileExplorerItemModel::NameColumn) {
+                        fitNameColumn();
+                    }
+                });
         connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this]() {
             saveColumnState();
         });

@@ -180,8 +180,10 @@ inline QString statusAndSplitterStyles() {
                "color: palette(dark); font-size: %1pt; padding: 2px 8px; "
                "background: transparent; }"
                "#fileExplorerRoot QSplitter::handle { background: transparent; }"
-               "#fileExplorerCommandBar QFrame { color: palette(mid); "
-               "max-height: 16px; margin: 0 4px; }")
+               // The separators only: a QLabel is a QFrame too, and the View menu's "Item size",
+               // the button's child, was drawn in the border colour (review 5, Z11).
+               "#fileExplorerCommandBar QFrame#fileExplorerCommandSeparator { "
+               "color: palette(mid); max-height: 16px; margin: 0 4px; }")
         .arg(kFontSizeNote);
 }
 
@@ -192,6 +194,17 @@ inline QString fileExplorerShellStyleSheetText() {
     return style_detail::chromeButtonStyles() + style_detail::addressInputStyles() +
            style_detail::tabStripStyles() + style_detail::sidebarStyles() +
            style_detail::itemViewStyles() + style_detail::statusAndSplitterStyles();
+}
+
+/// The omnibar's command-palette popup: opaque in both themes (the theme draws a plain frame
+/// transparent, and in light the listing showed through the results, 1.09:1; review 5, Z12), with
+/// a list that draws no frame or padding of its own, so the popup is as tall as its rows.
+inline QString omnibarSuggestionPopupStyleSheet() {
+    return QStringLiteral(
+        "QFrame#fileExplorerOmnibarSuggestionFrame { background: palette(base); "
+        "border: 1px solid palette(mid); } "
+        "QListWidget#fileExplorerOmnibarSuggestions { border: none; padding: 0px; "
+        "background: palette(base); }");
 }
 
 /// The accent-bordered frame drawn around the active pane in dual-pane mode.

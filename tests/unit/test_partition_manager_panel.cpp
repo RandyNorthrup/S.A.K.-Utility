@@ -121,6 +121,8 @@ private Q_SLOTS:
     void redoButtonEnablesOnlyAfterUndo();
     void diskMapRendersTypeColorInsideNeutralShell();
     void bottomDiskMapCanResizeIntoTableSpace();
+    void theDiskDrawingFollowsTheTheme();
+    void reviewBarsNameAndDivideEveryPartition();
     void finalApplyReviewContainsLayoutDiff();
     void applyReviewRejectsQueueMutation();
     void applyPreviewPreservesTrailingFreeSpan();
@@ -2476,6 +2478,260 @@ void PartitionManagerPanelTests::diskMapHighlightsSelectedDiskRow() {
     QCOMPARE(selectedSegmentCount, 0);
 }
 
+namespace {
+
+/// A 256 GB GPT disk as Windows lays one out: EFI, MSR, C:, Recovery.
+sak::PartitionDiskInfo windowsSystemDiskFixture() {
+    constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+    constexpr uint64_t kGiB = 1024ULL * kMiB;
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{1};
+    disk.partition_style = QStringLiteral("GPT");
+    uint64_t offset = kMiB;
+    struct Layout {
+        uint64_t bytes;
+        int role;  // 1 EFI, 2 MSR, 3 Recovery, 0 data
+        const char* letter;
+    };
+    for (const Layout& layout : {Layout{100 * kMiB, 1, ""},
+                                 Layout{16 * kMiB, 2, ""},
+                                 Layout{254 * kGiB, 0, "C"},
+                                 Layout{kGiB, 3, ""}}) {
+        sak::PartitionInfoEx partition;
+        partition.disk_number = disk.disk_number;
+        partition.partition_number =
+            sak::PartitionNumber{static_cast<uint32_t>(disk.partitions.size() + 1)};
+        partition.offset_bytes = offset;
+        partition.size_bytes = layout.bytes;
+        partition.is_efi = layout.role == 1;
+        partition.is_msr = layout.role == 2;
+        partition.is_recovery = layout.role == 3;
+        if (*layout.letter != '\0') {
+            sak::PartitionVolumeInfo volume;
+            volume.drive_letter = QString::fromLatin1(layout.letter);
+            volume.file_system = QStringLiteral("NTFS");
+            volume.total_bytes = layout.bytes;
+            partition.volume = volume;
+        }
+        disk.partitions.append(partition);
+        offset += layout.bytes;
+    }
+    disk.size_bytes = offset;
+    return disk;
+}
+
+/// Runs of segment colour along row @p y of @p bar, inset from its rounded ends; @p base between.
+int segmentRunsAlong(const QImage& drawn, const QRect& bar, int y, const QColor& base) {
+    int runs = 0;
+    bool in_run = false;
+    for (int x = bar.left() + 6; x < bar.right() - 6; ++x) {
+        const bool segment = drawn.pixelColor(x, y).rgb() != base.rgb();
+        runs += (segment && !in_run) ? 1 : 0;
+        in_run = segment;
+    }
+    return runs;
+}
+
+/// The colours along row @p y of @p bar, each run once, for a failure message.
+QString rowColours(const QImage& drawn, const QRect& bar, int y, const QColor& base) {
+    QStringList runs;
+    QRgb last = 0;
+    for (int x = bar.left(); x <= bar.right(); ++x) {
+        const QRgb pixel = drawn.pixel(x, y);
+        if (runs.isEmpty() || pixel != last) {
+            runs << QStringLiteral("%1@%2").arg(QColor(pixel).name()).arg(x);
+            last = pixel;
+        }
+    }
+    return QStringLiteral("image %1x%2, bar %3,%4 %5x%6, base %7: %8")
+        .arg(drawn.width())
+        .arg(drawn.height())
+        .arg(bar.left())
+        .arg(bar.top())
+        .arg(bar.width())
+        .arg(bar.height())
+        .arg(base.name(), runs.join(QLatin1Char(' ')));
+}
+
+/// @p disk grown to twice its size, the second half unallocated.
+sak::PartitionDiskInfo withFreeSecondHalf(const sak::PartitionDiskInfo& disk) {
+    sak::PartitionDiskInfo with_free = disk;
+    sak::UnallocatedRegion region;
+    region.disk_number = disk.disk_number;
+    region.offset_bytes = disk.size_bytes;
+    region.size_bytes = disk.size_bytes;
+    with_free.size_bytes = disk.size_bytes * 2;
+    with_free.unallocated_regions.append(region);
+    return with_free;
+}
+
+/// Every cell's text in @p table, trimmed.
+QStringList tableTexts(const QTableWidget& table) {
+    QStringList texts;
+    for (int row = 0; row < table.rowCount(); ++row) {
+        for (int column = 0; column < table.columnCount(); ++column) {
+            if (const QTableWidgetItem* item = table.item(row, column)) {
+                texts << item->text().trimmed();
+            }
+        }
+    }
+    return texts;
+}
+
+/// The first cell of @p row that shows an icon, or nullptr.
+const QTableWidgetItem* firstIconCell(const QTableWidget& table, int row) {
+    for (int column = 0; column < table.columnCount(); ++column) {
+        const QTableWidgetItem* item = table.item(row, column);
+        if (item != nullptr && !item->icon().isNull()) {
+            return item;
+        }
+    }
+    return nullptr;
+}
+
+/// The last tool button under @p parent with accessible name @p name, or nullptr.
+QToolButton* toolButtonNamed(const QWidget& parent, const QString& name) {
+    QToolButton* found = nullptr;
+    for (auto* button : parent.findChildren<QToolButton*>()) {
+        if (button->accessibleName() == name) {
+            found = button;
+        }
+    }
+    return found;
+}
+
+QImage smallIconImage(const QIcon& icon) {
+    return icon.pixmap(QSize(16, 16)).toImage().convertToFormat(QImage::Format_ARGB32);
+}
+
+/// Opens @p target's context menu and returns the icon its @p text action shows, then closes it.
+QImage contextMenuActionIcon(QWidget* target, const QString& text) {
+    QImage icon;
+    QTimer::singleShot(0, target, [&icon, &text]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        for (const QAction* action : menu->actions()) {
+            if (action->text() == text) {
+                icon = smallIconImage(action->icon());
+            }
+        }
+        menu->close();
+    });
+    sendContextMenu(target);
+    return icon;
+}
+
+}  // namespace
+
+// Review 5 (RG5, Z7): the review bars named EFI, MSR and Recovery but drew them at a 24 px floor
+// that fitted only "EFI"; neighbouring partitions, one colour there, ran together with no divider
+// (EFI and MSR one block); and the free-space grey was #6a7685 in the bars and #707d8d on the map.
+void PartitionManagerPanelTests::reviewBarsNameAndDivideEveryPartition() {
+    const sak::PartitionDiskInfo disk = windowsSystemDiskFixture();
+    constexpr int kBarWidth = 900;
+    QCOMPARE(sak::partitionCopyTargetLabelsForTest(disk, disk.size_bytes, kBarWidth),
+             (QStringList{QStringLiteral("EFI"),
+                          QStringLiteral("MSR"),
+                          QStringLiteral("C:"),
+                          QStringLiteral("Recovery")}));
+
+    // Four partitions, four runs of colour along the source bar, a line of the colour under the
+    // bar between each two. Read above the labels, which can be white.
+    QRect source_bar;
+    QRect target_bar;
+    const QImage drawn = sak::partitionCopyPreviewForTest(
+        disk, disk.size_bytes * 2, kBarWidth, &source_bar, &target_bar);
+    const int y = source_bar.top() + 2;
+    const QColor under = drawn.pixelColor(source_bar.left() - 2, y);
+    QVERIFY2(segmentRunsAlong(drawn, source_bar, y, under) == 4,
+             qPrintable(rowColours(drawn, source_bar, y, under)));
+
+    // The target is twice the source: its last segment is free space, drawn in the map's grey.
+    const QColor bar_free = drawn.pixelColor(target_bar.right() - 10, target_bar.top() + 2);
+    sak::PartitionInventory inventory;
+    inventory.disks = {withFreeSecondHalf(disk)};
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(inventory);
+    panel.resize(1100, 700);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+    QWidget* map_free = nullptr;
+    for (auto* segment : panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment"))) {
+        if (segment->property("colorRole").toString() == QStringLiteral("Unallocated")) {
+            map_free = segment;
+        }
+    }
+    QVERIFY(map_free != nullptr);
+    const QImage map = map_free->grab().toImage();
+    const QColor map_colour = map.pixelColor(map.width() / 2, sak::ui::kMarginSmall + 2);
+    QCOMPARE(map_colour.name(), bar_free.name());
+
+    // And the table names them as the bars do, not "*:".
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    panel.setTestInventoryForReview([&disk]() {
+        sak::PartitionInventory named;
+        named.disks = {disk};
+        return named;
+    }());
+    QApplication::processEvents();
+    const QStringList names = tableTexts(*table);
+    for (const char* name : {"EFI", "MSR", "Recovery"}) {
+        QVERIFY2(names.contains(QString::fromLatin1(name)), qPrintable(names.join(", ")));
+    }
+    QVERIFY2(!names.contains(QStringLiteral("*:")), qPrintable(names.join(", ")));
+}
+
+// Review 5 (RG7): the disk drawing was darkened for the light tab and its old drawing kept as the
+// dark theme's, but the table, the action list, the menus and the disk map built QIcon(path) and
+// so showed the light drawing on the dark theme (1.3-2.1:1). Each shows the theme's drawing, and
+// changes with the theme.
+void PartitionManagerPanelTests::theDiskDrawingFollowsTheTheme() {
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QString disk = QStringLiteral(":/icons/icons/icons8-pm-disk.svg");
+    const QString disk_dark = QStringLiteral(":/icons/icons/icons8-pm-disk-dark.svg");
+    QVERIFY(QFile::exists(disk_dark));
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+
+    for (const auto mode : {sak::ui::AppThemeMode::Dark, sak::ui::AppThemeMode::Light}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        QApplication::processEvents();
+        // Found again in each theme: the map and the table may be rebuilt meanwhile.
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        const QTableWidgetItem* disk_row = firstIconCell(*table, 0);
+        QVERIFY2(disk_row != nullptr, "the disk row has no icon");
+        QToolButton* link = toolButtonNamed(panel, QStringLiteral("Copy Disk Wizard"));
+        QVERIFY2(link != nullptr, "no Copy Disk Wizard action");
+        auto* tile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+        QVERIFY(tile != nullptr);
+        const bool dark = mode == sak::ui::AppThemeMode::Dark;
+        const QImage expected = smallIconImage(QIcon(dark ? disk_dark : disk));
+        const char* theme = dark ? "dark" : "light";
+        QVERIFY2(smallIconImage(disk_row->icon()) == expected, theme);
+        QVERIFY2(smallIconImage(link->icon()) == expected, theme);
+        QVERIFY2(contextMenuActionIcon(tile, QStringLiteral("Copy Disk Wizard")) == expected,
+                 theme);
+    }
+    // The disk map's tile paints its icon itself, with nothing to read it back by: no icon the
+    // panel shows is built straight from a path, every one goes through themedIcon. (The ribbon's
+    // greyed Disabled drawing is made from a pixmap of its file; no ribbon icon has a dark one.)
+    const QString source = readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    static const QRegularExpression kPlainIcon(
+        QStringLiteral(R"(\bQIcon\((k\w+|\w*icon_path)\)(?!\.pixmap))"));
+    const QRegularExpressionMatch plain = kPlainIcon.match(source);
+    QVERIFY2(!plain.hasMatch(), qPrintable(plain.captured(0)));
+}
+
 void PartitionManagerPanelTests::diskMapContextMenuSelectsMatchingTargets() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
@@ -4315,6 +4571,10 @@ void PartitionManagerPanelTests::recoveryWizardRefusesALivePartitionsPlace() {
         QVERIFY2(status->text().contains(QStringLiteral(
                      "Recovered partition candidate overlaps an existing partition")),
                  qPrintable(status->text()));
+        // Review 5 (Z23): "This candidate cannot be written back: Recovered partition candidate
+        // overlaps..." said "candidate" twice, with a capital after its colon.
+        QCOMPARE(status->text().count(QStringLiteral("candidate")), 1);
+        QVERIFY2(!status->text().contains(QStringLiteral(": ")), qPrintable(status->text()));
 
         // The free space after E:, where a deleted volume would have been.
         offset->setText(QString::number(16 * kMiB + 3 * kGiB));

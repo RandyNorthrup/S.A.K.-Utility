@@ -124,6 +124,9 @@ constexpr int kIsoDialogWidthWin = 720;   ///< Windows ISO dialog
 constexpr int kIsoDialogHeightWin = 620;  ///< Windows ISO dialog
 constexpr int kIsoDialogWidthLin = 780;   ///< Linux ISO dialog
 constexpr int kIsoDialogHeightLin = 680;  ///< Linux ISO dialog
+/// A title bar and borders at 100% scaling: what a dialog sized to its screen before it is shown
+/// leaves for the frame Windows adds.
+constexpr int kDialogWindowFrameAllowance = 40;
 
 // Common widget dimensions
 constexpr int kIconSize = 64;             ///< Application icon

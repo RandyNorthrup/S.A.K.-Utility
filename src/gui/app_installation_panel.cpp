@@ -660,7 +660,7 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offline_layout)
     action_btn_row->addWidget(m_directDownloadButton);
 
     m_installFromBundleButton = new QPushButton(tr("Install from Bundle"), this);
-    m_installFromBundleButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
+    m_installFromBundleButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_installFromBundleButton->setAccessibleName(QStringLiteral("Install from Bundle"));
     m_installFromBundleButton->setToolTip(
         tr("Install packages from a previously built offline bundle"));

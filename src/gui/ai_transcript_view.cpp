@@ -89,6 +89,12 @@ bool isUserChatRole(const QString& role) {
 }  // namespace
 
 AiTranscriptView::AiTranscriptView(QWidget* parent) : QWidget(parent) {
+    // The whole view in the transcript's surface: the Jump row's margins under the transcript
+    // showed the page through, an 8 px #0f172a band above the composer in dark and a faint one in
+    // light (review 5, Z17). The composer's top border is the one line between them.
+    setObjectName(QStringLiteral("aiTranscriptView"));
+    setAttribute(Qt::WA_StyledBackground, true);
+    setStyleSheet(sak::ui::backgroundStyle("QWidget#aiTranscriptView", sak::ui::kColorBgSurface));
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);

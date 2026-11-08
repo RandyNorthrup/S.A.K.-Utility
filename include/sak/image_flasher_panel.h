@@ -166,6 +166,8 @@ private:
 
     /** @brief Show or hide back/next/flash buttons per current page */
     void updateNavigationButtons();
+    /** @brief Flash on step 2 when nothing runs; Cancel on the progress page, spent once asked */
+    void updateFlashAndCancelButtons(int current_index);
     /** @brief Validate the selected image file: returns true only when it exists, is a regular
      *         readable non-empty file and either has a known format or the user confirmed an
      *         unknown format. Fail closed: an invalid image returns false. */
@@ -230,6 +232,22 @@ private:
     [[nodiscard]] bool decideImageWriter(bool* is_windows_iso);
     /// @brief Tell the user a run failed and what state the drive is in, then return to step 2.
     void showFlashFailure(const QString& error, const QString& drive_state);
+    /// What a cancelled run had done to its targets, as far as its writer reported.
+    enum class CancelledWrite {
+        NothingWritten,
+        Written,
+        Unknown
+    };
+    /// The sentence that says what a cancelled run left on its target drive or drives.
+    [[nodiscard]] static QString cancelledDriveState(CancelledWrite written, qsizetype drive_count);
+    /// @brief End a cancelled run on the completion page: "Flash cancelled", what the drive
+    ///        holds now, and, when the coordinator reported one, the run's result.
+    void showCancelledOutcome(const QString& drive_state, const FlashResult* result);
+    /// True while either writer can still report how its run ended.
+    [[nodiscard]] bool writerStillRunning() const;
+    /// @brief The Windows USB writer stopped short: a cancelled outcome when the technician asked
+    ///        for it, otherwise a failure that says whether the drive was changed.
+    void onWindowsUsbFailed(const QString& error, bool target_written);
     QString parseDiskNumberFromDevicePath(const QString& device_path);
     /** @brief Find the display text for a drive by matching its device path in the list widget */
     QString findDriveDisplayText(const QString& device_path) const;
@@ -285,6 +303,7 @@ private:
 
     // Step 4: Completion
     QWidget* m_completionPage;
+    QGroupBox* m_completionGroup{nullptr};
     QLabel* m_completionMessageLabel;
     QLabel* m_completionDetailsLabel;
     QPushButton* m_flashAnotherButton;
@@ -312,6 +331,8 @@ private:
     // removable-drive swap or disk-number reuse before the write can be detected and refused.
     QHash<QString, QString> m_selectedDriveSignatures;
     bool m_isFlashing;
+    // Cancel was confirmed and the writer told to stop; the run ends when it reports.
+    bool m_cancelRequested{false};
     int m_currentPage;
     LogToggleSwitch* m_logToggle{nullptr};
 

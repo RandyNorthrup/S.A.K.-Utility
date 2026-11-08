@@ -358,6 +358,12 @@ void addTabWithTooltip(QTabWidget* tab_widget,
     // the visible tooltip from this whenever tab positions are final.
     tab_widget->tabBar()->setTabData(idx, QString::fromUtf8(tooltip));
 
+    // Every tool page paints the theme's page colour behind its content. A panel class of its own
+    // paints no style-sheet background unless asked, so the Image Flasher's, Partition Manager's
+    // and File Management's step and Log rows took the window's #eef2f7 (dark #111827) while every
+    // other Log row sat on the page colour (review 5, Z15).
+    panel->setAttribute(Qt::WA_StyledBackground, true);
+
     // Set accessible name on the panel widget so screen readers
     // identify each tab's content area
     const QString title = QString::fromUtf8(tab_title);

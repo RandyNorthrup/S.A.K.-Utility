@@ -5229,6 +5229,8 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     // 1-12). This row binds to the active layout's kind; refreshItemSizeSlider() sets its range.
     auto* size_row = new QWidget(menu);
     size_row->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
+    // On the menu's own colour: as a plain widget it took the page's, a grey band (review 5, Z11).
+    size_row->setStyleSheet(ui::kTransparentWidgetStyle);
     auto* size_layout = new QHBoxLayout(size_row);
     size_layout->setContentsMargins(
         ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
@@ -7237,7 +7239,7 @@ void FileManagementExplorerPanel::onPreviewReadFinished(
     // the file's contents.
     if (!read.warnings.isEmpty()) {
         if (auto* caption = m_details_pane->previewCaption()) {
-            caption->setText(
+            m_details_pane->setPreviewCaption(
                 caption->text() + QLatin1Char('\n') +
                 tr("Preview warnings: %1").arg(read.warnings.join(QStringLiteral("; "))));
         }
@@ -7288,9 +7290,7 @@ void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
     m_last_preview_path.clear();
     m_last_preview_target_id.clear();
     m_details_pane->showImagePreview(false);
-    if (auto* caption = m_details_pane->previewCaption()) {
-        caption->clear();
-    }
+    m_details_pane->setPreviewCaption(QString());
     if (m_preview_text != nullptr) {
         m_preview_text->setPlainText(message);
     }
@@ -7319,9 +7319,7 @@ void FileManagementExplorerPanel::renderPreviewForEntry(const FileManagementEntr
                            static_cast<uint64_t>(std::max<qint64>(preview.shown_bytes, 0))));
     }
     m_details_pane->showImagePreview(false);
-    if (auto* label = m_details_pane->previewCaption()) {
-        label->setText(caption);
-    }
+    m_details_pane->setPreviewCaption(caption);
     m_preview_text->setPlainText(preview.text);
 }
 
@@ -7334,13 +7332,11 @@ void FileManagementExplorerPanel::showImagePreviewForEntry(const FileManagementE
                                        Qt::KeepAspectRatio,
                                        Qt::SmoothTransformation));
     }
-    if (auto* caption = m_details_pane->previewCaption()) {
-        caption->setText(tr("%1 - %2 x %3 image - %4")
-                             .arg(entry.name)
-                             .arg(image.width())
-                             .arg(image.height())
-                             .arg(FileExplorerItemModel::sizeText(entry.size_bytes)));
-    }
+    m_details_pane->setPreviewCaption(tr("%1 - %2 x %3 image - %4")
+                                          .arg(entry.name)
+                                          .arg(image.width())
+                                          .arg(image.height())
+                                          .arg(FileExplorerItemModel::sizeText(entry.size_bytes)));
     m_details_pane->showImagePreview(true);
 }
 
@@ -7795,12 +7791,57 @@ void FileManagementExplorerPanel::restoreTabSession() {
     restoreTab(m_tabs.at(m_active_tab));
 }
 
+namespace {
+
+/// Keeps two side-by-side panes' footers at one height: each at least as tall as the taller one
+/// needs at its width, so both lists end at one line. The footers wrap, and the active pane's says
+/// more, so the panes ended 16 to 28 px apart (review 5, Z9).
+class PaneFooterHeightSync final : public QObject {
+public:
+    PaneFooterHeightSync(QLabel* first, QLabel* second, QObject* parent)
+        : QObject(parent), m_first(first), m_second(second) {
+        m_first->installEventFilter(this);
+        m_second->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        const QEvent::Type type = event->type();
+        if (type == QEvent::Resize || type == QEvent::Show || type == QEvent::Hide) {
+            sync();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    void sync() {
+        if (m_syncing || m_first.isNull() || m_second.isNull()) {
+            return;
+        }
+        m_syncing = true;
+        const bool both = m_first->isVisible() && m_second->isVisible();
+        const int tallest = std::max(m_first->heightForWidth(m_first->width()),
+                                     m_second->heightForWidth(m_second->width()));
+        const int minimum = both ? tallest : 0;
+        m_first->setMinimumHeight(minimum);
+        m_second->setMinimumHeight(minimum);
+        m_syncing = false;
+    }
+
+    QPointer<QLabel> m_first;
+    QPointer<QLabel> m_second;
+    bool m_syncing{false};
+};
+
+}  // namespace
+
 void FileManagementExplorerPanel::ensureSecondPane() {
     if (m_pane_b != nullptr) {
         return;
     }
     m_pane_b = new FileExplorerPane(m_pane_splitter);
     m_pane_splitter->addWidget(m_pane_b);
+    new PaneFooterHeightSync(m_pane_a->statusLabel(), m_pane_b->statusLabel(), m_pane_b);
     installTagProvider(m_pane_b->itemModel());
     installIconProvider(m_pane_b->itemModel());
     installIconProvider(m_pane_b->columnsPreviewModel());
@@ -7835,8 +7876,11 @@ void FileManagementExplorerPanel::activatePane(int index) {
     clearInactivePaneSelection(index);
     // The pane being left says what it shows, without the active-pane line: both footers read
     // "Active pane: ..." and the one left behind was stale (review 4, Y6).
+    // It keeps a second line, as the active pane's footer has, so the two panes end at one
+    // height: with one line the inactive pane ran 16 px longer (review 5, Z9).
     if (m_status_label != nullptr) {
-        m_status_label->setText(paneSummaryText(otherPaneTarget(), 0));
+        m_status_label->setText(paneSummaryText(otherPaneTarget(), 0) +
+                                tr("\nInactive pane - click a file here to work in it"));
     }
     m_item_model = m_pane->itemModel();
     installTagProvider(m_item_model);

@@ -391,7 +391,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     toolbar->addWidget(m_copyConfigBtn);
 
     m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
-    m_backupEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_backupEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_backupEthernetBtn->setToolTip(
         tr("Backup selected adapter IP/DNS settings to a JSON file "
            "for restoration on this or another PC"));
@@ -402,7 +402,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     toolbar->addWidget(m_backupEthernetBtn);
 
     m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), parent);
-    m_restoreEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_restoreEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
         tr("Restore adapter settings from a previously saved "
            "JSON backup file - works across PCs"));
@@ -412,7 +412,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     toolbar->addWidget(m_restoreEthernetBtn);
 
     m_resetNetworkBtn = new QPushButton(tr("Reset Network"), parent);
-    m_resetNetworkBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_resetNetworkBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_resetNetworkBtn->setToolTip(
         tr("Reset all network settings including Winsock, TCP/IP, "
            "DNS cache, and firewall (requires admin)"));
@@ -1173,7 +1173,7 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     iperf_btn_row->addWidget(m_bwStopBtn);
 
     m_bwServerStartBtn = new QPushButton(tr("Start Server"), widget);
-    m_bwServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
+    m_bwServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_bwServerStartBtn->setToolTip(
         tr("Start local iPerf3 server for other devices to test "
            "against"));
@@ -1632,7 +1632,7 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     row->addWidget(m_lanPort);
 
     m_lanServerStartBtn = new QPushButton(tr("Start Server"), parent);
-    m_lanServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
+    m_lanServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_lanServerStartBtn->setToolTip(
         tr("Start a TCP server that receives data from the "
            "remote device to measure transfer speed"));

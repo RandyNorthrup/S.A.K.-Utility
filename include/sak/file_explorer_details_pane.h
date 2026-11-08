@@ -67,6 +67,9 @@ public:
     [[nodiscard]] QPlainTextEdit* previewText() const;
     [[nodiscard]] QLabel* previewImage() const;
     [[nodiscard]] QLabel* previewCaption() const;
+    /// The line above the preview: shown with text, gone without, so the preview card sits one
+    /// gap below the Details/Preview switch either way.
+    void setPreviewCaption(const QString& text);
     /// The Details tab's sections, each as tall as its text, so the one details scroller scrolls
     /// them together: as text boxes each had a scroll bar of its own and cut its text (review 2,
     /// F23), and as labels a long path could not wrap (review 3, F23).

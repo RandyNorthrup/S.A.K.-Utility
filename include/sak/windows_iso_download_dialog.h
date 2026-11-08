@@ -14,6 +14,7 @@
 #include <QMap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QString>
 
 class QVBoxLayout;
@@ -39,6 +40,10 @@ public:
 
     WindowsISODownloadDialog(const WindowsISODownloadDialog&) = delete;
     WindowsISODownloadDialog& operator=(const WindowsISODownloadDialog&) = delete;
+
+    /// As tall as its groups and buttons need, or @p room when that is less (its groups then
+    /// scroll). The dialog sizes itself to its screen this way when it is made.
+    void fitToHeight(int room);
 
     /**
      * @brief Get the downloaded ISO file path
@@ -85,7 +90,10 @@ private:
     void setupUi_buildSelection(QVBoxLayout* main_layout);
     void setupUi_languageEdition(QVBoxLayout* main_layout);
     void setupUi_saveLocation(QVBoxLayout* main_layout);
-    void setupUi_progressAndButtons(QVBoxLayout* main_layout);
+    void setupUi_progress(QVBoxLayout* main_layout);
+    void setupUi_buttons(QVBoxLayout* main_layout);
+    /// As tall as its content, or the screen's free area when that is less (the groups scroll).
+    void fitToScreen();
     void connectSignals();
     void connectDownloaderSignals();
     void updateStartButton();
@@ -123,6 +131,7 @@ private:
     QPushButton* m_startButton;
     QPushButton* m_cancelButton;
     QPushButton* m_closeButton;
+    QScrollArea* m_formArea{nullptr};
 
     // ---- State ----
     QList<UupDumpApi::BuildInfo> m_builds;

@@ -405,6 +405,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection() {
     return group;
 }
 
+namespace {
+
+/// A group's result lines one line apart, as the lines inside one label are: Random 4K's two lines
+/// were 17 px apart and the labels around them 23 px (review 5, Z14).
+void useResultLinePitch(QVBoxLayout* results) {
+    results->setSpacing(sak::ui::kSpacingNone);
+    results->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+}
+
+}  // namespace
+
 QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
@@ -420,6 +432,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
 
     m_cpu_multi_score_label = new QLabel("Multi-Thread: --", this);
     cpu_scores->addWidget(m_cpu_multi_score_label);
+    // The run's measurements are result lines too: under the bar, the empty label held the Run
+    // button 32 px below it, against 6 px for Disk and Memory (review 5, Z14). Shown once there
+    // is something to show.
+    m_cpu_details_label = new QLabel("", this);
+    m_cpu_details_label->setWordWrap(true);
+    m_cpu_details_label->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeStatus));
+    m_cpu_details_label->setVisible(false);
+    cpu_scores->addWidget(m_cpu_details_label);
+    useResultLinePitch(cpu_scores);
     cpu_layout->addLayout(cpu_scores);
 
     m_cpu_score_label = new QLabel("Score: --", this);
@@ -444,12 +466,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
         QStringLiteral("CPU benchmark score relative to an i5-12400 "
                        "baseline"));
     cpu_layout->addWidget(m_cpu_score_bar);
-
-    m_cpu_details_label = new QLabel("", this);
-    m_cpu_details_label->setWordWrap(true);
-    m_cpu_details_label->setStyleSheet(
-        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeStatus));
-    cpu_layout->addWidget(m_cpu_details_label);
 
     auto* cpu_btn_layout = new QHBoxLayout();
     cpu_btn_layout->addStretch();
@@ -482,14 +498,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     drive_row->addStretch();
     disk_layout->addLayout(drive_row);
 
+    auto* disk_results = new QVBoxLayout();
     m_disk_seq_label = new QLabel("Sequential: --", this);
-    disk_layout->addWidget(m_disk_seq_label);
+    disk_results->addWidget(m_disk_seq_label);
 
     m_disk_rand_label = new QLabel("Random 4K: --", this);
-    disk_layout->addWidget(m_disk_rand_label);
+    disk_results->addWidget(m_disk_rand_label);
 
     m_disk_latency_label = new QLabel("Latency: --", this);
-    disk_layout->addWidget(m_disk_latency_label);
+    disk_results->addWidget(m_disk_latency_label);
+    useResultLinePitch(disk_results);
+    disk_layout->addLayout(disk_results);
 
     m_disk_score_label = new QLabel("Score: --", this);
     m_disk_score_label->setStyleSheet(
@@ -526,11 +545,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
+    auto* mem_results = new QVBoxLayout();
     m_mem_bandwidth_label = new QLabel("Bandwidth: --", this);
-    mem_layout->addWidget(m_mem_bandwidth_label);
+    mem_results->addWidget(m_mem_bandwidth_label);
 
     m_mem_latency_label = new QLabel("Random Latency: --", this);
-    mem_layout->addWidget(m_mem_latency_label);
+    mem_results->addWidget(m_mem_latency_label);
+    useResultLinePitch(mem_results);
+    mem_layout->addLayout(mem_results);
 
     m_mem_score_label = new QLabel("Score: --", this);
     m_mem_score_label->setStyleSheet(
@@ -1040,6 +1062,10 @@ void DiagnosticBenchmarkPanel::connectStatusSignals() {
             &DiagnosticController::errorOccurred,
             this,
             &DiagnosticBenchmarkPanel::onErrorOccurred);
+    connect(m_controller.get(),
+            &DiagnosticController::driveWarning,
+            this,
+            &DiagnosticBenchmarkPanel::onDriveWarning);
     connect(m_controller.get(),
             &DiagnosticController::reportsGenerated,
             this,

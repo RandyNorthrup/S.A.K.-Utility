@@ -42,10 +42,13 @@
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFile>
+#include <QFontMetricsF>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QHash>
 #include <QHeaderView>
+#include <QIcon>
 #include <QImage>
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -77,6 +80,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
+#include <QTextEdit>
 #include <QTextLayout>
 #include <QTimer>
 #include <QToolButton>
@@ -87,6 +91,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <tuple>
@@ -255,6 +260,20 @@ void captureBaseline(QWidget* widget, const QString& name) {
         return;
     }
     captureBaselineImage(widget->grab().toImage(), name);
+}
+
+/// WCAG 2.x contrast of two opaque colours.
+double contrastBetween(const QColor& a, const QColor& b) {
+    const auto luminance = [](const QColor& color) {
+        const auto linear = [](double c) {
+            return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+        };
+        return (0.2126 * linear(color.redF())) + (0.7152 * linear(color.greenF())) +
+               (0.0722 * linear(color.blueF()));
+    };
+    const double la = luminance(a);
+    const double lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
 }
 
 // Mean perceived luminance (0..255) of the pixels an icon actually inks, ignoring
@@ -960,6 +979,37 @@ private Q_SLOTS:
                  "Explicit temporary target was replaced by mounted host discovery.");
     }
 
+    // Review 5 (Z10): the preview's caption sat 4 px under the Details/Preview switch and 6 px
+    // above its card; with no caption the card was 24 px down. One gap, caption or not.
+    void thePreviewSitsOneGapBelowTheSwitch() {
+        sak::FileExplorerDetailsPane pane;
+        pane.resize(320, 600);
+        pane.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&pane));
+        QWidget* pill = pane.findChild<QWidget*>(QStringLiteral("fileExplorerInfoPanePill"));
+        QWidget* stack = pane.findChild<QWidget*>(QStringLiteral("fileExplorerPreviewStack"));
+        QVERIFY(pill != nullptr && stack != nullptr);
+        const auto top = [&pane](const QWidget* widget) {
+            return widget->mapTo(&pane, QPoint(0, 0)).y();
+        };
+        const auto bottom = [&pane](const QWidget* widget) {
+            return widget->mapTo(&pane, QPoint(0, widget->height())).y();
+        };
+        QCoreApplication::processEvents();
+        const int gap = top(stack) - bottom(pill);
+        QVERIFY(gap > 0);
+        pane.setPreviewCaption(QStringLiteral("sample-notes.txt - 242 B - text"));
+        QCoreApplication::processEvents();
+        const QLabel* caption = pane.previewCaption();
+        QVERIFY(caption->isVisible());
+        QCOMPARE(top(caption) - bottom(pill), gap);
+        QCOMPARE(top(stack) - bottom(caption), gap);
+        pane.setPreviewCaption(QString());
+        QCoreApplication::processEvents();
+        QVERIFY(!caption->isVisible());
+        QCOMPARE(top(stack) - bottom(pill), gap);
+    }
+
     void detailsPanePreviewSwitchesBetweenTextAndImage() {
         sak::FileExplorerDetailsPane pane;
         QVERIFY(pane.previewText());
@@ -1610,6 +1660,44 @@ private Q_SLOTS:
         QCOMPARE(QGuiApplication::clipboard()->text(), text);
     }
 
+    // Review 5 (Z5): a selected row's file icon was drawn in the white HighlightedText on the light
+    // theme's pale selection (#d4e4fd), 1.18:1, gone. Selected, a file, folder or image icon keeps
+    // the text colour, as its row's text does, in both themes.
+    void aSelectedRowsIconKeepsTheTextColour() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            const QColor text = QApplication::palette().color(QPalette::WindowText);
+            for (const char* key : {"file", "folder", "image-file"}) {
+                const QImage selected =
+                    sak::FileExplorerIconRegistry::iconForKey(QString::fromLatin1(key))
+                        .pixmap(QSize(16, 16), QIcon::Selected)
+                        .toImage()
+                        .convertToFormat(QImage::Format_ARGB32);
+                int inked = 0;
+                for (int y = 0; y < selected.height(); ++y) {
+                    for (int x = 0; x < selected.width(); ++x) {
+                        const QRgb pixel = selected.pixel(x, y);
+                        if (qAlpha(pixel) < 200) {
+                            continue;  // An edge's colour is rounded through its alpha.
+                        }
+                        ++inked;
+                        const int off = std::abs(qRed(pixel) - text.red()) +
+                                        std::abs(qGreen(pixel) - text.green()) +
+                                        std::abs(qBlue(pixel) - text.blue());
+                        QVERIFY2(off <= 6,
+                                 qPrintable(QStringLiteral("%1 selected drawn %2, text is %3")
+                                                .arg(QLatin1String(key),
+                                                     QColor(pixel).name(),
+                                                     text.name())));
+                    }
+                }
+                QVERIFY2(inked > 0, key);
+            }
+        }
+    }
+
     // Review 4 (Y5): the Details lines started 7 px in from the pane's edge, their headings 11 px
     // and the preview's text 19 px. Every line of text in the pane starts at one inset.
     void theInfoPaneTextSharesOneInset() {
@@ -1725,7 +1813,8 @@ private Q_SLOTS:
     }
 
     // Review 3 (S7/DN8): the file list selected in its own shade, #b2cffb light and #214278 dark,
-    // where every other view uses the theme's selection colour.
+    // where every other view uses the theme's selection colour. Review 5 (Z4) made the dark
+    // theme's selection blue, apart from the table header's shade.
     void theFileListSelectsInTheThemesColour() {
         const auto restore = qScopeGuard(
             []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
@@ -1737,7 +1826,7 @@ private Q_SLOTS:
             QVERIFY2(sheet.contains(rule), qPrintable(rule));
         }
         sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Dark);
-        QCOMPARE(sak::ui::itemSelectionColor(), QString::fromLatin1(sak::ui::kColorDarkBgHover));
+        QCOMPARE(sak::ui::itemSelectionColor(), QString::fromLatin1(sak::ui::kColorDarkSelection));
     }
 
     // Review 3 (X16): Advanced Search's metadata showed raw ISO dates ("2026-11-06T18:02:11").
@@ -2388,6 +2477,67 @@ private Q_SLOTS:
                  QStringLiteral("C:\\SAK-Samples\\Docs\\notes.txt  (1)"));
         // It still opens the file it was found under.
         QCOMPARE(results->topLevelItem(0)->data(0, Qt::UserRole).toString(), match.file_path);
+    }
+
+    // Review 5 (Z21): a wrapped preview line went on at the left margin, under ">>>" and the line
+    // number. It goes on under its own text.
+    void aWrappedPreviewLineGoesOnUnderItsText() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("notes.txt"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write("short line\n");
+        file.write(QByteArray("harbor ").repeated(60) + "\n");
+        file.close();
+        sak::AdvancedSearchPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        sak::SearchMatch match;
+        match.file_path = path;
+        match.line_number = 2;
+        match.line_content = QStringLiteral("harbor");
+        match.match_start = 0;
+        match.match_end = 6;
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onResultsReceived",
+                                          Qt::DirectConnection,
+                                          Q_ARG(QVector<sak::SearchMatch>, {match})));
+        QTreeWidget* results = nullptr;
+        for (auto* tree : panel.findChildren<QTreeWidget*>()) {
+            if (tree->toolTip().startsWith(QStringLiteral("Click a result to preview"))) {
+                results = tree;
+            }
+        }
+        QVERIFY(results != nullptr && results->topLevelItemCount() == 1);
+        Q_EMIT results->itemClicked(results->topLevelItem(0), 0);
+        QApplication::processEvents();
+        QTextEdit* preview = nullptr;
+        for (auto* edit : panel.findChildren<QTextEdit*>()) {
+            if (edit->toolTip() == QStringLiteral("File preview with highlighted matches")) {
+                preview = edit;
+            }
+        }
+        QVERIFY(preview != nullptr);
+        QTRY_VERIFY(preview->toPlainText().contains(QStringLiteral(">>> ")));
+        QTextBlock block = preview->document()->begin();
+        while (block.isValid() && !block.text().startsWith(QStringLiteral(">>> "))) {
+            block = block.next();
+        }
+        QVERIFY(block.isValid());
+        const QTextLayout* layout = block.layout();
+        QVERIFY2(layout != nullptr && layout->lineCount() > 1, "the long line did not wrap");
+        const qreal gutter = QFontMetricsF(preview->font())
+                                 .horizontalAdvance(block.text().left(
+                                     block.text().indexOf(QStringLiteral("| ")) + 2));
+        const qreal first = layout->lineAt(0).x();
+        const qreal second = layout->lineAt(1).x();
+        QVERIFY2(qAbs((second - first) - gutter) < 1.0,
+                 qPrintable(QStringLiteral("first line at %1, second at %2, gutter %3")
+                                .arg(first)
+                                .arg(second)
+                                .arg(gutter)));
     }
 
     // Advanced Search's tree opened expanded at Home, with the drives out of sight below it.
@@ -4220,8 +4370,10 @@ private Q_SLOTS:
             QVERIFY(QTest::qWaitForWindowExposed(&view));
             QCOMPARE(view.model()->columnCount(),
                      static_cast<int>(sak::FileExplorerItemModel::ColumnCount));
-            view.horizontalHeader()->resizeSection(sak::FileExplorerItemModel::NameColumn, 321);
-            QCOMPARE(view.columnWidth(sak::FileExplorerItemModel::NameColumn), 321);
+            // Name takes what the other columns leave (review 5, Z9), so a width the technician
+            // gives one of them is what is kept.
+            view.horizontalHeader()->resizeSection(sak::FileExplorerItemModel::SizeColumn, 121);
+            QCOMPARE(view.columnWidth(sak::FileExplorerItemModel::SizeColumn), 121);
             view.saveColumnState();
         }
         sak::PortableSettings savedSettings;
@@ -4230,14 +4382,15 @@ private Q_SLOTS:
             savedSettings.value(QStringLiteral("ColumnWidths")).toList();
         savedSettings.endGroup();
         QVERIFY(!savedWidths.isEmpty());
-        QCOMPARE(savedWidths.at(sak::FileExplorerItemModel::NameColumn).toInt(), 321);
+        QCOMPARE(savedWidths.at(sak::FileExplorerItemModel::SizeColumn).toInt(), 121);
 
         sak::FileExplorerDetailsView restored;
         restored.setModel(&proxy);
         restored.resize(900, 400);
         restored.show();
         QVERIFY(QTest::qWaitForWindowExposed(&restored));
-        QCOMPARE(restored.columnWidth(sak::FileExplorerItemModel::NameColumn), 321);
+        QCOMPARE(restored.columnWidth(sak::FileExplorerItemModel::SizeColumn), 121);
+        QCOMPARE(restored.horizontalHeader()->length(), restored.viewport()->width());
 
         settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
         settings.remove(QString());
@@ -5898,6 +6051,49 @@ private Q_SLOTS:
         QCOMPARE(omnibar->mode(), sak::FileExplorerOmnibarMode::Path);
     }
 
+    // Review 5 (Z12): in the light theme the palette's results let the listing show through
+    // (#f5f5f6, 1.09:1), and one result filled a 312 px box. Opaque in both themes, as tall as
+    // its results.
+    void commandPaletteIsOpaqueAndAsTallAsItsResults() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            DeterministicExplorerPanel panel;
+            panel.resize(1100, 700);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+            QVERIFY(pathEdit);
+            panel.setFocus();
+            QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+            QApplication::processEvents();
+            QTest::keyClicks(pathEdit, QStringLiteral("Hidden"));
+            QApplication::processEvents();
+            auto* suggestions =
+                panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+            QVERIFY(suggestions && suggestions->count() == 1);
+            QWidget* frame = suggestions->parentWidget();
+            QVERIFY(frame && frame->isVisible());
+            const int one_row = suggestions->sizeHintForRow(0);
+            QVERIFY2(
+                frame->height() <= one_row + 8,
+                qPrintable(
+                    QStringLiteral("%1 px for one %2 px row").arg(frame->height()).arg(one_row)));
+            // Read with the row unselected, clear of its text: the popup's own fill.
+            suggestions->setCurrentRow(-1);
+            suggestions->clearSelection();
+            QApplication::processEvents();
+            const QImage drawn = panel.grab().toImage();
+            const QPoint inside = frame->mapTo(&panel,
+                                               QPoint(frame->width() - 6, frame->height() / 2));
+            const QColor base = QApplication::palette().color(QPalette::Base);
+            QVERIFY2(drawn.pixelColor(inside).rgb() == base.rgb(),
+                     qPrintable(QStringLiteral("%1 inside the popup, the base is %2")
+                                    .arg(drawn.pixelColor(inside).name(), base.name())));
+        }
+    }
+
     void commandPaletteReportsNoMatchRow() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
@@ -5978,6 +6174,101 @@ private Q_SLOTS:
                 QVERIFY2(action->icon().isNull(), qPrintable(action->text()));
             }
         }
+    }
+
+    // Review 5 (Z11): the view menu's "Item size" label was drawn in #cbd5e1 (1.36:1; dark
+    // #334155, 1.72:1) beside a live slider, on a grey band of its own. In the theme, both themes,
+    // the label reads as the menu's entries do, on the menu's own fill.
+    void theItemSizeRowReadsAsTheMenuDoes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            sak::FileManagementExplorerPanel panel;
+            panel.resize(1200, 760);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+            QVERIFY(view && view->menu());
+            QMenu* menu = view->menu();
+            menu->popup(view->mapToGlobal(QPoint(0, view->height())));
+            QVERIFY(QTest::qWaitForWindowExposed(menu));
+            const auto close = qScopeGuard([menu]() { menu->hide(); });
+            auto* row = menu->findChild<QWidget*>(QStringLiteral("fileExplorerItemSizeRow"));
+            QVERIFY(row != nullptr);
+            QLabel* label = row->findChild<QLabel*>();
+            QVERIFY(label != nullptr && label->isEnabled());
+            const QImage drawn = menu->grab().toImage();
+            const QPoint at = label->mapTo(menu, QPoint(0, 0));
+            const QColor fill = drawn.pixelColor(at.x() - 2, at.y() + 2);
+            const QColor menu_fill = drawn.pixelColor(menu->width() / 2, 3);
+            double best = 1.0;
+            for (int y = at.y(); y < at.y() + label->height(); ++y) {
+                for (int x = at.x(); x < at.x() + label->width(); ++x) {
+                    best = std::max(best, contrastBetween(drawn.pixelColor(x, y), fill));
+                }
+            }
+            const char* theme = mode == sak::ui::AppThemeMode::Dark ? "dark" : "light";
+            QVERIFY2(best >= 4.5,
+                     qPrintable(QStringLiteral("%1: \"Item size\" at %2:1")
+                                    .arg(QLatin1String(theme))
+                                    .arg(best, 0, 'f', 2)));
+            QVERIFY2(fill.rgb() == menu_fill.rgb(),
+                     qPrintable(QStringLiteral("%1: the row on %2, the menu %3")
+                                    .arg(QLatin1String(theme), fill.name(), menu_fill.name())));
+        }
+    }
+
+    // Review 5 (Z9): side by side, each pane's Type read "Dire" with Size and Modified off behind a
+    // scroll bar, and the two panes ended 16 px apart, one footer a line taller. Every column in
+    // view in both panes, and both end at one height.
+    void dualPanesShowEveryColumnAndEndTogether() {
+        // The first-run columns, not widths an earlier test saved.
+        QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
+        QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        {
+            sak::PortableSettings settings;
+            settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
+            settings.remove(QString());
+            settings.endGroup();
+        }
+        DeterministicExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view && view->menu());
+        QAction* dualPane = actionStartingWith(view->menu(), QStringLiteral("Dual Pane"));
+        QVERIFY(dualPane);
+        dualPane->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QApplication::processEvents();
+        const auto panes = panel.findChildren<sak::FileExplorerPane*>();
+        QCOMPARE(panes.size(), 2);
+        for (const sak::FileExplorerPane* pane : panes) {
+            auto* table = pane->findChild<sak::FileExplorerDetailsView*>();
+            QVERIFY(table != nullptr);
+            QTRY_VERIFY(table->isVisible());
+            QStringList widths;
+            for (int column = 0; column < table->model()->columnCount(); ++column) {
+                if (!table->isColumnHidden(column)) {
+                    widths << QStringLiteral("%1 %2")
+                                  .arg(
+                                      table->model()->headerData(column, Qt::Horizontal).toString())
+                                  .arg(table->columnWidth(column));
+                }
+            }
+            QVERIFY2(table->horizontalHeader()->length() <= table->viewport()->width(),
+                     qPrintable(QStringLiteral("%1 px of columns in a %2 px pane: %3")
+                                    .arg(table->horizontalHeader()->length())
+                                    .arg(table->viewport()->width())
+                                    .arg(widths.join(QStringLiteral(", ")))));
+        }
+        const auto bottom_of = [&panel](const sak::FileExplorerPane* pane) {
+            const auto* table = pane->findChild<sak::FileExplorerDetailsView*>();
+            return table->mapTo(&panel, QPoint(0, table->height())).y();
+        };
+        QTRY_COMPARE(bottom_of(panes.at(0)), bottom_of(panes.at(1)));
     }
 
     void duplicateTabClonesCurrentTab() {

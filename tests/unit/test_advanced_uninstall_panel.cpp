@@ -8,12 +8,14 @@
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/advanced_uninstall_types.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 
 #include <QApplication>
 #include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -60,6 +62,7 @@ private Q_SLOTS:
     void theUninstallConfirmationMatchesTheOtherUninstalls();
     void theNameColoursHaveAKey();
     void theBatchDialogHasOneStrongButtonAndCountsItsPrograms();
+    void aRefreshSaysLoadingOnlyOverAnEmptyList();
 };
 
 // Review 3 (X10): Remove Selected and Clear Queue were primary blue beside the danger-toned Start
@@ -223,6 +226,30 @@ void AdvancedUninstallPanelTests::remoteInstallFolderOffersNoMeasurement() {
     panel.addInstallFolderSizeRow(program, &dialog, form);
     QVERIFY(measureButton(&dialog) == nullptr);
     QCOMPARE(form->rowCount(), 0);
+}
+
+// Review 5 (Z19): after an uninstall the refresh drew "Loading installed programs..." across the
+// removed program's selected row, and "Leftover Items" was a bold label of its own under the
+// Installed Programs group box. The loading line only over an empty list; the leftovers in a group
+// box of that name.
+void AdvancedUninstallPanelTests::aRefreshSaysLoadingOnlyOverAnEmptyList() {
+    sak::AdvancedUninstallPanel panel;
+    panel.onEnumerationStarted();
+    QVERIFY(panel.m_program_empty_state->isOverlayVisible());
+    sak::ProgramInfo program;
+    program.displayName = QStringLiteral("Notepad++ (64-bit x64)");
+    panel.onEnumerationFinished({program});
+    QCOMPARE(panel.m_program_table->rowCount(), 1);
+    panel.onEnumerationStarted();
+    QVERIFY2(!panel.m_program_empty_state->isOverlayVisible(),
+             qPrintable(panel.m_program_empty_state->overlayText()));
+
+    auto* section = qobject_cast<QGroupBox*>(panel.m_leftover_section);
+    QVERIFY(section != nullptr);
+    QCOMPARE(section->title(), QStringLiteral("Leftover Items"));
+    for (const QLabel* label : panel.findChildren<QLabel*>()) {
+        QVERIFY2(label->text() != QStringLiteral("Leftover Items"), "a label of its own");
+    }
 }
 
 // UI re-check N5: after Refresh the status bar kept a 0% bar beside "Ready": each end sent 0 of 1.

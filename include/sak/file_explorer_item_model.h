@@ -122,6 +122,10 @@ public:
     [[nodiscard]] bool showFileExtensions() const;
     [[nodiscard]] static QString attributeSummary(const FileManagementEntry& entry);
     [[nodiscard]] static QString sizeText(uint64_t bytes);
+    /// What the Type column says: "File folder" for a folder, a file's kind from its extension
+    /// ("PNG image", "CSV document", else "XYZ File"), and any other entry's own type ("Search
+    /// result", "Symlink").
+    [[nodiscard]] static QString typeText(const FileManagementEntry& entry);
     [[nodiscard]] static QString timeText(const QDateTime& time);
 
 Q_SIGNALS:

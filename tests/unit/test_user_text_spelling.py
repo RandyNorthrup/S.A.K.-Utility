@@ -28,7 +28,9 @@ CODE = re.compile(
     re.S,
 )
 DIGIT_SEPARATOR = re.compile(r"(?<=[0-9A-Fa-f])'(?=[0-9A-Fa-f])")
-WIFI = re.compile(r"\bWiFi\b")
+# "WiFi" followed by an underscore is a name a user reads too: Screenshot Settings saved
+# "WiFi_Settings_<time>.png" and named it so in its "Not on this PC" line (review 5).
+WIFI = re.compile(r"\bWiFi(?![A-Za-z0-9])")
 LOWERCASE_ETHERNET = re.compile(r"(?<![-:])\bethernet\b")
 ADAPTER_TYPE_TOKEN = '"WiFi"'
 SOURCE_SUFFIXES = (".cpp", ".h")
@@ -86,6 +88,10 @@ class UserTextSpellingTests(unittest.TestCase):
 
     def test_lowercase_ethernet_is_named(self) -> None:
         self.assertEqual(len(self.scan('auto x = tr("Scanning ethernet adapters...");\n')), 1)
+
+    def test_wifi_in_a_file_name_is_named(self) -> None:
+        found = self.scan('Page p{.name = QStringLiteral("WiFi_Settings")};\n')
+        self.assertEqual(len(found), 1, found)
 
     def test_the_adapter_type_token_is_data(self) -> None:
         self.assertEqual(self.scan('bool w = type == QStringLiteral("WiFi");\n'), [])

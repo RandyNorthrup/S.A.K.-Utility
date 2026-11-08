@@ -174,7 +174,12 @@ QWidget* FileExplorerDetailsPane::buildTabPill() {
 QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     auto* container = new QWidget(this);
     auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    // One gap under the switch and one between the caption and the card: the caption sat 4 px
+    // under the switch and 6 px above the card, and with no caption the card was 24 px down
+    // (review 5, Z10).
+    layout->setContentsMargins(
+        ui::kMarginNone, kInfoPaneTextInset, ui::kMarginNone, ui::kMarginNone);
+    layout->setSpacing(kInfoPaneTextInset);
 
     m_preview_caption = new QLabel(container);
     m_preview_caption->setObjectName(QStringLiteral("fileExplorerPreviewCaption"));
@@ -188,6 +193,7 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     m_preview_caption->setContentsMargins(
         kInfoPaneTextInset, ui::kMarginNone, kInfoPaneTextInset, ui::kMarginNone);
     layout->addWidget(m_preview_caption);
+    m_preview_caption->hide();
 
     m_preview_stack = new QStackedWidget(container);
     m_preview_stack->setObjectName(QStringLiteral("fileExplorerPreviewStack"));
@@ -314,6 +320,11 @@ QLabel* FileExplorerDetailsPane::previewImage() const {
 
 QLabel* FileExplorerDetailsPane::previewCaption() const {
     return m_preview_caption;
+}
+
+void FileExplorerDetailsPane::setPreviewCaption(const QString& text) {
+    m_preview_caption->setText(text);
+    m_preview_caption->setVisible(!text.isEmpty());
 }
 
 FileExplorerDetailsText* FileExplorerDetailsPane::propertiesText() const {

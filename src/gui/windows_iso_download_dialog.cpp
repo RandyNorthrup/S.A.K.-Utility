@@ -21,6 +21,8 @@
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QScreen>
+#include <QScrollArea>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
@@ -77,6 +79,7 @@ WindowsISODownloadDialog::WindowsISODownloadDialog(WindowsISODownloader* downloa
 
     setupUi();
     connectSignals();
+    fitToScreen();
 
     m_statusLabel->setText("Select architecture and channel, then click Fetch Builds.");
 }
@@ -90,8 +93,41 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 void WindowsISODownloadDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* main_layout = new QVBoxLayout(this);
-    setupUi_formSections(main_layout);
-    setupUi_progressAndButtons(main_layout);
+    // The groups scroll and the buttons stay below them. With four whole rows of builds the
+    // dialog asked for 933 px, more than a 1600x900 or 1366x768 screen has, and its buttons ran
+    // off the foot of the screen (review 5, RG9).
+    m_formArea = new QScrollArea(this);
+    m_formArea->setWidgetResizable(true);
+    m_formArea->setFrameShape(QFrame::NoFrame);
+    m_formArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* form = new QWidget(m_formArea);
+    auto* form_layout = new QVBoxLayout(form);
+    form_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    setupUi_formSections(form_layout);
+    setupUi_progress(form_layout);
+    m_formArea->setWidget(form);
+    main_layout->addWidget(m_formArea, 1);
+    setupUi_buttons(main_layout);
+}
+
+void WindowsISODownloadDialog::fitToScreen() {
+    // As tall as the groups and the buttons need, unless the screen is shorter: then as tall as
+    // the screen's free area, less a title bar, and the groups scroll. Sized before it is shown,
+    // so QDialog places it inside the screen at this size.
+    const QScreen* shown_on = parentWidget() != nullptr ? parentWidget()->screen() : screen();
+    if (shown_on == nullptr) {
+        return;
+    }
+    fitToHeight(shown_on->availableGeometry().height() - sak::kDialogWindowFrameAllowance);
+}
+
+void WindowsISODownloadDialog::fitToHeight(int room) {
+    // In the theme's padding: hints read before the style sheet polishes the groups are short.
+    ensurePolished();
+    const int wanted = sizeHint().height() - m_formArea->sizeHint().height() +
+                       m_formArea->widget()->sizeHint().height();
+    resize(width(), std::min(wanted, room));
 }
 
 // ----------------------------------------------------------------------------
@@ -207,8 +243,7 @@ void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* main_layout) {
     main_layout->addWidget(save_group);
 }
 
-void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* main_layout) {
-    // ---- Progress ----
+void WindowsISODownloadDialog::setupUi_progress(QVBoxLayout* main_layout) {
     auto* progress_group = new QGroupBox("Progress", this);
     auto* progress_layout = new QVBoxLayout(progress_group);
 
@@ -247,8 +282,9 @@ void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* main_layo
     progress_layout->addLayout(detail_row);
 
     main_layout->addWidget(progress_group);
+}
 
-    // ---- Action Buttons ----
+void WindowsISODownloadDialog::setupUi_buttons(QVBoxLayout* main_layout) {
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
