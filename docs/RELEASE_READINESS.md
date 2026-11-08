@@ -2217,6 +2217,121 @@ sample files and folders on C:, D: and E: (D:\SAK-Samples held the BitLocker key
 the sample backups and the Settings screenshots with the real SSID), C:\Program Files\SAK-Test, the round's job
 folder and job task. The capture VM was not used and its snapshot was not touched.
 
+### UI review round 10: review 5's findings, Cancel during a flash, and review 6 (2026-11-08)
+
+From the independent review of round 9's pictures (`ui-review\recheck5.md`: 148 of 150 pictures read, five
+regressions and 23 new findings) and the coordinator's item list, on dev at 5f01bfee. Every item was confirmed on
+that commit first. Two commits: d8a44a0f (the items) and 823baafb (what review 6's first pictures showed d8a44a0f
+had left). Every fix has a test, and every test was drilled red with its fix broken in the source, one guard at a
+time, by a script that plants the mutant, builds, runs the tests, restores every byte in a finally and touches the
+file (testpc2's W:\sak and lane2): 99 drills, 91 red at once. The eight that were not: rg6-send-built (the Send
+button's icon at construction; updatePrimaryActionButton replaces it before the page shows, so the mutant changes
+nothing); rg9-not-fitted (the first test called fitToHeight itself; it now checks the dialog as it opens: no scroll,
+or as tall as the screen allows; red); z6-uninstall-refresh and z6-uninstall-two-primaries (the window-wide check
+counts enabled buttons, and Advanced Uninstall's toolbar is disabled while its list loads; a direct test of the five
+tools is red); z6-offline-install (Offline Deploy is a sub-tab the window-wide check does not open; a direct test is
+red); z12-opaque (the frame alone; the list covers it, so the popup and its list both see-through is the defect, and
+that mutant is red); z17-band (Qt's style sheet polish sets WA_StyledBackground itself; removing the transcript's
+style sheet is the defect, red); z9-pane-bottoms (the inactive pane's second line no longer aligns the panes, the
+footer sync does, and its mutant is red). Every guard's tests passed again on the restored code.
+
+**Must-fix.**
+- Z1, no Cancel while a flash wrote or waited for Windows to see a new Windows USB (safety).
+  beginConfirmedFlash set the buttons before it showed the progress page, so updateNavigationButtons saw step 2:
+  Cancel hidden, Back shown. The page switches first now: Step 3 shows a red Cancel and no Back for the whole
+  write, the USB wait included. Cancel asks, No the default; then it is spent and the page says "Stopping the
+  write..." until the writer says how it ended. The completion page reads "Flash cancelled" and what the drive
+  holds: nothing written and the drive as it was, or writing had started and it needs flashing again or formatting
+  (the raw writer's bytes-written count and the Windows USB writer's targetWasWritten() decide; a writer gone
+  before it reported is taken to have written). Z3 with it: the status bar's progress starts at 0.
+- RG9, the Windows ISO dialog ran past 768 and 900 px screens with its buttons below them. Its groups and progress
+  sit in a frameless scroll area with Download, Cancel and Close below it, outside the scroll, and it opens at its
+  content's height capped at the screen's available height less the window frame. Review 6 also found two filled
+  buttons (Fetch Builds, Browse) beside the disabled Download & Build ISO: they are secondary.
+- Z2, the light progress label (#0f172a) over a #3b82f6-#2563eb chunk at 2.6-3.5:1. The light chunk is
+  #93c5fd-#60a5fa; dark keeps its deep fill and white label from the theme's gradient; the AI workflow bar takes the
+  theme's.
+- RG6, the AI page's Close/Stop (a blank square) and disabled Send and Rename Chat (hairlines): one-colour drawings
+  of their own (button-close, -send, -rename, -attach), solid at 20 px enabled and disabled.
+- RG7, Partition Manager's disk icon in dark: the table, action list, menus and disk map take sak::themedIcon, an
+  icon engine that picks the theme's drawing when it paints.
+- RG8, the backup's Installed Applications gave the Publisher what the longest names left: Version and Publisher fit
+  their contents and the name takes the rest. The first test survived (one long name; Qt keeps a stretched section's
+  old width when nothing is left); it now walks the name from a few words to wider than the page.
+
+**Lows.**
+- RG5 and Z7: each review-bar segment's floor is its label's width plus room; neighbours have a line between them;
+  the map, legend and bars share one fill. Review 6 showed no line in the real Copy Disk wizard: the line took the
+  preview's own Base colour, which a wizard page's style sheet makes transparent. It takes the application's base
+  colour, and a test opens the real wizard in both themes and finds it. The table and map name a letterless
+  partition "EFI", "MSR", "Recovery" or "Partition N".
+- Y8's rest, App Data: name and path fit their contents, Size takes the rest, a wider path scrolls the list.
+- Y20's rest and Z9, File Explorer. Type takes the name Windows gives the type, as File Explorer shows it ("Text
+  Document", "PNG File", "File folder"; d8a44a0f's Qt MIME names read "Text/csv" on Windows). Name takes what the
+  other columns leave, never under 160 px; a pane too narrow for that (about 320 px side by side with the details
+  pane open) leaves out Tags, then Modified, then Size, and takes them back when it widens, never saving them hidden.
+  Side by side, the panes' footers are held at one height, so both lists end on one line.
+- Z4, dark tables: header in the border shade, a selected row #1e40af.
+- Z5, a selected file's icon keeps its normal drawing on the light selection.
+- Z6 and Z6a, one filled button per page or group box: Advanced Uninstall's Refresh, Batch, Select All, Deselect
+  All and Settings; Network Adapters' backup and restore and the servers' Start; Advanced Search's regex, target and
+  preference buttons; Offline Deploy's Install from Bundle; the wizards' Scan, Select All, Customize, Browse and
+  Auto-Map; Wi-Fi Manager's Connect with Phone/Tablet and Scan Known Networks; the AI rail's browser extension button;
+  the ISO dialog's Fetch Builds and Browse: secondary. Reset Network is red.
+- Z8, Store apps by the DisplayName Windows' PackageManager gives, in the same PowerShell call; none, the name.
+- Z10, the preview caption one gap below the Details/Preview switch, hidden when empty.
+- Z11, the View menu's "Item size" in the border colour: the command bar's separator rule (`#fileExplorerCommandBar
+  QFrame`) matched the label, a QFrame too, inside the button's menu. The rule names the separators; the row is on
+  the menu's colour.
+- Z12, the command palette is opaque (its style sheet now a style constant) and as tall as its results.
+- Z13, a finished restore shows Finish only, its Cancel buttons disabled and hidden; round summary bullets.
+- Z14, Benchmarks' Run buttons one gap below their bars, result lines at one pitch.
+- Z15, every tab page paints its own background, so Log rows sit on the page colour.
+- Z16, the AI status line: Context before the counts, the access mode as its box names it, Phase only while one runs,
+  the turn and session in one form, and "none" for both until there is a turn (review 6: the idle line still ran
+  past the status bar at 1280 px).
+- Z17, the transcript band and chips take one fill; the chip's close X follows the theme.
+- Z18, the light headers' icons for File Explorer and Advanced Search, Duplicate Finder, Advanced Uninstall, the
+  Vulnerability Scanner, Network Adapters, Wi-Fi Manager and Benchmarks redrawn so their pale parts stand 3.2:1 on the
+  page and their lines darker; the old drawings are the dark theme's. Action cards' logos are left as drawn.
+- Z19, the leftovers are a "Leftover Items" group; "Loading installed programs..." only over an empty list.
+- Z20, Email Inspector's page arrows together; the list starts unsorted.
+- Z21, wrapped preview lines hang under their text.
+- Z22, the findings table takes three quarters of the Vulnerability Scanner's split.
+- Z23 and wording: Check Disk's summary one sentence a line; "Then select the users to back up."; "It cannot be
+  written back."; a USB stick whose SMART a standard user cannot read is logged as a warning; Screenshot Settings
+  names its file "Wi-Fi_Settings" (test_user_text_spelling refuses "WiFi" before a non-letter).
+
+**Checks.** The raw flash's confirmation has No as its default and Enter answers No (drilled). Z6a, Z12 and Z17 are
+held by the tests above and shown in review 6.
+
+**Review 6.** `capture\review6\{light,dark}\`, with `index.json` naming what each picture proves and the
+package it came from: 35 shots of only the screens this round changed, in both themes, 70
+pictures, each looked at; 44 on package r10a (d8a44a0f, SHA-256 1E4F53D9...4BDE) and 26 retaken on r10b (823baafb,
+SHA-256 6E4306D6...6D8E) for the screens its commit changed. testpc2 took 64 of them; the VM took only the six
+account-listing backup wizard pages (Select Users, Installed Applications, App Data) and is back at its pre-round8
+snapshot, powered off. Z1's proofs are on testpc2's disposable Samsung Flash Drive (serial AA00000000000489, pinned
+by model, serial, size and bus before every write): flasher_progress (a 2 GB image mid-write, red Cancel, no Back,
+the status bar at 6-9%), flasher_cancelled ("Flash cancelled" and "Writing had started, so the target drive is not
+usable as it is...") and flasher_windows_usb_wait (Cancel during "Waiting for Windows to recognize the new
+partition... 0 s of 180 s"). RG9 at 1366x768: flasher_windows_iso_builds_1366, 722x712 on a 768-line screen, groups
+scrolling, Download, Cancel and Close in view; at 1600x900 it is 844 tall. Six rows have no picture:
+backup_wizard_progress, restore_wizard_permissions and restore_wizard_progress need the VM's throwaway data disk
+(the sample backup), which round 9's cleanup removed; their items are held by tests. The first pictures, on r10a,
+are what found 823baafb's four fixes (the wizard's invisible dividers, "Text/csv" and the 320 px dual pane, the idle
+AI line still cut, the ISO dialog's two filled buttons). Seen and left as judgement: a wide view's Name column
+still cuts Screenshot Settings' 36-character file names (Name takes all the room the other columns leave; the full
+name is in the tooltip and the details pane); Diagnostics' four one-click maintenance tools are filled, as review 5
+saw them without a finding; the AI rail's Add is filled beside Load Key once a workflow is chosen (two sections).
+
+**Static gates and suites.** All of ci.yml's static gates (lizard 1.24.3 from the main venv) green at both commits.
+Local label suite, T2's exact labels ('^(product|release-tooling|tooling|cert)$'): 316 of 316 at 823baafb. The
+broader unanchored set, which adds the 21 cert-tooling and tooling-extended tests: 337 of 337 at d8a44a0f and at
+823baafb, the two app-launching tests skipped as always locally (823baafb's first run met
+test_windows_runtime_dependencies' stale-build guard, after the local drills had relinked sak_gui.lib but not the
+app; a full relink and rerun were clean). Two loaded -j 6 runs of the 20 changed test executables, each repeated
+twice: green. T2: run 42503233394 (d8a44a0f) and run 42511319680 (823baafb) green.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
