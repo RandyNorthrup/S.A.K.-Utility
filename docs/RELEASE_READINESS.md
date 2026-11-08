@@ -2243,7 +2243,9 @@ footer sync does, and its mutant is red). Every guard's tests passed again on th
   write..." until the writer says how it ended. The completion page reads "Flash cancelled" and what the drive
   holds: nothing written and the drive as it was, or writing had started and it needs flashing again or formatting
   (the raw writer's bytes-written count and the Windows USB writer's targetWasWritten() decide; a writer gone
-  before it reported is taken to have written). Z3 with it: the status bar's progress starts at 0.
+  before it reported is taken to have written). Z3 with it: the write reports its progress from its start, so the
+  status bar holds "Image Flasher: Writing to 1 drive..." for the whole write, as a running job's message does (it
+  fell back to "Ready" after 5 s).
 - RG9, the Windows ISO dialog ran past 768 and 900 px screens with its buttons below them. Its groups and progress
   sit in a frameless scroll area with Download, Cancel and Close below it, outside the scroll, and it opens at its
   content's height capped at the screen's available height less the window frame. Review 6 also found two filled
@@ -2303,7 +2305,8 @@ footer sync does, and its mutant is red). Every guard's tests passed again on th
   names its file "Wi-Fi_Settings" (test_user_text_spelling refuses "WiFi" before a non-letter).
 
 **Checks.** The raw flash's confirmation has No as its default and Enter answers No (drilled). Z6a, Z12 and Z17 are
-held by the tests above and shown in review 6.
+held by the tests above; Z12 and Z17 are also pictured in review 6. Z6a's Select All and Deselect All, and Z19, sit
+in Advanced Uninstall's leftovers step, which review 6 did not take (it needs a real uninstall): tests only.
 
 **Review 6.** `capture\review6\{light,dark}\`, with `index.json` naming what each picture proves and the
 package it came from: 35 shots of only the screens this round changed, in both themes, 70
