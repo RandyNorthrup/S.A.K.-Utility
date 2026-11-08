@@ -53,15 +53,20 @@ jobs:
 
     # Release readiness runs the full secret scan (scripts/scan_secrets.ps1 without
     # -SkipExternalTools), which fails closed without both external scanners.
+    # Cached under their pinned SHA-256s; the toolchain action's pinned_download.ps1 retries an
+    # outage and uses a cached copy only when it is the pinned file.
+    - name: Cache gitleaks and trufflehog downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ${{ runner.temp }}/pinned-downloads/secret-scanners
+        key: pinned-secret-scanners-${{ env.GITLEAKS_SHA256 }}-${{ env.TRUFFLEHOG_SHA256 }}
+
     - name: Install gitleaks and trufflehog
       shell: pwsh
       run: |
         function Get-Pinned([string]$Url, [string]$Sha256, [string]$Name) {
-          $file = Join-Path $env:RUNNER_TEMP $Name
-          Invoke-WebRequest -Uri $Url -OutFile $file
-          $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne $Sha256) { throw "$Name hash $hash does not match the pin" }
-          return $file
+          return & ./.github/actions/windows-build-env/pinned_download.ps1 -Url $Url -Sha256 $Sha256 `
+            -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/secret-scanners') -Name $Name
         }
         $tools = Join-Path $env:RUNNER_TEMP "secret-scanners"
         New-Item -ItemType Directory -Force -Path $tools | Out-Null

@@ -121,14 +121,21 @@ jobs:
       with:
         cppcheck: 'true'
 
+    # Cached under its pinned SHA-256; the toolchain action's pinned_download.ps1 retries an outage
+    # and uses a cached copy only when it is the pinned file.
+    - name: Cache LLVM download
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ${{ runner.temp }}/pinned-downloads/llvm
+        key: pinned-llvm-${{ env.LLVM_SHA256 }}
+
     - name: Install LLVM
       shell: pwsh
       run: |
         # LLVM publishes its Windows release as an .msi from 23.x (no NSIS .exe).
-        $msi = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-win64.msi"
-        Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.msi" -OutFile $msi
-        $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne $env:LLVM_SHA256) { throw "LLVM installer hash $hash does not match the pin" }
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.msi"
+        $msi = & ./.github/actions/windows-build-env/pinned_download.ps1 -Url $url -Sha256 $env:LLVM_SHA256 `
+          -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/llvm') -Name "LLVM-$env:LLVM_VERSION-win64.msi"
         # The image's LLVM is a Chocolatey package; remove it so the installer owns the folder.
         choco uninstall llvm -y --no-progress
         $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru

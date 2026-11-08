@@ -68,21 +68,36 @@ runs:
       lizard --version
       python -m pre_commit --version
 
+  # Each pinned download is cached under its pinned SHA-256, and pinned_download.ps1 uses a cached
+  # copy only when it hashes to the pin, retries an outage (HTTP 5xx or no answer) with backoff, and
+  # refuses a wrong file. On 2026-11-08 GitHub's release downloads answered 504 for a while and
+  # every T2 shard failed here before building.
+  - name: Cache ripgrep download
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/ripgrep
+      key: pinned-ripgrep-${{ inputs.ripgrep-sha256 }}
+
   - name: Install ripgrep
     shell: pwsh
     env:
       RG_VERSION: ${{ inputs.ripgrep-version }}
       RG_SHA256: ${{ inputs.ripgrep-sha256 }}
     run: |
-      $zip = Join-Path $env:RUNNER_TEMP "ripgrep.zip"
       $url = "https://github.com/BurntSushi/ripgrep/releases/download/$env:RG_VERSION/ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc.zip"
-      Invoke-WebRequest -Uri $url -OutFile $zip
-      $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-      if ($hash -ne $env:RG_SHA256) { throw "ripgrep archive hash $hash does not match the pin" }
+      $zip = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:RG_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/ripgrep') -Name 'ripgrep.zip'
       Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
       $dir = Join-Path $env:RUNNER_TEMP "ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc"
       $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       & (Join-Path $dir rg.exe) --version
+
+  - name: Cache CMake download
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/cmake
+      key: pinned-cmake-${{ inputs.cmake-sha256 }}
 
   # First on PATH, so cmake and ctest in every later step are this release, not the image's.
   - name: Install CMake
@@ -92,17 +107,22 @@ runs:
       CMAKE_PIN_VERSION: ${{ inputs.cmake-version }}
       CMAKE_PIN_SHA256: ${{ inputs.cmake-sha256 }}
     run: |
-      $zip = Join-Path $env:RUNNER_TEMP "cmake.zip"
       $url = "https://github.com/Kitware/CMake/releases/download/v$env:CMAKE_PIN_VERSION/cmake-$env:CMAKE_PIN_VERSION-windows-x86_64.zip"
-      Invoke-WebRequest -Uri $url -OutFile $zip
-      $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-      if ($hash -ne $env:CMAKE_PIN_SHA256) { throw "CMake archive hash $hash does not match the pin" }
+      $zip = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:CMAKE_PIN_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/cmake') -Name 'cmake.zip'
       Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
       $bin = Join-Path $env:RUNNER_TEMP "cmake-$env:CMAKE_PIN_VERSION-windows-x86_64\bin"
       $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       $version = (& (Join-Path $bin cmake.exe) --version | Select-Object -First 1)
       Write-Host $version
       if ($version -ne "cmake version $env:CMAKE_PIN_VERSION") { throw "CMake is not $env:CMAKE_PIN_VERSION" }
+
+  - name: Cache cppcheck download
+    if: ${{ inputs.cppcheck == 'true' }}
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/cppcheck
+      key: pinned-cppcheck-${{ inputs.cppcheck-sha256 }}
 
   - name: Install cppcheck
     if: ${{ inputs.cppcheck == 'true' }}
@@ -111,10 +131,9 @@ runs:
       CPPCHECK_VERSION: ${{ inputs.cppcheck-version }}
       CPPCHECK_SHA256: ${{ inputs.cppcheck-sha256 }}
     run: |
-      $msi = Join-Path $env:RUNNER_TEMP "cppcheck.msi"
-      Invoke-WebRequest -Uri "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi" -OutFile $msi
-      $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
-      if ($hash -ne $env:CPPCHECK_SHA256) { throw "cppcheck installer hash $hash does not match the pin" }
+      $url = "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi"
+      $msi = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:CPPCHECK_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/cppcheck') -Name 'cppcheck.msi'
       $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
       if ($p.ExitCode -ne 0) { throw "cppcheck install exited $($p.ExitCode)" }
       "$env:ProgramFiles\Cppcheck" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH

@@ -6929,6 +6929,13 @@ add_test(NAME test_run_ctest_no_dialogs
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
 set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
 
+# The CI toolchain's pinned downloads: an outage is retried, a 4xx or a wrong file is refused, and a
+# cached copy is used only when it is the pinned file.
+add_test(NAME test_pinned_download
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_pinned_download.ps1")
+set_tests_properties(test_pinned_download PROPERTIES TIMEOUT 60)
+
 # The claim level and the site's words, from synthetic evidence for each outcome.
 add_test(NAME test_partition_manager_certification_status
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7305,7 +7312,8 @@ set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_depende
     test_verify_authenticode_signatures)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
-    test_run_ctest_no_dialogs test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
+    test_run_ctest_no_dialogs test_pinned_download test_run_lizard_js_baseline
+    test_cppcheck_qt_slot_classifier
     test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
