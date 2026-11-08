@@ -2425,6 +2425,18 @@ line, and one worker message put back; all four again on the final code, after t
   logged GPU and network-driver live kernel dumps shortly after (VS Code crashed then). It did not happen again: 25
   runs idle and 25 beside 16 busy threads, with QtTest's own watchdog set to name a stalled function, all passed in 7
   to 13 s, as did every label run since. No code change; recorded as not reproduced.
+- Y12's rest: review 4 named Quick Partition among the surfaces with too many strong buttons, and round 9 left it
+  out; review 5's picture showed the preset row's Save in the primary tone beside Add to Queue. Load, Save and
+  Delete are secondary now (quickPartitionHasOnePrimaryButton, drilled red).
+- T2 on 5e10f6d7 failed twice before building anything: every shard's Toolchain step got "504 Gateway Time-out"
+  from GitHub's release downloads (ripgrep, cppcheck), as did a download from the workstation. The pinned CI
+  downloads now go through .github/actions/windows-build-env/pinned_download.ps1: a copy restored by actions/cache
+  (keyed by the pinned SHA-256) is used only when it hashes to the pin; a download is tried up to four times,
+  10, 30 and 60 s apart, when the server answers 5xx or not at all; any other HTTP error, and any file that is not
+  the pin, fails at once. ripgrep, CMake and cppcheck in the toolchain action, nightly's LLVM and release's
+  gitleaks and trufflehog use it; secret-scan.yml's curl retries the same outages. test_pinned_download (tooling)
+  holds the helper's rules against a stand-in for Invoke-WebRequest, five guards drilled red; the workflows
+  themselves are proved by T2 once GitHub's downloads answer.
 - Judgement, not changed (Y20's rest): Compare Panes' message box still wraps "staff-list.csv" at its hyphen. Y28's
   word joiners keep a path whole in the Details pane because every way out of the pane strips them; a message box's
   text is also logged and copied with Ctrl+C, so marks put there would leave with it. A hyphen is an ordinary break

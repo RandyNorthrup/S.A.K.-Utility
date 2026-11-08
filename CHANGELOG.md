@@ -35,10 +35,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   narrow. The Vulnerability Scanner shows the published day ("2009-04-24") and its recommendations whole.
 - **Store apps name their publisher** - Advanced Uninstall names a Store app's publisher as the Store does instead
   of its certificate ID ("CN=5699BA41-...").
-- **One primary button per page** - File Organizer, Duplicate Finder, Application Management and the email file
-  scan have one strong button, the one that does the page's work. Image Flasher's Settings and Back are secondary,
-  its steps have a row of their own above the Log switch, its pages are only as tall as they need, and the erase
-  confirmation's Yes is red.
+- **One primary button per page** - File Organizer, Duplicate Finder, Application Management, Quick Partition and
+  the email file scan have one strong button, the one that does the page's work. Image Flasher's Settings and Back
+  are secondary, its steps have a row of their own above the Log switch, its pages are only as tall as they need,
+  and the erase confirmation's Yes is red.
 - **File Explorer** - The details pane's text, headings and preview start at one inset. A path wraps after a
   backslash rather than inside "SAK-Samples", and copying it still gives the path as it is. Only the active pane's
   footer says "Active pane". Advanced Search's preview is set in a fixed-width font so its line numbers line up.
