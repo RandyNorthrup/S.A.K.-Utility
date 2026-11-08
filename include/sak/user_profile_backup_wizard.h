@@ -325,6 +325,8 @@ private Q_SLOTS:
     void onItemChanged(QTreeWidgetItem* item, int column);
 
 private:
+    /// @brief The status line after a scan that found @p count profiles (empty for none).
+    [[nodiscard]] static QString scanStatusText(qsizetype count);
     void setupUi();
     void populateTree(const QVector<WifiProfileInfo>& profiles);
     void updateNextButtonText();
@@ -472,6 +474,7 @@ public:
     void setRunInputs(const QVector<UserProfile>& users, const QString& destination_path);
 
     void initializePage() override;
+    void cleanupPage() override;
     bool isComplete() const override;
 
 private Q_SLOTS:

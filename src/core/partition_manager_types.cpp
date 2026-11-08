@@ -6,6 +6,8 @@
 
 #include "sak/partition_manager_types.h"
 
+#include "sak/format_utils.h"
+
 #include <QUuid>
 
 namespace sak {
@@ -168,27 +170,7 @@ QString makePartitionOperationId() {
 }
 
 QString formatPartitionBytes(uint64_t bytes) {
-    constexpr double kUnit = 1024.0;
-    constexpr uint64_t kKiB = 1024ULL;
-    constexpr uint64_t kMiB = kKiB * 1024ULL;
-    constexpr uint64_t kGiB = kMiB * 1024ULL;
-    constexpr uint64_t kTiB = kGiB * 1024ULL;
-
-    if (bytes >= kTiB) {
-        return QStringLiteral("%1 TB").arg(
-            static_cast<double>(bytes) / kTiB, 0, 'f', kPartitionByteDisplayPrecision);
-    }
-    if (bytes >= kGiB) {
-        return QStringLiteral("%1 GB").arg(
-            static_cast<double>(bytes) / kGiB, 0, 'f', kPartitionByteDisplayPrecision);
-    }
-    if (bytes >= kMiB) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kMiB, 0, 'f', 1);
-    }
-    if (bytes >= kKiB) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kUnit, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 bytes").arg(bytes);
+    return formatBytes(bytes);
 }
 
 }  // namespace sak

@@ -6,6 +6,7 @@
 #include "sak/app_paths.h"
 #include "sak/bundled_tools_manager.h"
 #include "sak/elevation_manager.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
@@ -34,7 +35,6 @@ constexpr int kProgressDownloadManifest = 2;
 constexpr int kPercentComplete = 100;
 constexpr int kPercentAlmostComplete = 99;
 constexpr int kGbDisplayPrecision = 2;
-constexpr int kResumeGbLogScale = 100;
 constexpr double kMinimumDisplaySpeedMbps = 0.01;
 constexpr int kSecondsPerMinute = 60;
 constexpr int kEtaSecondsFieldWidth = 2;
@@ -256,8 +256,8 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     m_totalDownloadBytes = *total;
 
     sak::logInfo("Starting UUP ISO build: " + std::to_string(m_files.size()) + " files, " +
-                 std::to_string(m_totalDownloadBytes / sak::kBytesPerMB) + " MB total, edition=" +
-                 m_edition.toStdString() + ", lang=" + m_lang.toStdString());
+                 sak::formatBytes(m_totalDownloadBytes).toStdString() +
+                 " total, edition=" + m_edition.toStdString() + ", lang=" + m_lang.toStdString());
 
     executePreparation();
 }
@@ -449,15 +449,13 @@ void UupIsoBuilder::checkResumedDownloads() {
         return;
     }
 
-    const double existingGB = static_cast<double>(existingBytes) / sak::kBytesPerGBf;
-    sak::logInfo(
-        "Resuming download -- found " + std::to_string(existingFiles) + " existing files (" +
-        std::to_string(static_cast<int>(existingGB * kResumeGbLogScale) / kResumeGbLogScale) +
-        " GB) in work directory");
+    sak::logInfo("Resuming download -- found " + std::to_string(existingFiles) +
+                 " existing files (" + sak::formatBytes(existingBytes).toStdString() +
+                 ") in work directory");
     Q_EMIT progressUpdated(kProgressCreateWorkDir,
-                           QString("Resuming download \u2014 %1 files already present (%2 GB)")
+                           QString("Resuming download \u2014 %1 files already present (%2)")
                                .arg(existingFiles)
-                               .arg(existingGB, 0, 'f', kGbDisplayPrecision));
+                               .arg(sak::formatBytes(existingBytes)));
 }
 
 void UupIsoBuilder::downloadPackages() {
@@ -592,13 +590,12 @@ void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) 
     if (skippedFiles <= 0) {
         return;
     }
-    const double skippedMB = static_cast<double>(skippedBytes) / sak::kBytesPerMBf;
     sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) + " already-downloaded files (" +
-                 std::to_string(static_cast<int>(skippedMB)) + " MB)");
+                 sak::formatBytes(skippedBytes).toStdString() + ")");
     Q_EMIT progressUpdated(kProgressDownloadManifest,
-                           QString("Skipped %1 already-downloaded files (%2 MB)")
+                           QString("Skipped %1 already-downloaded files (%2)")
                                .arg(skippedFiles)
-                               .arg(skippedMB, 0, 'f', 0));
+                               .arg(sak::formatBytes(skippedBytes)));
 }
 
 // ============================================================================
@@ -784,11 +781,9 @@ void UupIsoBuilder::pollDownloadProgress() {
     m_downloadPercent = std::min(m_downloadPercent, kPercentComplete);
 
     // Build progress detail string
-    const double downloadedGB = static_cast<double>(totalDownloaded) / sak::kBytesPerGBf;
-    const double totalGB = static_cast<double>(m_totalDownloadBytes) / sak::kBytesPerGBf;
-    QString detail = QString("Downloaded %1 GB / %2 GB")
-                         .arg(downloadedGB, 0, 'f', kGbDisplayPrecision)
-                         .arg(totalGB, 0, 'f', kGbDisplayPrecision);
+    QString detail = QString("Downloaded %1 / %2")
+                         .arg(sak::formatBytes(totalDownloaded),
+                              sak::formatBytes(m_totalDownloadBytes));
 
     if (m_currentSpeedMBps > kMinimumDisplaySpeedMbps) {
         const double remainingMB = static_cast<double>(m_totalDownloadBytes - totalDownloaded) /
@@ -823,15 +818,14 @@ void UupIsoBuilder::pollConversionProgress() {
     const QFileInfo outputIso(m_outputIsoPath);
     if (outputIso.exists() && outputIso.size() > 0) {
         const qint64 isoSize = outputIso.size();
-        const double sizeGB = static_cast<double>(isoSize) / sak::kBytesPerGBf;
         int conversionProgress = m_conversionPercent;
         if (conversionProgress >= kPercentComplete) {
             conversionProgress = kPercentAlmostComplete;
         }
-        Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                                   (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete),
-                               QString("Building bootable ISO (%1 GB written)...")
-                                   .arg(sizeGB, 0, 'f', kGbDisplayPrecision));
+        Q_EMIT progressUpdated(
+            PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
+                (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete),
+            QString("Building bootable ISO (%1 written)...").arg(sak::formatBytes(isoSize)));
     } else if (m_converterProcess && m_converterProcess->state() == QProcess::Running) {
         int conversionProgress = m_conversionPercent;
         if (conversionProgress >= kPercentComplete) {
@@ -1571,7 +1565,7 @@ void UupIsoBuilder::finalizeSuccessfulConversion() {
     Q_EMIT progressUpdated(kPercentComplete, "ISO build complete!");
     Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
     sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() + " (" +
-                 std::to_string(fileSize / sak::kBytesPerMB) + " MB)");
+                 sak::formatBytes(fileSize).toStdString() + ")");
 }
 
 // ============================================================================

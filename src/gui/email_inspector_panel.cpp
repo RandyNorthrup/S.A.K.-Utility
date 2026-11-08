@@ -1987,7 +1987,10 @@ void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit hit) {
 
 void EmailInspectorPanel::onSearchComplete(int total_hits) {
     finishSearchResults(total_hits);
-    updateStatusBar(tr("Search complete: %1 hits").arg(total_hits));
+    // "results", as the item list's count says: "3 search results" stood beside "3 hits",
+    // and one result read "1 hits" (review 4, Y20).
+    updateStatusBar(
+        tr("Search complete: %1").arg(countOf(total_hits, tr("result"), tr("results"))));
 }
 
 void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
@@ -1996,7 +1999,7 @@ void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
     // caution colour so it never reads as a clean "Search complete". The colour is applied
     // AFTER updateStatusBar because that method resets the label style to muted on every call.
     updateStatusBar(tr("Search cancelled: %1")
-                        .arg(countOf(partial_hits, tr("partial hit"), tr("partial hits"))));
+                        .arg(countOf(partial_hits, tr("partial result"), tr("partial results"))));
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
 }
 
@@ -3030,9 +3033,9 @@ void EmailInspectorPanel::updatePageControls() {
 }
 
 QString EmailInspectorPanel::formatBytes(qint64 bytes) {
-    // The shared compact byte style. This class carried its own copy; five existed across
+    // The application's one byte style. This class carried its own copy; five existed across
     // the tree, differing only in which unit got which precision.
-    return sak::formatBytesCompact(bytes);
+    return sak::formatBytes(bytes);
 }
 
 }  // namespace sak

@@ -121,8 +121,8 @@ inline QString tabStripStyles() {
                "#fileExplorerInfoPaneDetailsScroll { border: none; "
                "border-top: 1px solid palette(mid); }"
                "#fileExplorerInfoPane QLabel[infoPaneSectionHeader=\"true\"] { "
-               "font-weight: 600; color: palette(dark); padding: 4px 2px 0 2px; }"
-               "#fileExplorerInfoPane QPlainTextEdit { border: none; "
+               "font-weight: 600; color: palette(dark); padding: 4px 0 0 0; }"
+               "#fileExplorerInfoPane QPlainTextEdit { border: none; padding: 0; "
                "background: palette(base); }"
                // The Details sections: text on the scroller's background, no box, focused or not.
                "#fileExplorerInfoPane QTextEdit[infoPaneDetailsText=\"true\"] { border: none; "

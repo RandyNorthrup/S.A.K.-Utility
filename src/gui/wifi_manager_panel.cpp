@@ -261,8 +261,10 @@ void WifiManagerPanel::setupUi() {
 
     auto* content_widget = new QWidget(scroll_area);
     auto* root_layout = new QVBoxLayout(content_widget);
-    root_layout->setContentsMargins(
-        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    root_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
     root_layout->setSpacing(sak::ui::kSpacingSmall);
 
     scroll_area->setWidget(content_widget);
@@ -315,7 +317,7 @@ void WifiManagerPanel::setupNetworkIdentityFields(QFormLayout* layout) {
     // SSID
     m_ssid_input = new QLineEdit(m_form_group);
     m_ssid_input->setPlaceholderText("Network name (SSID)");
-    m_ssid_input->setToolTip("The exact name of the WiFi network");
+    m_ssid_input->setToolTip("The exact name of the Wi-Fi network");
     m_ssid_input->setAccessibleName(QStringLiteral("Network SSID"));
     layout->addRow("SSID:", m_ssid_input);
 }
@@ -347,7 +349,7 @@ void WifiManagerPanel::setupNetworkPasswordField(QFormLayout* layout) {
 void WifiManagerPanel::setupNetworkOptionsFields(QFormLayout* layout) {
     m_security_combo = new QComboBox(m_form_group);
     m_security_combo->addItems({"WPA/WPA2/WPA3", "WEP", "None (Open)"});
-    m_security_combo->setToolTip("WiFi security type");
+    m_security_combo->setToolTip("Wi-Fi security type");
     m_security_combo->setAccessibleName(QStringLiteral("Security Type"));
     layout->addRow("Security:", m_security_combo);
 
@@ -438,7 +440,7 @@ void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
 void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     m_network_table = new QTableWidget(0, kColCount, m_table_group);
-    m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
+    m_network_table->setAccessibleName(QStringLiteral("Saved Wi-Fi Networks Table"));
     auto* check_header = new CheckHeaderView(m_table_group);
     m_network_table->setHorizontalHeader(check_header);
     m_network_table->setHorizontalHeaderLabels(
@@ -488,7 +490,7 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
     // A danger button with nothing to act on: it was enabled on an empty table.
     m_delete_selected_btn->setEnabled(false);
     m_add_to_windows_btn->setToolTip(
-        "Add checked networks to Windows known WiFi profiles via netsh");
+        "Add checked networks to Windows known Wi-Fi profiles via netsh");
     m_add_to_windows_btn->setEnabled(false);
     m_save_table_btn->setToolTip("Save table to a JSON file");
     m_save_table_btn->setEnabled(false);
@@ -522,9 +524,9 @@ void WifiManagerPanel::setupActionButtons() {
         "BMP)");
     m_export_script_btn->setToolTip("Generate a Windows netsh .cmd script for the current network");
     m_export_macos_btn->setToolTip(
-        "Generate a macOS WiFi .mobileconfig profile for the current "
+        "Generate a macOS Wi-Fi .mobileconfig profile for the current "
         "network");
-    m_scan_networks_btn->setToolTip("Scan Windows known WiFi profiles and add them to the table");
+    m_scan_networks_btn->setToolTip("Scan Windows known Wi-Fi profiles and add them to the table");
 
     bar->addWidget(m_generate_qr_btn);
     bar->addWidget(m_export_script_btn);
@@ -537,7 +539,7 @@ void WifiManagerPanel::setupActionButtons() {
     if (auto* vbox = qobject_cast<QVBoxLayout*>(layout())) {
         vbox->addWidget(bar_widget);
     } else {
-        sak::logError("WiFi panel: parent layout is not a QVBoxLayout");
+        sak::logError("Wi-Fi panel: parent layout is not a QVBoxLayout");
     }
 }
 
@@ -945,8 +947,8 @@ void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
     }
     if (ctl.chkPdf->isChecked()) {
         const QString pdf_path = out_dir + "/" + content.sub_name + ".pdf";
-        const QString title = content.ssid.isEmpty() ? QStringLiteral("WiFi QR Code")
-                                                     : content.ssid + " WiFi QR Code";
+        const QString title = content.ssid.isEmpty() ? QStringLiteral("Wi-Fi QR Code")
+                                                     : content.ssid + " Wi-Fi QR Code";
         if (exportQrToPdf(final_img, pdf_path, title)) {
             saved.append("PDF");
         }
@@ -1054,7 +1056,7 @@ bool WifiManagerPanel::saveQrFormats(const QImage& img,
     if (formats.bmp && img.save(path_stem + ".bmp", "BMP")) {
         any_saved = true;
     }
-    if (formats.pdf && exportQrToPdf(img, path_stem + ".pdf", ssid + " WiFi QR Code")) {
+    if (formats.pdf && exportQrToPdf(img, path_stem + ".pdf", ssid + " Wi-Fi QR Code")) {
         any_saved = true;
     }
     return any_saved;
@@ -1208,7 +1210,7 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int network_cou
     ui.img_lbl->setStyleSheet(
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
     ui.img_lbl->setFixedSize(kQrDisplaySize, kQrDisplaySize);
-    ui.img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    ui.img_lbl->setAccessibleName(QStringLiteral("Wi-Fi QR code"));
     ui.img_lbl->setAccessibleDescription(
         QStringLiteral("Scan it with a phone to join this network"));
     layout->addWidget(ui.img_lbl, 0, Qt::AlignHCenter);
@@ -1607,7 +1609,7 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
     img_lbl->setAlignment(Qt::AlignCenter);
     img_lbl->setStyleSheet(
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
-    img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    img_lbl->setAccessibleName(QStringLiteral("Wi-Fi QR code"));
     img_lbl->setAccessibleDescription(QStringLiteral("Scan it with a phone to join this network"));
     layout->addWidget(img_lbl);
 
@@ -1647,7 +1649,7 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
         ui.img_lbl->setPixmap(QPixmap::fromImage(qr_img));
 
         ui.title_lbl->setText(QString("<b>%1</b>")
-                                  .arg(cfg.ssid.isEmpty() ? QStringLiteral("WiFi Network")
+                                  .arg(cfg.ssid.isEmpty() ? QStringLiteral("Wi-Fi Network")
                                                           : cfg.ssid.toHtmlEscaped()));
         ui.idx_lbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
         ui.prev_btn->setEnabled(idx > 0);
@@ -1698,7 +1700,7 @@ std::pair<QList<WifiManagerPanel::WifiConfig>, bool> WifiManagerPanel::scanKnown
 
 void WifiManagerPanel::onScanNetworksClicked() {
     m_scan_networks_btn->setEnabled(false);
-    Q_EMIT statusMessage("Scanning known Windows WiFi profiles...", 0);
+    Q_EMIT statusMessage("Scanning known Windows Wi-Fi profiles...", 0);
 
     // The bool is the scanner's scan_ok: a COMPLETE and authoritative enumeration. Without it an
     // empty list is ambiguous, and this panel used to resolve that ambiguity the fail-OPEN way,
@@ -1718,13 +1720,13 @@ void WifiManagerPanel::onScanNetworksClicked() {
         const auto [configs, scan_ok] = watcher->result();
         if (!scan_ok) {
             Q_EMIT panel->statusMessage(
-                "Could not read the Windows WiFi profiles - the scan was incomplete, so this is "
+                "Could not read the Windows Wi-Fi profiles - the scan was incomplete, so this is "
                 "not a report that none exist.",
                 sak::kTimerStatusWarnMs);
             return;
         }
         if (configs.isEmpty()) {
-            Q_EMIT panel->statusMessage("No known WiFi profiles found.",
+            Q_EMIT panel->statusMessage("No known Wi-Fi profiles found.",
                                         sak::kTimerStatusMessageMs);
             return;
         }
@@ -1813,7 +1815,7 @@ void WifiManagerPanel::onSelectionChanged() {
             "Generate a Windows netsh .cmd script"
             " for the current network form");
         m_export_macos_btn->setToolTip(
-            "Generate a macOS WiFi .mobileconfig"
+            "Generate a macOS Wi-Fi .mobileconfig"
             " profile for the current network form");
         m_connect_phone_btn->setToolTip(
             "Show a QR code of the current network"
@@ -1876,11 +1878,11 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
     // nothing, so the destructor could not join it and it could deref the destroyed atomic. One
     // install at a time (the button is also disabled during a run; this guards a re-entrant path).
     if (m_wlanInstallFuture.isRunning()) {
-        Q_EMIT statusMessage("A WiFi profile install is already in progress.", 0);
+        Q_EMIT statusMessage("A Wi-Fi profile install is already in progress.", 0);
         return;
     }
     m_add_to_windows_btn->setEnabled(false);
-    Q_EMIT statusMessage(QString("Adding %1 to Windows WiFi profiles...")
+    Q_EMIT statusMessage(QString("Adding %1 to Windows Wi-Fi profiles...")
                              .arg(countOf(configs.size(),
                                           QStringLiteral("selected network"),
                                           QStringLiteral("selected networks"))),
@@ -1897,7 +1899,7 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
         const auto [added, failed] = watcher->result();
         if (failed == 0) {
             Q_EMIT panel->statusMessage(
-                QString("Added %1 to Windows WiFi profiles.").arg(networksCount(added)),
+                QString("Added %1 to Windows Wi-Fi profiles.").arg(networksCount(added)),
                 sak::kTimerStatusDefaultMs);
         } else {
             Q_EMIT panel->statusMessage(QString("Added %1; %2 failed"
@@ -2141,7 +2143,7 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
                      "</"
                      "string>\n";
         }
-        plist += "      <key>PayloadDisplayName</key><string>WiFi (" + cfg.ssid.toHtmlEscaped() +
+        plist += "      <key>PayloadDisplayName</key><string>Wi-Fi (" + cfg.ssid.toHtmlEscaped() +
                  ")</string>\n";
         plist += "      <key>PayloadIdentifier</key><string>com.sak.wifi." + net_uuid.toLower() +
                  "</string>\n";
@@ -2153,11 +2155,11 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
     }
 
     plist += "  </array>\n";
-    plist += "  <key>PayloadDescription</key><string>WiFi config by S.A.K. Utility on " + now +
+    plist += "  <key>PayloadDescription</key><string>Wi-Fi config by S.A.K. Utility on " + now +
              "</string>\n";
-    const QString display_name = networks.isEmpty() ? "WiFi Networks" : networks.first().ssid;
+    const QString display_name = networks.isEmpty() ? "Wi-Fi Networks" : networks.first().ssid;
     plist += "  <key>PayloadDisplayName</key><string>" + display_name.toHtmlEscaped() +
-             " WiFi</"
+             " Wi-Fi</"
              "string>\n";
     plist += "  <key>PayloadIdentifier</key><string>" + payload_id + "</string>\n";
     plist += "  <key>PayloadRemovalDisallowed</key><false/>\n";

@@ -125,7 +125,6 @@ constexpr auto kColorPauseBtnPressed = "#e65100";  ///< MUI amber -- button pres
 
 // Accent
 constexpr auto kColorAccentPurple = "#7c3aed";   ///< violet-600 -- special phases
-constexpr auto kColorAccentEmerald = "#059669";  ///< emerald-600 -- download phases
 constexpr auto kColorAccentWindows = "#0078d4";  ///< Windows accent blue
 constexpr auto kColorDiscord = "#5865f2";        ///< Discord brand action
 constexpr auto kColorSearchCurrentMatchHighlight = "#ffa500";

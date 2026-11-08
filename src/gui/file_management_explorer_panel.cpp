@@ -4945,16 +4945,29 @@ void FileManagementExplorerPanel::comparePanes() {
     }
     QStringList only_b = sizes_b.keys();
     only_b.sort(Qt::CaseInsensitive);
-    const QString summary = tr("Only in this pane (%1): %2\nOnly in other pane (%3): %4\n"
-                               "Size differs (%5): %6")
-                                .arg(QString::number(only_a.size()),
-                                     only_a.join(QStringLiteral(", ")),
-                                     QString::number(only_b.size()),
-                                     only_b.join(QStringLiteral(", ")),
-                                     QString::number(mismatched.size()),
-                                     mismatched.join(QStringLiteral(", ")));
+    const QString summary = comparePanesSummary(only_a, only_b, mismatched);
     logMessage(summary);
     sak::showInformationLogged(this, tr("Compare Panes"), summary);
+}
+
+QString FileManagementExplorerPanel::comparePanesSummary(const QStringList& only_here,
+                                                         const QStringList& only_there,
+                                                         const QStringList& size_differs) {
+    // Only what differs is listed: an empty "Size differs (0):" said nothing (review 4, Y20).
+    QStringList lines;
+    const auto add = [&lines](const QString& heading, const QStringList& names) {
+        if (!names.isEmpty()) {
+            lines.append(QStringLiteral("%1 (%2): %3")
+                             .arg(heading)
+                             .arg(names.size())
+                             .arg(names.join(QStringLiteral(", "))));
+        }
+    };
+    add(tr("Only in this pane"), only_here);
+    add(tr("Only in other pane"), only_there);
+    add(tr("Size differs"), size_differs);
+    return lines.isEmpty() ? tr("Both panes hold the same names, with the same sizes.")
+                           : lines.join(QLatin1Char('\n'));
 }
 
 void FileManagementExplorerPanel::logMessage(const QString& message) {
@@ -7168,17 +7181,22 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     }
 }
 
-QString FileManagementExplorerPanel::composeStatusText(
-    const FileManagementTarget& target, const FileExplorerSelection& selection) const {
+QString FileManagementExplorerPanel::paneSummaryText(const FileManagementTarget& target,
+                                                     qsizetype selected) const {
     if (target.root_path.isEmpty()) {
         return tr("No target selected");
     }
-    QString text = tr("%1 | %2 | %3 selected | writes %4")
-                       .arg(target.label,
-                            target.file_system,
-                            QString::number(selection.count()),
-                            target.can_write_files ? tr("enabled") : tr("blocked"));
-    if (m_dual_pane_enabled) {
+    return tr("%1 | %2 | %3 selected | writes %4")
+        .arg(target.label,
+             target.file_system,
+             QString::number(selected),
+             target.can_write_files ? tr("enabled") : tr("blocked"));
+}
+
+QString FileManagementExplorerPanel::composeStatusText(
+    const FileManagementTarget& target, const FileExplorerSelection& selection) const {
+    QString text = paneSummaryText(target, selection.count());
+    if (m_dual_pane_enabled && !target.root_path.isEmpty()) {
         const QString active_side = m_active_pane_index == 0 ? tr("Left") : tr("Right");
         const QString other_side = m_active_pane_index == 0 ? tr("Right") : tr("Left");
         // In the other pane's own form: a Windows volume with backslashes ("Left:
@@ -7812,6 +7830,11 @@ void FileManagementExplorerPanel::activatePane(int index) {
     m_active_pane_index = index;
     m_pane = (index == 0) ? m_pane_a : m_pane_b;
     clearInactivePaneSelection(index);
+    // The pane being left says what it shows, without the active-pane line: both footers read
+    // "Active pane: ..." and the one left behind was stale (review 4, Y6).
+    if (m_status_label != nullptr) {
+        m_status_label->setText(paneSummaryText(otherPaneTarget(), 0));
+    }
     m_item_model = m_pane->itemModel();
     installTagProvider(m_item_model);
     installIconProvider(m_item_model);

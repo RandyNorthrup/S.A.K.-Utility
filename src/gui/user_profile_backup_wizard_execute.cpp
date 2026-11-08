@@ -162,10 +162,22 @@ void UserProfileBackupExecutePage::setRunInputs(const QVector<UserProfile>& user
 void UserProfileBackupExecutePage::initializePage() {
     m_statusLabel->setText(tr("Ready to start backup. Click Start Backup to begin."));
     m_startButton->setEnabled(true);
+    m_startButton->show();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, false);
+    }
     m_lastProcessedBytes = 0;
     m_overallProgress->setRange(0, 0);
     m_overallProgress->setFormat(tr("Waiting for backup size..."));
     m_overallProgress->setAccessibleDescription(tr("Waiting for backup size."));
+}
+
+// Going back from a finished run gives the earlier pages their Cancel again.
+void UserProfileBackupExecutePage::cleanupPage() {
+    QWizardPage::cleanupPage();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, false);
+    }
 }
 
 bool UserProfileBackupExecutePage::isComplete() const {
@@ -360,12 +372,12 @@ bool UserProfileBackupExecutePage::saveWifiProfilesToBackup(
     QString error;
     if (!writeJsonSidecarAtomic(
             m_destinationPath + "/wifi_profiles.json", QJsonDocument(arr), error)) {
-        sak::logError("Could not save WiFi profiles: {}", error.toStdString());
-        appendLog(tr("ERROR: Could not save WiFi profiles: %1").arg(error));
+        sak::logError("Could not save Wi-Fi profiles: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save Wi-Fi profiles: %1").arg(error));
         return false;
     }
-    appendLog(
-        tr("Saved %1 to backup").arg(countOf(arr.size(), tr("WiFi profile"), tr("WiFi profiles"))));
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(arr.size(), tr("Wi-Fi profile"), tr("Wi-Fi profiles"))));
     return true;
 }
 
@@ -503,6 +515,12 @@ void UserProfileBackupExecutePage::onBackupComplete(bool success, const QString&
     }
     appendLog(success ? tr("=== Backup Complete ===") : tr("=== Backup Failed ==="));
     appendLog(message);
+    // Done, either way: Finish closes the wizard. A spent Start Backup and a Cancel with nothing
+    // left to cancel stood beside it (review 4, Y27).
+    m_startButton->hide();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, true);
+    }
     Q_EMIT completeChanged();
 }
 

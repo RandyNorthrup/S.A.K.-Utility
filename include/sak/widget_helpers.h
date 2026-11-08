@@ -156,26 +156,47 @@ inline QIcon themedGlyphIcon(const QString& path) {
     return tinted;
 }
 
-/// @brief A button icon with one disabled look in both themes: the drawing's silhouette in the
-///        colour a disabled button's label takes (the muted text colour). Qt greyed each drawing
-///        its own way, so on the AI page a disabled black glyph vanished on dark (1.06:1) while a
-///        white and blue drawing stayed bright there and vanished on light (review 3, X2). While
-///        enabled, a black glyph is drawn in the body text colour on the dark theme, as
-///        themedGlyphIcon does. The colours are read as the icon is drawn, so a change of theme
-///        takes effect at once.
+/// @brief @p drawn as a one-colour glyph in @p color: every part of it in that colour, except the
+///        parts drawn in white, which are left out, so a white page or question mark shows as a
+///        hole. A plain silhouette made Help's and About's tab icons blank discs.
+inline QPixmap toneGlyphPixmap(const QPixmap& drawn, QColor color) {
+    // A channel floor, not pure white: at 20 px a 1 px white stroke is blended with what is
+    // around it, and About's "i" came out near (197, 219, 248) on its (139, 183, 240) bubble.
+    constexpr int kNearWhite = 185;
+    QImage image = drawn.toImage().convertToFormat(QImage::Format_ARGB32);
+    const QRgb left_out = QColor(Qt::transparent).rgba();
+    for (int y = 0; y < image.height(); ++y) {
+        auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = line[x];
+            const bool white = std::min({qRed(pixel), qGreen(pixel), qBlue(pixel)}) >= kNearWhite;
+            color.setAlpha(qAlpha(pixel));
+            line[x] = white ? left_out : color.rgba();
+        }
+    }
+    QPixmap glyph = QPixmap::fromImage(image);
+    glyph.setDevicePixelRatio(drawn.devicePixelRatio());
+    return glyph;
+}
+
+/// @brief A button icon drawn as its button's label is: a one-colour glyph (toneGlyphPixmap) in
+///        the label's colour, white on the toned buttons that carry these icons, and in the
+///        colour a disabled button's label takes (the muted text colour) while disabled. Qt
+///        greyed each drawing its own way, so on the AI page a disabled black glyph vanished on
+///        dark (1.06:1) while a white and blue drawing stayed bright there (review 3, X2); and
+///        enabled, three secondary buttons showed a blue paperclip, a white book and a black bin
+///        beside their white labels (review 4, Y4). The colours are read as the icon is drawn, so
+///        a change of theme takes effect at once.
 class ButtonIconEngine final : public QIconEngine {
 public:
     explicit ButtonIconEngine(QString path) : m_path(std::move(path)), m_source(m_path) {}
 
     QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
-        QPixmap drawn = m_source.pixmap(size, QIcon::Normal, state);
+        const QPixmap drawn = m_source.pixmap(size, QIcon::Normal, state);
         if (mode == QIcon::Disabled) {
-            return silhouette(drawn, ui::themedColor(ui::kColorTextMuted));
+            return toneGlyphPixmap(drawn, ui::themedColor(ui::kColorTextMuted));
         }
-        if (ui::usingDarkUiTheme() && isBlackGlyph(drawn)) {
-            return silhouette(drawn, ui::themedColor(ui::kColorTextBody));
-        }
-        return drawn;
+        return toneGlyphPixmap(drawn, QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
     }
 
     void paint(QPainter* painter,
@@ -191,33 +212,6 @@ public:
     [[nodiscard]] QIconEngine* clone() const override { return new ButtonIconEngine(m_path); }
 
 private:
-    static QPixmap silhouette(QPixmap pixmap, const QColor& color) {
-        QPainter painter(&pixmap);
-        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        painter.fillRect(pixmap.rect(), color);
-        return pixmap;
-    }
-
-    // Every inked pixel near black: one of the icons8 line glyphs, drawn for a light surface.
-    static bool isBlackGlyph(const QPixmap& pixmap) {
-        constexpr int kNearBlack = 64;
-        const QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
-        bool inked = false;
-        for (int y = 0; y < image.height(); ++y) {
-            const auto* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
-            for (int x = 0; x < image.width(); ++x) {
-                if (qAlpha(line[x]) == 0) {
-                    continue;
-                }
-                inked = true;
-                if (std::max({qRed(line[x]), qGreen(line[x]), qBlue(line[x])}) >= kNearBlack) {
-                    return false;
-                }
-            }
-        }
-        return inked;
-    }
-
     QString m_path;
     QIcon m_source;
 };
@@ -292,24 +286,7 @@ inline QString themedIconPath(const QString& path) {
 ///        its colours lost. A part drawn in white (Help's question mark, About's "i") is left out,
 ///        so it shows in the tab's blue; a plain white silhouette made those two blank discs.
 inline QPixmap selectedTabPixmap(const QPixmap& drawn) {
-    // A channel floor, not pure white: at 20 px a 1 px white stroke is blended with what is
-    // around it, and About's "i" came out near (197, 219, 248) on its (139, 183, 240) bubble.
-    constexpr int kNearWhite = 185;
-    QImage image = drawn.toImage().convertToFormat(QImage::Format_ARGB32);
-    const QRgb left_out = QColor(Qt::transparent).rgba();
-    QColor on_tone(QString::fromLatin1(ui::kColorButtonTextOnTone));
-    for (int y = 0; y < image.height(); ++y) {
-        auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < image.width(); ++x) {
-            const QRgb pixel = line[x];
-            const bool white = std::min({qRed(pixel), qGreen(pixel), qBlue(pixel)}) >= kNearWhite;
-            on_tone.setAlpha(qAlpha(pixel));
-            line[x] = white ? left_out : on_tone.rgba();
-        }
-    }
-    QPixmap selected = QPixmap::fromImage(image);
-    selected.setDevicePixelRatio(drawn.devicePixelRatio());
-    return selected;
+    return toneGlyphPixmap(drawn, QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)));
 }
 
 /// @brief @p path as a tab icon: on unselected tabs the theme's drawing of it, and in white when
@@ -341,6 +318,12 @@ public:
 
     void refresh() const {
         m_label->setPixmap(QIcon(themedIconPath(m_path)).pixmap(m_size, m_size));
+    }
+
+    /// Shows @p path from now on, in the theme's drawing.
+    void setPath(QString path) {
+        m_path = std::move(path);
+        refresh();
     }
 
 protected:
@@ -436,6 +419,17 @@ inline void placeCellWidgetsInWholeCells(QAbstractItemView* view) {
     }
 }
 
+/// @brief Every column of @p header as wide as its contents but @p stretch_column, which takes
+///        the room left. Columns of equal shares cut names and paths while a neighbour had slack:
+///        the restore's "Microsoft.Windows.SecureAssessmen..." beside a half-empty package column,
+///        "VS Code Extensi..." beside the size (review 4, Y8); and a check-box column was 177 px
+///        wide with its box at the left under a centred header (Y16).
+inline void fitColumnsToContents(QHeaderView* header, int stretch_column) {
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(stretch_column, QHeaderView::Stretch);
+}
+
 /// @brief Sets @p item's text colour, or clears it back to the view's own when @p color is
 ///        invalid: an invalid QColor given to setForeground() paints black, 1.2:1 on dark.
 inline void setItemForeground(QTableWidgetItem* item, const QColor& color) {
@@ -503,7 +497,9 @@ inline PanelHeaderWidgets createPanelHeaderImpl(QWidget* parent,
 
         iconLabel = new QLabel(parent);
         iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
-        iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+        // The theme's drawing, as a tab and a card show it: the light drawings of the tab icons
+        // are drawn dark for the light tab, and lost their lines on a dark page (review 4, Y3).
+        new ThemedIconLabelRefresher(iconLabel, iconPath, kPanelIconSize);
         iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
         iconLabel->setAccessibleDescription(QStringLiteral("The icon for ") + title);
         headerRow->addWidget(iconLabel);
@@ -577,8 +573,18 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
                               const QString& title,
                               const QString& subtitle) {
     if (hw.iconLabel) {
-        hw.iconLabel->setPixmap(
-            QIcon(iconPath).pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
+        // The refresher has no meta-object of its own, so it is found by its C++ type.
+        ThemedIconLabelRefresher* refresher = nullptr;
+        for (QObject* child : hw.iconLabel->children()) {
+            refresher = refresher != nullptr ? refresher
+                                             : dynamic_cast<ThemedIconLabelRefresher*>(child);
+        }
+        if (refresher != nullptr) {
+            refresher->setPath(iconPath);
+        } else {
+            hw.iconLabel->setPixmap(QIcon(themedIconPath(iconPath))
+                                        .pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
+        }
         hw.iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
         hw.iconLabel->setAccessibleDescription(QStringLiteral("The icon for ") + title);
     }

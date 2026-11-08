@@ -115,6 +115,10 @@ class FileManagementExplorerPanel : public QWidget {
     Q_OBJECT
 
 public:
+    /// Compare Panes' result: each set that has names, or that the panes agree.
+    [[nodiscard]] static QString comparePanesSummary(const QStringList& only_here,
+                                                     const QStringList& only_there,
+                                                     const QStringList& size_differs);
     explicit FileManagementExplorerPanel(QWidget* parent = nullptr);
     /// Construct with an explicit target set instead of probing mounted host volumes.
     /// Tests use this dependency seam with temporary local roots; production uses
@@ -795,6 +799,9 @@ private:
     void updateDetailsPane();
     [[nodiscard]] QString composeStatusText(const FileManagementTarget& target,
                                             const FileExplorerSelection& selection) const;
+    /// A pane footer's first line: target, file system, selection count, write state.
+    [[nodiscard]] QString paneSummaryText(const FileManagementTarget& target,
+                                          qsizetype selected) const;
     void updatePreviewPane(const FileManagementTarget& target,
                            const FileExplorerSelection& selection);
     /// Finished handler for the off-thread preview read: drops a superseded

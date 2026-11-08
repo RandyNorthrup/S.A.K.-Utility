@@ -3,14 +3,17 @@
 
 #include "sak/file_explorer_details_pane.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/portable_settings.h"
 #include "sak/style_constants.h"
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
+#include <QMimeData>
 #include <QSettings>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -36,6 +39,10 @@ constexpr int kInfoPanePillButtonHeight = 32;
 constexpr int kInfoPanePillMargin = 12;
 constexpr int kInfoPanePreviewStretch = 2;
 constexpr int kInfoPaneDetailsStretch = 3;
+// One inset for every line of text in the pane: the preview's caption and text, the section
+// headings and the Details lines. The lines started 7 px in, their headings 11 px and the preview's
+// text 19 px (review 4, Y5).
+constexpr int kInfoPaneTextInset = ui::kMarginMedium;
 
 }  // namespace
 
@@ -61,7 +68,17 @@ FileExplorerDetailsText::FileExplorerDetailsText(QWidget* parent) : QTextEdit(pa
 }
 
 void FileExplorerDetailsText::setDetailsText(const QString& text) {
-    setPlainText(text);
+    setPlainText(withPathBreaks(text));
+}
+
+QString FileExplorerDetailsText::detailsText() const {
+    return withoutPathBreaks(toPlainText());
+}
+
+QMimeData* FileExplorerDetailsText::createMimeDataFromSelection() const {
+    auto* copied = new QMimeData();
+    copied->setText(withoutPathBreaks(textCursor().selection().toPlainText()));
+    return copied;
 }
 
 bool FileExplorerDetailsText::hasHeightForWidth() const {
@@ -169,7 +186,7 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     m_preview_caption->setAccessibleDescription(tr("Explorer preview caption"));
     // In from the edge as the preview's text is; flush left, it began 25 px left of it (X6).
     m_preview_caption->setContentsMargins(
-        ui::kMarginMedium, ui::kMarginNone, ui::kMarginMedium, ui::kMarginNone);
+        kInfoPaneTextInset, ui::kMarginNone, kInfoPaneTextInset, ui::kMarginNone);
     layout->addWidget(m_preview_caption);
 
     m_preview_stack = new QStackedWidget(container);
@@ -202,7 +219,8 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
 
     auto* content = new QWidget(scroll);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    layout->setContentsMargins(
+        kInfoPaneTextInset, ui::kMarginNone, kInfoPaneTextInset, ui::kMarginNone);
 
     m_properties_text = makeDetailsSection(tr("Explorer item properties"));
     m_properties_text->setObjectName(QStringLiteral("fileExplorerPropertiesText"));
@@ -224,6 +242,9 @@ void FileExplorerDetailsPane::addDetailsSection(QVBoxLayout* layout,
                                                 QWidget* text) {
     auto* header = new QLabel(title, this);
     header->setProperty("infoPaneSectionHeader", true);
+    // A styled label indents its text by half an "x" unless told not to: the headings started
+    // 6 px right of their lines (review 4, Y5).
+    header->setIndent(0);
     layout->addWidget(header);
     layout->addWidget(text);
 }
@@ -278,6 +299,7 @@ QPlainTextEdit* FileExplorerDetailsPane::makeDetailsText(const QString& accessib
     auto* editor = new QPlainTextEdit(this);
     editor->setReadOnly(true);
     editor->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    editor->document()->setDocumentMargin(kInfoPaneTextInset);
     editor->setAccessibleName(accessible_name);
     return editor;
 }

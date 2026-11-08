@@ -199,8 +199,9 @@ void EmailFileScannerDialog::setupStatusRow(QVBoxLayout* layout) {
 void EmailFileScannerDialog::setupButtonRow(QVBoxLayout* layout) {
     auto* button_row = new QHBoxLayout();
 
+    // Open Selected is the dialog's one primary button; Rescan was a second (review 4, Y12).
     m_scan_button = new QPushButton(tr("Rescan"), this);
-    m_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_scan_button->setStyleSheet(ui::kSecondaryButtonStyle);
     connect(m_scan_button, &QPushButton::clicked, this, &EmailFileScannerDialog::onScanClicked);
     button_row->addWidget(m_scan_button);
 

@@ -7,6 +7,7 @@
 #include "sak/flash_worker.h"
 
 #include "sak/drive_scanner.h"
+#include "sak/format_utils.h"
 #include "sak/keep_awake.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -997,9 +998,9 @@ sak::ValidationResult FlashWorker::verifySample() {
 
     num_samples = std::max(num_samples, 1);
 
-    sak::logInfo(QString("Verifying %1 sample blocks (%2 MB)")
+    sak::logInfo(QString("Verifying %1 sample blocks (%2)")
                      .arg(num_samples)
-                     .arg(sample_size / sak::kBytesPerMB)
+                     .arg(sak::formatBytes(sample_size))
                      .toStdString());
 
     QElapsedTimer timer;

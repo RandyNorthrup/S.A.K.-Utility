@@ -89,7 +89,6 @@ constexpr int kSortFileSizeLarge = 4;
 constexpr int kSortFileSizeSmall = 5;
 constexpr int kSortModifiedNewest = 6;
 constexpr int kSortModifiedOldest = 7;
-constexpr int kSizeDecimalPlaces = 2;
 constexpr int kMetadataSeparatorLength = 2;
 constexpr qint64 kBytesPerKiB = 1024;
 constexpr qint64 kBytesPerMiB = kBytesPerKiB * kBytesPerKiB;
@@ -101,9 +100,9 @@ bool matchesAreMetadataOnly(const QVector<SearchMatch>& matches) {
 }
 
 QString previewSizeLimitMessage(qint64 file_size, int limit_megabytes) {
-    return QObject::tr("File too large for preview (%1 MB, limit: %2 MB)")
-        .arg(static_cast<double>(file_size) / static_cast<double>(kBytesPerMiB), 0, 'f', 1)
-        .arg(limit_megabytes);
+    return QObject::tr("File too large for preview (%1, limit: %2)")
+        .arg(formatBytes(file_size),
+             formatBytes(static_cast<qint64>(limit_megabytes) * kBytesPerMiB));
 }
 
 QString buildTextPreview(QTextStream& stream,
@@ -433,20 +432,10 @@ void populateSortedResultsTree(QTreeWidget* tree,
 
 // -- Metadata dialog helpers -------------------------------------------------
 
+// The application's byte style, as the result list beside it shows sizes: "242 bytes" stood
+// beside the list's "242 B" (review 4, Y10).
 QString formatMetadataSize(qint64 bytes) {
-    constexpr qint64 kKB = 1024;
-    constexpr qint64 kMB = 1024 * 1024;
-    constexpr qint64 kGB = 1024 * 1024 * 1024;
-    if (bytes >= kGB) {
-        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', kSizeDecimalPlaces);
-    }
-    if (bytes >= kMB) {
-        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', kSizeDecimalPlaces);
-    }
-    if (bytes >= kKB) {
-        return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', 1);
-    }
-    return QString("%1 bytes").arg(bytes);
+    return formatBytes(bytes);
 }
 
 QMap<QString, QString> parseMetadataFromMatches(const QVector<SearchMatch>& matches) {

@@ -42,7 +42,7 @@ QString csvCell(const QString& value) {
 /// Format bytes into a human-readable string. The shared compact style: this file carried one
 /// of five copies of it.
 QString formatBytes(qint64 bytes) {
-    return sak::formatBytesCompact(bytes);
+    return sak::formatBytes(bytes);
 }
 
 /// Build an HTML table row

@@ -46,9 +46,7 @@ class QuickActionTests : public QObject {
 private Q_SLOTS:
     // --- formatFileSize ---
 
-    void formatFileSizeZero() {
-        QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 bytes"));
-    }
+    void formatFileSizeZero() { QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 B")); }
 
     // The unit suffix alone would still pass with a wrong magnitude or a
     // silently changed precision, so pin the whole rendered string. QString::arg
@@ -56,7 +54,7 @@ private Q_SLOTS:
     // machine-dependent.
 
     void formatFileSizeBytes() {
-        QCOMPARE(StubAction::formatFileSize(512), QStringLiteral("512 bytes"));
+        QCOMPARE(StubAction::formatFileSize(512), QStringLiteral("512 B"));
     }
 
     void formatFileSizeKilobytes() {

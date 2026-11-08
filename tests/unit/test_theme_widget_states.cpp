@@ -15,6 +15,7 @@
 #include "sak/file_explorer_style_constants.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/window_fitted_combo_box.h"
 #include "sak/windows11_theme.h"
 
 #include <QAction>
@@ -43,6 +44,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextDocument>
+#include <QTextEdit>
 #include <QTreeWidget>
 #include <QtTest/QtTest>
 #include <QVBoxLayout>
@@ -61,6 +63,8 @@ constexpr int kDisabledLightnessGap = 40;
 constexpr int kHeightTolerancePx = 2;
 constexpr int kSubmenuArrowGapPx = 10;
 constexpr int kTextDarknessThreshold = 160;
+// A glyph stem one pixel wide or more paints the text colour itself, give or take rounding.
+constexpr int kInkTolerance = 24;
 
 double channel(int value) {
     const double c = value / 255.0;
@@ -229,6 +233,12 @@ private Q_SLOTS:
     void aSegmentTooNarrowDrawsNoLabel();
     void aBarLabelStepsAroundItsHandles();
     void theWorkflowHeadingFitsItsPane();
+    // Review 4 (RG4, Y1).
+    void aComboListOpensWholeInsideItsWindow();
+    void aNarrowComboEndsItsEntryWithAnEllipsis();
+    void disabledMenuEntriesLookDisabled_data();
+    void disabledMenuEntriesLookDisabled();
+    void theSearchPreviewIsSetInAFixedWidthFont();
 };
 
 // The app runs on Qt's Windows 11 style with the theme's sheet on top; the offscreen platform would
@@ -699,7 +709,9 @@ void ThemeWidgetStatesTests::textTokensReachAaOnTheLightPage() {
                              sak::ui::kStatusColorWarning,
                              sak::ui::kColorWarning,
                              sak::ui::kColorError,
-                             sak::ui::kStatusColorError}) {
+                             sak::ui::kStatusColorError,
+                             sak::ui::kStatusColorRunning,
+                             sak::ui::kColorAccentPurple}) {
         const double on_page = contrast(token(text), page);
         const double on_window = contrast(token(text), window);
         QVERIFY2(on_page >= kWcagAaNormalText && on_window >= kWcagAaNormalText,
@@ -718,7 +730,9 @@ void ThemeWidgetStatesTests::darkStatusTextReachesAaOnDarkSurfaces() {
                              sak::ui::kStatusColorSuccess,
                              sak::ui::kStatusColorWarning,
                              sak::ui::kColorWarning,
-                             sak::ui::kColorError}) {
+                             sak::ui::kColorError,
+                             sak::ui::kStatusColorRunning,
+                             sak::ui::kColorAccentPurple}) {
         const QColor painted = sak::ui::themedColor(text);
         QCOMPARE(sak::ui::cssColor(text), painted.name());
         for (const char* surface : {sak::ui::kColorDarkBgPage,
@@ -1182,6 +1196,133 @@ void ThemeWidgetStatesTests::theWorkflowHeadingFitsItsPane() {
     const QRegularExpressionMatch match = h1.match(sak::ui::aiWorkflowMarkdownStyle());
     QVERIFY(match.hasMatch());
     QVERIFY2(match.captured(1).toInt() <= sak::ui::kFontSizeStatus, qPrintable(match.captured(1)));
+}
+
+// Review 4 (RG4): the AI workflow picker's list opened at the combo's own 316 px, so its names were
+// cut behind the scroll bar, and its 18 rows ran 39 px past the foot of an 860 px window.
+void ThemeWidgetStatesTests::aComboListOpensWholeInsideItsWindow() {
+    QWidget window;
+    auto* combo = new sak::WindowFittedComboBox(&window);
+    for (int row = 0; row < 30; ++row) {
+        combo->addItem(QStringLiteral("Cleanup - Approved Bloatware Removal (%1 phases)").arg(row));
+    }
+    const int needed = combo->view()->sizeHintForColumn(0);
+    QVERIFY(needed > 0);
+    // A field narrower than its entries, near the window's right edge and below its middle, where
+    // a list of 18 rows fits neither below nor above it on the screen.
+    constexpr int kFieldWidth = 150;
+    constexpr int kFieldHeight = 28;
+    constexpr int kWindowTop = 100;
+    constexpr int kWindowHeight = 300;
+    constexpr int kSideRoom = 40;
+    const int window_width = needed + (4 * kSideRoom);
+    window.setGeometry(kSideRoom / 2, kWindowTop, window_width, kWindowHeight);
+    combo->setGeometry(window_width - kFieldWidth - (kSideRoom / 4),
+                       (kWindowHeight * 2) / 3,
+                       kFieldWidth,
+                       kFieldHeight);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    combo->showPopup();
+    QWidget* popup = combo->view()->window();
+    QTRY_VERIFY(popup->isVisible());
+    const QRect bounds(window.mapToGlobal(QPoint(0, 0)), window.size());
+    const QRect list = popup->geometry();
+    const int shown = combo->view()->viewport()->width();
+    combo->hidePopup();
+    QVERIFY2(
+        shown >= needed,
+        qPrintable(
+            QStringLiteral("the list shows %1 px of entries %2 px wide").arg(shown).arg(needed)));
+    QVERIFY2(bounds.contains(list),
+             qPrintable(QStringLiteral("list at %1,%2 %3x%4 in a window at %5,%6 %7x%8")
+                            .arg(list.x())
+                            .arg(list.y())
+                            .arg(list.width())
+                            .arg(list.height())
+                            .arg(bounds.x())
+                            .arg(bounds.y())
+                            .arg(bounds.width())
+                            .arg(bounds.height())));
+}
+
+// Review 4 (DF11): with the side panel's scroll bar beside it, the workflow picker cut its chosen
+// name through a glyph ("Technician Service Report (5 phas"). The field ends it with an ellipsis
+// where it has too little room, and shows it whole where it has enough.
+void ThemeWidgetStatesTests::aNarrowComboEndsItsEntryWithAnEllipsis() {
+    QWidget window;
+    auto* combo = new sak::WindowFittedComboBox(&window);
+    const QString name = QStringLiteral("Reporting - Technician Service Report (5 phases)");
+    combo->addItem(name);
+    auto* layout = new QVBoxLayout(&window);
+    layout->addWidget(combo);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    combo->setFixedWidth(combo->fontMetrics().horizontalAdvance(name) / 2);
+    QCoreApplication::processEvents();
+    QVERIFY2(combo->shownText().endsWith(QChar(0x2026)), qPrintable(combo->shownText()));
+    QVERIFY(combo->shownText().size() > 3);
+    combo->setFixedWidth(combo->sizeHint().width() + combo->fontMetrics().horizontalAdvance(name));
+    QCoreApplication::processEvents();
+    QCOMPARE(combo->shownText(), name);
+}
+
+void ThemeWidgetStatesTests::disabledMenuEntriesLookDisabled_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// Review 4 (Y1): a disabled menu entry ("Convert Dynamic Disk to Basic" on a basic disk) kept the
+// enabled entries' full-contrast label; only its icon faded. Its label is the disabled label's
+// colour now: plainly lighter (or, in dark, dimmer) than its neighbours, and still readable.
+void ThemeWidgetStatesTests::disabledMenuEntriesLookDisabled() {
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    const bool dark = mode == AppThemeMode::Dark;
+    QMenu menu;
+    QAction* enabled = menu.addAction(QStringLiteral("Delete All Partitions"));
+    QAction* disabled = menu.addAction(QStringLiteral("Convert Dynamic Disk to Basic"));
+    disabled->setEnabled(false);
+    menu.ensurePolished();
+    menu.adjustSize();
+    const QImage image = menu.grab().toImage();
+    const QRect on_row = menu.actionGeometry(enabled);
+    const QRect off_row = menu.actionGeometry(disabled);
+    const QColor surface(image.pixel(off_row.right() - 2, off_row.center().y()));
+    const QColor on_ink = dark ? lightestPixel(image, on_row) : darkestPixel(image, on_row);
+    const QColor off_ink = dark ? lightestPixel(image, off_row) : darkestPixel(image, off_row);
+    const QColor expected = token(dark ? sak::ui::kColorDarkTextSecondary
+                                       : sak::ui::kColorTextMuted);
+    const int gap = std::abs(on_ink.lightness() - off_ink.lightness());
+    QVERIFY2(gap >= kDisabledLightnessGap,
+             qPrintable(QStringLiteral("enabled entry %1, disabled entry %2")
+                            .arg(on_ink.name(), off_ink.name())));
+    const int off_by = std::abs(off_ink.red() - expected.red()) +
+                       std::abs(off_ink.green() - expected.green()) +
+                       std::abs(off_ink.blue() - expected.blue());
+    QVERIFY2(off_by <= kInkTolerance,
+             qPrintable(QStringLiteral("disabled entry %1, the disabled label colour %2")
+                            .arg(off_ink.name(), expected.name())));
+    QVERIFY2(contrast(off_ink, surface) >= kWcagAaNormalText,
+             qPrintable(
+                 QStringLiteral("disabled entry %1 on %2").arg(off_ink.name(), surface.name())));
+}
+// Review 4 (Y7): Advanced Search's preview pads its line numbers with spaces, and the theme's
+// "* { font-family: Segoe UI }" beat the box's setFont(), so matched lines' numbers sat 14 px right
+// of the others'. The preview is set in Consolas under the theme, in both themes.
+void ThemeWidgetStatesTests::theSearchPreviewIsSetInAFixedWidthFont() {
+    for (const auto mode : {AppThemeMode::Light, AppThemeMode::Dark}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        sak::AdvancedSearchPanel panel;
+        QTextEdit* preview = nullptr;
+        for (auto* edit : panel.findChildren<QTextEdit*>()) {
+            if (edit->accessibleName() == QStringLiteral("File preview pane")) {
+                preview = edit;
+            }
+        }
+        QVERIFY(preview != nullptr);
+        preview->ensurePolished();
+        QCOMPARE(preview->font().family(), QStringLiteral("Consolas"));
+    }
 }
 QTEST_MAIN(ThemeWidgetStatesTests)
 #include "test_theme_widget_states.moc"

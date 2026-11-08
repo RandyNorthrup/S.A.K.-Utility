@@ -23,6 +23,9 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <utility>
+
 namespace {
 
 QString cachedFoldersCount(qint64 count) {
@@ -64,8 +67,6 @@ constexpr int kLargeDriveThresholdMinimumGb = 8;
 constexpr int kLargeDriveThresholdMaximumGb = 2048;
 constexpr int kLargeDriveThresholdStepGb = 8;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
-constexpr int kSizeDisplayPrecisionSmall = 1;
-constexpr int kSizeDisplayPrecisionLarge = 2;
 
 }  // namespace
 
@@ -86,6 +87,19 @@ void ImageFlasherSettingsDialog::setupUi() {
     setupUi_generalSection(main_layout);
     setupUi_advancedSection(main_layout);
     setupUi_buttonBar(main_layout);
+    alignFieldColumn();
+}
+
+// One column for every field in the dialog, the widest label's: the validation combo started at
+// x=191, the performance spin boxes at x=297 and the threshold at x=210 (review 4, Y18).
+void ImageFlasherSettingsDialog::alignFieldColumn() {
+    int width = 0;
+    for (const QWidget* label : std::as_const(m_fieldLabels)) {
+        width = std::max(width, label->sizeHint().width());
+    }
+    for (QGridLayout* grid : std::as_const(m_fieldGrids)) {
+        grid->setColumnMinimumWidth(0, width);
+    }
 }
 
 void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout) {
@@ -94,7 +108,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
     auto* verification_layout = new QGridLayout(verification_group);
 
     auto* val_label_widget = sak::InfoButton::createInfoLabel(
-        "Validation Mode:",
+        "Validation mode:",
         "Choose how to verify data after writing: Full reads every byte back, Quick samples random "
         "blocks, None skips verification",
         verification_group);
@@ -105,6 +119,9 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
     m_validationModeCombo->addItem("Quick Check (Faster, Less Thorough)", "quick");
     m_validationModeCombo->addItem("No Verification (Fastest, No Checking)", "none");
     verification_layout->addWidget(m_validationModeCombo, 0, 1);
+    verification_layout->setColumnStretch(1, 1);
+    m_fieldLabels.append(val_label_widget);
+    m_fieldGrids.append(verification_layout);
 
     auto* validation_note = new QLabel(
         "Full verification reads every byte back from the drive. "
@@ -117,13 +134,16 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
     verification_layout->addWidget(validation_note, 1, 0, kGridNoteRowSpan, kGridNoteColumnSpan);
 
     main_layout->addWidget(verification_group);
+    setupUi_performanceSection(main_layout);
+}
 
-    // Performance group
+void ImageFlasherSettingsDialog::setupUi_performanceSection(QVBoxLayout* main_layout) {
     auto* performance_group = new QGroupBox("Performance", this);
     auto* performance_layout = new QGridLayout(performance_group);
 
+    // The unit is the field's suffix: "Buffer Size (MB): 64 MB" gave it twice (review 4, Y18).
     auto* buf_label_widget = sak::InfoButton::createInfoLabel(
-        "Buffer Size (MB):",
+        "Buffer size:",
         "Larger buffers improve throughput but use more RAM - 64 MB is a good default for USB "
         "3.0 drives",
         performance_group);
@@ -136,7 +156,7 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
     performance_layout->addWidget(m_bufferSizeSpin, 0, 1);
 
     auto* conc_label_widget = sak::InfoButton::createInfoLabel(
-        "Max Concurrent Writes:",
+        "Max concurrent writes:",
         "Number of USB drives that can be flashed simultaneously - each uses one thread",
         performance_group);
     performance_layout->addWidget(conc_label_widget, 1, 0);
@@ -144,6 +164,10 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout
     m_maxConcurrentWritesSpin->setAccessibleName(tr("Concurrent writes"));
     m_maxConcurrentWritesSpin->setRange(kConcurrentWritesMinimum, kConcurrentWritesMaximum);
     performance_layout->addWidget(m_maxConcurrentWritesSpin, 1, 1);
+    performance_layout->setColumnStretch(1, 1);
+    m_fieldLabels.append(buf_label_widget);
+    m_fieldLabels.append(conc_label_widget);
+    m_fieldGrids.append(performance_layout);
 
     auto* performance_note = new QLabel(
         "Larger buffer sizes may improve performance but use more memory. "
@@ -179,21 +203,26 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* main_layou
     lg_row->addStretch();
     safety_layout->addLayout(lg_row);
 
-    auto* threshold_layout = new QHBoxLayout();
-    threshold_layout->addSpacing(sak::ui::kMarginXLarge);
-    threshold_layout->addWidget(sak::InfoButton::createInfoLabel(
+    auto* threshold_layout = new QGridLayout();
+    auto* threshold_label = sak::InfoButton::createInfoLabel(
         "Large drive threshold:",
         "Drives exceeding this size trigger a warning - helps avoid accidentally flashing "
         "internal HDDs",
-        safety_group));
+        safety_group);
+    // In under its check box, which it belongs to.
+    threshold_label->setContentsMargins(
+        sak::ui::kMarginXLarge, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    threshold_layout->addWidget(threshold_label, 0, 0);
+    m_fieldLabels.append(threshold_label);
+    m_fieldGrids.append(threshold_layout);
     m_largeDriveThresholdSpin = new QSpinBox(safety_group);
     m_largeDriveThresholdSpin->setAccessibleName(tr("Large drive threshold"));
     m_largeDriveThresholdSpin->setRange(kLargeDriveThresholdMinimumGb,
                                         kLargeDriveThresholdMaximumGb);
     m_largeDriveThresholdSpin->setSingleStep(kLargeDriveThresholdStepGb);
     m_largeDriveThresholdSpin->setSuffix(" GB");
-    threshold_layout->addWidget(m_largeDriveThresholdSpin);
-    threshold_layout->addStretch();
+    threshold_layout->addWidget(m_largeDriveThresholdSpin, 0, 1);
+    threshold_layout->setColumnStretch(1, 1);
     safety_layout->addLayout(threshold_layout);
 
     main_layout->addWidget(safety_group);
@@ -383,19 +412,7 @@ void ImageFlasherSettingsDialog::updateCacheInfo() {
         m_clearCacheButton->setEnabled(false);
     } else {
         QString size_str;
-        if (total_bytes < sak::kBytesPerMB) {
-            size_str = QString("%1 KB").arg(total_bytes / sak::kBytesPerKB);
-        } else if (total_bytes < sak::kBytesPerGB) {
-            size_str = QString("%1 MB").arg(static_cast<double>(total_bytes) / sak::kBytesPerMBf,
-                                            0,
-                                            'f',
-                                            kSizeDisplayPrecisionSmall);
-        } else {
-            size_str = QString("%1 GB").arg(static_cast<double>(total_bytes) / sak::kBytesPerGBf,
-                                            0,
-                                            'f',
-                                            kSizeDisplayPrecisionLarge);
-        }
+        size_str = sak::formatBytes(total_bytes);
         m_cacheInfoLabel->setText(
             QString("%1 using %2.").arg(cachedFoldersCount(dirs.size()), size_str));
         m_clearCacheButton->setEnabled(true);
@@ -410,14 +427,7 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     }
 
     const qint64 total_bytes = calculateCacheSize();
-    QString size_str;
-    if (total_bytes < sak::kBytesPerGB) {
-        const double mb = static_cast<double>(total_bytes) / sak::kBytesPerMBf;
-        size_str = QString("%1 MB").arg(mb, 0, 'f', kSizeDisplayPrecisionSmall);
-    } else {
-        const double gb = static_cast<double>(total_bytes) / sak::kBytesPerGBf;
-        size_str = QString("%1 GB").arg(gb, 0, 'f', kSizeDisplayPrecisionLarge);
-    }
+    const QString size_str = sak::formatBytes(total_bytes);
 
     auto reply =
         sak::showQuestionLogged(this,

@@ -4,6 +4,7 @@
 #include "sak/windows_iso_download_dialog.h"
 
 #include "sak/elevation_gate.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/logger.h"
@@ -18,6 +19,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -34,7 +36,6 @@ constexpr int kDownloadWeight = 60;
 constexpr int kConvertWeight = 35;
 constexpr double kDownloadSpeedVisibleThresholdMBps = 0.01;
 constexpr int kTransferSpeedDisplayPrecision = 1;
-constexpr int kIsoSizeDisplayPrecision = 2;
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
     return std::ranges::any_of(keywords, [&text](const auto& kw) { return text.contains(kw); });
@@ -47,6 +48,18 @@ QLabel* formLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setObjectName(QString::fromLatin1(kFormLabelName));
     return label;
+}
+
+constexpr int kBuildListRows = 4;
+
+/// The height @p list needs to show @p rows whole rows, as the theme draws a row (its item
+/// padding included), and its frame.
+int listHeightForRows(QListWidget* list, int rows) {
+    list->ensurePolished();
+    list->addItem(QStringLiteral("Windows 11, version 25H2 (26200.1)"));
+    const int row = list->sizeHintForRow(0);
+    delete list->takeItem(0);
+    return (rows * row) + list->frameWidth() + list->frameWidth();
 }
 
 }  // namespace
@@ -139,7 +152,10 @@ void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* main_layout) 
 
     m_buildListWidget = new QListWidget(build_group);
     m_buildListWidget->setAccessibleName(tr("Builds"));
-    m_buildListWidget->setMaximumHeight(sak::kListAreaMaxH);
+    // Four whole rows in every state. Squeezed by the dialog it showed one and a half before a
+    // build was picked, the second cut through its glyphs, and grew when one was, moving the
+    // Progress group down (review 4, Y9).
+    m_buildListWidget->setFixedHeight(listHeightForRows(m_buildListWidget, kBuildListRows));
     m_buildListWidget->setEnabled(false);
     new sak::ui::ViewEmptyState(m_buildListWidget,
                                 tr("Press Fetch Builds to list the builds for the architecture "
@@ -567,7 +583,7 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
         m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
-                                                                     sak::ui::kColorAccentEmerald));
+                                                                     sak::ui::kStatusColorSuccess));
         m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
@@ -651,9 +667,8 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& iso_path, qint6
 
     m_downloadProgressBar->setValue(sak::kPercentMax);
     m_convertProgressBar->setValue(sak::kPercentMax);
-    const double size_gb = static_cast<double>(file_size) / sak::kBytesPerGBf;
-    m_statusLabel->setText(QString("ISO created successfully! (%1 GB)")
-                               .arg(size_gb, 0, 'f', kIsoSizeDisplayPrecision));
+    m_statusLabel->setText(
+        QString("ISO created successfully! (%1)").arg(sak::formatBytes(file_size)));
     m_phaseLabel->setText("Complete!");
     m_phaseLabel->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold, sak::ui::kStatusColorSuccess));
@@ -664,9 +679,8 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& iso_path, qint6
     sak::showInformationLogged(this,
                                "ISO Build Complete",
                                QString("Windows ISO has been created successfully!\n\n"
-                                       "Saved to: %1\nSize: %2 GB\n\nClick OK to use this image.")
-                                   .arg(iso_path)
-                                   .arg(size_gb, 0, 'f', kIsoSizeDisplayPrecision));
+                                       "Saved to: %1\nSize: %2\n\nClick OK to use this image.")
+                                   .arg(iso_path, sak::formatBytes(file_size)));
 
     Q_EMIT downloadCompleted(iso_path);
     accept();

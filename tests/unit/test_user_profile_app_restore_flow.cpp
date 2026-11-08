@@ -182,6 +182,10 @@ private Q_SLOTS:
     void permissionOptionsSitBesideTheirLabels();
     void backupWizardSaysBackUpAsAVerb();
     void ethernetAddressesReadWhole();
+    void theAdapterPageScansAdaptersByThatName();
+    void aWifiScanCountsWithoutAFullStop();
+    void restoreTablesGiveTheirRoomToOneColumn();
+    void theRestoreOptionsShareOneWidth();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -257,6 +261,45 @@ void UserProfileAppRestoreFlowTests::restoreFolderSizesUseTheAppsByteFormat() {
              qPrintable(page->m_summaryLabel->text()));
 }
 
+// Review 4 (Y8, Y16): the restore's tables gave every column an equal share, so the Select column
+// was 177 px wide with its box at the left under a centred header, and names were cut beside
+// columns with room to spare. Each column takes its contents' width and one takes what is left.
+void UserProfileAppRestoreFlowTests::restoreTablesGiveTheirRoomToOneColumn() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    const auto check = [](QHeaderView* header, int stretch, const char* table) {
+        for (int column = 0; column < header->count(); ++column) {
+            const QHeaderView::ResizeMode expected =
+                column == stretch ? QHeaderView::Stretch : QHeaderView::ResizeToContents;
+            QVERIFY2(header->sectionResizeMode(column) == expected,
+                     qPrintable(
+                         QStringLiteral("%1, column %2").arg(QLatin1String(table)).arg(column)));
+        }
+    };
+    auto* folders = restore_wizard.findChild<sak::UserProfileRestoreFolderSelectionPage*>();
+    QVERIFY(folders != nullptr);
+    check(folders->m_folderTable->horizontalHeader(), 2, "folders");
+    auto* ethernet = restore_wizard.findChild<sak::UserProfileRestoreEthernetPage*>();
+    QVERIFY(ethernet != nullptr);
+    check(ethernet->m_ethernetTable->horizontalHeader(),
+          ethernet->m_ethernetTable->columnCount() - 1,
+          "network adapters");
+    auto* apps = restore_wizard.findChild<sak::UserProfileRestoreAppRestorePage*>();
+    QVERIFY(apps != nullptr);
+    check(apps->m_appTree->header(), apps->m_appTree->columnCount() - 1, "applications");
+}
+
+// Review 4 (Y24): the last step's two option boxes were 205 px and 159 px wide.
+void UserProfileAppRestoreFlowTests::theRestoreOptionsShareOneWidth() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    // The form keeps each box at its size hint or its minimum, whichever is larger.
+    const auto shown = [](const QComboBox* box) {
+        return std::max(box->sizeHint().width(), box->minimumWidth());
+    };
+    QCOMPARE(shown(page->m_permissionModeCombo), shown(page->m_conflictResolutionCombo));
+}
+
 // Review 3 (X20): an empty backup's Wi-Fi page said so three times in two wordings, as "WiFi".
 void UserProfileAppRestoreFlowTests::anEmptyWifiBackupSaysItOnce() {
     sak::BackupManifest manifest;
@@ -300,7 +343,8 @@ void UserProfileAppRestoreFlowTests::ethernetAddressesReadWhole() {
         backup_wizard.page(sak::UserProfileBackupWizard::Page_EthernetSettings));
     QVERIFY(page != nullptr);
     sak::EthernetConfigInfo config;
-    config.adapter_name = QStringLiteral("Ethernet");
+    // Review 4 (Y8): adapter names were cut while the DNS column had room to spare.
+    config.adapter_name = QStringLiteral("Bluetooth Network Connection 2");
     config.ip_address = QStringLiteral("192.168.100.200");
     config.subnet_mask = QStringLiteral("255.255.255.0");
     config.default_gateway = QStringLiteral("192.168.100.1");
@@ -314,7 +358,7 @@ void UserProfileAppRestoreFlowTests::ethernetAddressesReadWhole() {
     table->show();
     QVERIFY(QTest::qWaitForWindowExposed(table));
     QCoreApplication::processEvents();
-    for (int column = 2; column <= 5; ++column) {
+    for (int column = 1; column <= 5; ++column) {
         const int needed = static_cast<QAbstractItemView*>(table)->sizeHintForColumn(column);
         QVERIFY2(table->columnWidth(column) >= needed,
                  qPrintable(QStringLiteral("column %1: %2 px for %3")
@@ -322,6 +366,31 @@ void UserProfileAppRestoreFlowTests::ethernetAddressesReadWhole() {
                                 .arg(table->columnWidth(column))
                                 .arg(needed)));
     }
+}
+
+// Review 4 (Y19): the backup's Network Adapter Settings page, which keeps every adapter's IP
+// settings, scanned with a button called "Scan Ethernet". The button, the line that names it and
+// the status that starts the page say "Scan Adapters".
+void UserProfileAppRestoreFlowTests::theAdapterPageScansAdaptersByThatName() {
+    sak::UserProfileBackupWizard backup_wizard;
+    auto* page = qobject_cast<sak::UserProfileBackupEthernetSettingsPage*>(
+        backup_wizard.page(sak::UserProfileBackupWizard::Page_EthernetSettings));
+    QVERIFY(page != nullptr);
+    QCOMPARE(page->title(), QStringLiteral("Network Adapter Settings"));
+    QCOMPARE(page->m_scanButton->text(), QStringLiteral("Scan Adapters"));
+    QCOMPARE(page->m_statusLabel->text(), QStringLiteral("Click Scan Adapters to begin"));
+    for (const auto* label : page->findChildren<QLabel*>()) {
+        QVERIFY2(!label->text().contains(QStringLiteral("Ethernet")), qPrintable(label->text()));
+    }
+}
+
+// Review 4 (Y20): "Found 1 saved Wi-Fi profile." ended in a full stop the page's other status
+// lines do not have. None found says nothing: the list says it.
+void UserProfileAppRestoreFlowTests::aWifiScanCountsWithoutAFullStop() {
+    using Page = sak::UserProfileBackupKnownNetworksPage;
+    QCOMPARE(Page::scanStatusText(1), QStringLiteral("Found 1 saved Wi-Fi profile"));
+    QCOMPARE(Page::scanStatusText(3), QStringLiteral("Found 3 saved Wi-Fi profiles"));
+    QVERIFY(Page::scanStatusText(0).isEmpty());
 }
 
 // Low (coordinator, round 6): "Select Users to Backup". The verb is "back up".
@@ -1217,6 +1286,13 @@ void UserProfileAppRestoreFlowTests::backupWizardWalksToItsLastPage() {
     // The screened destination reached the page that runs the backup.
     QVERIFY2(execute->m_destinationPath.endsWith(QStringLiteral("backup")),
              qPrintable(execute->m_destinationPath));
+    // Review 4 (Y27): after "Backup completed successfully!", Cancel stayed beside Finish above a
+    // spent, full-width Start Backup. Finish is all that is left.
+    QVERIFY(!wizard.button(QWizard::CancelButton)->isHidden());
+    execute->onBackupComplete(true, QStringLiteral("Backup finished"));
+    QVERIFY(execute->m_startButton->isHidden());
+    QVERIFY(wizard.button(QWizard::CancelButton)->isHidden());
+    QVERIFY(!wizard.button(QWizard::FinishButton)->isHidden());
 }
 
 // UI re-check N10: after the backup finished, its subtitle still read "Backup in progress..." and

@@ -42,6 +42,7 @@
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
 #include "sak/widget_helpers.h"
+#include "sak/window_fitted_combo_box.h"
 #include "sak/windows11_theme.h"
 #include "sak/windows_usb_creator.h"
 
@@ -272,6 +273,46 @@ private Q_SLOTS:
         }
     }
 
+    // Review 4 (Y4): three secondary buttons, three icon treatments: a blue paperclip, a white
+    // book and a black bin beside their white labels. An enabled icon is a glyph in its label's
+    // colour, white on these toned buttons, in both themes.
+    void enabledIconsAreGlyphsInTheLabelColour() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            AiAssistantPanel panel;
+            const QColor label(QString::fromLatin1(sak::ui::kColorButtonTextOnTone));
+            for (QPushButton* button : {panel.m_addContextFilesButton,
+                                        panel.m_addInstructionButton,
+                                        panel.m_clearContextButton}) {
+                QVERIFY(button != nullptr);
+                const QImage enabled = button->icon()
+                                           .pixmap(QSize(20, 20), QIcon::Normal)
+                                           .toImage()
+                                           .convertToFormat(QImage::Format_ARGB32);
+                int inked = 0;
+                for (int y = 0; y < enabled.height(); ++y) {
+                    for (int x = 0; x < enabled.width(); ++x) {
+                        const QRgb pixel = enabled.pixel(x, y);
+                        if (qAlpha(pixel) < 200) {
+                            continue;
+                        }
+                        ++inked;
+                        const int off = std::abs(qRed(pixel) - label.red()) +
+                                        std::abs(qGreen(pixel) - label.green()) +
+                                        std::abs(qBlue(pixel) - label.blue());
+                        QVERIFY2(off <= 6,
+                                 qPrintable(
+                                     QStringLiteral("%1: %2 beside a %3 label")
+                                         .arg(button->text(), QColor(pixel).name(), label.name())));
+                    }
+                }
+                QVERIFY2(inked > 0, qPrintable(button->text()));
+            }
+        }
+    }
+
     // Review 3 (F21): the popups had a fixed 420 px minimum, so the access-mode list ran to x=1358
     // in a 1280 px window for entries about 170 px long.
     void comboPopupsTakeTheWidthTheirEntriesNeed() {
@@ -288,6 +329,33 @@ private Q_SLOTS:
                                     .arg(combo->view()->minimumWidth())
                                     .arg(widest)));
         }
+    }
+
+    // Review 4 (RG4): the workflow picker's list opened at the combo's own width, cutting its
+    // names, and ran past the foot of the window. Every picker on the page opens its list at its
+    // widest entry's width and inside the window (WindowFittedComboBox; its behaviour is tested in
+    // test_theme_widget_states).
+    void everyAiPickerOpensItsListWholeInsideTheWindow() {
+        AiAssistantPanel panel;
+        for (QComboBox* combo : {panel.m_promptTemplateCombo,
+                                 panel.m_accessModeCombo,
+                                 panel.m_modelCombo,
+                                 panel.m_sessionCombo,
+                                 panel.m_reasoningEffortCombo}) {
+            QVERIFY(combo != nullptr);
+            QVERIFY2(dynamic_cast<WindowFittedComboBox*>(combo) != nullptr,
+                     qPrintable(combo->accessibleName()));
+        }
+    }
+
+    // Review 4 (Y15): "Tokens: 0 in / 0 cached / 0 out / 0 reasoning / 0 total / 0 total (0 in,
+    // 0 out)" gave the last turn and the session with nothing to tell them apart.
+    void theStatusNamesTheTurnAndTheSession() {
+        AiAssistantPanel panel;
+        const QString details = panel.statusDetails();
+        QVERIFY2(details.contains(QStringLiteral("| Last turn: ")), qPrintable(details));
+        QVERIFY2(details.contains(QStringLiteral("| Session: ")), qPrintable(details));
+        QVERIFY2(!details.contains(QStringLiteral("Tokens: ")), qPrintable(details));
     }
 
     // Review 3 (S22): the status bar squeezed the AI status label and cut it mid-word at
@@ -347,6 +415,11 @@ private Q_SLOTS:
             }
         }
         QVERIFY(section_titles > 0);
+        // Review 4 (Y25): the pane's title and the document's first heading both said "Windows
+        // Update Repair". The title says it once.
+        QCOMPARE(panel.m_workflowDetailsTitle->text(), workflow.title);
+        QVERIFY2(!document->toPlainText().contains(workflow.title),
+                 qPrintable(document->toPlainText()));
     }
 
     // Review 3 (DF11): beside Add, the workflow picker cut "Reporting - Technician Servic".
@@ -8125,7 +8198,7 @@ private Q_SLOTS:
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
-                        .contains(QStringLiteral("WiFi"), Qt::CaseInsensitive));
+                        .contains(QStringLiteral("Wi-Fi"), Qt::CaseInsensitive));
         }
     }
 
@@ -8182,7 +8255,7 @@ private Q_SLOTS:
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
-                        .contains(QStringLiteral("WiFi"), Qt::CaseInsensitive));
+                        .contains(QStringLiteral("Wi-Fi"), Qt::CaseInsensitive));
         }
     }
 

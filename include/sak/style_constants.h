@@ -383,6 +383,12 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
         QMenu::item:selected {
             background-color: %13;
         }
+
+        /* A disabled entry in the disabled label's colour: under the QWidget colour above it kept
+           the enabled text's, and only its icon faded (review 4, Y1). */
+        QMenu::item:disabled {
+            color: %14;
+        }
     )SAK";
 
 inline constexpr auto kWindows11ThemeTabAndButtonStyles = R"SAK(
@@ -684,6 +690,10 @@ inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
 
         QMenu::item:selected, QMenuBar::item:selected {
             background-color: %6;
+        }
+
+        QMenu::item:disabled {
+            color: %7;
         }
     )SAK";
 
@@ -1604,10 +1614,15 @@ inline QString textBrowserSurfaceStyle(const char* background, const char* borde
         .arg(kCssPaddingLargePx);
 }
 
+/// A file preview's box, set in Consolas: the theme's "* { font-family: Segoe UI }" beat the
+/// widget's setFont(), and the line numbers padded with spaces did not line up in a proportional
+/// font (review 4, Y7).
 inline QString textEditPreviewStyle(const char* background,
                                     const char* text_color,
                                     const char* border) {
-    return QStringLiteral("QTextEdit { background: %1; color: %2; border: %3px solid %4; }")
+    return QStringLiteral(
+               "QTextEdit { background: %1; color: %2; border: %3px solid %4; "
+               "font-family: Consolas; }")
         .arg(cssColor(background))
         .arg(cssColor(text_color))
         .arg(kCssBorderWidthDefaultPx)

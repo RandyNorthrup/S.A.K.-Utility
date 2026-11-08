@@ -58,7 +58,6 @@ constexpr int kCompressionLevelSmallest = 9;
 constexpr int kUserFolderColumnName = 0;
 constexpr int kUserFolderColumnFolders = 1;
 constexpr int kUserFolderColumnCount = 2;
-constexpr int kSizeDisplayPrecision = 2;
 
 constexpr int kMaxFileSizeMinimumMb = 1;
 constexpr int kMaxFileSizeMaximumMb = 10'000;
@@ -282,12 +281,11 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
         }
     }
 
-    const double total_gb = static_cast<double>(total_size) / sak::kBytesPerGBf;
     m_summaryLabel->setText(
-        tr("%1, %2 | Estimated: %3 GB")
+        tr("%1, %2 | Estimated: %3")
             .arg(countOf(total_users, tr("user"), tr("users")),
-                 countOf(total_folders, tr("total folder"), tr("total folders")))
-            .arg(total_gb, 0, 'f', kSizeDisplayPrecision));
+                 countOf(total_folders, tr("total folder"), tr("total folders")),
+                 sak::formatBytes(total_size)));
 }
 
 // ============================================================================
@@ -996,11 +994,7 @@ void UserProfileBackupInstalledAppsPage::setupAppsTree(QVBoxLayout* layout) {
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Publisher")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
-    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnName, QHeaderView::Stretch);
-    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnVersion,
-                                              QHeaderView::ResizeToContents);
-    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnPublisher,
-                                              QHeaderView::ResizeToContents);
+    sak::fitColumnsToContents(m_appTree->header(), kInstalledAppColumnPublisher);
     m_appTree->setEnabled(false);
     connect(m_appTree,
             &QTreeWidget::itemChanged,
@@ -1487,10 +1481,9 @@ void UserProfileBackupAppDataPage::setupUi() {
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
-    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnName, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnPath, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnSize,
-                                                  QHeaderView::ResizeToContents);
+    sak::fitColumnsToContents(m_appDataTree->header(), kAppDataColumnPath);
+    // A path cut short keeps its start and its end: "AppData\Local\...\User Data".
+    m_appDataTree->setTextElideMode(Qt::ElideMiddle);
     m_appDataTree->setEnabled(false);
     connect(m_appDataTree,
             &QTreeWidget::itemChanged,
@@ -1869,6 +1862,17 @@ void UserProfileBackupKnownNetworksPage::cleanupPage() {
     }
 }
 
+QString UserProfileBackupKnownNetworksPage::scanStatusText(qsizetype count) {
+    // None found is the list's own message ("This PC has no saved Wi-Fi profiles."); "Found 0
+    // WiFi profile(s)" above it said it again (review 3, S24).
+    // A count, as the page's other status lines are, with no full stop (review 4, Y20).
+    if (count == 0) {
+        return {};
+    }
+    return tr("Found %1")
+        .arg(sak::countOf(count, tr("saved Wi-Fi profile"), tr("saved Wi-Fi profiles")));
+}
+
 void UserProfileBackupKnownNetworksPage::onScanNetworks() {
     Q_ASSERT(m_scanButton);
     Q_ASSERT(m_statusLabel);
@@ -1887,13 +1891,7 @@ void UserProfileBackupKnownNetworksPage::onScanNetworks() {
     m_networkTree->setEnabled(true);
     m_scanProgress->setVisible(false);
 
-    // None found is the list's own message ("This PC has no saved Wi-Fi profiles."); "Found 0
-    // WiFi profile(s)" above it said it again (review 3, S24).
-    m_statusLabel->setText(profiles.isEmpty() ? QString()
-                                              : tr("Found %1.")
-                                                    .arg(sak::countOf(profiles.size(),
-                                                                      tr("saved Wi-Fi profile"),
-                                                                      tr("saved Wi-Fi profiles"))));
+    m_statusLabel->setText(scanStatusText(profiles.size()));
     populateTree(profiles);
     updateNextButtonText();
 }
@@ -2009,8 +2007,8 @@ void UserProfileBackupKnownNetworksPage::onSelectNone() {
 
 UserProfileBackupEthernetSettingsPage::UserProfileBackupEthernetSettingsPage(QWidget* parent)
     : QWizardPage(parent) {
-    setTitle(tr("Ethernet Settings"));
-    setSubTitle(tr("Scan and select ethernet adapter configurations to include in the backup"));
+    setTitle(tr("Network Adapter Settings"));
+    setSubTitle(tr("Scan and select the network adapter settings to include in the backup"));
 
     setupUi();
 }
@@ -2020,7 +2018,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     auto* instruction_label =
-        new QLabel(tr("Click <b>Scan Ethernet</b> to detect network adapter configurations. "
+        new QLabel(tr("Click <b>Scan Adapters</b> to detect network adapter configurations. "
                       "Selected adapter settings (IP, DNS, gateway) will be saved to the backup. "
                       "This is especially useful for static IP configurations."),
                    this);
@@ -2028,7 +2026,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     layout->addWidget(instruction_label);
 
     auto* scan_layout = new QHBoxLayout();
-    m_scanButton = new QPushButton(tr("Scan Ethernet"), this);
+    m_scanButton = new QPushButton(tr("Scan Adapters"), this);
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
@@ -2037,7 +2035,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     scan_layout->addWidget(m_scanButton);
     // On a failed scan this label shows raw netsh output (adapter names and error text), so it
     // renders verbatim rather than letting QLabel auto-detect markup inside it.
-    m_statusLabel = plainTextLabel(tr("Click Scan Ethernet to begin"), this);
+    m_statusLabel = plainTextLabel(tr("Click Scan Adapters to begin"), this);
     scan_layout->addWidget(m_statusLabel, 1);
     layout->addLayout(scan_layout);
 
@@ -2046,7 +2044,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     layout->addWidget(m_scanProgress);
 
     m_ethernetTable = new QTableWidget(0, kEthernetColumnCount, this);
-    m_ethernetTable->setAccessibleName(tr("Ethernet settings"));
+    m_ethernetTable->setAccessibleName(tr("Network adapter settings"));
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),
@@ -2055,10 +2053,8 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
                                                 tr("Gateway"),
                                                 tr("DNS")});
     // Addresses whole: seven equal columns cut a subnet mask to "255.255.25..." (review 3, S15).
-    m_ethernetTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    m_ethernetTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_ethernetTable->horizontalHeader()->setSectionResizeMode(kEthernetColumnCount - 1,
-                                                              QHeaderView::Stretch);
+    // Adapter names whole too: sharing the room with DNS cut them (review 4, Y8).
+    sak::fitColumnsToContents(m_ethernetTable->horizontalHeader(), kEthernetColumnCount - 1);
     m_ethernetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_ethernetTable->verticalHeader()->setVisible(false);
     m_ethernetTable->setEnabled(false);
@@ -2072,7 +2068,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No ethernet adapters scanned yet"));
+    m_summaryLabel->setText(tr("No network adapters scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -2120,7 +2116,7 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
     Q_ASSERT(m_scanButton);
     Q_ASSERT(m_statusLabel);
     m_scanButton->setEnabled(false);
-    m_statusLabel->setText(tr("Scanning ethernet adapters..."));
+    m_statusLabel->setText(tr("Scanning network adapters..."));
     m_scanProgress->setVisible(true);
     m_scanProgress->setRange(0, 0);
     m_ethernetTable->setRowCount(0);
@@ -2140,7 +2136,7 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
         // A FAILED scan is not an empty machine. Reporting "found 0 adapters" for a scan that
         // never ran would tell the technician there is nothing to back up.
         if (!success) {
-            m_statusLabel->setText(tr("Failed to scan ethernet adapters"));
+            m_statusLabel->setText(tr("Failed to scan network adapters"));
             return;
         }
 
@@ -2151,7 +2147,7 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
 
         m_statusLabel->setText(
             tr("Found %1")
-                .arg(countOf(configs.size(), tr("ethernet adapter"), tr("ethernet adapters"))));
+                .arg(countOf(configs.size(), tr("network adapter"), tr("network adapters"))));
         populateTable(configs);
         updateNextButtonText();
     });
@@ -2234,7 +2230,7 @@ void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
 
     m_summaryLabel->setText(
         tr("%1 selected")
-            .arg(countOf(configs.size(), tr("ethernet adapter"), tr("ethernet adapters"))));
+            .arg(countOf(configs.size(), tr("network adapter"), tr("network adapters"))));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setEthernetConfigs(configs);
     }

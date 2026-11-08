@@ -17,7 +17,6 @@
 namespace sak {
 
 namespace {
-constexpr int kBackupSizeGbDisplayPrecision = 2;
 
 QString restoreWelcomeInfoHtml() {
     return QStringLiteral(
@@ -41,7 +40,7 @@ QString restoreWelcomeInfoHtml() {
                 "UserProfileRestoreWelcomePage",
                 "<b>App Data & Apps</b>: Restore application data and reinstall apps (optional)"),
             QCoreApplication::translate("UserProfileRestoreWelcomePage",
-                                        "<b>Networks & Ethernet</b>: Restore WiFi profiles and "
+                                        "<b>Networks & Ethernet</b>: Restore Wi-Fi profiles and "
                                         "adapter settings (optional)"));
 }
 }  // namespace
@@ -186,22 +185,18 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
     // version/source_machine are read straight out of the selected backup's manifest.json, which
     // anyone who can hand the technician a .sakbackup controls. This label is explicitly
     // Qt::RichText (setupUi), so both must be escaped before they enter the template.
-    const QString info =
-        QString(
-            "<b>Valid Backup Found</b><br>"
-            "<b>Version:</b> %1<br>"
-            "<b>Created:</b> %2<br>"
-            "<b>Source Machine:</b> %3<br>"
-            "<b>Users:</b> %4<br>"
-            "<b>Total Size:</b> %5 GB")
-            .arg(manifest.version.toHtmlEscaped(),
-                 manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
-                 manifest.source_machine.toHtmlEscaped(),
-                 QString::number(manifest.users.size()),
-                 QString::number(static_cast<double>(manifest.total_backup_size_bytes) /
-                                     sak::kBytesPerGBf,
-                                 'f',
-                                 kBackupSizeGbDisplayPrecision));
+    const QString info = QString(
+                             "<b>Valid Backup Found</b><br>"
+                             "<b>Version:</b> %1<br>"
+                             "<b>Created:</b> %2<br>"
+                             "<b>Source Machine:</b> %3<br>"
+                             "<b>Users:</b> %4<br>"
+                             "<b>Total Size:</b> %5")
+                             .arg(manifest.version.toHtmlEscaped(),
+                                  manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
+                                  manifest.source_machine.toHtmlEscaped(),
+                                  QString::number(manifest.users.size()),
+                                  sak::formatBytes(manifest.total_backup_size_bytes));
 
     m_manifestInfoLabel->setText(info);
     m_manifestInfoLabel->show();

@@ -19,6 +19,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QLabel>
 #include <QMap>
 #include <QMessageBox>
@@ -30,6 +31,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThreadPool>
 #include <QTimer>
@@ -74,6 +76,27 @@ void registerInventoryReport(sak::QuickActionController& quick_actions) {
     QVERIFY(
         !quick_actions.registerAction(std::make_unique<sak::GenerateSystemReportAction>(QString()))
              .isEmpty());
+}
+
+/// The first label in @p panel that reads @p text, or nullptr.
+QLabel* labelReading(const QWidget& panel, const QString& text) {
+    for (auto* label : panel.findChildren<QLabel*>()) {
+        if (label->text() == text) {
+            return label;
+        }
+    }
+    return nullptr;
+}
+
+/// Shows the sub-tab called @p name wherever @p panel has one.
+void showSubTab(const QWidget& panel, const QString& name) {
+    for (auto* tabs : panel.findChildren<QTabWidget*>()) {
+        for (int index = 0; index < tabs->count(); ++index) {
+            if (tabs->tabText(index) == name) {
+                tabs->setCurrentIndex(index);
+            }
+        }
+    }
 }
 
 QStringList statusTexts(const QSignalSpy& spy) {
@@ -165,6 +188,46 @@ private Q_SLOTS:
             QVERIFY2(style_of.contains(QString::fromLatin1(text)), text);
             QCOMPARE(style_of.value(QString::fromLatin1(text)), measurement);
         }
+    }
+
+    // Review 4 (Y26): "Score: --" stood above a bar reading "Score: 0 / 3000"; CPU's two results
+    // shared a line where Disk and Memory list one a line; and the disk baseline was "Samsung 980
+    // PRO" in the Score line and "980 PRO" on the bar.
+    void scoresReadOneWayInEveryGroup() {
+        sak::QuickActionController quick_actions;
+        sak::DiagnosticBenchmarkPanel panel(quick_actions);
+        panel.resize(1280, 860);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        QHash<QString, QProgressBar*> bars;
+        for (auto* bar : panel.findChildren<QProgressBar*>()) {
+            bars.insert(bar->accessibleName(), bar);
+        }
+        for (const char* name :
+             {"CPU Benchmark Score", "Disk Benchmark Score", "Memory Benchmark Score"}) {
+            QProgressBar* bar = bars.value(QString::fromLatin1(name));
+            QVERIFY2(bar != nullptr, name);
+            QVERIFY2(!bar->isTextVisible(), name);  // blank until there is a score
+            QVERIFY2(!bar->format().contains(QStringLiteral("baseline")), name);
+        }
+        QLabel* single = labelReading(panel, QStringLiteral("Single-Thread: --"));
+        QLabel* multi = labelReading(panel, QStringLiteral("Multi-Thread: --"));
+        QVERIFY(single != nullptr && multi != nullptr);
+        // Laid out where they show: on the Benchmarks sub-tab.
+        showSubTab(panel, QStringLiteral("Benchmarks"));
+        QTRY_VERIFY(single->isVisible());
+        QVERIFY2(multi->mapTo(&panel, QPoint(0, 0)).y() > single->mapTo(&panel, QPoint(0, 0)).y(),
+                 "CPU's two results share a line");
+        auto* controller = panel.findChild<sak::DiagnosticController*>();
+        QVERIFY(controller != nullptr);
+        sak::DiskBenchmarkResult disk;
+        disk.overall_score = 1234;
+        Q_EMIT controller->diskBenchmarkComplete(disk);
+        QProgressBar* disk_bar = bars.value(QStringLiteral("Disk Benchmark Score"));
+        QVERIFY(disk_bar->isTextVisible());
+        QVERIFY(
+            labelReading(panel, QStringLiteral("Score: 1234 (baseline Samsung 980 PRO = 1000)")) !=
+            nullptr);
     }
 
     // UI review F17: before any sensor answered, and for one that never does, Thermal read
@@ -456,6 +519,7 @@ private Q_SLOTS:
     void anUnreadableDriveShowsNoFakeNumbers();
     void thermalDiskRowSaysItIsTheHottestDisk();
     void thermalReasonsAreShownInFull();
+    void anUnreadDiskSaysSoNotThatThePcCannot();
     void exportScanReportWritesTheHtmlItSays();
 
 private:
@@ -653,6 +717,38 @@ void DiagnosticBenchmarkPanelTests::thermalDiskRowSaysItIsTheHottestDisk() {
 // testpc1: the reason a sensor has no reading sat in the 60 px value column and read "N/A - not".
 // Each row's value fits its column, and the reason, or the note that a drive's temperature came
 // from the SMART scan, is on the bar in full.
+// Review 4 (Y23): before any SMART scan, "Hottest disk: N/A - not reported by this PC" stood beside
+// drives the SMART table read at 42-54 degrees. Until SMART has run, the drive is not read yet.
+void DiagnosticBenchmarkPanelTests::anUnreadDiskSaysSoNotThatThePcCannot() {
+    const sak::ScopedProcessFaultInjector no_sensors(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            result.exit_code = 0;
+            result.std_out = QStringLiteral("status_cpu=unavailable:command_not_supported\n");
+            return result;
+        });
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    Q_EMIT controller->thermalSensorStatusesUpdated(
+        {QStringLiteral("status_cpu=unavailable:command_not_supported")});
+    using Readings = QVector<sak::ThermalReading>;
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
+    QProgressBar* disk = nullptr;
+    for (auto* bar : panel.findChildren<QProgressBar*>()) {
+        disk = bar->accessibleName() == QStringLiteral("Hottest disk Temperature") ? bar : disk;
+    }
+    QVERIFY(disk != nullptr);
+    QCOMPARE(disk->text(), QStringLiteral("N/A - not read yet; Scan SMART reads it"));
+    // Once SMART has read the drives and none reported a temperature, the PC does not report it.
+    Q_EMIT controller->smartAnalysisComplete({});
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onThermalReadingsUpdated", Qt::DirectConnection, Q_ARG(Readings, Readings{})));
+    QCOMPARE(disk->text(), QStringLiteral("N/A - not reported by this PC"));
+}
+
 void DiagnosticBenchmarkPanelTests::thermalReasonsAreShownInFull() {
     // Shown, the panel polls its sensors; each poll says what testpc1's did.
     const sak::ScopedProcessFaultInjector testpc1_sensors(
@@ -870,6 +966,14 @@ void DiagnosticBenchmarkPanelTests::anUnreadableDriveShowsNoFakeNumbers() {
     QCOMPARE(table->item(0, 2)->text(), QStringLiteral("N/A"));
     QCOMPARE(table->item(0, 3)->text(), QStringLiteral("N/A"));
     QCOMPARE(table->item(0, 4)->text(), QStringLiteral("N/A"));
+    // Review 4 (Y8): the last column, Wear, stretched to 378 px beside a cut drive name. The
+    // name takes the room and every other column its contents' width.
+    QHeaderView* header = table->horizontalHeader();
+    QVERIFY(!header->stretchLastSection());
+    QCOMPARE(header->sectionResizeMode(0), QHeaderView::Stretch);
+    for (int column = 1; column < table->columnCount(); ++column) {
+        QCOMPARE(header->sectionResizeMode(column), QHeaderView::ResizeToContents);
+    }
 }
 
 QTEST_MAIN(DiagnosticBenchmarkPanelTests)

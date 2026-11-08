@@ -22,18 +22,22 @@
         <file>icons/panel_diagnostic.svg</file>
         <file>icons/panel_diagnostic-dark.svg</file>
         <file>icons/panel_help.svg</file>
+        <file>icons/panel_help-dark.svg</file>
         <file>icons/panel_image_flasher.svg</file>
         <file>icons/panel_image_flasher-dark.svg</file>
         <file>icons/panel_network.svg</file>
+        <file>icons/panel_network-dark.svg</file>
         <file>icons/panel_organizer.svg</file>
         <file>icons/panel_organizer-dark.svg</file>
         <file>icons/panel_search.svg</file>
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
         <file>icons/panel_about.svg</file>
+        <file>icons/panel_about-dark.svg</file>
         <file>icons/panel_email.svg</file>
         <file>icons/panel_email-dark.svg</file>
         <file>icons/panel_ai.svg</file>
+        <file>icons/panel_ai-dark.svg</file>
         <file>icons/icons8-benchmark.svg</file>
         <file>icons/icons8-duplicate.svg</file>
         <file>icons/icons8-settings_help.svg</file>
@@ -86,6 +90,7 @@
         <file>icons/icons8-pm-copy.svg</file>
         <file>icons/icons8-pm-properties.svg</file>
         <file>icons/icons8-pm-disk.svg</file>
+        <file>icons/icons8-pm-disk-dark.svg</file>
         <file>icons/icons8-pm-data-recovery.svg</file>
         <file>icons/icons8-pm-align.svg</file>
         <file>icons/icons8-pm-delete.svg</file>

@@ -16,13 +16,16 @@
 #include <QTextEdit>
 #include <QWidget>
 
+class QMimeData;
+
 namespace sak {
 
 /// One Details section: read-only, selectable text with no frame and no scroll bar of its own,
 /// as tall as its text at the width it is given, so the details scroller scrolls every section
 /// together. It wraps anywhere a line has to break: a long path has no spaces, and a label could
-/// break only at spaces and cut it at the pane's edge (review 3, F23). Nothing is inserted to
-/// make the breaks, so what a technician copies is the path as it is.
+/// break only at spaces and cut it at the pane's edge (review 3, F23). A path breaks after a
+/// backslash rather than at a hyphen (review 4, Y28): the marks that allow that are taken out of
+/// what is copied and of detailsText(), so what a technician copies is the path as it is.
 class FileExplorerDetailsText : public QTextEdit {
     Q_OBJECT
 
@@ -32,10 +35,16 @@ public:
     /// The section's text, plain: a path or name from the browsed disk is never read as markup.
     void setDetailsText(const QString& text);
 
+    /// The text as it was given, without the marks that let a path break after its backslashes.
+    [[nodiscard]] QString detailsText() const;
+
     [[nodiscard]] bool hasHeightForWidth() const override;
     [[nodiscard]] int heightForWidth(int width) const override;
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
+
+protected:
+    [[nodiscard]] QMimeData* createMimeDataFromSelection() const override;
 
 private:
     /// Left plus right, and top plus bottom, of everything around the text: frame, margins and

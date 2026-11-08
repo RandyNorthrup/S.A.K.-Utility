@@ -302,7 +302,7 @@ void NetworkDiagnosticPanel::setupUi() {
     m_toolTabs->addTab(createDnsTab(), tr("DNS"));
     m_toolTabs->addTab(createPortScanTab(), tr("Port Scan"));
     m_toolTabs->addTab(createBandwidthTab(), tr("Bandwidth"));
-    m_toolTabs->addTab(createWiFiTab(), tr("WiFi"));
+    m_toolTabs->addTab(createWiFiTab(), tr("Wi-Fi"));
     m_toolTabs->addTab(createConnectionsTab(), tr("Connections"));
     m_toolTabs->addTab(createFirewallTab(), tr("Firewall"));
     m_toolTabs->addTab(createSharesTab(), tr("Shares"));
@@ -364,7 +364,7 @@ QWidget* NetworkDiagnosticPanel::createAdapterSection() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupAdapterToolbar(widget, layout);
@@ -504,7 +504,7 @@ QWidget* NetworkDiagnosticPanel::createPingTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupPingConfig(widget, layout);
@@ -626,7 +626,7 @@ QWidget* NetworkDiagnosticPanel::createTracerouteTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupTracerouteConfig(widget, layout);
@@ -717,7 +717,7 @@ QWidget* NetworkDiagnosticPanel::createMtrTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupMtrConfig(widget, layout);
@@ -809,7 +809,7 @@ QWidget* NetworkDiagnosticPanel::createDnsTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupDnsConfig(widget, layout);
@@ -936,7 +936,7 @@ QWidget* NetworkDiagnosticPanel::createPortScanTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupPortScanConfig(widget, layout);
@@ -1086,7 +1086,7 @@ QWidget* NetworkDiagnosticPanel::createBandwidthTab() {
     auto* widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     auto* iperf_group = new QGroupBox(tr("LAN Bandwidth (iPerf3)"), widget);
@@ -1240,21 +1240,21 @@ void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLay
 
 void NetworkDiagnosticPanel::setupWifiControls(QWidget* widget, QVBoxLayout* layout) {
     auto* btn_row = new QHBoxLayout();
-    m_wifiScanBtn = new QPushButton(tr("Scan WiFi"), widget);
+    m_wifiScanBtn = new QPushButton(tr("Scan Wi-Fi"), widget);
     m_wifiScanBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    m_wifiScanBtn->setToolTip(tr("Scan for available WiFi networks"));
-    setAccessible(m_wifiScanBtn, tr("Scan WiFi networks"));
+    m_wifiScanBtn->setToolTip(tr("Scan for available Wi-Fi networks"));
+    setAccessible(m_wifiScanBtn, tr("Scan Wi-Fi networks"));
     btn_row->addWidget(m_wifiScanBtn);
     m_wifiContBtn = new QPushButton(tr("Continuous Scan"), widget);
     m_wifiContBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    m_wifiContBtn->setToolTip(tr("Start continuous WiFi scanning for real-time monitoring"));
-    setAccessible(m_wifiContBtn, tr("Continuous Scan"), tr("Start continuous WiFi scan"));
+    m_wifiContBtn->setToolTip(tr("Start continuous Wi-Fi scanning for real-time monitoring"));
+    setAccessible(m_wifiContBtn, tr("Continuous Scan"), tr("Start continuous Wi-Fi scan"));
     btn_row->addWidget(m_wifiContBtn);
     m_wifiStopBtn = new QPushButton(tr("Stop"), widget);
     m_wifiStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_wifiStopBtn->setEnabled(false);
-    m_wifiStopBtn->setToolTip(tr("Stop continuous WiFi scanning"));
-    setAccessible(m_wifiStopBtn, tr("Stop WiFi scan"));
+    m_wifiStopBtn->setToolTip(tr("Stop continuous Wi-Fi scanning"));
+    setAccessible(m_wifiStopBtn, tr("Stop Wi-Fi scan"));
     btn_row->addWidget(m_wifiStopBtn);
     btn_row->addStretch();
     layout->addLayout(btn_row);
@@ -1293,12 +1293,12 @@ void NetworkDiagnosticPanel::setupWifiTable(QWidget* widget, QVBoxLayout* layout
     wifi_header->setSectionResizeMode(KWifiColumnVendor, QHeaderView::Interactive);
     wifi_header->resizeSection(KWifiColumnVendor, kTableColumnWidthWide);
 
-    setAccessible(m_wifiTable, tr("WiFi networks"));
+    setAccessible(m_wifiTable, tr("Wi-Fi networks"));
     m_wifiTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_wifiTable, 1);
 
-    m_wifiEmptyState = new sak::ui::ViewEmptyState(m_wifiTable,
-                                                   tr("No WiFi networks found - click Scan WiFi"));
+    m_wifiEmptyState =
+        new sak::ui::ViewEmptyState(m_wifiTable, tr("No Wi-Fi networks found - click Scan Wi-Fi"));
 }
 
 void NetworkDiagnosticPanel::setupWifiStatusLabel(QWidget* widget, QVBoxLayout* layout) {
@@ -1313,7 +1313,7 @@ QWidget* NetworkDiagnosticPanel::createWiFiTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
     setupWifiControls(widget, layout);
     setupWifiTable(widget, layout);
@@ -1328,7 +1328,7 @@ QWidget* NetworkDiagnosticPanel::createConnectionsTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupConnectionsConfig(widget, layout);
@@ -1440,7 +1440,7 @@ QWidget* NetworkDiagnosticPanel::createFirewallTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupFirewallToolbar(widget, layout);
@@ -1567,7 +1567,7 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     auto* config_row = new QHBoxLayout();
@@ -1717,7 +1717,7 @@ QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
     auto* widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     layout->addWidget(createLanServerGroup(widget));
@@ -2152,7 +2152,7 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
         auto* name_item = new QTableWidgetItem(a.name);
         name_item->setData(Qt::UserRole, row);  // Store original data index
         m_adapterTable->setItem(row, 0, name_item);
-        m_adapterTable->setItem(row, 1, new QTableWidgetItem(a.adapterType));
+        m_adapterTable->setItem(row, 1, new QTableWidgetItem(adapterTypeLabel(a.adapterType)));
 
         auto* status_item = new QTableWidgetItem(a.isConnected ? tr("Connected")
                                                                : tr("Disconnected"));
@@ -2277,7 +2277,7 @@ void NetworkDiagnosticPanel::onCopyAdapterConfig() {
     const auto& a = m_adapters[data_idx];
     QString config;
     config += QStringLiteral("Name: %1\n").arg(a.name);
-    config += QStringLiteral("Type: %1\n").arg(a.adapterType);
+    config += QStringLiteral("Type: %1\n").arg(adapterTypeLabel(a.adapterType));
     config += QStringLiteral("MAC: %1\n").arg(a.macAddress);
     config += QStringLiteral("Status: %1\n").arg(a.isConnected ? "Connected" : "Disconnected");
     config += QStringLiteral("DHCP: %1\n").arg(a.dhcpEnabled ? "Enabled" : "Disabled");
@@ -2584,7 +2584,7 @@ void NetworkDiagnosticPanel::populateStatusTree(QTreeWidget* tree,
                       tr("General"),
                       {{tr("Name"), adapter.name},
                        {tr("Description"), adapter.description},
-                       {tr("Type"), adapter.adapterType},
+                       {tr("Type"), adapterTypeLabel(adapter.adapterType)},
                        {tr("MAC Address"), adapter.macAddress},
                        {tr("Interface Index"), QString::number(adapter.interfaceIndex)}});
 
@@ -4128,22 +4128,22 @@ QString NetworkDiagnosticPanel::noBandwidthResultText() const {
 
 void NetworkDiagnosticPanel::onScanWiFi() {
     if (!m_controller->isWiFiAvailable()) {
-        Q_EMIT statusMessage(tr("WiFi hardware not available"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Wi-Fi hardware not available"), sak::kTimerStatusMessageMs);
         return;
     }
     m_wifiScanBtn->setEnabled(false);
-    m_wifiEmptyState->setLoading(tr("Scanning for WiFi networks..."));
+    m_wifiEmptyState->setLoading(tr("Scanning for Wi-Fi networks..."));
     m_controller->scanWiFi();
 }
 
 void NetworkDiagnosticPanel::onStartContinuousWiFi() {
     if (!m_controller->isWiFiAvailable()) {
-        Q_EMIT statusMessage(tr("WiFi hardware not available"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Wi-Fi hardware not available"), sak::kTimerStatusMessageMs);
         return;
     }
     m_wifiContBtn->setEnabled(false);
     m_wifiStopBtn->setEnabled(true);
-    m_wifiEmptyState->setLoading(tr("Scanning for WiFi networks..."));
+    m_wifiEmptyState->setLoading(tr("Scanning for Wi-Fi networks..."));
     m_controller->startContinuousWiFiScan(sak::kTimerRefreshMs);
 }
 
@@ -4542,13 +4542,10 @@ void NetworkDiagnosticPanel::onRunLanTransferTest() {
 void NetworkDiagnosticPanel::onLanTransferProgress(double current_mbps,
                                                    double elapsed_sec,
                                                    qint64 total_bytes) {
-    m_lanResultLabel->setText(QStringLiteral("Running: %1 Mbps | %2 s | %3 MB transferred")
+    m_lanResultLabel->setText(QStringLiteral("Running: %1 Mbps | %2 s | %3 transferred")
                                   .arg(current_mbps, 0, 'f', 1)
                                   .arg(elapsed_sec, 0, 'f', 0)
-                                  .arg(static_cast<double>(total_bytes) / sak::kBytesPerMBf,
-                                       0,
-                                       'f',
-                                       kDecimalPrecisionOne));
+                                  .arg(sak::formatBytes(total_bytes)));
 }
 
 void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
@@ -4558,16 +4555,13 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
     m_lanResultLabel->setText(
         QStringLiteral("<b>%1 Complete</b><br>"
                        "Remote: %2<br>"
-                       "Transferred: %3 MB in %4 s<br>"
+                       "Transferred: %3 in %4 s<br>"
                        "Average Speed: <b>%5 Mbps</b> (%6 MB/s)<br>"
                        "Peak Speed: %7 Mbps")
             .arg(result.isUpload ? tr("Upload") : tr("Download"))
             // remoteAddress is a peer-supplied string echoed into a rich-text label.
             .arg(result.remoteAddress.toHtmlEscaped())
-            .arg(static_cast<double>(result.bytesTransferred) / sak::kBytesPerMBf,
-                 0,
-                 'f',
-                 kDecimalPrecisionOne)
+            .arg(sak::formatBytes(result.bytesTransferred))
             .arg(result.durationSec, 0, 'f', 1)
             .arg(result.avgSpeedMbps, 0, 'f', 1)
             .arg(result.avgSpeedMbps / kBitsPerByteF, 0, 'f', kDecimalPrecisionOne)

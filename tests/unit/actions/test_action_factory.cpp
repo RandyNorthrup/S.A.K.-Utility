@@ -119,7 +119,7 @@ void TestActionFactory::testAllDescriptionsNonEmpty() {
         {QStringLiteral("System Inventory Report"),
          QStringLiteral("Collect a live system inventory into a text report")},
         {QStringLiteral("Optimize Power Settings"),
-         QStringLiteral("Switch to High Performance power plan")},
+         QStringLiteral("Switch to High performance power plan")},
         {QStringLiteral("Reset Network Settings"),
          QStringLiteral("Reset TCP/IP, DNS, Winsock and Windows Firewall rules, and restart "
                         "network adapters")},

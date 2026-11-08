@@ -352,20 +352,25 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
         return;
     }
 
+    // One plain sentence per drive. Windows' own result name ("NoErrorsFound") stood above the
+    // same verdict in words (review 4, Y14); it is kept only where errors call for a closer look.
     drives_scanned++;
-    report += QString("Drive %1: scan result %2\n").arg(state.drive_letter, state.result);
     switch (verdict) {
     case ScanVerdict::NoErrors:
-        report += "  \u2713 No errors found\n";
+        report += QString("Drive %1: \u2713 No errors found\n").arg(state.drive_letter);
         break;
     case ScanVerdict::FixedOnline:
         errors_found++;
-        report += "  \u26a0 Errors found and fixed by Windows while the drive stayed online\n";
+        report += QString(
+                      "Drive %1: \u26a0 Errors found and fixed by Windows while the drive stayed "
+                      "online\n")
+                      .arg(state.drive_letter);
         break;
     default:
         errors_found++;
         repairs_recommended++;
-        report += "  \u26a0 Errors found\n";
+        report += QString("Drive %1: \u26a0 Errors found (Windows reports %2)\n")
+                      .arg(state.drive_letter, state.result);
         report += "  \u2139 Repair recommended (this check does not modify the disk)\n";
         break;
     }

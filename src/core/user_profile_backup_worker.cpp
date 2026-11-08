@@ -31,11 +31,9 @@ namespace {
 // The compression level is range-checked where it is USED, by the codec, which refuses
 // anything outside 1-9 rather than clamping. A duplicate check here would be a second
 // place to keep in step with zlib.
-constexpr int kBackupSizeDisplayPrecision = 2;
 constexpr int kProgressEmitFileInterval = 100;
 constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
 constexpr double kDiskSpaceSafetyMultiplier = 1.1;
-constexpr int kDiskSpaceDisplayPrecision = 1;
 // Number of leading backslashes in a "\\server\share" UNC path, stripped before the
 // "\\?\UNC\" extended-length prefix is prepended.
 constexpr int kUncLeadingBackslashCount = 2;
@@ -354,11 +352,7 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
     Q_EMIT overallProgress(0, m_totalUsersToBackup, 0, m_totalBytesToCopy);
-    Q_EMIT logMessage(tr("Total estimated size: %1 GB")
-                          .arg(static_cast<double>(m_totalBytesToCopy) / sak::kBytesPerGBf,
-                               0,
-                               'f',
-                               kBackupSizeDisplayPrecision),
+    Q_EMIT logMessage(tr("Total estimated size: %1").arg(sak::formatBytes(m_totalBytesToCopy)),
                       false);
 
     warnAboutLargeFolders();
@@ -808,9 +802,8 @@ bool UserProfileBackupWorker::fileIsSkipped(const QFileInfo& sourceInfo, qint64 
 
     // Check size limit
     if (m_activeFilter->exceedsSizeLimit(fileSize)) {
-        Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)")
-                              .arg(sourceInfo.fileName())
-                              .arg(static_cast<double>(fileSize) / sak::kBytesPerMBf, 0, 'f', 1),
+        Q_EMIT logMessage(tr("Skipping large file: %1 (%2)")
+                              .arg(sourceInfo.fileName(), sak::formatBytes(fileSize)),
                           true);
         m_filesSkipped++;
         return true;
@@ -1243,12 +1236,9 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     }
 
     if (availableBytes < requiredBytes) {
-        const double availableGB = static_cast<double>(availableBytes) / sak::kBytesPerGBf;
-        const double requiredGB = static_cast<double>(requiredBytes) / sak::kBytesPerGBf;
-
-        Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
-                              .arg(availableGB, 0, 'f', kDiskSpaceDisplayPrecision)
-                              .arg(requiredGB, 0, 'f', kDiskSpaceDisplayPrecision),
+        Q_EMIT logMessage(tr("Insufficient disk space. Available: %1, Required: %2")
+                              .arg(sak::formatBytes(availableBytes),
+                                   sak::formatBytes(requiredBytes)),
                           true);
         return false;
     }

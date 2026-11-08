@@ -115,9 +115,17 @@ const auto kUwpPackagesCommand = QStringLiteral(
     // rather than emit valid JSON for only the packages that did enumerate. Reporting that partial
     // set as complete is a fail-open; a failed scan instead warns (enumerateAll) or safely refuses
     // a headless match (enumerateUwpPackagesSync).
+    //
+    // A Store-signed package's certificate names its publisher only by an ID ("CN=5699BA41-..."),
+    // so for a subject with no organisation the manifest's PublisherDisplayName is read too: the
+    // name the Store and Settings show (review 4, N9). It is a label for the list; a manifest that
+    // cannot be read leaves it empty and the list shows the subject.
     "Get-AppxPackage -ErrorAction Stop | Select-Object Name, PackageFamilyName, "
-    "PackageFullName, Publisher, Version, InstallLocation, "
-    "IsFramework, SignatureKind | ConvertTo-Json -Compress");
+    "PackageFullName, Publisher, Version, InstallLocation, IsFramework, SignatureKind, "
+    "@{n='PublisherDisplayName';e={if ($_.Publisher -notmatch '(^|,)\\s*O=') "
+    "{try {[string](Get-AppxPackageManifest -Package $_.PackageFullName -ErrorAction Stop)"
+    ".Package.Properties.PublisherDisplayName} catch {''}} else {''}}} | "
+    "ConvertTo-Json -Compress");
 }  // namespace
 
 ProgramEnumerator::ProgramEnumerator(QObject* parent) : QObject(parent) {}
@@ -653,8 +661,10 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     prog.displayName = obj["Name"].toString();
     prog.packageFamilyName = obj["PackageFamilyName"].toString();
     prog.packageFullName = obj["PackageFullName"].toString();
-    // The list showed "CN=Microsoft Corporation, O=Micro..." (review 2, N9).
-    prog.publisher = publisherFromSubject(obj["Publisher"].toString());
+    // The list showed "CN=Microsoft Corporation, O=Micro..." (review 2, N9), and for a
+    // Store-signed package "CN=5699BA41-022E-4..." (review 4, N9).
+    prog.publisher = packagePublisher(obj["Publisher"].toString(),
+                                      obj["PublisherDisplayName"].toString());
     prog.displayVersion = obj["Version"].toString();
     prog.installLocation = obj["InstallLocation"].toString();
     prog.source = ProgramInfo::Source::UWP;
@@ -719,6 +729,18 @@ QString ProgramEnumerator::publisherFromSubject(const QString& subject) {
         return common;
     }
     return subject;
+}
+
+QString ProgramEnumerator::packagePublisher(const QString& subject, const QString& display_name) {
+    const QString shown = publisherFromSubject(subject);
+    // The subject names no one (a Store ID) when it comes back as it is. A manifest's display name
+    // that is a resource reference ("ms-resource:PublisherDisplayName") names no one either.
+    const QString name = display_name.trimmed();
+    if (shown == subject && !name.isEmpty() &&
+        !name.startsWith(QStringLiteral("ms-resource:"), Qt::CaseInsensitive)) {
+        return name;
+    }
+    return shown;
 }
 
 bool ProgramEnumerator::appxScanSucceeded(const ProcessResult& result) {

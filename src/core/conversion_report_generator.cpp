@@ -470,7 +470,7 @@ QString ConversionReportGenerator::formatDuration(qint64 ms) {
 QString ConversionReportGenerator::formatBytes(qint64 bytes) {
     // KB now renders to one decimal instead of truncating with integer division, which is what
     // every other compact caller already did. 1536 bytes reads "1.5 KB" rather than "1 KB".
-    return sak::formatBytesCompact(bytes);
+    return sak::formatBytes(bytes);
 }
 
 }  // namespace sak

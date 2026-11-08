@@ -15,6 +15,7 @@
 
 #include "sak/uup_dump_api.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
@@ -544,10 +545,9 @@ bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>&
         return false;
     }
 
-    const double totalSizeGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
-    sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
+    sak::logInfo(QString("Fetched %1 downloadable files (%2 total)")
                      .arg(out.size())
-                     .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
+                     .arg(sak::formatBytes(totalSize))
                      .toStdString());
     return true;
 }

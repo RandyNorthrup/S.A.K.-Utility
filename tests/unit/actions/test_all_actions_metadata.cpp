@@ -185,7 +185,7 @@ void TestAllActionsMetadata::verifyAction(const QString& expectedName,
 
 void TestAllActionsMetadata::testOptimizePowerSettings() {
     verifyAction("Optimize Power Settings",
-                 "Switch to High Performance power plan",
+                 "Switch to High performance power plan",
                  QuickAction::ActionCategory::SystemOptimization,
                  false);
 }

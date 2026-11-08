@@ -22,6 +22,7 @@
 #include "sak/file_explorer_tag_store.h"
 #include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_explorer_panel.h"
+#include "sak/format_utils.h"
 #include "sak/portable_settings.h"
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
@@ -42,6 +43,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QHash>
 #include <QHeaderView>
 #include <QImage>
@@ -85,6 +87,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <tuple>
 #include <utility>
@@ -1541,6 +1544,17 @@ private Q_SLOTS:
     // edge behind a horizontal scroll bar. A label wraps only at a space, and a path has none. The
     // sections wrap anywhere a line must break, and the text a technician copies is the path as
     // it is, with nothing inserted.
+    // Review 4 (Y20): Compare Panes said "Size differs (0):" with nothing after it.
+    void comparePanesListsOnlyWhatDiffers() {
+        const QString some = sak::FileManagementExplorerPanel::comparePanesSummary(
+            {QStringLiteral("a.txt")}, {}, {QStringLiteral("b.txt"), QStringLiteral("c.txt")});
+        QCOMPARE(some,
+                 QStringLiteral("Only in this pane (1): a.txt\nSize differs (2): b.txt, c.txt"));
+        const QString none = sak::FileManagementExplorerPanel::comparePanesSummary({}, {}, {});
+        QVERIFY2(!none.contains(QStringLiteral("(0)")), qPrintable(none));
+        QCOMPARE(none, QStringLiteral("Both panes hold the same names, with the same sizes."));
+    }
+
     void detailsLinesWrapAnywhereAndCopyUnchanged() {
         sak::FileExplorerDetailsPane pane;
         pane.setStyleSheet(sak::ui::fileExplorerShellStyleSheetText());
@@ -1574,14 +1588,71 @@ private Q_SLOTS:
                                 .arg(section->viewport()->width())));
         // The path, which has no space after "Path:", broke into several lines.
         const QTextBlock path_block = section->document()->findBlockByNumber(2);
-        QCOMPARE(path_block.text(), path);
+        // Shown with break chances after each backslash (review 4, Y28); the text is the path.
+        QCOMPARE(sak::withoutPathBreaks(path_block.text()), path);
         QVERIFY2(path_block.layout()->lineCount() > 2,
                  qPrintable(QString::number(path_block.layout()->lineCount())));
         // The section is as tall as its text: it never scrolls inside itself.
         QCOMPARE(section->verticalScrollBar()->maximum(), 0);
-        // What is copied is what was given.
+        // Review 4 (Y28): "C:\SAK-" and "Samples\Docs" read as two names. A line of the path
+        // ends after a backslash or inside a long name, never at a hyphen.
+        for (int line = 0; line + 1 < path_block.layout()->lineCount(); ++line) {
+            const QTextLine shown = path_block.layout()->lineAt(line);
+            const QString piece =
+                sak::withoutPathBreaks(path_block.text().mid(shown.textStart(), shown.textLength()))
+                    .trimmed();
+            QVERIFY2(!piece.endsWith(QLatin1Char('-')), qPrintable(piece));
+        }
+        // What is copied, and what the section says it holds, is what was given.
+        QCOMPARE(section->detailsText(), text);
         section->selectAll();
-        QCOMPARE(section->textCursor().selection().toPlainText(), text);
+        section->copy();
+        QCOMPARE(QGuiApplication::clipboard()->text(), text);
+    }
+
+    // Review 4 (Y5): the Details lines started 7 px in from the pane's edge, their headings 11 px
+    // and the preview's text 19 px. Every line of text in the pane starts at one inset.
+    void theInfoPaneTextSharesOneInset() {
+        sak::FileExplorerDetailsPane pane;
+        pane.setStyleSheet(sak::ui::fileExplorerShellStyleSheetText());
+        pane.resize(280, 900);
+        pane.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&pane));
+        pane.propertiesText()->setDetailsText(QStringLiteral("Target: DATA (D:)"));
+        pane.previewText()->setPlainText(QStringLiteral("No file selected."));
+        QCoreApplication::processEvents();
+        const QImage shot = pane.grab().toImage();
+        // The first column of ink in @p widget's rectangle, read on the pane.
+        const auto first_ink = [&pane, &shot](const QWidget* widget) {
+            const QRect area(widget->mapTo(&pane, QPoint(0, 0)), widget->size());
+            const QColor ground = shot.pixelColor(area.right() - 2, area.top() + 2);
+            for (int x = area.left(); x < area.right() - 4; ++x) {
+                for (int y = area.top(); y < area.bottom(); ++y) {
+                    if (std::abs(shot.pixelColor(x, y).lightness() - ground.lightness()) > 60) {
+                        return x;
+                    }
+                }
+            }
+            return -1;
+        };
+        QLabel* heading = nullptr;
+        for (auto* label : pane.findChildren<QLabel*>()) {
+            if (label->property("infoPaneSectionHeader").toBool() && heading == nullptr) {
+                heading = label;
+            }
+        }
+        QVERIFY(heading != nullptr);
+        const int heading_x = first_ink(heading);
+        const int line_x = first_ink(pane.propertiesText()->viewport());
+        const int preview_x = first_ink(pane.previewText()->viewport());
+        QVERIFY(heading_x >= 0 && line_x >= 0 && preview_x >= 0);
+        const int spread = std::max({heading_x, line_x, preview_x}) -
+                           std::min({heading_x, line_x, preview_x});
+        QVERIFY2(spread <= 2,
+                 qPrintable(QStringLiteral("heading at x=%1, Details line at x=%2, preview at x=%3")
+                                .arg(heading_x)
+                                .arg(line_x)
+                                .arg(preview_x)));
     }
 
     // Round 6's heap corruption (0xc0000374, about 1 loaded run in 30): the List action was
@@ -2612,7 +2683,7 @@ private Q_SLOTS:
         // Review 2 (S21): "Root: C:/" and "Path: C:/SAK-Samples/Docs" on a Windows volume.
         const QString properties = child<sak::FileExplorerDetailsText>(&panel,
                                                                        "fileExplorerPropertiesText")
-                                       ->toPlainText();
+                                       ->detailsText();
         for (const QString& line : properties.split(QLatin1Char('\n'))) {
             if (line.startsWith(QStringLiteral("Root: ")) ||
                 line.startsWith(QStringLiteral("Path: "))) {
@@ -2624,8 +2695,8 @@ private Q_SLOTS:
         // one LABEL and ignores its value and every sibling line, so an empty capability word
         // or a lost Read/Browse line passes. The host-dependent label, file system and root
         // path are deliberately left unpinned; the capability words are a closed vocabulary.
-        const QStringList safety_lines = safety->toPlainText().split(QLatin1Char('\n'));
-        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->toPlainText()));
+        const QStringList safety_lines = safety->detailsText().split(QLatin1Char('\n'));
+        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->detailsText()));
         const QStringList prefixes{QStringLiteral("Target: "),
                                    QStringLiteral("File system: "),
                                    QStringLiteral("Identity: ")};
@@ -2787,7 +2858,7 @@ private Q_SLOTS:
     }
 
     // One Safety-pane verdict: identity, capability words, and the file-system note.
-    void verifySafetyPaneCase(sak::FileExplorerDetailsText* safety,
+    void verifySafetyPaneCase(const sak::FileExplorerDetailsText* safety,
                               const SafetyPaneCase& expected) {
         const QString& file_system = expected.file_system;
         const QString& image_path = expected.image;
@@ -2797,8 +2868,8 @@ private Q_SLOTS:
         // The pane repaints from the selection change; wait for THIS target's identity
         // line so a stale previous verdict can never be read as this one's.
         const QString identity = QStringLiteral("Identity: %1").arg(image_path);
-        QTRY_VERIFY2(safety->toPlainText().contains(identity), qPrintable(safety->toPlainText()));
-        const QString text = safety->toPlainText();
+        QTRY_VERIFY2(safety->detailsText().contains(identity), qPrintable(safety->detailsText()));
+        const QString text = safety->detailsText();
         const QStringList lines = text.split(QLatin1Char('\n'));
         const auto verdict = [](bool enabled) {
             return enabled ? QStringLiteral("enabled") : QStringLiteral("blocked");
@@ -5209,6 +5280,17 @@ private Q_SLOTS:
         QApplication::processEvents();
         QTRY_COMPARE(pathEdit->text(), root.path());
         QTRY_COMPARE(pane_b->sharedSelectionModel()->selectedRows().size(), 0);
+        // Review 4 (Y6): both footers said "Active pane: ...", and the one left behind was
+        // stale. Only the active pane's footer says it.
+        QStringList active_lines;
+        for (const auto* footer : panel.findChildren<QLabel*>()) {
+            if (footer->text().contains(QStringLiteral("Active pane:"))) {
+                active_lines.append(footer->text());
+            }
+        }
+        QVERIFY2(active_lines.size() == 1, qPrintable(active_lines.join(QStringLiteral(" | "))));
+        QVERIFY2(active_lines.constFirst().contains(QStringLiteral("Active pane: Left")),
+                 qPrintable(active_lines.constFirst()));
 
         // Pane A is now the active pane: the same command lands under the parent.
         QString second_label;
@@ -6279,7 +6361,7 @@ private Q_SLOTS:
         QVERIFY(!progressBar->isVisible());
         auto* speed = child<QLabel>(card, "fileExplorerStatusCardSpeed");
         QVERIFY(speed);
-        QCOMPARE(speed->text(), QStringLiteral("Speed: 800 bytes/s"));
+        QCOMPARE(speed->text(), QStringLiteral("Speed: 800 B/s"));
         auto* name = child<QLabel>(card, "fileExplorerStatusCardName");
         QVERIFY(name);
         QVERIFY(name->isVisible());

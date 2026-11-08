@@ -201,7 +201,7 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
                     "<td>%4</td><td>%5</td><td>%6</td></tr>\n")
                     .arg(a.name.toHtmlEscaped(),
-                         a.adapterType.toHtmlEscaped(),
+                         adapterTypeLabel(a.adapterType).toHtmlEscaped(),
                          status,
                          ip.toHtmlEscaped(),
                          a.macAddress.toHtmlEscaped(),
@@ -396,7 +396,7 @@ QString NetworkDiagnosticReportGenerator::buildBandwidthSection() const {
 
 QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
     QString html;
-    html += QStringLiteral("<h2>WiFi Analysis</h2>\n");
+    html += QStringLiteral("<h2>Wi-Fi Analysis</h2>\n");
     html += QStringLiteral(
         "<table>\n<tr><th>SSID</th><th>BSSID</th><th>Signal</th>"
         "<th>Channel</th><th>Band</th><th>Security</th><th>Vendor</th></tr>\n");
@@ -643,7 +643,7 @@ void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
          "Bandwidth Test Results"},
         {Section::WiFiAnalysis,
          &NetworkDiagnosticReportGenerator::buildWiFiSection,
-         "WiFi Analysis"},
+         "Wi-Fi Analysis"},
         {Section::FirewallAudit,
          &NetworkDiagnosticReportGenerator::buildFirewallSection,
          "Firewall Audit"},
@@ -695,7 +695,7 @@ void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) con
          "Bandwidth Test Results"},
         {Section::WiFiAnalysis,
          &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson,
-         "WiFi Analysis"},
+         "Wi-Fi Analysis"},
         {Section::FirewallAudit,
          &NetworkDiagnosticReportGenerator::appendFirewallAuditJson,
          "Firewall Audit"},

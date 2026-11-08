@@ -96,6 +96,12 @@ public:
     ///        subject naming neither, or one whose CN is only an ID, comes back as it is. Pure.
     [[nodiscard]] static QString publisherFromSubject(const QString& subject);
 
+    /// A Store package's publisher: its organisation or common name from the certificate subject
+    /// (publisherFromSubject), or, when the subject names no one (a Store ID), the manifest's
+    /// PublisherDisplayName, the name the Store and Settings show.
+    [[nodiscard]] static QString packagePublisher(const QString& subject,
+                                                  const QString& display_name);
+
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);

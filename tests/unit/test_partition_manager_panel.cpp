@@ -96,6 +96,9 @@ private Q_SLOTS:
     void resizePreviewShowsEveryRow();
     void resizeSupportLineStaysWholeWhenItWraps();
     void copyDiskTargetBarNamesTheCopy();
+    void reviewBarsNamePartitionsWithoutALetter();
+    void spaceAnalyzerHidesATypeColumnWithOneValue();
+    void aCopyTargetWithNoSizeSaysWhatItTakes();
     void convertStylePromptNamesTheDiskAndItsStyle();
     void optimizeDialogHasOnePrimaryButtonAndOneLabel();
     void operationsListScrollsDownOnly();
@@ -2680,6 +2683,67 @@ void PartitionManagerPanelTests::copyDiskTargetBarNamesTheCopy() {
         (QStringList{QStringLiteral("E:"), QStringLiteral("F:"), QStringLiteral("Unallocated")}));
 }
 
+// Review 4 (RG5): the Copy Disk and Migrate OS bars printed "*:" for every partition without a
+// letter, which the 24 px floor gave the EFI and MSR slivers room for. They name what each is, as
+// the Apply review does, and a letterless data partition by its number.
+void PartitionManagerPanelTests::reviewBarsNamePartitionsWithoutALetter() {
+    constexpr uint64_t kGiB = 1024ULL * 1024ULL * 1024ULL;
+    sak::PartitionDiskInfo source;
+    source.disk_number = sak::DiskNumber{1};
+    source.partition_style = QStringLiteral("GPT");
+    uint64_t offset = kTestMegabyteBytes;
+    // Equal sizes, so every segment has room for its name on the bar.
+    for (const auto& [letter, role] : {std::pair{QString(), 1},
+                                       std::pair{QString(), 2},
+                                       std::pair{QStringLiteral("C"), 0},
+                                       std::pair{QString(), 3},
+                                       std::pair{QString(), 0}}) {
+        sak::PartitionInfoEx partition;
+        partition.disk_number = source.disk_number;
+        partition.partition_number =
+            sak::PartitionNumber{static_cast<uint32_t>(source.partitions.size() + 1)};
+        partition.offset_bytes = offset;
+        partition.size_bytes = 2 * kGiB;
+        partition.is_efi = role == 1;
+        partition.is_msr = role == 2;
+        partition.is_recovery = role == 3;
+        if (!letter.isEmpty()) {
+            sak::PartitionVolumeInfo volume;
+            volume.drive_letter = letter;
+            volume.file_system = QStringLiteral("NTFS");
+            volume.total_bytes = partition.size_bytes;
+            partition.volume = volume;
+        }
+        source.partitions.append(partition);
+        offset += partition.size_bytes;
+    }
+    source.size_bytes = offset;
+    constexpr int kBarWidth = 1200;
+    const QStringList labels = sak::partitionCopyTargetLabelsForTest(source, offset, kBarWidth);
+    QCOMPARE(labels,
+             (QStringList{QStringLiteral("EFI"),
+                          QStringLiteral("MSR"),
+                          QStringLiteral("C:"),
+                          QStringLiteral("Recovery"),
+                          QStringLiteral("Partition 5")}));
+}
+
+// Review 4 (Y20): the File Types tab said "File type" on every row, and Largest Files "File".
+void PartitionManagerPanelTests::spaceAnalyzerHidesATypeColumnWithOneValue() {
+    QVERIFY(sak::partitionSpaceAnalyzerTypeColumnHiddenForTest(
+        {QStringLiteral("File type"), QStringLiteral("File type")}));
+    QVERIFY(!sak::partitionSpaceAnalyzerTypeColumnHiddenForTest(
+        {QStringLiteral("Folder"), QStringLiteral("File")}));
+}
+
+// Review 4 (Y20): a Copy Partition target with no size of its own (a raw device or an image
+// file) said "Target size: custom/unknown" on the review page.
+void PartitionManagerPanelTests::aCopyTargetWithNoSizeSaysWhatItTakes() {
+    QCOMPARE(sak::partitionCopyTargetSizeTextForTest(0), QStringLiteral("as large as the source"));
+    QCOMPARE(sak::partitionCopyTargetSizeTextForTest(1'073'741'824ULL),
+             sak::formatPartitionBytes(1'073'741'824ULL));
+}
+
 void PartitionManagerPanelTests::diskMapSegmentsSelectMatchingTableRows() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
@@ -3282,6 +3346,18 @@ void PartitionManagerPanelTests::diskCopyWizardHasNoUnprobedCustomTarget() {
         QVERIFY2(target != nullptr, "Target disk selector should exist");
         QCOMPARE(target->count(), 1);
         QVERIFY(target->findText(QStringLiteral("Custom path")) < 0);
+        // Review 4 (Y20): the review named the disks "\\.\PhysicalDrive1" under a bar that said
+        // "Copy of Disk 1". It names them as the bar and the disk map do, with the path beside.
+        bool named = false;
+        QStringList reviews;
+        for (const auto* label : wizard->findChildren<QLabel*>()) {
+            if (label->text().contains(QStringLiteral("Source: "))) {
+                reviews.append(label->text());
+                named = named || (label->text().contains(QStringLiteral("Source: Disk ")) &&
+                                  label->text().contains(QStringLiteral(" (\\\\.\\PhysicalDrive")));
+            }
+        }
+        QVERIFY2(named, qPrintable(reviews.join(QStringLiteral(" | "))));
         QVERIFY(findAccessibleWidget<QLineEdit>(wizard, QStringLiteral("Custom target path")) ==
                 nullptr);
         inspected = true;
@@ -3800,6 +3876,44 @@ void PartitionManagerPanelTests::resizePreviewShowsEveryRow() {
     QVERIFY2(!bare_status_row, "Resize/Move shows an empty Status row");
 }
 
+namespace {
+
+/// Review 4 (Y17): the Support text stood beside its label and again, word for word, in the
+/// summary below. It is said once, and no label sits beside it. Empty when it is.
+QStringList supportNotSaidOnce(const QDialog* dialog) {
+    QStringList saying;
+    for (const auto* label : dialog->findChildren<QLabel*>()) {
+        if (label->isVisible() && label->text().contains(QStringLiteral("Offline move will"))) {
+            saying.append(label->text());
+        }
+        if (label->isVisible() && label->text() == QStringLiteral("Support:")) {
+            saying.append(QStringLiteral("a \"Support:\" label"));
+        }
+    }
+    return saying.size() == 1 ? QStringList() : QStringList{saying.join(QStringLiteral(" | "))};
+}
+
+/// Each visible wrapped label in @p dialog shorter than its text needs at its width.
+QStringList wrappedLabelsCut(const QDialog* dialog) {
+    QStringList cut;
+    for (const auto* label : dialog->findChildren<QLabel*>()) {
+        if (label->isVisible() && label->wordWrap() && !label->text().isEmpty() &&
+            label->height() < label->heightForWidth(label->width())) {
+            cut.append(QStringLiteral("%1 (%2 < %3; dialog %4x%5, needs %6, screen %7)")
+                           .arg(label->text())
+                           .arg(label->height())
+                           .arg(label->heightForWidth(label->width()))
+                           .arg(dialog->width())
+                           .arg(dialog->height())
+                           .arg(dialog->layout()->totalHeightForWidth(dialog->width()))
+                           .arg(dialog->screen()->availableGeometry().height()));
+        }
+    }
+    return cut;
+}
+
+}  // namespace
+
 // Review 3 (X4): picking "Move partition start" after the dialog opened turned the Support line
 // into two lines, and the dialog kept its height, so the layout cut the second line at its
 // descenders. Every wrapped line is as tall as its text at its width.
@@ -3830,19 +3944,7 @@ void PartitionManagerPanelTests::resizeSupportLineStaysWholeWhenItWraps() {
         mode->setCurrentIndex(mode->findText(QStringLiteral("Move partition start")));
         QCoreApplication::processEvents();
         QCoreApplication::processEvents();
-        for (const auto* label : dialog->findChildren<QLabel*>()) {
-            if (label->isVisible() && label->wordWrap() && !label->text().isEmpty() &&
-                label->height() < label->heightForWidth(label->width())) {
-                cut.append(QStringLiteral("%1 (%2 < %3; dialog %4x%5, needs %6, screen %7)")
-                               .arg(label->text())
-                               .arg(label->height())
-                               .arg(label->heightForWidth(label->width()))
-                               .arg(dialog->width())
-                               .arg(dialog->height())
-                               .arg(dialog->layout()->totalHeightForWidth(dialog->width()))
-                               .arg(dialog->screen()->availableGeometry().height()));
-            }
-        }
+        cut << supportNotSaidOnce(dialog) << wrappedLabelsCut(dialog);
         dialog->reject();
     });
     auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));

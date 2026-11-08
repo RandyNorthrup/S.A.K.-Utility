@@ -323,7 +323,7 @@ void TestWifiSetupScript::refusesUnrecognizedSecurity() {
     QVERIFY(!r.profile_added);
     QVERIFY(!r.connect_issued);
     QCOMPARE(r.error,
-             QStringLiteral("Enterprise/802.1X WiFi security is not supported by this connector"));
+             QStringLiteral("Enterprise/802.1X Wi-Fi security is not supported by this connector"));
 }
 
 void TestWifiSetupScript::connectRefusesEnterpriseSecurity() {
@@ -333,7 +333,7 @@ void TestWifiSetupScript::connectRefusesEnterpriseSecurity() {
     QVERIFY(!r.profile_added);
     QVERIFY(!r.connect_issued);
     QCOMPARE(r.error,
-             QStringLiteral("Enterprise/802.1X WiFi security is not supported by this connector"));
+             QStringLiteral("Enterprise/802.1X Wi-Fi security is not supported by this connector"));
 }
 
 void TestWifiSetupScript::buildsWpaScriptWithProfileAndConnect() {

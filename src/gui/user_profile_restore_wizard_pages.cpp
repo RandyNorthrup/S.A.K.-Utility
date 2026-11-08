@@ -46,8 +46,8 @@ QString appDataSourcesCount(qint64 count) {
 
 QString ethernetConfigsCount(qint64 count) {
     return countOf(count,
-                   QObject::tr("ethernet configuration"),
-                   QObject::tr("ethernet configurations"));
+                   QObject::tr("network adapter setting"),
+                   QObject::tr("network adapter settings"));
 }
 
 QString applicationsCount(qint64 count) {
@@ -480,7 +480,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     m_folderTable->setAccessibleName(tr("Folders"));
     m_folderTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("User"), tr("Folder"), tr("Size"), tr("Files")});
-    m_folderTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    sak::fitColumnsToContents(m_folderTable->horizontalHeader(), KFolderColumnFolder);
     m_folderTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_folderTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_folderTable);
@@ -692,10 +692,9 @@ void UserProfileRestoreAppDataPage::setupUi() {
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
-    m_appDataTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(kTreePackageColumn,
-                                                  QHeaderView::ResizeToContents);
+    sak::fitColumnsToContents(m_appDataTree->header(), 1);
+    // A path cut short keeps its start and its end.
+    m_appDataTree->setTextElideMode(Qt::ElideMiddle);
     m_appDataTree->setEnabled(false);
     connect(m_appDataTree,
             &QTreeWidget::itemChanged,
@@ -1205,8 +1204,8 @@ void UserProfileRestoreNetworksPage::onSelectNone() {
 
 UserProfileRestoreEthernetPage::UserProfileRestoreEthernetPage(QWidget* parent)
     : QWizardPage(parent) {
-    setTitle(tr("Restore Ethernet Settings"));
-    setSubTitle(tr("Select ethernet configurations to restore (all selected by default)"));
+    setTitle(tr("Restore Network Adapter Settings"));
+    setSubTitle(tr("Select the network adapter settings to restore (all selected by default)"));
 
     setupUi();
 }
@@ -1216,8 +1215,8 @@ void UserProfileRestoreEthernetPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     auto* instruction_label =
-        new QLabel(tr("The backup contains saved ethernet adapter configurations. "
-                      "Select which configurations to apply. All are selected by default. "
+        new QLabel(tr("The backup contains saved network adapter settings. "
+                      "Select which settings to apply. All are selected by default. "
                       "Static IP settings will be applied using netsh."),
                    this);
     instruction_label->setWordWrap(true);
@@ -1227,7 +1226,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     layout->addWidget(m_statusLabel);
 
     m_ethernetTable = new QTableWidget(0, KEthernetColumnCount, this);
-    m_ethernetTable->setAccessibleName(tr("Ethernet settings"));
+    m_ethernetTable->setAccessibleName(tr("Network adapter settings"));
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),
@@ -1235,14 +1234,14 @@ void UserProfileRestoreEthernetPage::setupUi() {
                                                 tr("Subnet"),
                                                 tr("Gateway"),
                                                 tr("DNS")});
-    m_ethernetTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    sak::fitColumnsToContents(m_ethernetTable->horizontalHeader(), KEthernetColumnCount - 1);
     m_ethernetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_ethernetTable->verticalHeader()->setVisible(false);
     m_ethernetTable->setEnabled(false);
     layout->addWidget(m_ethernetTable);
     // Empty-only overlay (R5-G20-7): filled synchronously from the in-memory manifest,
     // so no loading state; parented to the table, which owns its lifetime.
-    new sak::ui::ViewEmptyState(m_ethernetTable, tr("No ethernet adapters in the backup"));
+    new sak::ui::ViewEmptyState(m_ethernetTable, tr("No network adapters in the backup"));
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -1267,7 +1266,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No ethernet configuration data found in backup"));
+    m_summaryLabel->setText(tr("No network adapter settings found in the backup"));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -1328,7 +1327,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     m_loaded = true;
 
     if (configs.isEmpty()) {
-        m_statusLabel->setText(tr("No ethernet configurations found in backup"));
+        m_statusLabel->setText(tr("No network adapter settings found in the backup"));
         return;
     }
 
@@ -1478,6 +1477,12 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
                                        static_cast<int>(ConflictResolution::KeepLarger));
     m_conflictResolutionCombo->setCurrentIndex(1);  // Default to RenameWithSuffix
     perm_layout->addRow(tr("Conflict Resolution:"), m_conflictResolutionCombo);
+    // One width for the two option boxes, the wider one's: each took its own, 205 px and 159 px
+    // (review 4, Y24).
+    const int options_width = std::max(m_permissionModeCombo->sizeHint().width(),
+                                       m_conflictResolutionCombo->sizeHint().width());
+    m_permissionModeCombo->setMinimumWidth(options_width);
+    m_conflictResolutionCombo->setMinimumWidth(options_width);
 
     layout->addWidget(perm_group);
 
@@ -1760,9 +1765,7 @@ void UserProfileRestoreAppRestorePage::setupAppTree(QVBoxLayout* layout) {
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Chocolatey Package")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
-    m_appTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_appTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_appTree->header()->setSectionResizeMode(kTreePackageColumn, QHeaderView::ResizeToContents);
+    sak::fitColumnsToContents(m_appTree->header(), kTreePackageColumn);
     m_appTree->setEnabled(false);
     connect(m_appTree,
             &QTreeWidget::itemChanged,

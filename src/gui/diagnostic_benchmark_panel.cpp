@@ -192,8 +192,10 @@ QWidget* DiagnosticBenchmarkPanel::createDiagnosticsTab() {
 
     auto* content_widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(content_widget);
-    layout->setContentsMargins(
-        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    layout->setContentsMargins(sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium);
     layout->setSpacing(sak::ui::kSpacingDefault);
     // Adopt the empty content shell before adding descendants: setWidget()
     // re-polishes a populated tree and can block first display for seconds.
@@ -219,8 +221,10 @@ void DiagnosticBenchmarkPanel::createBenchmarkTab() {
 
     auto* content_widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(content_widget);
-    layout->setContentsMargins(
-        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    layout->setContentsMargins(sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium,
+                               sak::ui::kMarginMedium);
     layout->setSpacing(sak::ui::kSpacingDefault);
     scroll_area->setWidget(content_widget);
     logDiagnosticStartupPhase(&phase_timer, "benchmark scroll attachment");
@@ -312,8 +316,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
     // Table
     m_smart_table = new QTableWidget(0, SmartColCount, this);
     m_smart_table->setHorizontalHeaderLabels({"Drive", "Type", "Health", "Temp", "Hours", "Wear"});
-    m_smart_table->horizontalHeader()->setStretchLastSection(true);
-    m_smart_table->horizontalHeader()->setSectionResizeMode(SmartColDrive, QHeaderView::Stretch);
+    // The drive's name takes the room; Wear, stretched as the last column, took 378 px beside a
+    // cut "PhysicalDrive1 (NS-PCNVM..." (review 4, Y8).
+    sak::fitColumnsToContents(m_smart_table->horizontalHeader(), SmartColDrive);
     m_smart_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_smart_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_smart_table->setMaximumHeight(sak::kListAreaMaxH);
@@ -404,7 +409,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
-    auto* cpu_scores = new QHBoxLayout();
+    // One result a line, as Disk and Memory list theirs (review 4, Y26).
+    auto* cpu_scores = new QVBoxLayout();
     // Each group shows its measurements in the body weight and one "Score:" line in the score
     // style, as Disk and Memory do: CPU's two thread results were drawn as scores and it had no
     // Score line (reviews 2 and 3, F40). The CPU score is the multi-thread result, which the bar
@@ -414,8 +420,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
 
     m_cpu_multi_score_label = new QLabel("Multi-Thread: --", this);
     cpu_scores->addWidget(m_cpu_multi_score_label);
-
-    cpu_scores->addStretch();
     cpu_layout->addLayout(cpu_scores);
 
     m_cpu_score_label = new QLabel("Score: --", this);
@@ -427,7 +431,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     m_cpu_score_bar->setRange(0, kCpuScoreMax);
     m_cpu_score_bar->setValue(0);
     m_cpu_score_bar->setTextVisible(true);
-    m_cpu_score_bar->setFormat("Score: %v / 3000 (baseline i5-12400 = 1000)");
+    // The bar is the score against its scale, blank until there is one: it read "Score: 0 /
+    // 3000" under "Score: --", and named the baseline again, "980 PRO" beside the line's
+    // "Samsung 980 PRO" (review 4, Y26). The Score line names the baseline.
+    m_cpu_score_bar->setFormat(QStringLiteral("%v / %m"));
+    m_cpu_score_bar->setTextVisible(false);
     m_cpu_score_bar->setAccessibleName(QStringLiteral("CPU Benchmark Score"));
     m_cpu_score_bar->setAccessibleDescription(
         QStringLiteral("Displays the CPU benchmark score out "
@@ -492,7 +500,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     m_disk_score_bar->setRange(0, kBenchmarkScoreMax);
     m_disk_score_bar->setValue(0);
     m_disk_score_bar->setTextVisible(true);
-    m_disk_score_bar->setFormat("Score: %v / 2000 (baseline 980 PRO = 1000)");
+    m_disk_score_bar->setFormat(QStringLiteral("%v / %m"));
+    m_disk_score_bar->setTextVisible(false);
     m_disk_score_bar->setAccessibleName(QStringLiteral("Disk Benchmark Score"));
     m_disk_score_bar->setToolTip(
         QStringLiteral("Disk benchmark score relative to a Samsung 980 PRO baseline"));
@@ -532,7 +541,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     m_mem_score_bar->setRange(0, kBenchmarkScoreMax);
     m_mem_score_bar->setValue(0);
     m_mem_score_bar->setTextVisible(true);
-    m_mem_score_bar->setFormat("Score: %v / 2000 (baseline DDR4-3200 = 1000)");
+    m_mem_score_bar->setFormat(QStringLiteral("%v / %m"));
+    m_mem_score_bar->setTextVisible(false);
     m_mem_score_bar->setAccessibleName(QStringLiteral("Memory Benchmark Score"));
     m_mem_score_bar->setToolTip(
         QStringLiteral("Memory benchmark score relative to a DDR4-3200 baseline"));

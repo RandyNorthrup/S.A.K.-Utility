@@ -269,9 +269,24 @@ void ImageFlasherPanel::setupUi() {
     // and Flash! stay in view at any window height.
     setupNavigationButtons(root_layout);
 
+    connect(
+        m_stackedWidget, &QStackedWidget::currentChanged, this, &ImageFlasherPanel::fitStackToPage);
+
     // Show first page
+    fitStackToPage(kImageSelectionPageIndex);
     m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);
     updateNavigationButtons();
+}
+
+void ImageFlasherPanel::fitStackToPage(int current) {
+    // The stack is as tall as the page it shows. As tall as the tallest page, the target list's
+    // page ran on below the window, the list with no bottom edge (review 4, Y13).
+    for (int index = 0; index < m_stackedWidget->count(); ++index) {
+        const QSizePolicy::Policy policy = index == current ? QSizePolicy::Preferred
+                                                            : QSizePolicy::Ignored;
+        m_stackedWidget->widget(index)->setSizePolicy(policy, policy);
+    }
+    m_stackedWidget->updateGeometry();
 }
 
 void ImageFlasherPanel::setupBackButton(QHBoxLayout* button_layout) {
@@ -280,7 +295,8 @@ void ImageFlasherPanel::setupBackButton(QHBoxLayout* button_layout) {
     m_backButton->setAccessibleName(QStringLiteral("Back"));
     m_backButton->setAccessibleDescription(QStringLiteral("Previous Step"));
     m_backButton->setToolTip(QStringLiteral("Go back to the previous step"));
-    m_backButton->setStyleSheet(ui::kPrimaryButtonStyle);
+    // Back only goes back: secondary, beside the one primary step button (review 4, Y12).
+    m_backButton->setStyleSheet(ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_backButton);
     connect(m_backButton, &QPushButton::clicked, this, [this]() {
         const int current_index = m_stackedWidget->currentIndex();
@@ -301,13 +317,26 @@ void ImageFlasherPanel::setupBackButton(QHBoxLayout* button_layout) {
 void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* page_layout) {
     Q_ASSERT(page_layout);
     Q_ASSERT(m_stackedWidget);
+    // The steps have a row of their own above the Log switch, which every tool's footer holds
+    // alone: Settings, Back and Flash! shared it, and the target list ran under them with no edge
+    // (review 4, Y13). The row stays outside the scrolling page, so Flash! is in view at any
+    // height.
+    auto* button_layout = new QHBoxLayout();
+    const QMargins page = page_layout->contentsMargins();
+    button_layout->setContentsMargins(std::max(ui::kMarginNone, ui::kMarginMedium - page.left()),
+                                      ui::kSpacingTight,
+                                      std::max(ui::kMarginNone, ui::kMarginMedium - page.right()),
+                                      ui::kMarginNone);
+    button_layout->setSpacing(ui::kSpacingMedium);
+    button_layout->addStretch();
+    page_layout->addLayout(button_layout);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    auto* button_layout = addLogFooter(page_layout, m_logToggle);
+    addLogFooter(page_layout, m_logToggle);
 
     m_settingsButton = new QPushButton("Settings", this);
     m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
     m_settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
-    m_settingsButton->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_settingsButton->setStyleSheet(ui::kSecondaryButtonStyle);
     connect(
         m_settingsButton,
         &QPushButton::clicked,
@@ -317,7 +346,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* page_layout) {
             dialog.exec();
         },
         Qt::QueuedConnection);
-    button_layout->insertWidget(1, m_settingsButton);
+    button_layout->insertWidget(0, m_settingsButton);
 
     setupBackButton(button_layout);
 
@@ -1390,13 +1419,9 @@ void ImageFlasherPanel::showConfirmationDialog() {
 
     const QString message = buildFlashConfirmationMessage(drive_details, is_windows_iso);
 
-    auto reply = sak::showWarningLogged(this,
-                                        "Confirm Flash - Data Loss Warning",
-                                        message,
-                                        QMessageBox::Yes | QMessageBox::No,
-                                        QMessageBox::No);
-
-    if (reply != QMessageBox::Yes) {
+    const std::unique_ptr<QMessageBox> confirmation = eraseConfirmation(this, message);
+    sak::logDialogWarning(confirmation->windowTitle(), message, {});
+    if (confirmation->exec() != QMessageBox::Yes) {
         return;
     }
 
@@ -1407,6 +1432,18 @@ void ImageFlasherPanel::showConfirmationDialog() {
     }
 
     beginConfirmedFlash(is_windows_iso);
+}
+
+std::unique_ptr<QMessageBox> ImageFlasherPanel::eraseConfirmation(QWidget* parent,
+                                                                  const QString& message) {
+    auto box = std::make_unique<QMessageBox>(QMessageBox::Warning,
+                                             QStringLiteral("Confirm Flash - Data Loss Warning"),
+                                             message,
+                                             QMessageBox::Yes | QMessageBox::No,
+                                             parent);
+    box->setDefaultButton(QMessageBox::No);
+    box->button(QMessageBox::Yes)->setStyleSheet(sak::ui::kDangerButtonStyle);
+    return box;
 }
 
 void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {

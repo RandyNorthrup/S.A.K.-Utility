@@ -709,9 +709,9 @@ void OstConverterWidget::updateQueueRow(int row, const OstConversionJob& job) {
 }
 
 QString OstConverterWidget::formatBytes(qint64 bytes) {
-    // The shared compact byte style. This class carried its own copy; five existed across
+    // The application's one byte style. This class carried its own copy; five existed across
     // the tree, differing only in which unit got which precision.
-    return sak::formatBytesCompact(bytes);
+    return sak::formatBytes(bytes);
 }
 
 QString OstConverterWidget::progressSummary(const OstConversionResult& result) {

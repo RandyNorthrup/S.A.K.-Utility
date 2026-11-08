@@ -35,7 +35,6 @@ constexpr int kStatusTimeoutLongMs = 5000;
 constexpr int kThreadWaitMs = 5000;
 constexpr int kDefaultScanLevelValue = 1;
 constexpr int kMaxScanLevelValue = 2;
-constexpr int kRecoveredSizeDisplayPrecision = 1;
 
 QString itemsCount(qint64 count) {
     return countOf(count, QStringLiteral("item"), QStringLiteral("items"));
@@ -1280,8 +1279,7 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
         msg += QString(", %1 failed").arg(failed);
     }
     if (bytes_recovered > 0) {
-        const double mb = static_cast<double>(bytes_recovered) / kBytesPerMBf;
-        msg += QString(" (%1 MB recovered)").arg(mb, 0, 'f', kRecoveredSizeDisplayPrecision);
+        msg += QString(" (%1 recovered)").arg(formatBytes(bytes_recovered));
     }
     Q_EMIT statusMessage(msg, kStatusTimeoutLongMs);
 

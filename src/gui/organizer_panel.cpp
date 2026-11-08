@@ -54,7 +54,6 @@ constexpr int kCategoryTableColumnCount = 2;
 constexpr int kProgressMaximum = 100;
 constexpr int kDedupMinSizeMaxKb = 1'000'000;
 constexpr int kDedupThreadCountMax = 64;
-constexpr int kSizeGbPrecision = 2;
 constexpr int kFallbackCpuCoreCount = 4;
 // Upper bound for the on-UI-thread dedup summary walk: a deep recursive tree
 // would otherwise freeze the GUI, so enumeration stops here and the totals are
@@ -93,14 +92,7 @@ DedupScanTotals scanDedupTotals(const QStringList& paths, const bool recursive) 
 }
 
 QString formatDedupBytes(const qint64 bytes) {
-    if (bytes >= sak::kBytesPerGB) {
-        return QString("%1 GB").arg(
-            static_cast<double>(bytes) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
-    }
-    if (bytes >= sak::kBytesPerMB) {
-        return QString("%1 MB").arg(static_cast<double>(bytes) / sak::kBytesPerMBf, 0, 'f', 1);
-    }
-    return QString("%1 KB").arg(static_cast<double>(bytes) / sak::kBytesPerKBf, 0, 'f', 0);
+    return sak::formatBytes(bytes);
 }
 
 struct DedupSettingsDefaults {
@@ -285,10 +277,17 @@ void OrganizerPanel::setupUi() {
         tr("Switch between file organizer, duplicate finder, file explorer, and advanced search"));
     root_layout->addWidget(m_tabs, 1);
 
+    // A message belongs to the tab that sent it. The File Explorer, still listing behind the File
+    // Organizer sub-tab, put "Explorer loaded 32 items" there after the tab change had cleared the
+    // bar (review 4, S22); it speaks only while it shows.
     connect(m_file_explorer_panel,
             &FileManagementExplorerPanel::statusMessage,
             this,
-            &OrganizerPanel::statusMessage);
+            [this](const QString& message, int timeout_ms) {
+                if (m_file_explorer_panel->isVisible()) {
+                    Q_EMIT statusMessage(message, timeout_ms);
+                }
+            });
     connect(m_file_explorer_panel,
             &FileManagementExplorerPanel::progressUpdate,
             this,
@@ -439,13 +438,13 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
     m_target_scan_button->setAccessibleName(tr("Scan Disks"));
     m_target_scan_button->setAccessibleDescription(tr("Scan disk and partition organizer targets"));
-    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_target_scan_button->setStyleSheet(ui::kSecondaryButtonStyle);
     target_row->addWidget(m_target_scan_button);
 
     m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
     m_target_manual_button->setAccessibleName(tr("Add Raw/Image"));
     m_target_manual_button->setAccessibleDescription(tr("Add raw or image organizer target"));
-    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_target_manual_button->setStyleSheet(ui::kSecondaryButtonStyle);
     target_row->addWidget(m_target_manual_button);
     group_layout->addLayout(target_row);
 
@@ -459,7 +458,7 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     m_browse_button = new QPushButton(tr("Browse..."), this);
     m_browse_button->setAccessibleName(QStringLiteral("Browse Directory"));
     m_browse_button->setToolTip(QStringLiteral("Browse for a directory to organize"));
-    m_browse_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_browse_button->setStyleSheet(ui::kSecondaryButtonStyle);
     path_row->addWidget(m_browse_button);
     group_layout->addLayout(path_row);
 
@@ -495,19 +494,19 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
     m_add_category_button = new QPushButton(tr("Add Category"), this);
     m_add_category_button->setAccessibleName(QStringLiteral("Add Category"));
     m_add_category_button->setToolTip(QStringLiteral("Add a new file category row"));
-    m_add_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_add_category_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_remove_category_button = new QPushButton(tr("Remove Selected"), this);
     m_remove_category_button->setAccessibleName(QStringLiteral("Remove Selected"));
     m_remove_category_button->setAccessibleDescription(QStringLiteral("Remove Category"));
     m_remove_category_button->setToolTip(
         QStringLiteral("Remove the selected category from the list"));
-    m_remove_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_remove_category_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_reset_categories_button = new QPushButton(tr("Reset to Defaults"), this);
     m_reset_categories_button->setAccessibleName(QStringLiteral("Reset to Defaults"));
     m_reset_categories_button->setAccessibleDescription(QStringLiteral("Reset Categories"));
     m_reset_categories_button->setToolTip(
         QStringLiteral("Restore the default category-to-extension mappings"));
-    m_reset_categories_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_reset_categories_button->setStyleSheet(ui::kSecondaryButtonStyle);
     btn_row->addWidget(m_add_category_button);
     btn_row->addWidget(m_remove_category_button);
     btn_row->addWidget(m_reset_categories_button);
@@ -529,7 +528,7 @@ QWidget* OrganizerPanel::createOrganizerTab() {
 
     auto* layout = new QVBoxLayout(tab);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     layout->addWidget(createTargetDirectoryGroup());
@@ -630,7 +629,7 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
     settings_btn = new QPushButton(tr("Settings"), this);
     settings_btn->setAccessibleName(QStringLiteral("Organizer Settings"));
     settings_btn->setToolTip(QStringLiteral("Configure collision strategy and preview mode"));
-    settings_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    settings_btn->setStyleSheet(ui::kSecondaryButtonStyle);
     row->addWidget(settings_btn);
     row->addStretch();
 
@@ -647,6 +646,8 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
     m_execute_button->setAccessibleName(QStringLiteral("Organize Files"));
     m_execute_button->setAccessibleDescription(QStringLiteral("Execute Organization"));
     m_execute_button->setToolTip(QStringLiteral("Organize files into category folders"));
+    // The page's one primary button. Scan, Manual, Browse, the category edits and Settings
+    // were primary too, eight strong buttons on one page (review 4, Y12).
     m_execute_button->setStyleSheet(ui::kPrimaryButtonStyle);
     row->addWidget(m_execute_button);
 
@@ -687,15 +688,15 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     m_dedup_add_button->setAccessibleName(QStringLiteral("Add Directory"));
     m_dedup_add_button->setAccessibleDescription(QStringLiteral("Add Scan Directory"));
     m_dedup_add_button->setToolTip(QStringLiteral("Add a directory to the scan list"));
-    m_dedup_add_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_dedup_add_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dedup_remove_button = new QPushButton(tr("Remove Selected"), this);
     m_dedup_remove_button->setAccessibleName(QStringLiteral("Remove Selected Directory"));
     m_dedup_remove_button->setToolTip(QStringLiteral("Remove highlighted directory from the list"));
-    m_dedup_remove_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_dedup_remove_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dedup_clear_button = new QPushButton(tr("Clear All"), this);
     m_dedup_clear_button->setAccessibleName(QStringLiteral("Clear All Directories"));
     m_dedup_clear_button->setToolTip(QStringLiteral("Remove all directories from the scan list"));
-    m_dedup_clear_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_dedup_clear_button->setStyleSheet(ui::kSecondaryButtonStyle);
     btn_row->addWidget(m_dedup_add_button);
     btn_row->addWidget(m_dedup_remove_button);
     btn_row->addWidget(m_dedup_clear_button);
@@ -721,7 +722,7 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
     settings_btn->setToolTip(
         QStringLiteral("Configure minimum file size, recursion,"
                        " and hashing options"));
-    settings_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    settings_btn->setStyleSheet(ui::kSecondaryButtonStyle);
     row->addWidget(settings_btn);
     row->addStretch();
 
@@ -757,7 +758,7 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     scroll_area->setFrameShape(QFrame::NoFrame);
     auto* layout = new QVBoxLayout(tab);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
     layout->addWidget(createScanDirectoriesGroup());
     // Hidden options (managed via Settings dialog)
@@ -914,24 +915,15 @@ void OrganizerPanel::updateDirectorySummary() {
         total_size += entry.size();
     }
 
-    QString size_str;
-    if (total_size >= sak::kBytesPerGB) {
-        size_str = QString("%1 GB").arg(
-            static_cast<double>(total_size) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
-    } else if (total_size >= sak::kBytesPerMB) {
-        size_str =
-            QString("%1 MB").arg(static_cast<double>(total_size) / sak::kBytesPerMBf, 0, 'f', 1);
-    } else {
-        size_str =
-            QString("%1 KB").arg(static_cast<double>(total_size) / sak::kBytesPerKBf, 0, 'f', 0);
-    }
+    const QString size_str = sak::formatBytes(total_size);
 
     const int subdir_count =
         static_cast<int>(dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
-    m_dir_summary_label->setText(tr("%1 files (%2) | %3 subdirectories")
-                                     .arg(entries.size())
-                                     .arg(size_str)
-                                     .arg(subdir_count));
+    m_dir_summary_label->setText(
+        tr("%1 (%2) | %3")
+            .arg(countOf(entries.size(), tr("file"), tr("files")),
+                 size_str,
+                 countOf(subdir_count, tr("subdirectory"), tr("subdirectories"))));
 }
 
 void OrganizerPanel::onBrowseClicked() {
@@ -1643,14 +1635,7 @@ void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& 
 void OrganizerPanel::onDedupResultsReady(const QString& summary,
                                          int duplicate_count,
                                          qint64 wasted_space) {
-    QString size_str;
-    if (wasted_space >= sak::kBytesPerGB) {
-        size_str = QString("%1 GB").arg(
-            static_cast<double>(wasted_space) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
-    } else {
-        size_str = QString("%1 MB").arg(
-            static_cast<double>(wasted_space) / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
-    }
+    const QString size_str = sak::formatBytes(wasted_space);
 
     const QString results_text =
         tr("Found %1, %2 wasted space")

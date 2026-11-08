@@ -860,7 +860,7 @@ private Q_SLOTS:
         item.reportProgress(progress);
         QCOMPARE(item.message(), QStringLiteral("Processing items..."));
         QCOMPARE(item.progressPercentage(), 25);
-        QCOMPARE(item.speedText(), QStringLiteral("500 bytes/s"));
+        QCOMPARE(item.speedText(), QStringLiteral("500 B/s"));
         QCOMPARE(item.currentItemName(), QStringLiteral("a.txt"));
         QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (25%)"));
 
@@ -868,7 +868,7 @@ private Q_SLOTS:
         progress.processed_size = 750;
         progress.size_speed = 750.0;
         item.reportProgress(progress);
-        QCOMPARE(item.message(), QStringLiteral("750 bytes of 1000 bytes processed"));
+        QCOMPARE(item.message(), QStringLiteral("750 B of 1000 B processed"));
         QCOMPARE(item.progressPercentage(), 75);
         QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (75%)"));
         // Both coordinates of both points. Checking only the last x proved the graph advanced

@@ -7,6 +7,7 @@
 #include "sak/actions/generate_system_report_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -24,8 +25,6 @@ namespace {
 
 constexpr int kTextReportRuleWidth = 78;
 constexpr int kDurationDisplayPrecision = 1;
-constexpr int kReportSizeDisplayPrecision = 1;
-constexpr int kStorageDisplayPrecision = 2;
 constexpr int kPercentDisplayPrecision = 1;
 
 // Millisecond resolution (_zzz): two reports generated in the same second would
@@ -191,12 +190,9 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
         result.message =
             QString("System inventory report saved: %1").arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
-        result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
+        result.log = QString("Report saved to: %1\nSize: %2\nDuration: %3 seconds")
                          .arg(filepath)
-                         .arg(static_cast<double>(report_bytes) / sak::kBytesPerKBf,
-                              0,
-                              'f',
-                              kReportSizeDisplayPrecision)
+                         .arg(sak::formatBytes(report_bytes))
                          .arg(static_cast<double>(duration_ms) / kMillisecondsPerSecondF,
                               0,
                               'f',
@@ -589,21 +585,9 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section += QString("  Total: %1 GB\n")
-                       .arg(static_cast<double>(storage.bytesTotal()) / sak::kBytesPerGBf,
-                            0,
-                            'f',
-                            kStorageDisplayPrecision);
-        section += QString("  Free: %1 GB\n")
-                       .arg(static_cast<double>(storage.bytesFree()) / sak::kBytesPerGBf,
-                            0,
-                            'f',
-                            kStorageDisplayPrecision);
-        section += QString("  Available: %1 GB\n")
-                       .arg(static_cast<double>(storage.bytesAvailable()) / sak::kBytesPerGBf,
-                            0,
-                            'f',
-                            kStorageDisplayPrecision);
+        section += QString("  Total: %1\n").arg(sak::formatBytes(storage.bytesTotal()));
+        section += QString("  Free: %1\n").arg(sak::formatBytes(storage.bytesFree()));
+        section += QString("  Available: %1\n").arg(sak::formatBytes(storage.bytesAvailable()));
         const qint64 total_bytes = storage.bytesTotal();
         const double used_percent =
             total_bytes > 0

@@ -414,7 +414,7 @@ void triggerScanAndWait(HANDLE handle, const GUID& guid) {
     bool confirmed = false;
     const DWORD scanStatus = WlanScan(handle, &guid, nullptr, nullptr, nullptr);
     if (scanStatus != ERROR_SUCCESS) {
-        logWarning("WiFi: WlanScan failed ({}); reading the driver's cached BSS list", scanStatus);
+        logWarning("Wi-Fi: WlanScan failed ({}); reading the driver's cached BSS list", scanStatus);
     } else if (registered) {
         const DWORD waited = WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
         if (waited == WAIT_OBJECT_0) {
@@ -422,7 +422,7 @@ void triggerScanAndWait(HANDLE handle, const GUID& guid) {
         } else {
             // WAIT_TIMEOUT / WAIT_FAILED: the completion never signalled, so the BSS
             // list read below may return stale cached results -- surface that.
-            logWarning("WiFi: scan-complete wait did not signal ({}); results may be stale",
+            logWarning("Wi-Fi: scan-complete wait did not signal ({}); results may be stale",
                        waited);
         }
     } else {
@@ -549,7 +549,7 @@ void seedFallbackVendors(QHash<QString, QString>& db) {
             // vendor data path that ships, so seed the bundled built-in set (vendor
             // display is purely cosmetic) -- but surface that the richer file DB was
             // absent instead of silently substituting it.
-            logInfo("WiFi: OUI text database not found; using the built-in vendor set");
+            logInfo("Wi-Fi: OUI text database not found; using the built-in vendor set");
             seedFallbackVendors(table);
         }
         return table;
@@ -599,7 +599,7 @@ bool WiFiAnalyzer::isWiFiAvailable() const {
 
 void WiFiAnalyzer::scan() {
     if (!m_wlanInitialized.load()) {
-        Q_EMIT errorOccurred(QStringLiteral("WiFi adapter not available"));
+        Q_EMIT errorOccurred(QStringLiteral("Wi-Fi adapter not available"));
         Q_EMIT scanComplete({});
         return;
     }
@@ -614,7 +614,7 @@ void WiFiAnalyzer::scan() {
     // (some interface produced data) is still a success.
     if (scanError && networks.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral(
-            "WiFi scan failed (no data from the adapter -- the radio may be off or there is no "
+            "Wi-Fi scan failed (no data from the adapter -- the radio may be off or there is no "
             "wireless interface)"));
         Q_EMIT scanComplete(networks);
         return;
@@ -625,7 +625,7 @@ void WiFiAnalyzer::scan() {
     // data -- scanComplete is emitted below regardless.
     if (t_freshScanUnconfirmed) {
         Q_EMIT errorOccurred(QStringLiteral(
-            "WiFi scan results may be stale: the adapter did not confirm scan completion"));
+            "Wi-Fi scan results may be stale: the adapter did not confirm scan completion"));
     }
 
     Q_EMIT scanComplete(networks);

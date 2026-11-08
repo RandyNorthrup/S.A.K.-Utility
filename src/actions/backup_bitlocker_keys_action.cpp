@@ -86,7 +86,6 @@ constexpr int kVolumeTypeFixedData = 1;
 constexpr int kVolumeTypeRemovableData = 2;
 constexpr int kKeyRetrievalProgressSpan = 40;
 constexpr qsizetype kBitlockerSummaryLineReserve = 14;
-constexpr int kVolumeSizeDisplayPrecision = 2;
 
 /// Length of a bare drive-letter root in native form ("X:\\"): drive letter, ':' and separator.
 constexpr int kDriveRootLength = 3;
@@ -1230,9 +1229,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
             << (vol.volume_metadata_known ? "Available" : "Unavailable") << "\n";
 
         if (vol.volume_size_bytes > 0) {
-            const double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
-            out << "  Volume Size:          "
-                << QString::number(size_gb, 'f', kVolumeSizeDisplayPrecision) << " GB\n";
+            out << "  Volume Size:          " << sak::formatBytes(vol.volume_size_bytes) << "\n";
         }
 
         out << "\n";

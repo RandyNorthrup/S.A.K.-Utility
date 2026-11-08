@@ -269,6 +269,11 @@ void CheckDiskErrorsActionTests::parseDriveScanResult_reportsWhatTheScanReturned
     QCOMPARE(totals.errors, 0);
     QCOMPARE(totals.repairs, 0);
     QVERIFY2(report.contains(QStringLiteral("No errors found")), qPrintable(report));
+    // Review 4 (Y14): Windows' result name stood above the same verdict in words.
+    QVERIFY2(!report.contains(QStringLiteral("ScanNoErrorsFound")), qPrintable(report));
+    QVERIFY2(report.contains(QStringLiteral("Drive C: ") + QChar(0x2713) +
+                             QStringLiteral(" No errors found")),
+             qPrintable(report));
 
     // The case this exists for: errors reported by the scan, no marker file anywhere. The old
     // check read this as clean.

@@ -3,8 +3,8 @@
 <svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
 	 viewBox="0 0 48 48" style="enable-background:new 0 0 48 48;" xml:space="preserve">
 <radialGradient id="SVGID_1_" cx="995.8414" cy="-405.4786" r="25.29" gradientTransform="matrix(0.7071 -0.7071 -0.7071 -0.7071 -966.8606 441.3478)" gradientUnits="userSpaceOnUse">
-	<stop  offset="0.752" style="stop-color:#076CB3"/>
-	<stop  offset="0.825" style="stop-color:#138CD2"/>
+	<stop  offset="0.752" style="stop-color:#2b9be0"/>
+	<stop  offset="0.825" style="stop-color:#2fa3e4"/>
 	<stop  offset="0.865" style="stop-color:#1898DE"/>
 	<stop  offset="1" style="stop-color:#199AE0"/>
 </radialGradient>

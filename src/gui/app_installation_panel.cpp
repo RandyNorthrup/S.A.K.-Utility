@@ -160,8 +160,10 @@ void AppInstallationPanel::setupUi() {
     auto* online_tab = new QWidget(m_tabWidget);
     m_tabWidget->addTab(online_tab, tr("Online Install"));
     auto* online_layout = new QVBoxLayout(online_tab);
-    online_layout->setContentsMargins(
-        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    online_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                      sak::ui::kMarginMedium,
+                                      sak::ui::kMarginMedium,
+                                      sak::ui::kMarginMedium);
     online_layout->setSpacing(sak::ui::kSpacingDefault);
 
     setupUi_searchBar(online_layout);
@@ -207,7 +209,9 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* side_by_side) {
     m_searchButton = new QPushButton(tr("Search"), this);
     m_searchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_searchButton->setToolTip(QStringLiteral("Search the Chocolatey repository"));
-    m_searchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    // One primary button per page, the one that does the page's work (Install All, Build
+    // Offline Bundle); search, list edits and Clear All are secondary (review 4, Y12).
+    m_searchButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     search_row->addWidget(m_searchButton);
     search_layout->addLayout(search_row);
 
@@ -235,7 +239,7 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* side_by_side) {
     m_addToQueueButton->setAccessibleName(QStringLiteral("Add Selected to Queue"));
     m_addToQueueButton->setAccessibleDescription(QStringLiteral("Add to Queue"));
     m_addToQueueButton->setToolTip(QStringLiteral("Add the selected package to the install queue"));
-    m_addToQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_addToQueueButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     search_layout->addWidget(m_addToQueueButton);
 
     side_by_side->addWidget(search_group, 1);
@@ -265,7 +269,7 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
     m_removeFromQueueButton->setEnabled(false);
     m_removeFromQueueButton->setAccessibleName(QStringLiteral("Remove from Queue"));
     m_removeFromQueueButton->setToolTip(QStringLiteral("Remove selected packages from the queue"));
-    applyCompactQueueButton(m_removeFromQueueButton, sak::ui::kCompactPrimaryButtonStyle);
+    applyCompactQueueButton(m_removeFromQueueButton, sak::ui::kCompactSecondaryButtonStyle);
     queue_btn_row->addWidget(m_removeFromQueueButton);
 
     m_clearQueueButton = new QPushButton(tr("Clear All"), this);
@@ -273,7 +277,7 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
     m_clearQueueButton->setAccessibleName(QStringLiteral("Clear All"));
     m_clearQueueButton->setAccessibleDescription(QStringLiteral("Clear Queue"));
     m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
-    applyCompactQueueButton(m_clearQueueButton, sak::ui::kCompactPrimaryButtonStyle);
+    applyCompactQueueButton(m_clearQueueButton, sak::ui::kCompactSecondaryButtonStyle);
     queue_btn_row->addWidget(m_clearQueueButton);
 
     m_installButton = new QPushButton(tr("Install All"), this);
@@ -521,7 +525,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* side_by_side) {
     m_offlineSearchButton = new QPushButton(tr("Search"), this);
     m_offlineSearchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_offlineSearchButton->setToolTip(tr("Search the Chocolatey repository for matching packages"));
-    m_offlineSearchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_offlineSearchButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     search_row->addWidget(m_offlineSearchButton);
     search_layout->addLayout(search_row);
 
@@ -550,7 +554,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* side_by_side) {
     m_offlineAddButton->setToolTip(
         tr("Add the selected search result to the offline deployment list"));
     m_offlineAddButton->setEnabled(false);
-    m_offlineAddButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_offlineAddButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     search_layout->addWidget(m_offlineAddButton);
 
     side_by_side->addWidget(search_group, 1);
@@ -574,14 +578,14 @@ void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* side_by_side
     m_offlineRemoveButton = new QPushButton(tr("Remove"), this);
     m_offlineRemoveButton->setEnabled(false);
     m_offlineRemoveButton->setAccessibleName(QStringLiteral("Remove from List"));
-    m_offlineRemoveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_offlineRemoveButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     list_btn_row->addWidget(m_offlineRemoveButton);
 
     m_offlineClearButton = new QPushButton(tr("Clear All"), this);
     m_offlineClearButton->setEnabled(false);
     m_offlineClearButton->setAccessibleName(QStringLiteral("Clear All"));
     m_offlineClearButton->setAccessibleDescription(QStringLiteral("Clear Offline List"));
-    m_offlineClearButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_offlineClearButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     list_btn_row->addWidget(m_offlineClearButton);
     list_btn_row->addStretch();
 
@@ -698,8 +702,10 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     auto* offline_tab = new QWidget(tabs);
     tabs->addTab(offline_tab, tr("Offline Deploy"));
     auto* offline_layout = new QVBoxLayout(offline_tab);
-    offline_layout->setContentsMargins(
-        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    offline_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                       sak::ui::kMarginMedium,
+                                       sak::ui::kMarginMedium,
+                                       sak::ui::kMarginMedium);
     offline_layout->setSpacing(sak::ui::kSpacingDefault);
 
     setupOfflinePresetRow(offline_layout);

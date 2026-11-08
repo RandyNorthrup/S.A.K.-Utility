@@ -153,6 +153,9 @@ private Q_SLOTS:
     // UI review F46: the Folders pane's right edge was at 267 px with search results listed and at
     // 321 px with a message open, because the Items pane's count text set its narrowest width.
     void theFoldersPaneKeepsItsWidthWhateverTheCountSays();
+    // Review 4 (Y20): the status bar said "3 hits" beside the list's "3 search results", and
+    // "1 hits" for one.
+    void aFinishedSearchCountsResultsAsTheListDoes();
 
 private:
     void openMailbox();
@@ -552,6 +555,15 @@ void EmailInspectorPanelTests::noTextAndNoFilterSearchesNothing() {
     m_panel->m_search_button->click();
     QCOMPARE(m_panel->m_controller->currentState(), EmailInspectorController::State::Idle);
     QVERIFY(!m_panel->m_showing_search_results);
+}
+
+void EmailInspectorPanelTests::aFinishedSearchCountsResultsAsTheListDoes() {
+    m_panel->onSearchComplete(1);
+    QCOMPARE(m_panel->m_status_label->text(), QStringLiteral("Search complete: 1 result"));
+    m_panel->onSearchComplete(3);
+    QCOMPARE(m_panel->m_status_label->text(), QStringLiteral("Search complete: 3 results"));
+    QVERIFY2(m_panel->m_item_count_label->text().startsWith(QStringLiteral("3 search results")),
+             qPrintable(m_panel->m_item_count_label->text()));
 }
 
 // An empty list would read as "none matched". The file cannot hold them, and it says that.

@@ -340,6 +340,7 @@ private Q_SLOTS:
     void aListeningConnectionUsesTheTablesTextColour();
     void everyColumnFitsItsHeaderLabel();
     void aDisconnectedAdapterReadsWhole();
+    void theAdapterTableSpellsWiFi();
     void aFinishedPortScanReplacesItsStartMessage();
     void aOneHopTraceSaysHop();
     void adapterScanRunsInEveryMode_data();
@@ -1062,6 +1063,25 @@ void NetworkDiagnosticPanelTests::everyButtonsNameHoldsItsLabel() {
         QVERIFY2(sak::accessibleNameHoldsLabel(button->accessibleName(), button->text()),
                  qPrintable(button->accessibleName() + QStringLiteral(" for ") + button->text()));
     }
+}
+
+// Review 4 (Y11): the adapter table's Type column read "WiFi". The data keeps the type as it
+// was (exports and the AI tools read it); the table says "Wi-Fi".
+void NetworkDiagnosticPanelTests::theAdapterTableSpellsWiFi() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo adapter;
+    adapter.name = QStringLiteral("Wi-Fi");
+    adapter.adapterType = QStringLiteral("WiFi");
+    adapter.isConnected = true;
+    Q_EMIT controller->adaptersScanComplete({adapter});
+    auto* table = panel.adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr && table->rowCount() == 1);
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("Wi-Fi"));
+    QCOMPARE(sak::adapterTypeLabel(QStringLiteral("Ethernet")), QStringLiteral("Ethernet"));
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

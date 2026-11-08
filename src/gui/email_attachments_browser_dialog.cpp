@@ -832,7 +832,7 @@ void EmailAttachmentsBrowserDialog::surfaceError(const QString& context, const Q
 QString EmailAttachmentsBrowserDialog::formatBytes(qint64 bytes) {
     // GB now renders to two decimals rather than one, matching every other compact caller. That
     // is the only visible change from sharing the formatter, and it is the point of sharing it.
-    return sak::formatBytesCompact(bytes);
+    return sak::formatBytes(bytes);
 }
 
 // Data-driven extension -> category mapping

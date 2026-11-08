@@ -537,9 +537,9 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
     html += QString("<tr><td>Clock Speed</td><td>%1 MHz (max %2 MHz)</td></tr>\n")
                 .arg(inv.cpu.base_clock_mhz)
                 .arg(inv.cpu.max_clock_mhz);
-    html += QString("<tr><td>Cache</td><td>L2: %1 KB | L3: %2 KB</td></tr>\n")
-                .arg(inv.cpu.l2_cache_kb)
-                .arg(inv.cpu.l3_cache_kb);
+    html += QString("<tr><td>Cache</td><td>L2: %1 | L3: %2</td></tr>\n")
+                .arg(formatBytes(static_cast<uint64_t>(inv.cpu.l2_cache_kb) * kBytesPerKB),
+                     formatBytes(static_cast<uint64_t>(inv.cpu.l3_cache_kb) * kBytesPerKB));
 
     html += "<tr><th colspan=\"2\">Memory</th></tr>\n";
     html +=

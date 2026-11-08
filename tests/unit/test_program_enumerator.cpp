@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -22,6 +23,7 @@ class TestProgramEnumerator : public QObject {
 private Q_SLOTS:
     void construction_default();
     void publisherFromSubject_namesThePublisher();
+    void storePackagesAreNamedByTheirManifest();
     void construction_nonCopyable();
     void programs_emptyInitially();
     void measureFolderBytes_emptyPath();
@@ -537,6 +539,35 @@ void TestProgramEnumerator::publisherFromSubject_namesThePublisher() {
     // A desktop program's Publisher is a plain name already.
     QCOMPARE(ProgramEnumerator::publisherFromSubject(QStringLiteral("Mozilla")),
              QStringLiteral("Mozilla"));
+}
+
+// Review 4 (N9): Store-signed packages, whose certificate names the publisher only by an ID, were
+// listed as "CN=5699BA41-022E-4...". The scan reads the manifest's PublisherDisplayName for them.
+void TestProgramEnumerator::storePackagesAreNamedByTheirManifest() {
+    using sak::ProgramEnumerator;
+    const QString store = QStringLiteral("CN=5699BA41-022E-4A1B-9C2D-3E4F5A6B7C8D");
+    QCOMPARE(ProgramEnumerator::packagePublisher(store, QStringLiteral("Spotify AB")),
+             QStringLiteral("Spotify AB"));
+    // A resource reference or nothing at all names no one: the subject is shown as it is.
+    QCOMPARE(ProgramEnumerator::packagePublisher(store, QStringLiteral("ms-resource:Publisher")),
+             store);
+    QCOMPARE(ProgramEnumerator::packagePublisher(store, QString()), store);
+    // A subject with an organisation keeps it.
+    QCOMPARE(ProgramEnumerator::packagePublisher(
+                 QStringLiteral("CN=Microsoft Corporation, O=Microsoft Corporation, C=US"),
+                 QStringLiteral("Microsoft Corporation")),
+             QStringLiteral("Microsoft Corporation"));
+    // Through the scan's parser, as a package arrives.
+    ProgramEnumerator enumerator;
+    QVector<sak::ProgramInfo> results;
+    enumerator.parseUwpPackage(
+        QJsonObject{{QStringLiteral("Name"), QStringLiteral("SpotifyAB.SpotifyMusic")},
+                    {QStringLiteral("Publisher"), store},
+                    {QStringLiteral("PublisherDisplayName"), QStringLiteral("Spotify AB")},
+                    {QStringLiteral("IsFramework"), false}},
+        results);
+    QCOMPARE(results.size(), 1);
+    QCOMPARE(results.first().publisher, QStringLiteral("Spotify AB"));
 }
 
 QTEST_MAIN(TestProgramEnumerator)

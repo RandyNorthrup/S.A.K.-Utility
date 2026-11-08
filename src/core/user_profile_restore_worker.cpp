@@ -1347,7 +1347,7 @@ bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelat
 bool UserProfileRestoreWorker::restoreWifiProfile(const WifiProfileInfo& profile) {
     if (profile.xml_data.isEmpty()) {
         Q_EMIT logMessage(
-            tr("WiFi profile '%1' has no stored XML; cannot restore").arg(profile.profile_name),
+            tr("Wi-Fi profile '%1' has no stored XML; cannot restore").arg(profile.profile_name),
             true);
         return false;
     }
@@ -1361,13 +1361,13 @@ bool UserProfileRestoreWorker::restoreWifiProfile(const WifiProfileInfo& profile
     QTemporaryFile xmlFile(QDir::tempPath() + QStringLiteral("/sak_wlan_XXXXXX.xml"));
     xmlFile.setAutoRemove(true);
     if (!xmlFile.open()) {
-        Q_EMIT logMessage(tr("Failed to stage WiFi profile XML for: %1").arg(profile.profile_name),
+        Q_EMIT logMessage(tr("Failed to stage Wi-Fi profile XML for: %1").arg(profile.profile_name),
                           true);
         return false;
     }
     const QByteArray xmlBytes = profile.xml_data.toUtf8();
     if (xmlFile.write(xmlBytes) != xmlBytes.size()) {
-        Q_EMIT logMessage(tr("Failed to write WiFi profile XML for: %1").arg(profile.profile_name),
+        Q_EMIT logMessage(tr("Failed to write Wi-Fi profile XML for: %1").arg(profile.profile_name),
                           true);
         return false;
     }
@@ -1531,10 +1531,10 @@ void UserProfileRestoreWorker::applyWifiProfiles() {
         if (!profile.selected) {
             continue;
         }
-        Q_EMIT statusUpdate(profile.profile_name, tr("Restoring WiFi profile..."));
+        Q_EMIT statusUpdate(profile.profile_name, tr("Restoring Wi-Fi profile..."));
         if (restoreWifiProfile(profile)) {
             ++m_networkApplied;
-            Q_EMIT logMessage(tr("Restored WiFi profile: %1").arg(profile.profile_name), false);
+            Q_EMIT logMessage(tr("Restored Wi-Fi profile: %1").arg(profile.profile_name), false);
         } else {
             // A selected item that could not be applied fails the result.
             m_networkNotApplied.append(tr("Wi-Fi profile '%1'").arg(profile.profile_name));
@@ -1556,7 +1556,7 @@ void UserProfileRestoreWorker::applyEthernetConfigs() {
             Q_EMIT logMessage(tr("Restored Ethernet configuration: %1").arg(config.adapter_name),
                               false);
         } else {
-            m_networkNotApplied.append(tr("Ethernet settings for '%1'").arg(config.adapter_name));
+            m_networkNotApplied.append(tr("network settings for '%1'").arg(config.adapter_name));
         }
     }
 }

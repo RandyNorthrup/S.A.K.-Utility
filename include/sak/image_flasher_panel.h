@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QWidget>
@@ -131,6 +132,8 @@ private:
     void setupUi();
     /** @brief Create and wire up navigation buttons (Back/Next/Flash/Settings) */
     void setupNavigationButtons(QVBoxLayout* page_layout);
+    /// Sizes the page stack to the page at @p current, not the tallest page.
+    void fitStackToPage(int current);
     void setupBackButton(QHBoxLayout* button_layout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
@@ -232,6 +235,10 @@ private:
     QString findDriveDisplayText(const QString& device_path) const;
     /** @brief Format a byte count as a human-readable string */
     static QString formatFileSize(qint64 bytes);
+    /// The last question before a flash erases its targets: Yes in the danger tone, No the
+    /// default. It offered a blue Yes, while Batch Uninstall's destructive action is red (review
+    /// 4, Y12).
+    static std::unique_ptr<QMessageBox> eraseConfirmation(QWidget* parent, const QString& message);
     /** @brief Format a transfer speed in MB/s */
     QString formatSpeed(double mbps) const;
     /** @brief Run ISO analysis and populate the info group box */

@@ -144,7 +144,7 @@ void WifiManagerPanelTests::qrDialogsPutCancelLastWithOnePrimaryButton() {
     add->click();
     QTableWidget* table = nullptr;
     for (auto* candidate : panel.findChildren<QTableWidget*>()) {
-        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+        if (candidate->accessibleName() == QStringLiteral("Saved Wi-Fi Networks Table")) {
             table = candidate;
         }
     }
@@ -189,7 +189,7 @@ void WifiManagerPanelTests::anEmptyTableSaysHowToFillIt() {
     WifiManagerPanel panel;
     QTableWidget* table = nullptr;
     for (auto* candidate : panel.findChildren<QTableWidget*>()) {
-        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+        if (candidate->accessibleName() == QStringLiteral("Saved Wi-Fi Networks Table")) {
             table = candidate;
         }
     }
@@ -346,7 +346,7 @@ void WifiManagerPanelTests::savedNetworksShowNoRowNumbers() {
     WifiManagerPanel panel;
     QTableWidget* table = nullptr;
     for (QTableWidget* candidate : panel.findChildren<QTableWidget*>()) {
-        if (candidate->accessibleName() == QStringLiteral("Saved WiFi Networks Table")) {
+        if (candidate->accessibleName() == QStringLiteral("Saved Wi-Fi Networks Table")) {
             table = candidate;
         }
     }

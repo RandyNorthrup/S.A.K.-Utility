@@ -3739,7 +3739,7 @@ AppActionResult wifiScan(const QJsonObject&) {
 
     if (!captured || !hard_error.isEmpty()) {
         return {false,
-                hard_error.isEmpty() ? QStringLiteral("WiFi scan did not complete") : hard_error,
+                hard_error.isEmpty() ? QStringLiteral("Wi-Fi scan did not complete") : hard_error,
                 {}};
     }
 
@@ -3768,7 +3768,7 @@ AppActionResult wifiScan(const QJsonObject&) {
                             utilization.size() > channels.size()}};
     return {
         true,
-        QStringLiteral("WiFi scan: %1 found")
+        QStringLiteral("Wi-Fi scan: %1 found")
             .arg(countOf(networks.size(), QStringLiteral("network"), QStringLiteral("networks"))),
         data};
 }
@@ -3783,7 +3783,7 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
         scanAllWifiProfiles(nullptr, &scan_ok, /*include_xml=*/false);
     if (!scan_ok) {
         return {false,
-                QStringLiteral("Could not enumerate WiFi profiles (WLAN AutoConfig service "
+                QStringLiteral("Could not enumerate Wi-Fi profiles (WLAN AutoConfig service "
                                "unavailable, no wireless adapter, or netsh failed)"),
                 {}};
     }
@@ -3804,8 +3804,8 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
     return {true,
             QStringLiteral("Found %1")
                 .arg(countOf(profiles.size(),
-                             QStringLiteral("saved WiFi profile"),
-                             QStringLiteral("saved WiFi profiles"))),
+                             QStringLiteral("saved Wi-Fi profile"),
+                             QStringLiteral("saved Wi-Fi profiles"))),
             data};
 }
 
@@ -3888,7 +3888,7 @@ AppActionResult generateWifiSetupScript(const QJsonObject& args) {
         embeds_password
             ? QStringLiteral(
                   "Save as a .cmd and run as Administrator. It adds the WLAN profile then "
-                  "connects; the script contains the WiFi password in plain text.")
+                  "connects; the script contains the Wi-Fi password in plain text.")
             : QStringLiteral(
                   "Save as a .cmd and run as Administrator. It adds the WLAN profile then "
                   "connects.");
@@ -3901,7 +3901,7 @@ AppActionResult generateWifiSetupScript(const QJsonObject& args) {
                            {QStringLiteral("script"), script},
                            {QStringLiteral("note"), note}};
     return {true,
-            QStringLiteral("Built a Windows WiFi setup script for '%1'").arg(clampLine(ssid)),
+            QStringLiteral("Built a Windows Wi-Fi setup script for '%1'").arg(clampLine(ssid)),
             data};
 }
 
@@ -3923,7 +3923,7 @@ QJsonObject generateWifiSetupScriptParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("ssid"), strProp(QStringLiteral("Network name (SSID) to connect to"))},
         {QStringLiteral("password"),
-         strProp(QStringLiteral("WiFi passphrase (omit/empty for an open network)"))},
+         strProp(QStringLiteral("Wi-Fi passphrase (omit/empty for an open network)"))},
         {QStringLiteral("security"), security_prop},
         {QStringLiteral("hidden"), hidden_prop}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
@@ -5227,17 +5227,17 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
         auditFirewall);
 
     add(makeDescriptor(QStringLiteral("network.wifi_scan"),
-                       QStringLiteral("Scan WiFi networks"),
-                       QStringLiteral("Scan for nearby WiFi networks with signal/channel/security "
+                       QStringLiteral("Scan Wi-Fi networks"),
+                       QStringLiteral("Scan for nearby Wi-Fi networks with signal/channel/security "
                                       "details and channel-utilization analysis"),
                        QStringLiteral("network"),
                        noParamsSchema()),
         wifiScan);
 
     add(makeDescriptor(QStringLiteral("network.list_wifi_profiles"),
-                       QStringLiteral("List saved WiFi profiles"),
+                       QStringLiteral("List saved Wi-Fi profiles"),
                        QStringLiteral(
-                           "Enumerate the machine's saved WiFi profiles (name + security "
+                           "Enumerate the machine's saved Wi-Fi profiles (name + security "
                            "type); read-only, no key material exposed"),
                        QStringLiteral("network"),
                        noParamsSchema()),
@@ -5245,7 +5245,7 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
 
     add(makeDescriptor(
             QStringLiteral("network.generate_wifi_setup_script"),
-            QStringLiteral("Generate a WiFi setup script"),
+            QStringLiteral("Generate a Wi-Fi setup script"),
             QStringLiteral(
                 "Build a Windows .cmd that adds a WLAN profile and connects to a network "
                 "(returns the script text; does NOT run it or change any settings)"),

@@ -65,6 +65,7 @@
 #include "sak/smart_disk_analyzer.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/window_fitted_combo_box.h"
 #include "sak/windows_path_policy.h"
 
 #include <QAbstractItemView>
@@ -840,14 +841,10 @@ QString fromStringView(std::string_view value) {
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
 
+// The application's byte style: the integer division here printed "(3 KB)" beside "(527 B)"
+// (review 4, Y10).
 QString compactByteCount(qint64 bytes) {
-    if (bytes >= sak::kBytesPerMB) {
-        return QStringLiteral("%1 MB").arg(bytes / sak::kBytesPerMB);
-    }
-    if (bytes >= sak::kBytesPerKB) {
-        return QStringLiteral("%1 KB").arg(bytes / sak::kBytesPerKB);
-    }
-    return QStringLiteral("%1 B").arg(bytes);
+    return sak::formatBytes(bytes);
 }
 
 void emitPrefixedLogLines(const std::function<void(const QString&)>& emit_line,
@@ -3523,9 +3520,10 @@ QStringList workflowPhaseLines(const ai::WorkflowTemplate& workflow) {
     return phases;
 }
 
+// The pane's own title names the workflow; the document starts at its first section. Both said
+// "Windows Update Repair", one above the other (review 4, Y25).
 QString workflowDetailsMarkdown(const ai::WorkflowTemplate& workflow) {
     QStringList lines;
-    lines << QStringLiteral("# %1").arg(workflow.title) << QString();
     appendWorkflowTextSection(&lines,
                               QStringLiteral("Required Inputs"),
                               workflowInputLines(workflow));
@@ -3584,9 +3582,10 @@ QScrollArea* createScrollArea(QWidget* parent, QWidget* content) {
     return scroll;
 }
 
-// The popup takes the width its longest entry needs (QComboBox measures its items) and no fixed
-// minimum: a 420 px minimum ran the access-mode list to x=1358 in a 1280 px window for entries
-// about 170 px long (review 3, F21).
+// The popup takes the width its longest entry needs and no fixed minimum: a 420 px minimum ran
+// the access-mode list to x=1358 in a 1280 px window for entries about 170 px long (review 3,
+// F21). The combos are WindowFittedComboBox, which opens the list at its widest entry's width
+// and inside the window (review 4, RG4).
 void configureReadableCombo(QComboBox* combo,
                             int minimum_contents_length = kReadableComboDefaultContentsLength) {
     if (combo == nullptr) {
@@ -3946,8 +3945,10 @@ QString AiAssistantPanel::statusDetails() const {
                        : tr("0 total");
     const QString phase = m_runState.phase_id.isEmpty() ? tr("none") : m_runState.phase_id;
     const QString context = contextWindowStatusText();
-    return tr("AI: %1 | Key: %2 | Access: %3 | Phase: %4 | Tokens: %5 / %6 | Context: %7 | "
-              "Tools: %8 (%9 active) | Agents: %10/%11")
+    // The last turn's and the session's counts each say which they are: "Tokens: 0 in / 0 cached /
+    // 0 out / 0 reasoning / 0 total / 0 total (0 in, 0 out)" ran them together (review 4, Y15).
+    return tr("AI: %1 | Key: %2 | Access: %3 | Phase: %4 | Last turn: %5 | Session: %6 | "
+              "Context: %7 | Tools: %8 (%9 active) | Agents: %10/%11")
         .arg(task, key, access, phase, turn, session)
         .arg(context)
         .arg(m_toolCallsThisSession)
@@ -4209,7 +4210,7 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
     layout->addWidget(makeRailTitle(pane, tr("Session")));
     layout->addWidget(makeFieldLabel(pane, tr("Chat session")));
 
-    m_sessionCombo = new QComboBox(pane);
+    m_sessionCombo = new WindowFittedComboBox(pane);
     configureReadableCombo(m_sessionCombo, kSessionComboContentsLength);
     m_sessionCombo->setToolTip(tr("Switch between saved AI chat sessions"));
     setAccessible(m_sessionCombo, tr("AI session"), tr("Open or switch AI chat session"));
@@ -4267,7 +4268,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     layout->addWidget(makeRailTitle(pane, tr("GPT Assistant")));
 
     layout->addWidget(makeFieldLabel(pane, tr("Model")));
-    m_modelCombo = new QComboBox(pane);
+    m_modelCombo = new WindowFittedComboBox(pane);
     configureReadableCombo(m_modelCombo);
     // Restricted to the supported GPT-5.6 line (sol/terra/luna); non-editable so
     // no other model can be typed. The API-fetched list is filtered to match in
@@ -4287,7 +4288,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     refreshPromptTemplates();
 
     layout->addWidget(makeFieldLabel(pane, tr("Reasoning effort")));
-    m_reasoningEffortCombo = new QComboBox(pane);
+    m_reasoningEffortCombo = new WindowFittedComboBox(pane);
     configureReadableCombo(m_reasoningEffortCombo, kReasoningComboContentsLength);
     m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
     m_reasoningEffortCombo->setCurrentIndex(1);
@@ -4300,7 +4301,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
 
 void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane) {
     layout->addWidget(makeFieldLabel(pane, tr("Workflow")));
-    m_promptTemplateCombo = new QComboBox(pane);
+    m_promptTemplateCombo = new WindowFittedComboBox(pane);
     configureReadableCombo(m_promptTemplateCombo, kWorkflowComboContentsLength);
     const QString picker_help =
         tr("Choose a multi-step workflow. The list shows category, job name, and phase count.");
@@ -4427,7 +4428,7 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
     layout->addWidget(makeRailTitle(pane, tr("Access")));
 
     layout->addWidget(makeFieldLabel(pane, tr("Local tool access")));
-    m_accessModeCombo = new QComboBox(pane);
+    m_accessModeCombo = new WindowFittedComboBox(pane);
     configureReadableCombo(m_accessModeCombo);
     m_accessModeCombo->addItem(tr("Chat and Research"),
                                static_cast<int>(ai::AiAccessMode::ChatAndResearch));

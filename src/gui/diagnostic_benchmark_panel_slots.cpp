@@ -320,6 +320,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     m_smart_table->setRowCount(static_cast<int>(reports.size()));
     QStringList warnings_list;
     m_smart_hottest_drive_celsius = 0.0;
+    m_smart_scanned = true;
 
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
@@ -363,9 +364,12 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
 
     m_cpu_single_score_label->setText(QString("Single-Thread: %1").arg(result.single_thread_score));
     m_cpu_multi_score_label->setText(QString("Multi-Thread: %1").arg(result.multi_thread_score));
-    m_cpu_score_label->setText(QString("Score: %1").arg(result.multi_thread_score));
+    m_cpu_score_label->setText(QString("Score: %1 (baseline i5-12400 = %2)")
+                                   .arg(result.multi_thread_score)
+                                   .arg(kReferenceBenchmarkScore));
 
     m_cpu_score_bar->setValue(result.multi_thread_score);
+    m_cpu_score_bar->setTextVisible(true);
 
     const double baseline_pct = result.multi_thread_score > 0 ? (result.multi_thread_score / 10.0)
                                                               : 0.0;
@@ -448,11 +452,12 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
                                       .arg(result.avg_write_latency_us, 0, 'f', 1)
                                       .arg(result.p99_write_latency_us, 0, 'f', 1));
 
-    m_disk_score_label->setText(QString("Score: %1 (Samsung 980 PRO = %2)")
+    m_disk_score_label->setText(QString("Score: %1 (baseline Samsung 980 PRO = %2)")
                                     .arg(result.overall_score)
                                     .arg(kReferenceBenchmarkScore));
 
     m_disk_score_bar->setValue(result.overall_score);
+    m_disk_score_bar->setTextVisible(true);
 
     logMessage(QString("Disk benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Disk benchmark complete", sak::kTimerStatusMessageMs);
@@ -481,17 +486,20 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
                                        .arg(result.write_bandwidth_gbps, 0, 'f', 1)
                                        .arg(result.copy_bandwidth_gbps, 0, 'f', 1));
 
-    m_mem_latency_label->setText(QString("Random Latency: %1 ns | Alloc Stress: %2 ops/s | "
-                                         "Max Contiguous: %3 MB")
-                                     .arg(result.random_latency_ns, 0, 'f', 1)
-                                     .arg(result.alloc_dealloc_ops_per_sec, 0, 'f', 0)
-                                     .arg(result.max_contiguous_alloc_mb));
+    m_mem_latency_label->setText(
+        QString("Random Latency: %1 ns | Alloc Stress: %2 ops/s | "
+                "Max Contiguous: %3")
+            .arg(result.random_latency_ns, 0, 'f', 1)
+            .arg(result.alloc_dealloc_ops_per_sec, 0, 'f', 0)
+            .arg(sak::formatBytes(static_cast<uint64_t>(result.max_contiguous_alloc_mb) *
+                                  sak::kBytesPerMB)));
 
-    m_mem_score_label->setText(QString("Score: %1 (DDR4-3200 dual-channel = %2)")
+    m_mem_score_label->setText(QString("Score: %1 (baseline DDR4-3200 dual-channel = %2)")
                                    .arg(result.overall_score)
                                    .arg(kReferenceBenchmarkScore));
 
     m_mem_score_bar->setValue(result.overall_score);
+    m_mem_score_bar->setTextVisible(true);
 
     logMessage(QString("Memory benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
@@ -718,7 +726,7 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
         showSuiteStep(i,
                       kSuitePendingMark,
                       m_suite_step_names[i],
-                      sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
+                      sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -933,6 +941,20 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
         return;
     }
     render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp, "disk");
+    if (!disk_found) {
+        sayWhetherTheDriveWasRead();
+    }
+}
+
+void DiagnosticBenchmarkPanel::sayWhetherTheDriveWasRead() {
+    // Windows' counters seldom report a drive, but its SMART data does. The row said "not
+    // reported by this PC" beside drives the SMART table showed at 42-54 degrees.
+    const QString not_reported = ThermalMonitor::unavailableReason({}, QStringLiteral("disk"));
+    if (!m_smart_scanned &&
+        ThermalMonitor::unavailableReason(m_thermal_statuses, QStringLiteral("disk")) ==
+            not_reported) {
+        m_thermal_disk_bar->setFormat(tr("N/A - not read yet; Scan SMART reads it"));
+    }
 }
 
 // ============================================================================

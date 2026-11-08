@@ -33,8 +33,6 @@ constexpr int kExtractionWorkspaceMultiplier = 2;
 constexpr int kSplitStepTimeoutMs = 45 * 60 * 1000;
 constexpr qsizetype kSplitErrorTailChars = 300;
 constexpr qsizetype kFat32LabelMaxChars = 11;
-constexpr int kCapacityDisplayPrecision = 2;
-constexpr int kProgressDisplayPrecision = 1;
 constexpr int kExtractProgressStart = 15;
 constexpr int kExtractProgressSpan = 35;
 // The split, after the extraction and before the 60% of a verified extraction: taking the image
@@ -214,8 +212,8 @@ bool WindowsUSBCreator::copyISO_splitInstallImage(const QString& sevenZipPath,
     const QStorageInfo space(QDir::tempPath());
     if (!work.isValid() ||
         space.bytesAvailable() < kExtractionWorkspaceMultiplier * m_isoSizeBytes) {
-        setError(QStringLiteral("Splitting install.wim needs about %1 GB free in %2")
-                     .arg(kExtractionWorkspaceMultiplier * m_isoSizeBytes / sak::kBytesPerGB)
+        setError(QStringLiteral("Splitting install.wim needs about %1 free in %2")
+                     .arg(sak::formatBytes(kExtractionWorkspaceMultiplier * m_isoSizeBytes))
                      .arg(QDir::toNativeSeparators(QDir::tempPath())));
         sak::logError(m_lastError.toStdString());
         return false;
@@ -453,28 +451,14 @@ bool WindowsUSBCreator::copyISO_checkDiskSpace(const QString& cleanDest,
     const qint64 requiredSpace = isoSize * kExtractionWorkspaceMultiplier;
 
     if (availableSpace < requiredSpace) {
-        setError(QString("Insufficient disk space: need %1 GB, have %2 GB")
-                     .arg(static_cast<double>(requiredSpace) / sak::kBytesPerGBf,
-                          0,
-                          'f',
-                          kCapacityDisplayPrecision)
-                     .arg(static_cast<double>(availableSpace) / sak::kBytesPerGBf,
-                          0,
-                          'f',
-                          kCapacityDisplayPrecision));
+        setError(QString("Insufficient disk space: need %1, have %2")
+                     .arg(sak::formatBytes(requiredSpace), sak::formatBytes(availableSpace)));
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
-    sak::logInfo(QString("Disk space check: %1 GB available, %2 GB required")
-                     .arg(static_cast<double>(availableSpace) / sak::kBytesPerGBf,
-                          0,
-                          'f',
-                          kCapacityDisplayPrecision)
-                     .arg(static_cast<double>(requiredSpace) / sak::kBytesPerGBf,
-                          0,
-                          'f',
-                          kCapacityDisplayPrecision)
+    sak::logInfo(QString("Disk space check: %1 available, %2 required")
+                     .arg(sak::formatBytes(availableSpace), sak::formatBytes(requiredSpace))
                      .toStdString());
     return true;
 }
@@ -613,17 +597,12 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
     lastProgressPercent = totalProgress;
     Q_EMIT progressUpdated(totalProgress);
 
-    const double processedMB = static_cast<double>(processedBytes) / sak::kBytesPerMBf;
-    const double totalMB = static_cast<double>(totalBytes) / sak::kBytesPerMBf;
-
-    Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)")
-                             .arg(processedMB, 0, 'f', kProgressDisplayPrecision)
-                             .arg(totalMB, 0, 'f', kProgressDisplayPrecision)
+    Q_EMIT statusChanged(QString("Extracting Windows files... %1 / %2 (%3%)")
+                             .arg(sak::formatBytes(processedBytes), sak::formatBytes(totalBytes))
                              .arg(extractPercent));
 
-    sak::logInfo(QString("Extraction progress: %1 MB / %2 MB (%3%)")
-                     .arg(processedMB, 0, 'f', kProgressDisplayPrecision)
-                     .arg(totalMB, 0, 'f', kProgressDisplayPrecision)
+    sak::logInfo(QString("Extraction progress: %1 / %2 (%3%)")
+                     .arg(sak::formatBytes(processedBytes), sak::formatBytes(totalBytes))
                      .arg(extractPercent)
                      .toStdString());
 }

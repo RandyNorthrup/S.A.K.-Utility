@@ -22,7 +22,6 @@
 namespace sak {
 
 namespace {
-constexpr int kProfileSizeDisplayPrecision = 1;
 // permissionMode combo index (built in enum order) that maps to AssignToDestination.
 constexpr int kPermissionModeIndexAssignToDestination = 2;
 
@@ -365,9 +364,7 @@ void UserProfileBackupSelectUsersPage::populateTable() {
         // Size estimate
         QString size_text = tr("Calculating...");
         if (user.total_size_estimated > 0) {
-            const double size_gb = static_cast<double>(user.total_size_estimated) /
-                                   sak::kBytesPerGBf;
-            size_text = QString("%1 GB").arg(size_gb, 0, 'f', kProfileSizeDisplayPrecision);
+            size_text = sak::formatBytes(user.total_size_estimated);
         }
         auto* size_item = new QTableWidgetItem(size_text);
         size_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -417,14 +414,12 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
         }
     }
 
-    const double total_gb = static_cast<double>(total_size_bytes) / sak::kBytesPerGBf;
-
     if (selected_count == 0) {
         m_summaryLabel->setText(tr("No users selected"));
     } else {
-        m_summaryLabel->setText(tr("%1 selected | Estimated total size: %2 GB")
-                                    .arg(countOf(selected_count, tr("user"), tr("users")))
-                                    .arg(total_gb, 0, 'f', 1));
+        m_summaryLabel->setText(tr("%1 selected | Estimated total size: %2")
+                                    .arg(countOf(selected_count, tr("user"), tr("users")),
+                                         sak::formatBytes(total_size_bytes)));
     }
 
     // Notify wizard that completion state may have changed

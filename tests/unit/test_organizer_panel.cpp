@@ -4,7 +4,9 @@
 /// @file test_organizer_panel.cpp
 /// @brief The File Organizer's two buttons do what they say, whatever was pressed before.
 
+#include "sak/file_management_explorer_panel.h"
 #include "sak/organizer_panel.h"
+#include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -16,7 +18,9 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTimer>
@@ -109,7 +113,53 @@ private Q_SLOTS:
     void previewMovesNothingAndOrganizeMovesEverything();
     void aFileThatWillNotMoveIsListedWithWhatDidMove();
     void thereIsNoPreviewModeLeftToForget();
+    void theHiddenExplorerKeepsItsStatusToItself();
+    void eachPageHasOnePrimaryButton();
 };
+
+// Review 4 (Y12): File Organizer had eight primary buttons (Scan, Manual, Browse, the category
+// edits, Settings and Organize Files). Each page's one primary button does the page's work.
+void OrganizerPanelTests::eachPageHasOnePrimaryButton() {
+    sak::OrganizerPanel panel;
+    auto* tabs = panel.findChild<QTabWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    QVERIFY(tabs != nullptr);
+    for (int index = 0; index < 2; ++index) {  // File Organizer, Duplicate Finder
+        QStringList primary;
+        for (const auto* button : tabs->widget(index)->findChildren<QPushButton*>()) {
+            if (button->styleSheet() == sak::ui::kPrimaryButtonStyle) {
+                primary.append(button->text());
+            }
+        }
+        QVERIFY2(primary.size() == 1,
+                 qPrintable(tabs->tabText(index) + QStringLiteral(": ") +
+                            primary.join(QStringLiteral(", "))));
+    }
+}
+
+// Review 4 (S22): the File Explorer, listing behind the File Organizer sub-tab, put "Explorer
+// loaded 32 items" in the status bar there after the tab change had cleared it.
+void OrganizerPanelTests::theHiddenExplorerKeepsItsStatusToItself() {
+    sak::OrganizerPanel panel;
+    panel.resize(1100, 700);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    auto* tabs = panel.findChild<QTabWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    auto* explorer = panel.findChild<sak::FileManagementExplorerPanel*>();
+    QVERIFY(tabs != nullptr && explorer != nullptr);
+    QSignalSpy spy(&panel, &sak::OrganizerPanel::statusMessage);
+    tabs->setCurrentIndex(0);  // File Organizer
+    QCoreApplication::processEvents();
+    Q_EMIT explorer->statusMessage(QStringLiteral("Explorer loaded 32 items"), 3000);
+    for (const auto& call : spy) {
+        QVERIFY2(call.at(0).toString() != QStringLiteral("Explorer loaded 32 items"),
+                 "the hidden explorer's message reached the status bar");
+    }
+    tabs->setCurrentWidget(explorer);
+    QCoreApplication::processEvents();
+    spy.clear();
+    Q_EMIT explorer->statusMessage(QStringLiteral("Explorer loaded 32 items"), 3000);
+    QCOMPARE(spy.size(), 1);
+}
 
 // Organize Files used to preview too, until a tick box in Settings was turned off, and pressing
 // Preview turned it back on. Pressing the two in this order is exactly what the old page did wrong.

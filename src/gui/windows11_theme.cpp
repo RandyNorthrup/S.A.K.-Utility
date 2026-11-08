@@ -73,7 +73,8 @@ QString themeBaseAndChromeStyles() {
         .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderSubtleAlpha))
         .arg(colorWithAlpha(kColorPrimary, kSelectionSubtleAlpha))
         .arg(colorWithAlpha(kColorBgWhite, kChromeMenuAlpha))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionSoftAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kSelectionSoftAlpha))
+        .arg(QString::fromLatin1(kColorTextMuted));
 }
 
 QString themeTabAndButtonStyles() {
@@ -206,7 +207,8 @@ QString darkBaseChromeStyles() {
         .arg(QString::fromLatin1(kColorDarkBgChrome))
         .arg(QString::fromLatin1(kColorDarkBgPanel))
         .arg(QString::fromLatin1(kColorDarkBorderDefault))
-        .arg(QString::fromLatin1(kColorDarkBgHover));
+        .arg(QString::fromLatin1(kColorDarkBgHover))
+        .arg(QString::fromLatin1(kColorDarkTextSecondary));
 }
 
 QString darkTabAndInputStyles() {

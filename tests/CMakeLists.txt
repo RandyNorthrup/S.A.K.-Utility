@@ -7202,6 +7202,16 @@ add_test(NAME test_plural_placeholders
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_plural_placeholders.py")
 set_tests_properties(test_plural_placeholders PROPERTIES TIMEOUT 60)
 
+add_test(NAME test_one_byte_format
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_one_byte_format.py")
+set_tests_properties(test_one_byte_format PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_user_text_spelling
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_text_spelling.py")
+set_tests_properties(test_user_text_spelling PROPERTIES TIMEOUT 60)
+
 add_test(NAME test_clang_tidy_naming_gate
          COMMAND "${SAK_PYTHON_EXECUTABLE}"
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
@@ -7284,7 +7294,8 @@ set(_sak_label_lists
 set(_sak_labels_product
     test_browser_extension_pure test_pack_extension test_register_native_host
     test_sak_apfs_writer_cli test_sak_hfs_writer_cli test_release_binary_test_hooks
-    test_single_instance_app test_plural_placeholders
+    test_single_instance_app test_plural_placeholders test_one_byte_format
+    test_user_text_spelling
     test_partition_image_volume_lock_whole_disk
     test_partition_image_volume_lock_selected_partition
     test_partition_image_volume_lock_selected_mbr_unpinned_guid

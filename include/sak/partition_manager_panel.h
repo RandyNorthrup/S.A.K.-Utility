@@ -347,6 +347,10 @@ private:
 /// The names of @p rows (name, bytes) in the order the space analyzer's table shows them.
 [[nodiscard]] QStringList partitionSpaceAnalyzerTableOrderForTest(
     const QVector<QPair<QString, uint64_t>>& rows);
+/// Whether the space analyzer's table hides its Type column for rows of @p types.
+[[nodiscard]] bool partitionSpaceAnalyzerTypeColumnHiddenForTest(const QStringList& types);
+/// The Copy Partition wizard's target size: a size, or what a target with none takes.
+[[nodiscard]] QString partitionCopyTargetSizeTextForTest(uint64_t target_size);
 // Test seam for the Quick Partition size logic: exposes the pure size-derivation and validity
 // helpers so the fail-closed handling of malformed custom sizes and the overflow-safe total can be
 // unit tested without driving the full modal flow.

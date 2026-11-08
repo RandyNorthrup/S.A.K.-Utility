@@ -197,7 +197,7 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
     // output (powershell blocked, GetTempFileName throws): without this the script would run an
     // ELEVATED write and delete against the attacker-chosen path.
     script += "setlocal\r\n";
-    script += "echo S.A.K. Utility - WiFi Network Setup Script\r\n";
+    script += "echo S.A.K. Utility - Wi-Fi Network Setup Script\r\n";
     script += "echo Network: " + safe_ssid + "\r\n";
     script += "echo.\r\n";
     script += "set \"PROFILE_XML=\"\r\n";
@@ -228,7 +228,7 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
     // failure and success paths, so the credentials do not linger in %TEMP%.
     script += "if %errorlevel% neq 0 (\r\n";
     script +=
-        "    echo Failed to add WiFi profile."
+        "    echo Failed to add Wi-Fi profile."
         " Run as Administrator.\r\n";
     script += "    del \"%PROFILE_XML%\" 2>nul\r\n";
     script += "    pause\r\n";
@@ -259,17 +259,17 @@ QString buildWifiSetupScriptWindows(const QString& ssid,
     // Fail closed: an empty or unsafe SSID yields no script rather than an injectable one.
     if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
         sak::logWarning(
-            "Refusing to build WiFi script: SSID is empty or contains unsafe characters");
+            "Refusing to build Wi-Fi script: SSID is empty or contains unsafe characters");
         return {};
     }
     if (!ssidWithinByteLimit(ssid)) {
-        sak::logWarning("Refusing to build WiFi script: SSID exceeds the 32-byte WLAN limit");
+        sak::logWarning("Refusing to build Wi-Fi script: SSID exceeds the 32-byte WLAN limit");
         return {};
     }
     const std::optional<WlanAuthConfig> auth = resolveWlanAuth(security);
     if (!auth) {
         sak::logWarning(
-            "Refusing to build WiFi script: enterprise/802.1X security is not supported");
+            "Refusing to build Wi-Fi script: enterprise/802.1X security is not supported");
         return {};
     }
     const QString xml = buildWlanXmlContent(ssid, password, *auth, hidden);
@@ -302,7 +302,7 @@ static std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
     const std::optional<WlanAuthConfig> auth = resolveWlanAuth(security);
     if (!auth) {
         error =
-            QStringLiteral("Enterprise/802.1X WiFi security is not supported by this connector");
+            QStringLiteral("Enterprise/802.1X Wi-Fi security is not supported by this connector");
     }
     return auth;
 }

@@ -3457,7 +3457,7 @@ QJsonObject connectWifiParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("ssid"), stringProp(QStringLiteral("Network name (SSID) to connect to"))},
         {QStringLiteral("password"),
-         stringProp(QStringLiteral("WiFi passphrase (omit/empty for an open network)"))},
+         stringProp(QStringLiteral("Wi-Fi passphrase (omit/empty for an open network)"))},
         {QStringLiteral("security"), security_prop},
         {QStringLiteral("hidden"), hidden_prop}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
@@ -3572,8 +3572,8 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     // + association, no data loss) and NOT catastrophic; the panel gate still fires (chat refuses).
     AppActionDescriptor connect = mutatingDescriptor(
         QStringLiteral("network.connect_wifi"),
-        QStringLiteral("Connect to a WiFi network"),
-        QStringLiteral("Install a WLAN profile and connect to a WiFi network now (netsh); needs "
+        QStringLiteral("Connect to a Wi-Fi network"),
+        QStringLiteral("Install a WLAN profile and connect to a Wi-Fi network now (netsh); needs "
                        "administrator rights"),
         QStringLiteral("network"));
     connect.params_schema = connectWifiParamsSchema();

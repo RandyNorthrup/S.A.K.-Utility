@@ -189,6 +189,10 @@ private:
     /// @brief Append a timestamped message to the log viewer
     void logMessage(const QString& message);
 
+    /// The drive row's bar when no counter reported a drive: until a SMART scan has run the
+    /// drive has not been read, which is not the same as this PC not reporting it (review 4, Y23).
+    void sayWhetherTheDriveWasRead();
+
     /// @brief Populate disk drive combo from hardware inventory storage data
     void populateDiskDriveCombo(const HardwareInventory& inventory);
 
@@ -321,6 +325,8 @@ private:
     /// The hottest drive temperature the last SMART scan read, or 0: a drive Windows' counters
     /// do not report may still report it over SMART.
     double m_smart_hottest_drive_celsius{0.0};
+    /// A SMART scan has run this session, so a drive with no temperature was read, not skipped.
+    bool m_smart_scanned{false};
 
     // -- Full Suite Widgets --------------------------------------
     /// Each step's mark (pending, running, done, skipped) in a column of one width, and its name

@@ -3,6 +3,7 @@
 
 #include "sak/file_explorer_item_model.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 
 #include <QBrush>
@@ -511,20 +512,7 @@ QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry
 }
 
 QString FileExplorerItemModel::sizeText(const uint64_t bytes) {
-    constexpr int kSizeTextDecimals = 2;
-    if (bytes >= sak::kBytesPerGB) {
-        return QStringLiteral("%1 GB").arg(
-            static_cast<double>(bytes) / sak::kBytesPerGBf, 0, 'f', kSizeTextDecimals);
-    }
-    if (bytes >= sak::kBytesPerMB) {
-        return QStringLiteral("%1 MB").arg(
-            static_cast<double>(bytes) / sak::kBytesPerMBf, 0, 'f', 1);
-    }
-    if (bytes >= sak::kBytesPerKB) {
-        return QStringLiteral("%1 KB").arg(
-            static_cast<double>(bytes) / sak::kBytesPerKBf, 0, 'f', 0);
-    }
-    return QStringLiteral("%1 B").arg(bytes);
+    return sak::formatBytes(bytes);
 }
 
 QString FileExplorerItemModel::timeText(const QDateTime& time) {

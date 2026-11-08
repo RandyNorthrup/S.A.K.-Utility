@@ -220,7 +220,7 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
     QCOMPARE(run.message,
              QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
                             "Items skipped (filters and Windows links): 0\nSkipped (elevation "
-                            "required): 0\nErrors: 1\nTotal size: 0 bytes"));
+                            "required): 0\nErrors: 1\nTotal size: 0 B"));
 }
 
 // Windows makes Documents\My Music, My Pictures and My Videos in every profile: hidden, system
@@ -625,7 +625,7 @@ void TestUserProfileBackupWorker::progressState_usesBytesAndHandlesUnknownTotals
     QCOMPARE(known.minimum, 0);
     QCOMPARE(known.maximum, kPercentMax);
     QCOMPARE(known.value, 60);
-    QCOMPARE(known.format, QStringLiteral("60% - 60 bytes / 100 bytes"));
+    QCOMPARE(known.format, QStringLiteral("60% - 60 B / 100 B"));
     QVERIFY(known.accessible_description.contains(QStringLiteral("1 of 4 users complete")));
 
     const UserProfileProgressState unknown = userProfileProgressState(1, 4, 4096, 0);
@@ -637,7 +637,7 @@ void TestUserProfileBackupWorker::progressState_usesBytesAndHandlesUnknownTotals
     QCOMPARE(indeterminate.minimum, 0);
     QCOMPARE(indeterminate.maximum, 0);
     QCOMPARE(indeterminate.value, 0);
-    QCOMPARE(indeterminate.format, QStringLiteral("0 bytes processed - total size unknown"));
+    QCOMPARE(indeterminate.format, QStringLiteral("0 B processed - total size unknown"));
 
     const UserProfileProgressState bounded = userProfileProgressState(9, 4, 200, 100);
     QCOMPARE(bounded.completed_users, 4);

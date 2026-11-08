@@ -322,8 +322,9 @@ void AdvancedUninstallPanelTests::versionSizeAndDateColumnsFitWhatTheyHold() {
         const QString label = programs->horizontalHeaderItem(column) != nullptr
                                   ? programs->horizontalHeaderItem(column)->text()
                                   : QString();
-        if (label == QStringLiteral("Version") || label == QStringLiteral("Size") ||
-            label == QStringLiteral("Install Date")) {
+        // Review 4 (Y8): and a fixed Publisher column cut its names.
+        if (label == QStringLiteral("Publisher") || label == QStringLiteral("Version") ||
+            label == QStringLiteral("Size") || label == QStringLiteral("Install Date")) {
             QCOMPARE(programs->horizontalHeader()->sectionResizeMode(column),
                      QHeaderView::ResizeToContents);
         }

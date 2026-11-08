@@ -39,7 +39,6 @@ inline constexpr int kPartitionLongTaskTimeoutSeconds = 2'000'000;
 inline constexpr int kPartitionReportOutputPreviewChars = 4000;
 inline constexpr int kPartitionLayoutHashPreviewChars = 10;
 inline constexpr int kPartitionCenterTableStretch = 3;
-inline constexpr int kPartitionByteDisplayPrecision = 2;
 
 // Shared ceiling for S.A.K.-generated APFS containers (format + in-place file
 // mutation). The certified writer formats and commits in place across the

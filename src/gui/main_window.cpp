@@ -297,7 +297,7 @@ constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applica
 constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives";
 constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests";
 constexpr char kTooltipNetworkManagement[] =
-    "Network diagnostics, WiFi management, and connectivity tools";
+    "Network diagnostics, Wi-Fi management, and connectivity tools";
 constexpr char kTooltipEmailTool[] =
     "Inspect PST, OST, and MBOX email files - search, export, and manage profiles";
 
@@ -1176,14 +1176,14 @@ void MainWindow::createNetworkManagementPanel() {
         QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
         tr("Comprehensive network analysis - connectivity testing, DNS diagnostics, "
-           "port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
+           "port scanning, bandwidth, Wi-Fi analysis, firewall auditing, and more"),
         net_mgmt_layout);
 
     auto* net_tabs = new QTabWidget(net_mgmt_wrapper);
     net_tabs->setAccessibleName(tr("Network management tabs"));
     net_tabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
     net_tabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
-    net_tabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
+    net_tabs->addTab(m_wifi_manager_panel.get(), tr("Wi-Fi Manager"));
     net_mgmt_layout->addWidget(net_tabs, 1);
     clearStatusWhenSubTabChanges(net_tabs);
     addWrapperLogFooter(net_mgmt_wrapper, net_mgmt_layout);
@@ -1199,14 +1199,14 @@ void MainWindow::createNetworkManagementPanel() {
              .title = "Network Diagnostics & Troubleshooting",
              .subtitle = "Comprehensive network analysis "
                          "- connectivity testing, DNS diagnostics, "
-                         "port scanning, bandwidth, WiFi analysis, "
+                         "port scanning, bandwidth, Wi-Fi analysis, "
                          "firewall auditing, and more"},
             {.icon = ":/icons/icons/icons8-network-card.svg",
              .title = "Network Adapters",
              .subtitle = "View and manage network adapter configurations, "
                          "backup and restore adapter settings"},
             {.icon = ":/icons/icons/panel_wifi.svg",
-             .title = "WiFi Manager",
+             .title = "Wi-Fi Manager",
              .subtitle = "Manage, share, and deploy Wi-Fi network profiles"},
         }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {

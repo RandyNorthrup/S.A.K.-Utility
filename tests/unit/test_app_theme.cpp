@@ -261,6 +261,7 @@ private Q_SLOTS:
     void cellWidgetsFillTheirCells();
     void cellWidgetRowsAreAsTallAsTheirCombos();
     void wizardsDrawNoAeroBackArrowOverTheTitle();
+    void framesSitOneInsetInsideTheirPanes();
 
 private:
     std::unique_ptr<sak::MainWindow> m_window;
@@ -840,6 +841,83 @@ void AppThemeTests::subTabPagesKeepAMarginInsideTheirPane() {
     QVERIFY2(touching.isEmpty(), qPrintable(touching.join(QStringLiteral("\n"))));
 }
 
+namespace {
+
+/// The tab page @p widget is on: the nearest ancestor that is a page of a QTabWidget.
+QWidget* tabPageOf(QWidget* widget) {
+    for (QWidget* child = widget; child != nullptr; child = child->parentWidget()) {
+        QWidget* stack = child->parentWidget();
+        if (stack != nullptr && qobject_cast<QTabWidget*>(stack->parentWidget()) != nullptr) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+/// How far inside @p page its leftmost visible group box or item view starts, or -1 if none.
+/// A frame on a tab page nested in @p page belongs to that page's own pane.
+int firstFrameLeft(QWidget* page) {
+    int left = -1;
+    for (QWidget* framed : page->findChildren<QWidget*>()) {
+        const bool bordered = qobject_cast<QGroupBox*>(framed) != nullptr ||
+                              qobject_cast<QAbstractItemView*>(framed) != nullptr;
+        if (bordered && framed->isVisible() && tabPageOf(framed) == page) {
+            const int x = framed->mapTo(page, QPoint(0, 0)).x();
+            left = left < 0 ? x : std::min(left, x);
+        }
+    }
+    return left;
+}
+
+}  // namespace
+
+// Review 4 (Y21): group boxes and tables sat 8 px inside the sub-tab pane on Benchmark and
+// Diagnostics, Network adapters, File Organizer and the Vulnerability Scanner, and 12 px on the
+// other pages. Every page's first frame sits one inset, kMarginMedium, inside its pane, the
+// network tools' and App Installation's inner tabs included. The File Explorer is left out: it is
+// a file manager's shell (sidebar, panes, details pane) laid out to its own 8 px gaps, with no
+// group boxes in it.
+void AppThemeTests::framesSitOneInsetInsideTheirPanes() {
+    sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+    m_window->resize(1680, 900);
+    QCoreApplication::processEvents();
+    const QStringList reviewed = {QStringLiteral("Diagnostics and benchmarks tabs"),
+                                  QStringLiteral("Diagnostic tools"),
+                                  QStringLiteral("Network management tabs"),
+                                  QStringLiteral("File management tools"),
+                                  QStringLiteral("Application management tabs"),
+                                  QStringLiteral("Application installation mode tabs"),
+                                  QStringLiteral("Email tools tabs")};
+    QStringList insets;
+    QStringList wrong;
+    for (QTabWidget* tabs : m_window->findChildren<QTabWidget*>()) {
+        if (!reviewed.contains(tabs->accessibleName())) {
+            continue;
+        }
+        revealTabWidget(tabs);
+        for (int index = 0; index < tabs->count(); ++index) {
+            if (tabs->tabText(index) == QStringLiteral("File Explorer")) {
+                continue;
+            }
+            tabs->setCurrentIndex(index);
+            QCoreApplication::processEvents();
+            const int left = firstFrameLeft(tabs->widget(index));
+            if (left < 0) {
+                continue;
+            }
+            const QString where = tabs->accessibleName() + QStringLiteral(" > ") +
+                                  tabs->tabText(index);
+            insets << QStringLiteral("%1: %2").arg(where).arg(left);
+            if (left != sak::ui::kMarginMedium) {
+                wrong << QStringLiteral("%1: %2 px").arg(where).arg(left);
+            }
+        }
+    }
+    m_window->resize(kReviewWindowWidth, kReviewWindowHeight);
+    qInfo().noquote() << insets.join(QStringLiteral("; "));
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+
 // UI review S24: two dash styles ("--" and an em dash) and other non-ASCII punctuation in the
 // window's text. Every tab is built; every label, button, group title, tab, tooltip and
 // placeholder uses " - ".
@@ -1036,6 +1114,37 @@ double pixelsAtThreeToOne(const QImage& icon, const QColor& background) {
     return ink > 0 ? static_cast<double>(legible) / ink : 0.0;
 }
 
+/// The least share of pixels at 3:1 among the quarters of @p icon that each hold a tenth or more
+/// of its ink. A part of a drawing all but gone hides in a whole-icon share the rest carries: the
+/// dark stethoscope's tube, #36404d on the dark tab at 1.3:1 (review 4, Y3).
+double weakestQuarterAtThreeToOne(const QImage& icon, const QColor& background) {
+    constexpr int kQuarters = 2;
+    constexpr double kMeaningfulInk = 0.1;
+    const auto ink_in = [](const QImage& image) {
+        int ink = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                ink += image.pixelColor(x, y).alpha() > 0 ? 1 : 0;
+            }
+        }
+        return ink;
+    };
+    const int all_ink = ink_in(icon);
+    const int half_width = icon.width() / kQuarters;
+    const int half_height = icon.height() / kQuarters;
+    double weakest = 1.0;
+    for (int row = 0; row < kQuarters; ++row) {
+        for (int column = 0; column < kQuarters; ++column) {
+            const QImage quarter =
+                icon.copy(column * half_width, row * half_height, half_width, half_height);
+            if (all_ink > 0 && ink_in(quarter) >= kMeaningfulInk * all_ink) {
+                weakest = std::min(weakest, pixelsAtThreeToOne(quarter, background));
+            }
+        }
+    }
+    return weakest;
+}
+
 }  // namespace
 
 namespace {
@@ -1051,23 +1160,26 @@ int opaquePixels(const QImage& image) {
     return count;
 }
 
-/// The four tab icons S25 redrew, on the light tab, read as the reviewer reads them, every pixel
-/// they touch in full: most must stand 3:1 from the tab. Review 4 found Benchmark and Diagnostics
-/// at 38% and Backup and Restore at 47% on testpc1's tab, their thin strokes anti-aliased.
-QStringList mostPixelsUnderThreeToOne(bool dark,
-                                      const QString& name,
-                                      double pixel_share,
+/// Every tab icon, in both themes, read as the reviewer reads it, every pixel it touches in full:
+/// most must stand 3:1 from its tab. Round 8 held only the four S25 redrew, on the light tab;
+/// review 4 found light Help and About at 0%, Partition Manager 36%, Email Tools 46% and Network
+/// Management 42%, and dark Partition Manager 47% (Y3).
+/// And no part of it mostly lost: each quarter with a tenth of the ink has a third or more of its
+/// pixels at 3:1. The old dark stethoscope tube left its quarter at 0.15 while the whole icon read
+/// 0.56; every drawing now reads 0.41 or more in its weakest quarter.
+QStringList mostPixelsUnderThreeToOne(double pixel_share,
+                                      double weakest_quarter,
                                       const QString& line) {
     constexpr double kMost = 0.5;
-    const bool redrawn_s25 = QSet<QString>{QStringLiteral("Benchmark and Diagnostics"),
-                                           QStringLiteral("Application Management"),
-                                           QStringLiteral("Image Flasher"),
-                                           QStringLiteral("Backup and Restore")}
-                                 .contains(name);
-    if (dark || !redrawn_s25 || pixel_share > kMost) {
-        return {};
+    constexpr double kLeastQuarter = 1.0 / 3.0;
+    QStringList wrong;
+    if (pixel_share <= kMost) {
+        wrong << QStringLiteral("%1, most of its pixels under 3:1").arg(line);
     }
-    return {QStringLiteral("%1, most of its pixels under 3:1").arg(line)};
+    if (weakest_quarter < kLeastQuarter) {
+        wrong << QStringLiteral("%1, a quarter of it mostly under 3:1").arg(line);
+    }
+    return wrong;
 }
 
 /// What is wrong with @p tabs' icons in the theme showing now; each one's reading goes to @p
@@ -1095,10 +1207,12 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
         const QImage drawn = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::Off).toImage();
         const double share = inkAtThreeToOne(drawn, tab_colour);
         const double pixel_share = pixelsAtThreeToOne(drawn, tab_colour);
-        const QString line = QStringLiteral("%1 %2: %3 (pixels %4) on %5")
+        const double weakest_quarter = weakestQuarterAtThreeToOne(drawn, tab_colour);
+        const QString line = QStringLiteral("%1 %2: %3 (pixels %4, weakest quarter %5) on %6")
                                  .arg(theme, name)
                                  .arg(share, 0, 'f', 2)
                                  .arg(pixel_share, 0, 'f', 2)
+                                 .arg(weakest_quarter, 0, 'f', 2)
                                  .arg(tab_colour.name());
         *report << line;
         // Every icon on the dark tab. On the light tab, the ones the reviews found faint: File
@@ -1118,7 +1232,7 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
         if ((dark || faint_before) && (share < kLegibleShare || faint > kMostlyFaint)) {
             wrong << QStringLiteral("%1, %2 faint").arg(line).arg(faint, 0, 'f', 2);
         }
-        wrong << mostPixelsUnderThreeToOne(dark, name, pixel_share, line);
+        wrong << mostPixelsUnderThreeToOne(pixel_share, weakest_quarter, line);
         // Selected, Help's question mark and About's "i", drawn in white, are left out of the white
         // drawing, so they show in the tab's blue.
         const bool glyph_inside =

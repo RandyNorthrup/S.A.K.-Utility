@@ -3,6 +3,7 @@
 
 #include "sak/smart_file_filter.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -13,8 +14,6 @@
 namespace sak {
 
 namespace {
-constexpr int kFileSizeDisplayPrecision = 1;
-constexpr int kFileSizeLimitDisplayPrecision = 0;
 
 // Upper bound on an exclude-pattern's source length. Filename-matching regexes
 // are short in practice; anything longer is treated as invalid rather than
@@ -215,16 +214,9 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
         return QString("Dangerous system file: %1 (would corrupt profile)").arg(fileName);
     }
 
-    if (exceedsSizeLimit(fileInfo.size())) {
-        const double sizeMB = static_cast<double>(fileInfo.size()) / kBytesPerMBf;
-        if (m_rules.enable_file_size_limit) {
-            return QString("File too large: %1 MB (limit: %2 MB)")
-                .arg(sizeMB, 0, 'f', kFileSizeDisplayPrecision)
-                .arg(static_cast<double>(m_rules.max_single_file_size_bytes) / kBytesPerMBf,
-                     0,
-                     'f',
-                     kFileSizeLimitDisplayPrecision);
-        }
+    if (exceedsSizeLimit(fileInfo.size()) && m_rules.enable_file_size_limit) {
+        return QString("File too large: %1 (limit: %2)")
+            .arg(formatBytes(fileInfo.size()), formatBytes(m_rules.max_single_file_size_bytes));
     }
 
     if (matchesPattern(fileName)) {

@@ -575,7 +575,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     }
 
     sak::logInfo("Download complete: " + m_savePath.toStdString() + " (" +
-                 std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
+                 sak::formatBytes(downloadedFile.size()).toStdString() + ")");
 
     // An ISO that cannot be checked against a pinned checksum is never handed on as a
     // completed download: the transport may have been redirected onto a plain-HTTP mirror and

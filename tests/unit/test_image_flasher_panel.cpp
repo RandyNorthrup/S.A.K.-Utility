@@ -16,6 +16,7 @@
 /// selection state and button state, not in any single function.
 
 #include "sak/color_constants.h"
+#include "sak/detachable_log_window.h"
 #include "sak/drive_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
@@ -23,6 +24,7 @@
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/style_constants.h"
+#include "sak/windows11_theme.h"
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_usb_creator.h"
@@ -42,10 +44,16 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSignalSpy>
+#include <QStackedWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
+
+#include <algorithm>
+#include <cmath>
 
 using namespace sak;
 
@@ -60,6 +68,29 @@ constexpr int kStartupScanTimeoutMs = 30'000;
 /// panel builds these from DriveScanner results; the tests place this row directly once the
 /// real start-up scan has landed.
 constexpr auto kFakeDevicePath = "\\\\.\\PhysicalDrive99";
+
+/// The colour a phase line's style sheet gives its text ("color: #rrggbb;").
+QString phaseLineColour(const QString& sheet) {
+    static const QRegularExpression kColour(
+        QStringLiteral(R"((?<![-\w])color:\s*(#[0-9a-fA-F]{6}))"));
+    return kColour.match(sheet).captured(1);
+}
+
+double linearChannel(int value) {
+    const double c = value / 255.0;
+    return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+}
+
+/// WCAG 2.x contrast of two opaque colours.
+double contrastRatio(const QColor& a, const QColor& b) {
+    const auto luminance = [](const QColor& c) {
+        return (0.2126 * linearChannel(c.red())) + (0.7152 * linearChannel(c.green())) +
+               (0.0722 * linearChannel(c.blue()));
+    };
+    const double la = luminance(a);
+    const double lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
 
 /// The Step 1 -> Step 2 navigation button. Every assertion in this file watched the Flash
 /// button only, so the Next gate -- which decides whether a user can reach drive selection at
@@ -174,6 +205,44 @@ private Q_SLOTS:
                                 .arg(footer_top)));
         QCOMPARE(button->visibleRegion().boundingRect().height(), button->height());
     }
+    // Review 4 (Y13): Settings, Back and Flash! sat in the Log switch's row, and the target list
+    // ran on under them with no bottom edge, its page as tall as the tallest page. The steps have
+    // a row of their own, and the list ends inside the window.
+    void theTargetListEndsAboveItsOwnActionRow() {
+        sak::ImageFlasherPanel& panel = *m_panel;
+        panel.resize(1240, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        panel.m_stackedWidget->setCurrentIndex(1);  // Step 2: Select Target Drives
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        QWidget* list = panel.m_driveListWidget;
+        QVERIFY(list != nullptr && list->isVisible());
+        QCOMPARE(list->visibleRegion().boundingRect().height(), list->height());
+        const int toggle_top = panel.m_logToggle->mapTo(&panel, QPoint(0, 0)).y();
+        const int flash_bottom =
+            panel.m_flashButton->mapTo(&panel, QPoint(0, panel.m_flashButton->height())).y();
+        QVERIFY2(flash_bottom <= toggle_top,
+                 qPrintable(QStringLiteral("Flash! ends at y=%1, the Log switch starts at y=%2")
+                                .arg(flash_bottom)
+                                .arg(toggle_top)));
+        QCOMPARE(panel.m_backButton->styleSheet(), sak::ui::kSecondaryButtonStyle);
+        QCOMPARE(panel.m_settingsButton->styleSheet(), sak::ui::kSecondaryButtonStyle);
+        // The stack asks for the room of the page it shows, not of its tallest page: as tall as
+        // the tallest, the target list's page ran on below the window.
+        QStackedWidget* stack = panel.m_stackedWidget;
+        const int shown = stack->currentIndex();
+        const auto back = qScopeGuard([stack, shown]() { stack->setCurrentIndex(shown); });
+        for (int index = 0; index < stack->count(); ++index) {
+            stack->setCurrentIndex(index);
+            QCoreApplication::processEvents();
+            QVERIFY2(stack->sizeHint().height() == stack->currentWidget()->sizeHint().height(),
+                     qPrintable(QStringLiteral("page %1: the stack asks for %2 px, the page %3")
+                                    .arg(index)
+                                    .arg(stack->sizeHint().height())
+                                    .arg(stack->currentWidget()->sizeHint().height())));
+        }
+    }
     // Review 3 (S22): a raw flash read "Ready" in the status bar beside its bar at 95-100%, and a
     // finished flash left the bar at 95%.
     void aRawFlashSaysItsStateAndEndsItsBar() {
@@ -198,6 +267,76 @@ private Q_SLOTS:
         QCOMPARE(box->button(QDialogButtonBox::RestoreDefaults)->styleSheet(),
                  sak::ui::kSecondaryButtonStyle);
     }
+    // Review 4 (Y18): the settings' fields started in two columns (x=297 for the spin boxes,
+    // x=210 for the threshold, x=191 for the combo), and "Buffer Size (MB): 64 MB" gave the unit
+    // twice.
+    void flasherSettingsHaveOneFieldColumn() {
+        ::ImageFlasherSettingsDialog dialog;
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        QHash<QString, int> left;
+        for (auto* field : dialog.findChildren<QWidget*>()) {
+            if (!field->accessibleName().isEmpty()) {
+                left.insert(field->accessibleName(), field->mapTo(&dialog, QPoint(0, 0)).x());
+            }
+        }
+        for (const char* name :
+             {"Verification mode", "Buffer size", "Concurrent writes", "Large drive threshold"}) {
+            QVERIFY2(left.contains(QString::fromLatin1(name)), name);
+            QVERIFY2(left.value(QString::fromLatin1(name)) ==
+                         left.value(QStringLiteral("Buffer size")),
+                     qPrintable(QStringLiteral("%1 at x=%2, Buffer size at x=%3")
+                                    .arg(QLatin1String(name))
+                                    .arg(left.value(QString::fromLatin1(name)))
+                                    .arg(left.value(QStringLiteral("Buffer size")))));
+        }
+        for (const auto* label : dialog.findChildren<QLabel*>()) {
+            QVERIFY2(!label->text().contains(QStringLiteral("(MB)")), qPrintable(label->text()));
+        }
+    }
+    // Review 4 (Y9): before a build was picked, the Builds list showed one and a half rows, the
+    // second cut through its glyphs, and it grew once one was picked. Four whole rows always.
+    void theBuildListShowsWholeRowsInEveryState() {
+        // In the theme, whose item padding makes a row as tall as it is on screen.
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+        WindowsISODownloader downloader;
+        WindowsISODownloadDialog dialog(&downloader);
+        QListWidget* builds = nullptr;
+        for (auto* list : dialog.findChildren<QListWidget*>()) {
+            if (list->accessibleName() == QStringLiteral("Builds")) {
+                builds = list;
+            }
+        }
+        QVERIFY(builds != nullptr);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        // As short as the dialog can be made, as on a small screen.
+        dialog.resize(dialog.width(), 200);
+        QCoreApplication::processEvents();
+        const int empty_height = builds->height();
+        for (int row = 0; row < 12; ++row) {
+            builds->addItem(QStringLiteral("Windows 11, version 25H2 (26200.%1)").arg(row));
+        }
+        builds->setCurrentRow(0);
+        QCoreApplication::processEvents();
+        QCOMPARE(builds->height(), empty_height);
+        const int rows_shown = builds->viewport()->height() / builds->sizeHintForRow(0);
+        QVERIFY2(rows_shown >= 3,
+                 qPrintable(QStringLiteral("%1 whole rows in %2 px")
+                                .arg(rows_shown)
+                                .arg(builds->viewport()->height())));
+    }
+    // Review 4 (Y12): the raw flash's "ALL DATA ... PERMANENTLY ERASED" confirmation offered a
+    // blue Yes, while Batch Uninstall's destructive action is red. Yes is the danger tone, and No
+    // stays the default.
+    void theEraseConfirmationsYesIsTheDangerTone() {
+        const auto box = sak::ImageFlasherPanel::eraseConfirmation(
+            nullptr, QStringLiteral("ALL DATA on the target drive will be PERMANENTLY ERASED."));
+        QVERIFY(box != nullptr);
+        QCOMPARE(box->windowTitle(), QStringLiteral("Confirm Flash - Data Loss Warning"));
+        QCOMPARE(box->button(QMessageBox::Yes)->styleSheet(), sak::ui::kDangerButtonStyle);
+        QCOMPARE(box->defaultButton(), box->button(QMessageBox::No));
+    }
     // Review 3 (X19): the Windows ISO download bar read "0%" with 0.09 of 8.70 GB down.
     void theWindowsIsoDownloadBarShowsTenthsBelowOnePercent() {
         WindowsISODownloader downloader;
@@ -213,6 +352,62 @@ private Q_SLOTS:
         constexpr qint64 kGigabyte = 1024LL * kMegabyte;
         Q_EMIT downloader.downloadBytesUpdated(50 * kMegabyte, (87 * kGigabyte) / 10);
         QCOMPARE(bar->text(), QStringLiteral("0.5%"));
+    }
+    // Review 4 (Y2): "Downloading Windows UUP files..." was emerald #059669 in both themes, 3.60:1
+    // on the light dialog and 3.89:1 on the dark one. Every phase line of both ISO dialogs reaches
+    // AA on its dialog's surfaces in both themes.
+    void everyIsoPhaseLineReadsInBothThemes() {
+        const auto restore = qScopeGuard(
+            []() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+        for (const auto mode : {sak::ui::AppThemeMode::Light, sak::ui::AppThemeMode::Dark}) {
+            sak::ui::applyWindows11Theme(*qApp, mode);
+            const bool dark = mode == sak::ui::AppThemeMode::Dark;
+            const QList<const char*> surfaces =
+                dark ? QList<const char*>{sak::ui::kColorDarkBgSurface, sak::ui::kColorDarkBgPanel}
+                     : QList<const char*>{sak::ui::kColorBgSurface, sak::ui::kColorBgWhite};
+            const auto check = [&](QWidget& dialog, const QString& description) {
+                QLabel* line = nullptr;
+                for (auto* label : dialog.findChildren<QLabel*>()) {
+                    if (label->text().endsWith(description)) {
+                        line = label;
+                    }
+                }
+                QVERIFY2(line != nullptr, qPrintable(description));
+                const QColor ink(phaseLineColour(line->styleSheet()));
+                QVERIFY2(ink.isValid(), qPrintable(line->styleSheet()));
+                for (const char* surface : surfaces) {
+                    const double ratio = contrastRatio(ink, QColor(QString::fromLatin1(surface)));
+                    QVERIFY2(ratio >= 4.5,
+                             qPrintable(QStringLiteral("%1 in %2 on %3: %4:1")
+                                            .arg(description, ink.name(), QLatin1String(surface))
+                                            .arg(ratio, 0, 'f', 2)));
+                }
+            };
+            WindowsISODownloader windows_downloader;
+            WindowsISODownloadDialog windows_dialog(&windows_downloader);
+            for (const auto phase : {UupIsoBuilder::Phase::PreparingDownload,
+                                     UupIsoBuilder::Phase::DownloadingFiles,
+                                     UupIsoBuilder::Phase::ConvertingToISO,
+                                     UupIsoBuilder::Phase::Completed,
+                                     UupIsoBuilder::Phase::Failed}) {
+                const QString description =
+                    QStringLiteral("Windows phase %1").arg(static_cast<int>(phase));
+                Q_EMIT windows_downloader.phaseChanged(phase, description);
+                check(windows_dialog, description);
+            }
+            LinuxISODownloader linux_downloader;
+            LinuxISODownloadDialog linux_dialog(&linux_downloader);
+            for (const auto phase : {LinuxISODownloader::Phase::ResolvingVersion,
+                                     LinuxISODownloader::Phase::Downloading,
+                                     LinuxISODownloader::Phase::VerifyingChecksum,
+                                     LinuxISODownloader::Phase::Completed,
+                                     LinuxISODownloader::Phase::Failed}) {
+                const QString description =
+                    QStringLiteral("Linux phase %1").arg(static_cast<int>(phase));
+                Q_EMIT linux_downloader.phaseChanged(phase, description);
+                check(linux_dialog, description);
+            }
+        }
     }
     void aSuccessfulFlashSaysSoWithATick() {
         // The fixture's panel: init() makes one for every test, and a second panel beside it is a

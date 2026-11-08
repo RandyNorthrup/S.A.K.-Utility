@@ -83,6 +83,12 @@ constexpr int kSignalWeak = -80;
 // Network Adapter Types
 // ===========================================================================
 
+/// @brief An adapter type as a person reads it: "Wi-Fi" for the "WiFi" the data keeps (the JSON
+///        exports and the AI tools carry the type as it always was). Review 4, Y11.
+[[nodiscard]] inline QString adapterTypeLabel(const QString& adapter_type) {
+    return adapter_type == QStringLiteral("WiFi") ? QStringLiteral("Wi-Fi") : adapter_type;
+}
+
 /// @brief Complete network adapter information
 struct NetworkAdapterInfo {
     // Identity

@@ -27,7 +27,7 @@ public:
     explicit OptimizePowerSettingsAction(QObject* parent = nullptr);
 
     QString name() const override { return "Optimize Power Settings"; }
-    QString description() const override { return "Switch to High Performance power plan"; }
+    QString description() const override { return "Switch to High performance power plan"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return false; }

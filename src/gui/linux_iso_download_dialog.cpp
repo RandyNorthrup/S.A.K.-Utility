@@ -463,7 +463,7 @@ void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
         break;
     case LinuxISODownloader::Phase::Downloading:
         m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
-                                                                     sak::ui::kColorAccentEmerald));
+                                                                     sak::ui::kStatusColorSuccess));
         m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case LinuxISODownloader::Phase::VerifyingChecksum:

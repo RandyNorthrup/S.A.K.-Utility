@@ -80,6 +80,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -2206,6 +2207,25 @@ private:
     std::function<void()> m_on_activated;
 };
 
+/// The name the review bars (Apply, Copy Disk, Migrate OS) give a partition: its drive letter,
+/// else what it is, else its number. "*:" said only that a partition had no letter, and the
+/// 24 px floor gave the EFI and MSR slivers room to print it (review 4, RG5).
+[[nodiscard]] QString reviewSegmentName(const PartitionInfoEx& partition) {
+    if (partition.volume && !partition.volume->drive_letter.isEmpty()) {
+        return QObject::tr("%1:").arg(partition.volume->drive_letter);
+    }
+    if (partition.is_efi) {
+        return QStringLiteral("EFI");
+    }
+    if (partition.is_msr) {
+        return QStringLiteral("MSR");
+    }
+    if (partition.is_recovery) {
+        return QObject::tr("Recovery");
+    }
+    return QObject::tr("Partition %1").arg(partition.partition_number.value());
+}
+
 struct ClonePreviewSegment {
     QString label;
     uint64_t bytes{0};
@@ -2405,12 +2425,9 @@ private:
     }
 
     [[nodiscard]] ClonePreviewSegment partitionSegment(const PartitionInfoEx& partition) const {
-        const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
-                                  ? tr("%1:").arg(partition.volume->drive_letter)
-                                  : tr("*:");
         // The disk map's partition colour: the success green lightened to a neon no token names.
         const QColor color = kPartitionColorGptPrimary;
-        return {.label = label,
+        return {.label = reviewSegmentName(partition),
                 .bytes = partition.size_bytes,
                 .color = color,
                 .used_percent = partitionUsedPercent(partition)};
@@ -2676,11 +2693,8 @@ private:
     [[nodiscard]] QVector<ApplyDiffSegment> currentSegments(const PartitionDiskInfo& disk) const {
         QVector<ApplyDiffSegment> segments;
         for (const auto& partition : disk.partitions) {
-            const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
-                                      ? tr("%1:").arg(partition.volume->drive_letter)
-                                      : segmentPartitionLabel(partition);
             segments.append(
-                {.label = label,
+                {.label = reviewSegmentName(partition),
                  .offset = partition.offset_bytes,
                  .bytes = partition.size_bytes,
                  .color = segmentPartitionColor(partition),
@@ -2701,22 +2715,6 @@ private:
         }
         sortSegments(&segments);
         return segments;
-    }
-
-    [[nodiscard]] static QString segmentPartitionLabel(const PartitionInfoEx& partition) {
-        if (partition.is_efi) {
-            return QStringLiteral("EFI");
-        }
-        if (partition.is_msr) {
-            return QStringLiteral("MSR");
-        }
-        if (partition.is_recovery) {
-            return QStringLiteral("Recovery");
-        }
-        if (partition.volume && !partition.volume->drive_letter.isEmpty()) {
-            return QStringLiteral("%1:").arg(partition.volume->drive_letter);
-        }
-        return QStringLiteral("*:");
     }
 
     // The disk map's colours, so the review shows the disk as the map does.
@@ -5830,10 +5828,13 @@ void addResizeExtAndStatusControls(PartitionOperationDialog& dialog,
     nameConfirmationBox(widgets->non_native_confirmation,
                         QObject::tr("Confirm ext filesystem resize"));
     dialog.formLayout()->addRow(QString(), widgets->non_native_confirmation);
+    // What the chosen mode does, said once, across the dialog's width: beside a "Support:" label
+    // centred against its two lines, and again word for word in the summary 150 px below (review
+    // 4, Y17).
     widgets->mode_status = new QLabel(&dialog);
     widgets->mode_status->setWordWrap(true);
     widgets->mode_status->setAccessibleDescription(QObject::tr("Move resize support status"));
-    dialog.formLayout()->addRow(QObject::tr("Support:"), widgets->mode_status);
+    dialog.formLayout()->addRow(widgets->mode_status);
 }
 
 ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dialog,
@@ -6022,11 +6023,10 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
     }
     widgets.mode_status->setText(resizeModeStatusText(widgets));
     dialog.setAcceptEnabled(queueable);
-    dialog.setPreviewText(QObject::tr("%1 from %2 to %3. %4")
+    dialog.setPreviewText(QObject::tr("%1 from %2 to %3.")
                               .arg(resizeActionText(target_bytes, widgets.current_bytes),
                                    formatPartitionBytes(widgets.current_bytes),
-                                   formatPartitionBytes(target_bytes),
-                                   resizeModeStatusText(widgets)));
+                                   formatPartitionBytes(target_bytes)));
 }
 
 void connectResizePartitionControls(PartitionOperationDialog& dialog,
@@ -7883,6 +7883,13 @@ void populateSpaceAnalyzerTable(QTableWidget* table, const SpaceAnalyzerResult& 
         setSpaceAnalyzerRow(
             table, static_cast<int>(row), result.entries.at(row), result.total_bytes);
     }
+    // A Type column that says the same on every row says nothing: "File type" beside every row
+    // of File Types and "File" beside every Largest File (review 4, Y20).
+    const bool one_type =
+        std::ranges::all_of(result.entries, [&result](const SpaceAnalyzerEntry& entry) {
+            return entry.type == result.entries.constFirst().type;
+        });
+    table->setColumnHidden(SpaceAnalyzerColType, !result.entries.isEmpty() && one_type);
     fitColumnsAndStretchLast(table);
     table->setSortingEnabled(true);
     table->sortItems(SpaceAnalyzerColSize, Qt::DescendingOrder);
@@ -8129,12 +8136,13 @@ bool showFileRecoveryReviewDialog(QWidget* parent,
     dialog.setAccessibleName(QObject::tr("Offline image data recovery review"));
     dialog.setMinimumSize(kFileRecoveryDialogMinWidth, kFileRecoveryDialogMinHeight);
     auto* layout = new QVBoxLayout(&dialog);
+    // The paths break after a backslash, not inside "SAK-Samples" (review 4, Y28).
     auto* summary = new QLabel(QObject::tr("%1 found in %2. Restore destination: %3")
                                    .arg(countOf(scan.candidates.size(),
                                                 QObject::tr("recoverable file"),
                                                 QObject::tr("recoverable files")),
-                                        QDir::toNativeSeparators(source_path),
-                                        QDir::toNativeSeparators(destination_path)),
+                                        withPathBreaks(QDir::toNativeSeparators(source_path)),
+                                        withPathBreaks(QDir::toNativeSeparators(destination_path))),
                                &dialog);
     summary->setAccessibleDescription(QObject::tr("Data recovery summary"));
     summary->setWordWrap(true);
@@ -8627,6 +8635,17 @@ QString osMigrationWizardSizingText(const OsMigrationPlan& plan) {
     return text;
 }
 
+/// A raw disk path as the review names it, "Disk 1 (\\.\PhysicalDrive1)": the bar above said
+/// "Copy of Disk 1" and the text under it only "\\.\PhysicalDrive1" (review 4, Y20). Any other
+/// target (an image file) is named by its path.
+QString reviewDiskName(const QString& path) {
+    static const QRegularExpression kPhysicalDrive(QStringLiteral(
+                                                       R"(^\\\\\.\\PhysicalDrive(\d+)$)"),
+                                                   QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch disk = kPhysicalDrive.match(path);
+    return disk.hasMatch() ? QObject::tr("Disk %1 (%2)").arg(disk.captured(1), path) : path;
+}
+
 void updateDiskWizardReview(const DiskCopyWizardConfig& config,
                             const DiskCopyWizardWidgets& widgets) {
     const auto* source_disk = findWizardDisk(*config.inventory, config.source_disk);
@@ -8646,8 +8665,8 @@ void updateDiskWizardReview(const DiskCopyWizardConfig& config,
     widgets.layout_preview->configure(source_disk, target_bytes, std::move(plan));
     syncWizardReview(widgets.review,
                      {.operation = config.title,
-                      .source = rawDiskPath(config.source_disk),
-                      .target = selectedDiskWizardTarget(widgets),
+                      .source = reviewDiskName(rawDiskPath(config.source_disk)),
+                      .target = reviewDiskName(selectedDiskWizardTarget(widgets)),
                       .mode = mode,
                       .verify = widgets.verify_mode->currentText(),
                       .sizing = sizing});
@@ -8814,12 +8833,18 @@ void syncPartitionCopyTargetPath(const PartitionCopyWizardWidgets& widgets) {
     widgets.target_path->setReadOnly(false);
 }
 
+QString partitionCopyTargetSizeText(uint64_t target_size) {
+    // A target with no size of its own (a raw device or an image file) takes the source's:
+    // "custom/unknown" said nothing a technician could use (review 4, Y20).
+    return target_size == 0 ? QObject::tr("as large as the source")
+                            : formatPartitionBytes(target_size);
+}
+
 QString partitionCopySizingText(const PartitionCopyWizardWidgets& widgets, uint64_t source_size) {
     const uint64_t target_size = selectedPartitionRegionSize(widgets);
     QString text = QStringLiteral("Source size: %1\nTarget size: %2")
                        .arg(formatPartitionBytes(source_size),
-                            target_size == 0 ? QStringLiteral("custom/unknown")
-                                             : formatPartitionBytes(target_size));
+                            partitionCopyTargetSizeText(target_size));
     if (partitionRegionSelected(widgets)) {
         text += QStringLiteral("\nTarget offset: %1")
                     .arg(formatPartitionBytes(selectedPartitionRegionOffset(widgets)));
@@ -8853,8 +8878,7 @@ void updatePartitionCopyPreview(const QString& source_path,
                                     .total_bytes = scale_bytes,
                                     .filled_bytes = target_size,
                                     .fill_color = target_color,
-                                    .text = target_size == 0 ? QObject::tr("custom/unknown")
-                                                             : formatPartitionBytes(target_size)}});
+                                    .text = partitionCopyTargetSizeText(target_size)}});
     syncWizardReview(widgets.review,
                      {.operation = QStringLiteral("Copy Partition Wizard"),
                       .source = source_path,
@@ -9087,6 +9111,21 @@ QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
     const QFontMetrics metrics(preview.font());
     return CloneLayoutPreviewWidget::shownLabels(
         metrics, preview.targetSegmentsFor(metrics, bar_width), target_bytes, bar_width);
+}
+
+QString partitionCopyTargetSizeTextForTest(uint64_t target_size) {
+    return partitionCopyTargetSizeText(target_size);
+}
+
+bool partitionSpaceAnalyzerTypeColumnHiddenForTest(const QStringList& types) {
+    SpaceAnalyzerResult result;
+    for (const QString& type : types) {
+        result.entries.append({.name = type, .type = type, .path = type, .bytes = 1});
+        result.total_bytes += 1;
+    }
+    QTableWidget table(0, SpaceAnalyzerColCount);
+    populateSpaceAnalyzerTable(&table, result);
+    return table.isColumnHidden(SpaceAnalyzerColType);
 }
 
 QStringList partitionSpaceAnalyzerTableOrderForTest(const QVector<QPair<QString, uint64_t>>& rows) {

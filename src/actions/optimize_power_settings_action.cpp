@@ -425,7 +425,7 @@ OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>
     // fails and says so.
     PowerPlan built_in;
     built_in.guid = QString::fromLatin1(kHighPerformanceGuid);
-    built_in.name = QStringLiteral("High Performance (built-in, not listed by powercfg)");
+    built_in.name = QStringLiteral("High performance (built-in, not listed by powercfg)");
     return built_in;
 }
 
@@ -510,7 +510,7 @@ void OptimizePowerSettingsAction::appendSuccessLog(const OptimizationResultConte
         // assertions about the machine's effective settings that nothing here ever queried.
         // Switching schemes can change sleep, display and processor settings, so a report that
         // announces them without reading them is telling a technician something it does not know.
-        log += "* System is already on the High Performance plan\n";
+        log += "* System is already on the High performance plan\n";
         log += "* That plan is Windows' least power-restricted scheme\n";
     } else {
         // "Sleep/hibernate settings unchanged" and "Display timeout settings unchanged" were not
@@ -538,8 +538,8 @@ OptimizePowerSettingsAction::FailureText OptimizePowerSettingsAction::failureTex
         return text;
     }
     text.message = outcome == Outcome::VerificationFailed
-                       ? QStringLiteral("High Performance activation could not be verified")
-                       : QStringLiteral("Failed to activate High Performance plan");
+                       ? QStringLiteral("High performance activation could not be verified")
+                       : QStringLiteral("Failed to activate High performance plan");
     // The cause in powercfg's own words. The old line guessed "administrative privileges may be
     // required" whatever powercfg said; this action does not need elevation, and a hidden plan
     // or a policy-managed power scheme fails the same command for reasons that guess hides.
@@ -565,8 +565,8 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
 
     if (result.success) {
         result.message = context.outcome == Outcome::AlreadyOptimized
-                             ? QStringLiteral("Already using High Performance power plan")
-                             : QStringLiteral("Switched to High Performance (was: %1)")
+                             ? QStringLiteral("Already using High performance power plan")
+                             : QStringLiteral("Switched to High performance (was: %1)")
                                    .arg(context.previous_plan_name);
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
         appendSuccessLog(context, result.log);
@@ -639,7 +639,7 @@ void OptimizePowerSettingsAction::execute() {
 
     QString report = buildPowerPlanListReport(current_plan, all_plans);
 
-    Q_EMIT executionProgress("Locating High Performance plan...", progress::kStep40);
+    Q_EMIT executionProgress("Locating High performance plan...", progress::kStep40);
     const std::optional<PowerPlan> high_perf_plan = resolveHighPerformancePlan(all_plans,
                                                                                discovery_ok);
     if (!high_perf_plan) {
@@ -660,7 +660,7 @@ void OptimizePowerSettingsAction::execute() {
     Outcome outcome = Outcome::AlreadyOptimized;
     QString failure_reason;
     if (current_plan && isHighPerformanceGuid(current_plan->guid)) {
-        report += reportRow(QStringLiteral("Status:       Already using High Performance"));
+        report += reportRow(QStringLiteral("Status:       Already using High performance"));
         report += reportRow(QStringLiteral("Action:       No change needed"));
     } else {
         // Discovery ran several powercfg processes; honor a cancellation that arrived

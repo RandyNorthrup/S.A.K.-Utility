@@ -12,6 +12,7 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/ethernet_config_manager.h"
 #include "sak/firewall_rule_auditor.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_report_generator.h"
@@ -564,7 +565,7 @@ void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
                 Q_EMIT wifiChannelUtilization(channels);
 
                 Q_EMIT logOutput(
-                    QStringLiteral("WiFi scan complete: %1 networks found").arg(networks.size()));
+                    QStringLiteral("Wi-Fi scan complete: %1 networks found").arg(networks.size()));
                 removeOperation(State::ScanningWiFi);
             });
     connect(m_wifiAnalyzer.get(),
@@ -874,7 +875,7 @@ void NetworkDiagnosticController::runHttpSpeedTest() {
 }
 
 void NetworkDiagnosticController::scanWiFi() {
-    Q_EMIT statusMessage(QStringLiteral("Scanning WiFi networks..."), 0);
+    Q_EMIT statusMessage(QStringLiteral("Scanning Wi-Fi networks..."), 0);
 
     runOnThread([this]() { m_wifiAnalyzer->scan(); }, State::ScanningWiFi);
 }
@@ -887,11 +888,11 @@ void NetworkDiagnosticController::startContinuousWiFiScan(int intervalMs) {
     // active continuous scan blocks a one-shot (scanWiFi already routes through the same gate).
     // Without this the two threads race the QVector d-pointer -> double-free / use-after-free.
     if (isWorkerGroupBusy(State::ScanningWiFi)) {
-        Q_EMIT errorOccurred(QStringLiteral("A WiFi scan is already in progress"));
+        Q_EMIT errorOccurred(QStringLiteral("A Wi-Fi scan is already in progress"));
         return;
     }
     Q_EMIT logOutput(
-        QStringLiteral("Starting continuous WiFi scan (interval: %1 ms)").arg(intervalMs));
+        QStringLiteral("Starting continuous Wi-Fi scan (interval: %1 ms)").arg(intervalMs));
     // The first scan is a full WlanScan plus a wait for the driver's completion notification, so
     // it runs on the worker exactly like a one-off scanWiFi(); it used to run inline here, on the
     // GUI thread. The periodic refresh (a quick cached-list read) starts only once it has landed,
@@ -915,7 +916,7 @@ void NetworkDiagnosticController::stopContinuousWiFiScan() {
     m_continuousWiFiRequested = false;
     m_wifiAnalyzer->stopContinuousScan();
     removeOperation(State::ScanningWiFi);
-    Q_EMIT logOutput(QStringLiteral("Continuous WiFi scan stopped"));
+    Q_EMIT logOutput(QStringLiteral("Continuous Wi-Fi scan stopped"));
 }
 
 bool NetworkDiagnosticController::isWiFiAvailable() const {
@@ -1100,12 +1101,11 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     result.speedSamplesMbps = ctx->speed_samples;
 
     Q_EMIT lanTransferComplete(result);
-    Q_EMIT logOutput(
-        QStringLiteral("LAN transfer receive complete: "
-                       "%1 MB in %2s (%3 Mbps avg)")
-            .arg(static_cast<double>(ctx->total_received) / sak::kBytesPerMBf, 0, 'f', 1)
-            .arg(elapsed_sec, 0, 'f', 1)
-            .arg(result.avgSpeedMbps, 0, 'f', 1));
+    Q_EMIT logOutput(QStringLiteral("LAN transfer receive complete: "
+                                    "%1 in %2s (%3 Mbps avg)")
+                         .arg(sak::formatBytes(static_cast<qint64>(ctx->total_received)))
+                         .arg(elapsed_sec, 0, 'f', 1)
+                         .arg(result.avgSpeedMbps, 0, 'f', 1));
 
     delete ctx;
     socket->deleteLater();
@@ -1387,8 +1387,8 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
 
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer complete: "
-                                    "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(static_cast<double>(data.total_sent) / sak::kBytesPerMBf, 0, 'f', 1)
+                                    "%1 in %2s (%3 Mbps avg)")
+                         .arg(sak::formatBytes(static_cast<qint64>(data.total_sent)))
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
     Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), sak::kTimerStatusDefaultMs);
