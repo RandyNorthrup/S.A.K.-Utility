@@ -289,15 +289,34 @@ void UserProfileAppRestoreFlowTests::restoreTablesGiveTheirRoomToOneColumn() {
 }
 
 // Review 4 (Y24): the last step's two option boxes were 205 px and 159 px wide.
+// Review 5: the first fix read the boxes' size hints before the theme's style sheet had polished
+// them, and on screen they were still 145 px and 115 px. Measured as shown, in the theme.
 void UserProfileAppRestoreFlowTests::theRestoreOptionsShareOneWidth() {
+    const QString previous_style = qApp->styleSheet();
+    const auto restore = qScopeGuard([previous_style]() { qApp->setStyleSheet(previous_style); });
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
     sak::UserProfileRestoreWizard restore_wizard;
     auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
     QVERIFY(page != nullptr);
-    // The form keeps each box at its size hint or its minimum, whichever is larger.
-    const auto shown = [](const QComboBox* box) {
-        return std::max(box->sizeHint().width(), box->minimumWidth());
-    };
-    QCOMPARE(shown(page->m_permissionModeCombo), shown(page->m_conflictResolutionCombo));
+    for (const int id : restore_wizard.pageIds()) {
+        if (restore_wizard.page(id) == page) {
+            restore_wizard.setStartId(id);
+        }
+    }
+    restore_wizard.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&restore_wizard));
+    QTRY_VERIFY(page->isVisible());
+    QCoreApplication::processEvents();
+    QCOMPARE(page->m_permissionModeCombo->width(), page->m_conflictResolutionCombo->width());
+    // Review 5: the plan beside them counted Wi-Fi and Bluetooth adapters as "Ethernet adapters".
+    sak::EthernetConfigInfo wifi;
+    wifi.adapter_name = QStringLiteral("Wi-Fi 2");
+    wifi.selected = true;
+    restore_wizard.setEthernetConfigs({wifi});
+    page->initializePage();
+    QVERIFY2(page->m_summaryLabel->text().contains(QStringLiteral("Network adapters (1)")),
+             qPrintable(page->m_summaryLabel->text()));
+    QVERIFY(!page->m_summaryLabel->text().contains(QStringLiteral("Ethernet adapters")));
 }
 
 // Review 3 (X20): an empty backup's Wi-Fi page said so three times in two wordings, as "WiFi".

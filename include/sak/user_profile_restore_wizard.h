@@ -320,6 +320,8 @@ public:
     bool validatePage() override;
 
 private:
+    /// Gives the two option boxes one width, the wider one's, once the theme has polished them.
+    void equalizeOptionWidths();
     void setupUi();
     /// @brief Build verify/backup options, summary label, and signal connections
     void setupUi_optionsAndConnections(QVBoxLayout* layout);

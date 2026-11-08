@@ -8,6 +8,11 @@ counting Wi-Fi and Bluetooth adapters among them.
 This reads every string literal under src/ and include/, comments left out. "WiFi" on its own is
 the adapter type the data keeps (JSON exports, the AI tools, comparisons); sak::adapterTypeLabel
 shows it as "Wi-Fi". A Settings page address ("ms-settings:network-ethernet") is not wording.
+
+Review 5: the restore's plan still counted every adapter as "Ethernet adapters (4)", and the
+welcome page, the backup's log and the restore worker's messages said "Ethernet" for the same
+settings. The user-profile backup and restore keep every adapter's settings, so no string literal
+in their sources (src/*/user_profile_*) says "Ethernet".
 """
 
 from __future__ import annotations
@@ -48,6 +53,24 @@ def misspellings(root: Path) -> list[str]:
     return found
 
 
+ETHERNET = re.compile(r"\bEthernet\b")
+
+
+def ethernet_in_profile_text(root: Path) -> list[str]:
+    """Every string literal in the user-profile backup and restore sources that says "Ethernet"."""
+    found: list[str] = []
+    for path in sorted((root / "src").rglob("user_profile_*")):
+        if path.suffix not in SOURCE_SUFFIXES or not path.is_file():
+            continue
+        text = DIGIT_SEPARATOR.sub("_", path.read_text(encoding="utf-8", errors="replace"))
+        for match in CODE.finditer(text):
+            literal = match.group(0)
+            if literal.startswith('"') and ETHERNET.search(literal):
+                line = text.count("\n", 0, match.start()) + 1
+                found.append(f"{path.relative_to(root).as_posix()}:{line}: {literal}")
+    return found
+
+
 class UserTextSpellingTests(unittest.TestCase):
     def scan(self, source: str) -> list[str]:
         with tempfile.TemporaryDirectory() as directory:
@@ -78,6 +101,22 @@ class UserTextSpellingTests(unittest.TestCase):
 
     def test_this_tree_has_none(self) -> None:
         found = misspellings(REPO)
+        self.assertEqual(found, [], "\n".join(found))
+
+    def test_profile_backup_text_says_network_adapters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src" / "gui").mkdir(parents=True)
+            (root / "src" / "gui" / "user_profile_restore_wizard_pages.cpp").write_text(
+                'auto x = tr("* Ethernet adapters (%1): settings changed");\n', encoding="utf-8")
+            (root / "src" / "gui" / "network_panel.cpp").write_text(
+                'auto y = tr("Ethernet");\n', encoding="utf-8")
+            found = ethernet_in_profile_text(root)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("src/gui/user_profile_restore_wizard_pages.cpp:1:"))
+
+    def test_this_trees_profile_backup_has_none(self) -> None:
+        found = ethernet_in_profile_text(REPO)
         self.assertEqual(found, [], "\n".join(found))
 
 

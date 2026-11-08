@@ -39,9 +39,10 @@ QString restoreWelcomeInfoHtml() {
             QCoreApplication::translate(
                 "UserProfileRestoreWelcomePage",
                 "<b>App Data & Apps</b>: Restore application data and reinstall apps (optional)"),
-            QCoreApplication::translate("UserProfileRestoreWelcomePage",
-                                        "<b>Networks & Ethernet</b>: Restore Wi-Fi profiles and "
-                                        "adapter settings (optional)"));
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "<b>Wi-Fi & Network Adapters</b>: Restore Wi-Fi profiles and "
+                "adapter settings (optional)"));
 }
 }  // namespace
 

@@ -1314,7 +1314,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     const BackupManifest& manifest = wiz->manifest();
     if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
         m_statusLabel->setText(
-            tr("Backup has no verified integrity checksum - Ethernet restore is disabled"));
+            tr("Backup has no verified integrity checksum - network adapter restore is disabled"));
         m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
@@ -1438,7 +1438,20 @@ UserProfileRestorePermissionSettingsPage::UserProfileRestorePermissionSettingsPa
 }
 
 void UserProfileRestorePermissionSettingsPage::initializePage() {
+    equalizeOptionWidths();
     updateSummary();
+}
+
+void UserProfileRestorePermissionSettingsPage::equalizeOptionWidths() {
+    // One width for the two option boxes, the wider one's: each took its own, 205 px and 159 px
+    // (review 4, Y24). Read once the theme's style sheet has polished them: before that their size
+    // hints lack its padding, and the boxes again came out 145 px and 115 px (review 5).
+    m_permissionModeCombo->ensurePolished();
+    m_conflictResolutionCombo->ensurePolished();
+    const int options_width = std::max(m_permissionModeCombo->sizeHint().width(),
+                                       m_conflictResolutionCombo->sizeHint().width());
+    m_permissionModeCombo->setMinimumWidth(options_width);
+    m_conflictResolutionCombo->setMinimumWidth(options_width);
 }
 
 void UserProfileRestorePermissionSettingsPage::setupUi() {
@@ -1477,12 +1490,6 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
                                        static_cast<int>(ConflictResolution::KeepLarger));
     m_conflictResolutionCombo->setCurrentIndex(1);  // Default to RenameWithSuffix
     perm_layout->addRow(tr("Conflict Resolution:"), m_conflictResolutionCombo);
-    // One width for the two option boxes, the wider one's: each took its own, 205 px and 159 px
-    // (review 4, Y24).
-    const int options_width = std::max(m_permissionModeCombo->sizeHint().width(),
-                                       m_conflictResolutionCombo->sizeHint().width());
-    m_permissionModeCombo->setMinimumWidth(options_width);
-    m_conflictResolutionCombo->setMinimumWidth(options_width);
 
     layout->addWidget(perm_group);
 
@@ -1637,7 +1644,9 @@ QString UserProfileRestorePermissionSettingsPage::selectionSummary() const {
     const auto selected_ethernet = std::ranges::count_if(
         ethernet, [](const EthernetConfigInfo& config) { return config.selected; });
     if (selected_ethernet > 0) {
-        lines += tr("* Ethernet adapters (%1): settings changed, which can drop this PC's "
+        // Every adapter's settings, Wi-Fi and Bluetooth ones too, as the adapter page says
+        // (review 4, Y19; review 5 found this line).
+        lines += tr("* Network adapters (%1): settings changed, which can drop this PC's "
                     "connection<br>")
                      .arg(selected_ethernet);
     }

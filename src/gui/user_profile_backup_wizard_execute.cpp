@@ -400,13 +400,13 @@ bool UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
     QString error;
     if (!writeJsonSidecarAtomic(
             m_destinationPath + "/ethernet_configs.json", QJsonDocument(arr), error)) {
-        sak::logError("Could not save Ethernet configs: {}", error.toStdString());
-        appendLog(tr("ERROR: Could not save Ethernet configurations: %1").arg(error));
+        sak::logError("Could not save network adapter settings: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save network adapter settings: %1").arg(error));
         return false;
     }
-    appendLog(
-        tr("Saved %1 to backup")
-            .arg(countOf(arr.size(), tr("Ethernet configuration"), tr("Ethernet configurations"))));
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(
+                      arr.size(), tr("network adapter setting"), tr("network adapter settings"))));
     return true;
 }
 

@@ -1448,7 +1448,8 @@ bool UserProfileRestoreWorker::restoreEthernetStatic(const EthernetConfigInfo& c
     // leave netsh to guess, so fail closed.
     if (config.ip_address.isEmpty() || config.subnet_mask.isEmpty()) {
         Q_EMIT logMessage(
-            tr("Ethernet config '%1' is static but missing IP address/subnet").arg(name), true);
+            tr("Network adapter settings '%1' are static but missing IP address/subnet").arg(name),
+            true);
         return false;
     }
 
@@ -1496,7 +1497,8 @@ bool UserProfileRestoreWorker::restoreEthernetStatic(const EthernetConfigInfo& c
 
 bool UserProfileRestoreWorker::restoreEthernetConfig(const EthernetConfigInfo& config) {
     if (config.adapter_name.isEmpty()) {
-        Q_EMIT logMessage(tr("Ethernet configuration has no adapter name; cannot restore"), true);
+        Q_EMIT logMessage(tr("Network adapter settings have no adapter name; cannot restore"),
+                          true);
         return false;
     }
     const QString netsh = resolveSystem32Netsh();
@@ -1550,10 +1552,10 @@ void UserProfileRestoreWorker::applyEthernetConfigs() {
         if (!config.selected) {
             continue;
         }
-        Q_EMIT statusUpdate(config.adapter_name, tr("Restoring Ethernet configuration..."));
+        Q_EMIT statusUpdate(config.adapter_name, tr("Restoring network adapter settings..."));
         if (restoreEthernetConfig(config)) {
             ++m_networkApplied;
-            Q_EMIT logMessage(tr("Restored Ethernet configuration: %1").arg(config.adapter_name),
+            Q_EMIT logMessage(tr("Restored network adapter settings: %1").arg(config.adapter_name),
                               false);
         } else {
             m_networkNotApplied.append(tr("network settings for '%1'").arg(config.adapter_name));
