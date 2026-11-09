@@ -46,6 +46,8 @@ public:
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     using InventoryScanner = std::function<StorageInventoryScanResult(const CancelCheck&)>;
+    using InventoryScannerWithProgress = std::function<StorageInventoryScanResult(
+        const CancelCheck&, const InventoryScanProgressCallback&)>;
     using ApplyExecutor = std::function<PartitionExecutionResult(
         const QVector<PartitionOperation>&, bool, bool, const CancelCheck&)>;
     using FileSystemCheckRunner = std::function<PartitionFileSystemToolRunResult(
@@ -87,6 +89,7 @@ public Q_SLOTS:
     // guard without dispatching a real (destructive) apply.
     void setTestState(PartitionManagerState state);
     void setInventoryScannerForTesting(InventoryScanner scanner);
+    void setInventoryScannerWithProgressForTesting(InventoryScannerWithProgress scanner);
     void setApplyInventoryScannerForTesting(InventoryScanner scanner);
     void setApplyExecutorForTesting(ApplyExecutor executor);
     void setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner);
@@ -102,6 +105,8 @@ Q_SIGNALS:
     /// Apply read the disks again and refused to start, for these reasons. Nothing was written.
     void applyRefused(const QStringList& reasons);
     void progressUpdate(int current, int maximum);
+    /// A scan reached this disk, of this many.
+    void inventoryScanProgress(int disk, int disks);
     void logOutput(const QString& message);
     void executionFinished(const sak::PartitionExecutionResult& result);
     void fileSystemCheckFinished(const sak::PartitionFileSystemToolRunResult& result);
@@ -139,8 +144,12 @@ private:
     std::optional<PendingApplyRequest> m_pending_apply_request;
     std::optional<PendingApplyRequest> m_active_apply_request;
     std::optional<PartitionExecutionResult> m_pending_execution_result;
-    std::function<StorageInventoryScanResult(const CancelCheck&)> m_inventory_scanner;
-    std::function<StorageInventoryScanResult(const CancelCheck&)> m_apply_inventory_scanner;
+    std::function<StorageInventoryScanResult(const CancelCheck&,
+                                             const InventoryScanProgressCallback&)>
+        m_inventory_scanner;
+    std::function<StorageInventoryScanResult(const CancelCheck&,
+                                             const InventoryScanProgressCallback&)>
+        m_apply_inventory_scanner;
     std::function<PartitionExecutionResult(
         const QVector<PartitionOperation>&, bool, bool, const CancelCheck&)>
         m_apply_executor_for_testing;

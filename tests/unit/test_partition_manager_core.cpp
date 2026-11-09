@@ -37,6 +37,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1912,6 +1913,11 @@ private Q_SLOTS:
     void safetyValidator_defragTrustsTheDrivesOwnRotationRate();
     void safetyValidator_defragWaitsForApplyWhenTheScanCouldNotAsk();
     void standardUserScanLeavesOnlyAnUnspecifiedDrivePending();
+    void inventoryScan_aSlowScanThatKeepsMovingFinishes();
+    void inventoryScan_aScanThatGoesQuietDidNotFinish();
+    void inventoryScan_aScanPastItsCeilingDidNotFinish();
+    void inventoryScan_oneVolumeThatDoesNotAnswerIsThatVolumesError();
+    void inventoryScan_writesProgressAndSkipsWhatItCannotUse();
     void scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay();
     void driveRotationRateFunction_readsWhatTheToolReports();
     void diskMediaHeuristics_readTheModelStringToo();
@@ -17500,9 +17506,10 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
         "IsOffline = if ($disk.IsOffline -is [bool]) { $disk.IsOffline } else { $null }")));
     QVERIFY2(script.contains(QStringLiteral("$ProgressPreference = 'SilentlyContinue'")),
              "Inventory script should suppress progress records so stdout remains JSON-only.");
-    QVERIFY2(script.contains(QStringLiteral("Get-Partition -DiskNumber $DiskNumber "
-                                            "-ErrorAction Stop")),
-             "A failing partition query must raise, not be silenced into an empty list.");
+    QVERIFY2(script.contains(QStringLiteral("Get-Partition -DiskNumber $number -AsJob")),
+             "The partition query runs as a bounded job, so one disk cannot stop the scan.");
+    QVERIFY2(script.contains(QStringLiteral("The partition list did not answer within")),
+             "A partition query that does not answer is that disk's failure, not silence.");
     QVERIFY2(script.contains(QStringLiteral("CmdletizationQuery_NotFound")),
              "RAW disks with no partitions must not abort the whole inventory scan.");
     QVERIFY2(script.contains(QStringLiteral("PartitionQueryFailed")),
@@ -17515,11 +17522,12 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
              "Get-SakPartitionsForDisk must be defined before the disk pipeline calls it.");
     QVERIFY2(script.contains(QStringLiteral("Get-SakVolumeForPartition")),
              "Hidden partitions should use a resilient volume lookup helper.");
-    QVERIFY2(script.contains(QStringLiteral("Get-Volume -Path $accessPath")),
+    QVERIFY2(script.contains(QStringLiteral("Get-Volume -Path $path -AsJob")),
              "Volume GUID access paths should be tried when direct partition lookup fails.");
-    QVERIFY2(script.contains(QStringLiteral("$dirtyOutput = @(& fsutil.exe dirty query")),
-             "Dirty-bit output must be captured for an explicit result or error.");
-    QVERIFY2(script.contains(QStringLiteral("$dirtyExit = $LASTEXITCODE")),
+    QVERIFY2(script.contains(QStringLiteral("Invoke-SakBoundedProgram -Path "
+                                            "\"$env:SystemRoot\\System32\\fsutil.exe\"")),
+             "Dirty-bit output must be captured, from System32's fsutil, within a time.");
+    QVERIFY2(script.contains(QStringLiteral("$dirtyExit = $dirtyRun.ExitCode")),
              "Dirty-bit query success must be decided by the native exit code.");
     QVERIFY2(script.contains(QStringLiteral("DirtyBitKnown = [bool]$dirtyKnown")),
              "Inventory JSON must distinguish clean from unknown dirty state.");
@@ -22061,7 +22069,8 @@ void PartitionManagerCoreTests::standardScanSkipsWhatOnlyAnAdministratorMayRead(
          {std::pair{QStringLiteral("Get-BitLockerVolume -MountPoint"),
                     QStringLiteral("if ($volume -and $volume.DriveLetter -and "
                                    "$sakReadAdministratorState) {")},
-          std::pair{QStringLiteral("& fsutil.exe dirty query"),
+          std::pair{QStringLiteral(
+                        "Invoke-SakBoundedProgram -Path \"$env:SystemRoot\\System32\\fsutil.exe\""),
                     QStringLiteral("if ($volume -and $volume.DriveLetter -and "
                                    "$sakReadAdministratorState) {")},
           std::pair{QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop"),
@@ -22832,7 +22841,7 @@ void PartitionManagerCoreTests::standardUserScanLeavesOnlyAnUnspecifiedDrivePend
     const QString script = StorageInventoryWorker::inventoryPowerShellScript(true);
     QVERIFY(script.contains(QStringLiteral("function Get-SakRotationRateRpm")));
     QVERIFY(script.indexOf(QStringLiteral("function Get-SakRotationRateRpm")) <
-            script.indexOf(QStringLiteral("$disks = @(@(Get-Disk)")));
+            script.indexOf(QStringLiteral("$sakDiskList = @(@(Get-Disk)")));
     QVERIFY(
         script.contains(QStringLiteral("if ($sakReadAdministratorState -and $physical -and "
                                        "\"$($physical.MediaType)\" -ceq 'Unspecified')")));
@@ -22903,6 +22912,164 @@ void PartitionManagerCoreTests::driveRotationRateFunction_readsWhatTheToolReport
     QCOMPARE(rateFrom(QDir::toNativeSeparators(dir.filePath(QStringLiteral("absent.cmd")))),
              QStringLiteral("rate=0"));
     QCOMPARE(rateFrom(QString()), QStringLiteral("rate=0"));
+}
+
+namespace {
+
+// A stand-in for the scan that reads no disk: it writes progress lines as the scan does, and JSON.
+QString progressScript(const QString& body) {
+    return QStringLiteral(
+               "function Write-SakScanProgress([string]$Step) "
+               "{ [Console]::Error.WriteLine(\"SAK-SCAN-PROGRESS $Step\") }\n") +
+           body;
+}
+
+}  // namespace
+
+// A slow PC that keeps moving finishes, however long past the quiet limit it takes in all.
+void PartitionManagerCoreTests::inventoryScan_aSlowScanThatKeepsMovingFinishes() {
+    QList<sak::InventoryScanProgress> seen;
+    QElapsedTimer took;
+    took.start();
+    const auto scan = StorageInventoryWorker::runBrowsingScanScript(
+        progressScript(
+            QStringLiteral("foreach ($i in 1..6) { Write-SakScanProgress \"disk $i of 6\"; "
+                           "Start-Sleep -Milliseconds 500 }\n'[]'\n")),
+        {.idle_ms = 1500, .ceiling_ms = 60'000},
+        {},
+        [&seen](const sak::InventoryScanProgress& progress) { seen.append(progress); });
+    QVERIFY2(took.elapsed() >= 2500, "the stand-in must outlast the quiet limit to prove anything");
+    QVERIFY2(!scan.inventory.scan_did_not_finish, qPrintable(scan.inventory.warnings.join('|')));
+    QVERIFY2(scan.inventory.warnings.isEmpty(), qPrintable(scan.inventory.warnings.join('|')));
+    QVERIFY(!scan.cancelled);
+    QVERIFY(!seen.isEmpty());
+    // Which disk, and of how many, read the right way round.
+    QCOMPARE(seen.first().disk, 1);
+    QCOMPARE(seen.first().disks, 6);
+    QCOMPARE(seen.last().disk, 6);
+    QCOMPARE(seen.last().disks, 6);
+}
+
+// One that goes quiet is stopped, says it did not finish and where, and what it wrote is not a
+// list.
+void PartitionManagerCoreTests::inventoryScan_aScanThatGoesQuietDidNotFinish() {
+    QElapsedTimer took;
+    took.start();
+    const auto scan = StorageInventoryWorker::runBrowsingScanScript(
+        progressScript(
+            QStringLiteral("Write-SakScanProgress 'disk 1 of 2'\n"
+                           "[Console]::Out.Write('[{\"Number\":0,\"FriendlyName\":\"Partial\"}')\n"
+                           "[Console]::Out.Flush()\n"
+                           "Start-Sleep -Seconds 30\n']'\n")),
+        {.idle_ms = 1500, .ceiling_ms = 60'000},
+        {},
+        {});
+    QVERIFY2(took.elapsed() < 20'000,
+             "a quiet scan is stopped at its quiet limit, not left to run");
+    QVERIFY(scan.inventory.scan_did_not_finish);
+    QVERIFY2(scan.inventory.disks.isEmpty(), "nothing a scan wrote before it stopped is a disk");
+    QVERIFY(!scan.cancelled);
+    QCOMPARE(scan.inventory.warnings,
+             QStringList{QStringLiteral("The disk scan did not finish: no progress for 1 s "
+                                        "(last step: disk 1 of 2)")});
+}
+
+void PartitionManagerCoreTests::inventoryScan_aScanPastItsCeilingDidNotFinish() {
+    const auto scan = StorageInventoryWorker::runBrowsingScanScript(
+        progressScript(QStringLiteral("$i = 0\nwhile ($true) { $i++; Write-SakScanProgress "
+                                      "\"disk $i of 99\"; Start-Sleep -Milliseconds 200 }\n")),
+        {.idle_ms = 2000, .ceiling_ms = 3000},
+        {},
+        {});
+    QVERIFY(scan.inventory.scan_did_not_finish);
+    QVERIFY(scan.inventory.disks.isEmpty());
+    QCOMPARE(scan.inventory.warnings.size(), 1);
+    QVERIFY2(scan.inventory.warnings.first().startsWith(
+                 QStringLiteral("The disk scan did not finish within 3 s (last step: disk ")),
+             qPrintable(scan.inventory.warnings.first()));
+}
+
+// The query the scan bounds each volume and partition lookup with: one that does not answer is
+// that volume's error, and the others still answer. Stand-in jobs, no disk.
+void PartitionManagerCoreTests::inventoryScan_oneVolumeThatDoesNotAnswerIsThatVolumesError() {
+    const QString script =
+        StorageInventoryWorker::boundedQueryFunctionScript() +
+        QStringLiteral(
+            "$slow = Invoke-SakBoundedQuery -Start { Start-Job { Start-Sleep -Seconds 25 } } "
+            "-Seconds 2\n"
+            "Get-Job | Stop-Job\nGet-Job | Remove-Job -Force\n"
+            "$fast = Invoke-SakBoundedQuery -Start { param($a) Start-Job { param($b) \"vol-$b\" } "
+            "-ArgumentList $a } -ArgumentList @('E') -Seconds 60\n"
+            "$failed = Invoke-SakBoundedQuery -Start { Start-Job { throw 'no such volume' } } "
+            "-Seconds 60\n"
+            "$wrong = Invoke-SakBoundedQuery -Start { throw 'cannot start' } -Seconds 60\n"
+            "'slow=' + $slow.Finished + '|' + $slow.Items.Count\n"
+            "'fast=' + $fast.Finished + '|' + ($fast.Items -join ',')\n"
+            "'failed=' + $failed.Finished + '|' + $failed.Error\n"
+            "'wrong=' + $wrong.Finished + '|' + $wrong.Error\n");
+    const ProcessResult proc = sak::runPowerShell(script, 120'000);
+    QVERIFY2(proc.succeeded(), qPrintable(proc.std_err));
+    const QStringList lines = proc.std_out.split(QRegularExpression(QStringLiteral("\\r?\\n")),
+                                                 Qt::SkipEmptyParts);
+    QCOMPARE(lines,
+             QStringList({QStringLiteral("slow=False|0"),
+                          QStringLiteral("fast=True|vol-E"),
+                          QStringLiteral("failed=True|no such volume"),
+                          QStringLiteral("wrong=True|cannot start")}));
+
+    // The other disks still list: a volume whose lookup did not answer is that partition's
+    // warning, and its disk and every other disk are in the inventory.
+    auto stuck = standardUserInventoryDisk();
+    auto partitions = stuck.value(QStringLiteral("Partitions")).toArray();
+    auto partition = partitions.first().toObject();
+    partition[QStringLiteral("VolumeLookupFailed")] = true;
+    partition[QStringLiteral("VolumeLookupError")] =
+        QStringLiteral("The volume did not answer within 20 s");
+    partition.remove(QStringLiteral("Volume"));
+    partitions[0] = partition;
+    stuck[QStringLiteral("Partitions")] = partitions;
+    auto other = standardUserInventoryDisk();
+    other[QStringLiteral("Number")] = 2;
+    other[QStringLiteral("UniqueId")] = QStringLiteral("OTHER");
+    const auto inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(QJsonArray{stuck, other}).toJson());
+    QCOMPARE(inventory.disks.size(), 2);
+    QVERIFY(!inventory.scan_did_not_finish);
+    const bool said = std::ranges::any_of(inventory.warnings, [](const QString& warning) {
+        return warning.contains(QStringLiteral("disk 1 partition 1")) &&
+               warning.contains(QStringLiteral("The volume did not answer within 20 s"));
+    });
+    QVERIFY2(said, qPrintable(inventory.warnings.join('|')));
+    QVERIFY(inventory.disks.at(1).partitions.first().volume.has_value());
+}
+
+void PartitionManagerCoreTests::inventoryScan_writesProgressAndSkipsWhatItCannotUse() {
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript(false);
+    QVERIFY(
+        script.contains(QStringLiteral("Write-SakScanProgress \"disk $sakDiskIndex of "
+                                       "$sakDiskCount\"")));
+    QVERIFY(
+        script.contains(QStringLiteral("Write-SakScanProgress \"partition "
+                                       "$($partition.PartitionNumber) of disk $sakDiskIndex\"")));
+    QVERIFY2(script.indexOf(QStringLiteral("function Invoke-SakBoundedQuery")) <
+                 script.indexOf(QStringLiteral("function Get-SakVolumeForPartition")),
+             "the bounded query must exist before the lookups that use it");
+    QVERIFY2(script.contains(QStringLiteral("The volume did not answer within")),
+             "a volume that does not answer is that volume's error");
+    // A standard-user scan cannot read BitLocker, so it does not load the module to ask.
+    const int guard = script.indexOf(QStringLiteral("if ($sakReadAdministratorState) {"));
+    const int load = script.indexOf(QStringLiteral("Get-Command Get-BitLockerVolume"));
+    QVERIFY2(guard >= 0 && load > guard, "loading the BitLocker module waits for an administrator");
+    // The dynamic-disk probe is compiled only when a disk Get-Disk left out needs it.
+    const int none = script.indexOf(QStringLiteral("if ($hidden.Count -eq 0) { return }"));
+    const int compile = script.indexOf(QStringLiteral("  Initialize-SakDynamicDiskProbe"));
+    QVERIFY2(none >= 0 && compile > none, "the probe compiles after the check that needs it");
+    const int wrapper = script.indexOf(QStringLiteral("function Initialize-SakDynamicDiskProbe {"));
+    const int add_type =
+        script.indexOf(QStringLiteral("if (-not ('Sak.DynamicDiskProbe' -as [type]))"));
+    QVERIFY2(wrapper >= 0 && add_type > wrapper &&
+                 script.count(QStringLiteral("'Sak.DynamicDiskProbe' -as [type]")) == 1,
+             "the probe's compile sits inside the function that runs only when needed");
 }
 
 void PartitionManagerCoreTests::jsonUInt64_clampsNegativesInsteadOfWrapping() {

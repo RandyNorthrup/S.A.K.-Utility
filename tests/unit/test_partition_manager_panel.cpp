@@ -8,6 +8,7 @@
 #include "sak/partition_os_migration.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/windows11_theme.h"
 
 #include <QAbstractItemDelegate>
@@ -61,6 +62,8 @@
 #include <QWizard>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -68,6 +71,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 
 class PartitionManagerPanelTests : public QObject {
@@ -116,6 +120,8 @@ private Q_SLOTS:
     void contextMenuOmitsRibbonAndQueueControls();
     void convertDynamicToBasicRefusesABasicDisk();
     void aScanThatFoundNoDisksSaysWhy();
+    void aScanThatDidNotFinishSaysSo();
+    void aScanShowsWhichDiskItIsOn();
     void smallPartitionsStayVisibleInTheBars();
     void diskMapSegmentsSelectMatchingTableRows();
     void redoButtonEnablesOnlyAfterUndo();
@@ -2835,6 +2841,73 @@ void PartitionManagerPanelTests::convertDynamicToBasicRefusesABasicDisk() {
     auto* queue = panel.findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 0);
+}
+
+// A scan that stopped did not find nothing: the panel says it did not finish, and why.
+void PartitionManagerPanelTests::aScanThatDidNotFinishSaysSo() {
+    sak::PartitionManagerPanel panel;
+    QSignalSpy status(&panel, &sak::PartitionManagerPanel::statusMessage);
+    sak::PartitionInventory inventory;
+    inventory.layout_hash = QStringLiteral("unfinished-scan-layout");
+    inventory.scan_did_not_finish = true;
+    inventory.warnings = {QStringLiteral(
+        "The disk scan did not finish: no progress for 30 s (last step: disk 2 of 5)")};
+    panel.setTestInventoryForReview(inventory);
+    QApplication::processEvents();
+    const QString why = QStringLiteral(
+        "The disk scan did not finish: no progress for 30 s (last step: disk 2 of 5). Click Scan "
+        "Disks to try again.");
+    int shown = 0;
+    int wrong = 0;
+    for (const auto* label : panel.findChildren<QLabel*>()) {
+        shown += label->text() == why ? 1 : 0;
+        wrong += label->text().contains(QStringLiteral("found no disks")) ? 1 : 0;
+    }
+    QVERIFY2(shown >= 2, "The disk map and the table should both say it did not finish");
+    QCOMPARE(wrong, 0);
+    const bool said = std::ranges::any_of(status, [&why](const QList<QVariant>& args) {
+        return args.at(0).toString() == why;
+    });
+    QVERIFY2(said, "The status bar should say it did not finish");
+}
+
+// A slow scan shows it is still moving: which disk it is on, of how many.
+void PartitionManagerPanelTests::aScanShowsWhichDiskItIsOn() {
+    using namespace std::chrono_literals;
+    sak::PartitionManagerPanel panel;
+    QSignalSpy status(&panel, &sak::PartitionManagerPanel::statusMessage);
+    std::atomic_bool release{false};
+    const auto inventory = applyReviewInventoryFixture();
+    panel.setTestInventoryScannerWithProgressForReview(
+        [&release, inventory](const sak::CancelCheck&,
+                              const sak::InventoryScanProgressCallback& on_progress) {
+            on_progress({.disk = 1, .disks = 3});
+            std::this_thread::sleep_for(100ms);
+            on_progress({.disk = 2, .disks = 3});
+            const auto deadline = std::chrono::steady_clock::now() + 20s;
+            while (!release.load() && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(10ms);
+            }
+            return sak::StorageInventoryScanResult{.inventory = inventory, .cancelled = false};
+        });
+    auto* scan = findToolButtonByName(&panel, QStringLiteral("Scan Disks"));
+    QVERIFY2(scan != nullptr, "Scan Disks should exist");
+    pressAction(scan);
+    const QString expected = QStringLiteral("Scanning disk 2 of 3");
+    const auto saidIt = [&status, &expected]() {
+        return std::ranges::any_of(status, [&expected](const QList<QVariant>& args) {
+            return args.at(0).toString() == expected;
+        });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(saidIt(), 10'000);
+    const auto overlays = panel.findChildren<sak::ui::ViewEmptyState*>();
+    const bool over_the_table =
+        std::ranges::any_of(overlays, [&expected](const sak::ui::ViewEmptyState* overlay) {
+            return overlay->overlayText() == expected;
+        });
+    release.store(true);
+    QVERIFY2(over_the_table, "The table's scanning message should say which disk");
+    QTRY_VERIFY_WITH_TIMEOUT(scan->isEnabled(), 10'000);
 }
 
 // Review 3: a scan that timed out showed "No disks to map - click Scan Disks" and "Ready", like a

@@ -162,10 +162,30 @@ try {
     Compress-Archive -Path (Split-Path -Parent $rowFile) -DestinationPath $rowZip
     $rows = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'Rows', '-PcFile', $pc, '-Rows', 'vhd.mine', '-EvidenceDir', $evidence, '-JobMinutes', '1') -Environment @{ SAK_TEST_ZIP = $rowZip }
     Assert-That ($rows.code -eq 0) 'A row runs' $rows.text
-    Assert-That ($rows.calls -cmatch "Compress-Archive -Path @\('C:\\SAKCert\\evidence\\vhd\.mine'\)") 'It asks for that row alone' $rows.calls
+    Assert-That ($rows.calls -cmatch "Compress-Archive -Path @\(@\('C:\\SAKCert\\evidence\\vhd\.mine'\) \| Where-Object \{ Test-Path -LiteralPath \`$_ \}\)") 'It asks for that row alone, if it ran' $rows.calls
     Assert-That ((Get-Content -LiteralPath (Join-Path $other 'independent.json') -Raw).Trim() -ceq 'what the host added') 'Another row is left as it was'
     Assert-That (Test-Path -LiteralPath (Join-Path $evidence 'vhd.mine\report.json')) 'The row came back'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $evidence 'sakcert-evidence-*.zip'))) 'Its archive is gone'
+
+    # A group stops at a row that failed, and says which.
+    $pinStub = Join-Path $Script:Root 'group-pins.json'
+    Set-Content -LiteralPath $pinStub -Value '{}'
+    foreach ($case in @(@{ status = 'Passed'; failure = '' }, @{ status = 'Failed'; failure = 'the drill failed it' })) {
+        $groupRow = Join-Path $Script:Root "group-$($case.status)\external.ssd-retrim\report.json"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $groupRow) | Out-Null
+        Set-Content -LiteralPath $groupRow -Value (@{ status = $case.status; failure = $case.failure } | ConvertTo-Json)
+        $groupZip = Join-Path $Script:Root "group-$($case.status).zip"
+        Compress-Archive -Path (Split-Path -Parent $groupRow) -DestinationPath $groupZip
+        $groupEvidence = Join-Path $Script:Root "group-evidence-$($case.status)"
+        $group = Invoke-Script -Path $Script:Groups -Arguments @('-Group', 'ssd-device', '-Rows', 'external.ssd-retrim', '-EvidenceDir', $groupEvidence, '-PcFile', $pc, '-PinFile', $pinStub, '-RowMinutes', '1') -Environment @{ SAK_TEST_ZIP = $groupZip }
+        if ($case.status -eq 'Passed') {
+            Assert-That ($group.code -eq 0) 'A group whose rows passed goes on' $group.text
+        } else {
+            Assert-That ($group.code -ne 0 -and $group.text -match 'external\.ssd-retrim failed: the drill failed it') 'A group stops at the row that failed, and names it' $group.text
+        }
+    }
+    $rowsScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_partition_manager_app_certification.ps1') -Raw
+    Assert-That ($rowsScript -match "if \(\`$report\.status -ne 'Passed'\) \{ break \}") 'The rows in the guest stop at the first that fails' ''
 
     # Pins come from what the PC reports.
     $disks = @(

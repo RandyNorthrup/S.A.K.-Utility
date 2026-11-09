@@ -71,6 +71,8 @@ public:
     // Replaces the scan made with administrator rights (the helper's, in a standard session).
     void setTestElevatedInventoryScannerForReview(
         PartitionManagerController::InventoryScanner scanner);
+    void setTestInventoryScannerWithProgressForReview(
+        PartitionManagerController::InventoryScannerWithProgress scanner);
 #endif
 
 Q_SIGNALS:
@@ -333,6 +335,8 @@ private:
     LogToggleSwitch* m_log_toggle{nullptr};
     // Empty/loading overlay for m_table; parented to m_table, so m_table owns its lifetime.
     ui::ViewEmptyState* m_table_empty_state{nullptr};
+    /// Scan Disks put its message over the table, and the scan has not come back yet.
+    bool m_scan_overlay_shown{false};
     bool m_inventory_load_started{false};
 };
 

@@ -107,7 +107,7 @@ What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key,
    pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json> -PcFile <pc.json>
    ```
 
-   It stops at the first group that fails, with that group's evidence kept. A failed row is a finding: fix the code, and a code fix starts again from step 1.
+   It stops at the first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. A failed row is a finding: fix the code, and a code fix starts again from step 1.
 6. Read the block below, which step 5 regenerated, with its claim level and the words the site may use.
 7. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
 
@@ -127,6 +127,8 @@ Measured on the rig in the trial of 2026-11-04, one group at a time. The device 
 | The device groups on a PC: two whole-disk passes on the 256 GB SSD, a defrag of 16 GB on the hard drive, and four small data rows | about an hour, not measured |
 
 The whole run is about three and a half hours on the VM rig and an hour on the PC, one after the other, or about five hours with setup. A failed group stops it, and a code fix starts it again from the freeze.
+
+The rig signs in to a VM through its keyboard, and takes the sign-in as done only when Windows names who is signed in. It tries four times, waiting up to 90 seconds after each, and a VM that never signs in stops the run as "did not sign in": Windows can report that nobody is signed in before its sign-in screen is drawn, and keys typed then are lost.
 
 A proof VM is shut down from inside its Windows, as a person would. Pulling the power leaves Windows recording a failed shutdown, and on BIOS the next start then stops at "Your PC couldn't turn off properly" until someone presses Enter.
 

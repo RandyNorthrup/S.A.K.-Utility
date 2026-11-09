@@ -498,7 +498,10 @@ $summaries = @()
 foreach ($row in $Rows) {
     $report = Invoke-CertRow -Id $row
     $summaries += [pscustomobject]@{ id = $row; status = $report.status; failure = $report.failure }
+    # A failed row fails the run, so the rows after it would only take time.
+    if ($report.status -ne 'Passed') { break }
 }
 $summaries | ForEach-Object { "ROW $($_.id): $($_.status) $($_.failure)" }
+@($Rows | Where-Object { @($summaries.id) -notcontains $_ }) | ForEach-Object { "ROW ${_}: not run, a row before it failed" }
 if (@($summaries | Where-Object { $_.status -ne 'Passed' }).Count -gt 0) { exit 1 }
 exit 0

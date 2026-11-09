@@ -9,17 +9,67 @@
 #include "sak/partition_manager_types.h"
 #include "sak/process_runner.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 
 #include <atomic>
 #include <expected>
 #include <functional>
+#include <mutex>
 
 namespace sak {
 
 struct StorageInventoryScanResult {
     PartitionInventory inventory;
     bool cancelled{false};
+};
+
+/// A scan with no progress line for this long has stopped answering.
+inline constexpr int kInventoryScanIdleLimitMs = 30'000;
+/// However much progress it makes, a scan ends here.
+inline constexpr int kInventoryScanCeilingMs = 300'000;
+
+/// How far a scan has got: the disk it is on, of how many.
+struct InventoryScanProgress {
+    int disk{0};
+    int disks{0};
+};
+using InventoryScanProgressCallback = std::function<void(const InventoryScanProgress&)>;
+
+struct InventoryScanLimits {
+    int idle_ms{kInventoryScanIdleLimitMs};
+    int ceiling_ms{kInventoryScanCeilingMs};
+};
+
+/// Watches the progress lines a scan script writes to standard error ("SAK-SCAN-PROGRESS step").
+/// A slow PC keeps scanning while it keeps moving; one that goes quiet is stopped, and the scan
+/// says it did not finish rather than that the PC has no disks. One thread may feed it while
+/// another asks whether it has gone quiet.
+class InventoryScanLiveness {
+public:
+    explicit InventoryScanLiveness(InventoryScanLimits limits,
+                                   InventoryScanProgressCallback on_progress = {});
+    /// Starts the quiet clock. Until then nothing counts as quiet: a helper waiting on the UAC
+    /// prompt is not a scan that stopped.
+    void arm();
+    void feed(const QString& stderr_chunk);
+    [[nodiscard]] bool idleExpired() const;
+    /// This watcher stopped the run.
+    void markStopped();
+    /// What the run's result means for a scan. Stopped for going quiet, or past its ceiling, it did
+    /// not finish, and its error says so and names the last step. Progress lines leave the error.
+    void settle(ProcessResult* result) const;
+    [[nodiscard]] static QString withoutProgressLines(const QString& text);
+
+private:
+    mutable std::mutex m_mutex;
+    InventoryScanLimits m_limits;
+    InventoryScanProgressCallback m_on_progress;
+    QElapsedTimer m_since_progress;
+    QString m_pending;
+    QString m_last_step;
+    bool m_armed{false};
+    bool m_stopped{false};
 };
 
 /// How the inventory script runs for a scan that needs administrator rights.
@@ -59,13 +109,31 @@ public:
     /// only wants to look at disks gets no prompt. Without administrator rights it cannot read
     /// BitLocker, a volume's dirty bit or a raw partition, and marks them pending, not failed.
     [[nodiscard]] static StorageInventoryScanResult scanForBrowsing(
-        const CancelCheck& should_cancel = {});
+        const CancelCheck& should_cancel = {},
+        const InventoryScanProgressCallback& on_progress = {});
+    /// What scanForBrowsing does with its script, for any script and limits. Public so a test can
+    /// run a stand-in that reads no disk.
+    [[nodiscard]] static StorageInventoryScanResult runBrowsingScanScript(
+        const QString& script,
+        const InventoryScanLimits& limits,
+        const CancelCheck& should_cancel,
+        const InventoryScanProgressCallback& on_progress);
+    /// Runs a scan script in this process, and stops it when it goes quiet or reaches its ceiling.
+    [[nodiscard]] static ProcessResult runInventoryScript(
+        const QString& script,
+        const InventoryScanLimits& limits,
+        const CancelCheck& should_cancel,
+        const InventoryScanProgressCallback& on_progress);
+    /// PowerShell function Invoke-SakBoundedQuery: starts a storage query as a job and gives it a
+    /// set time, so one volume that does not answer is that volume's error. Public for a test.
+    [[nodiscard]] static QString boundedQueryFunctionScript();
     /// The scan a press of Apply runs before it writes anything, and again afterwards. It runs in
     /// the session's elevated helper, whose start is the job's one prompt, so it reads what the
     /// browsing scan could not, right before the write. If the helper cannot run it, the prompt
     /// having been declined for one, the inventory says so and Apply stops.
     [[nodiscard]] static StorageInventoryScanResult scanForApply(
-        const CancelCheck& should_cancel = {});
+        const CancelCheck& should_cancel = {},
+        const InventoryScanProgressCallback& on_progress = {});
     [[nodiscard]] static PartitionInventory parseInventoryJson(const QByteArray& json_data);
     /// The same parse for a scan made under a standard-user token, as scanForBrowsing's is.
     [[nodiscard]] static PartitionInventory parseStandardUserInventoryJson(

@@ -251,6 +251,14 @@ void PartitionManagerControllerTests::refreshDerivesReadyPartialAndFailedStates(
     empty_warning.warnings.append(QStringLiteral("PowerShell failed"));
     QVERIFY(sak::PartitionManagerController::inventoryStatusMessage(empty_warning)
                 .contains(QStringLiteral("PowerShell failed")));
+    // A scan that stopped did not return no disks: its status line says it did not finish.
+    sak::PartitionInventory unfinished;
+    unfinished.scan_did_not_finish = true;
+    unfinished.warnings.append(QStringLiteral(
+        "The disk scan did not finish: no progress for 30 s (last step: disk 2 of 5)"));
+    QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(unfinished),
+             QStringLiteral("Partition Manager: The disk scan did not finish: no progress for 30 s "
+                            "(last step: disk 2 of 5)"));
 }
 
 void PartitionManagerControllerTests::queueCapacityRefusalIsAtomic() {

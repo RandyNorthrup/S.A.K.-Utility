@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QMetaObject>
+#include <QPromise>
 #include <QtConcurrent>
 #include <QThread>
 
@@ -121,12 +122,14 @@ bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& o
 
 PartitionManagerController::PartitionManagerController(QObject* parent)
     : QObject(parent)
-    , m_inventory_scanner([](const CancelCheck& should_cancel) {
-        return StorageInventoryWorker::scanForBrowsing(should_cancel);
-    })
-    , m_apply_inventory_scanner([](const CancelCheck& should_cancel) {
-        return StorageInventoryWorker::scanForApply(should_cancel);
-    })
+    , m_inventory_scanner(
+          [](const CancelCheck& should_cancel, const InventoryScanProgressCallback& on_progress) {
+              return StorageInventoryWorker::scanForBrowsing(should_cancel, on_progress);
+          })
+    , m_apply_inventory_scanner(
+          [](const CancelCheck& should_cancel, const InventoryScanProgressCallback& on_progress) {
+              return StorageInventoryWorker::scanForApply(should_cancel, on_progress);
+          })
     , m_file_system_check_runner([](const PartitionFileSystemReadOnlyCheckRequest& request,
                                     const CancelCheck& should_cancel) {
         return PartitionFileSystemToolRunner::runReadOnlyCheck(request, should_cancel);
@@ -203,14 +206,24 @@ PartitionManagerState PartitionManagerController::inventoryReadyState(
                : PartitionManagerState::Ready;
 }
 
+namespace {
+
+/// A scan with no disk: one that did not finish says so, in its own words.
+QString emptyInventoryStatusMessage(const PartitionInventory& inventory) {
+    const QString warnings = inventory.warnings.join(QStringLiteral("; "));
+    if (inventory.scan_did_not_finish) {
+        return QStringLiteral("Partition Manager: %1").arg(warnings);
+    }
+    const QString detail = warnings.isEmpty() ? QString() : QStringLiteral(": %1").arg(warnings);
+    return QStringLiteral("Partition Manager: inventory FAILED -- no disks were returned%1")
+        .arg(detail);
+}
+
+}  // namespace
+
 QString PartitionManagerController::inventoryStatusMessage(const PartitionInventory& inventory) {
     if (inventory.isEmpty()) {
-        const QString detail =
-            inventory.warnings.isEmpty()
-                ? QString()
-                : QStringLiteral(": %1").arg(inventory.warnings.join(QStringLiteral("; ")));
-        return QStringLiteral("Partition Manager: inventory FAILED -- no disks were returned%1")
-            .arg(detail);
+        return emptyInventoryStatusMessage(inventory);
     }
     if (inventory.layout_hash.isEmpty()) {
         return QStringLiteral("Partition Manager: inventory FAILED -- layout identity missing");
@@ -628,12 +641,28 @@ void PartitionManagerController::startInventoryScan(InventoryScanPurpose purpose
             &QFutureWatcher<StorageInventoryScanResult>::finished,
             this,
             [this, watcher]() { finishInventoryScan(watcher); });
-    watcher->setFuture(QtConcurrent::run([scanner, cancel_requested]() {
-        const CancelCheck should_cancel = [cancel_requested]() {
-            return cancel_requested->load();
-        };
-        return scanner(should_cancel);
-    }));
+    // The scan's progress reaches this thread through the future, which the watcher owns: nothing
+    // posts to this object from the scan's thread.
+    connect(watcher,
+            &QFutureWatcher<StorageInventoryScanResult>::progressValueChanged,
+            this,
+            [this, watcher](int disk) {
+                if (watcher == m_inventory_watcher && disk > 0) {
+                    Q_EMIT inventoryScanProgress(disk, watcher->progressMaximum());
+                }
+            });
+    watcher->setFuture(QtConcurrent::run(
+        [scanner, cancel_requested](QPromise<StorageInventoryScanResult>& promise) {
+            const CancelCheck should_cancel = [cancel_requested]() {
+                return cancel_requested->load();
+            };
+            const InventoryScanProgressCallback on_progress =
+                [&promise](const InventoryScanProgress& progress) {
+                    promise.setProgressRange(0, progress.disks);
+                    promise.setProgressValue(progress.disk);
+                };
+            promise.addResult(scanner(should_cancel, on_progress));
+        }));
 
     const auto next_state = purpose == InventoryScanPurpose::Refresh
                                 ? PartitionManagerState::RefreshingInventory
@@ -994,16 +1023,35 @@ void PartitionManagerController::setTestState(PartitionManagerState state) {
     setState(state);
 }
 
+namespace {
+
+PartitionManagerController::InventoryScannerWithProgress withoutProgress(
+    PartitionManagerController::InventoryScanner scanner) {
+    return [scanner = std::move(scanner)](const CancelCheck& should_cancel,
+                                          const InventoryScanProgressCallback&) {
+        return scanner(should_cancel);
+    };
+}
+
+}  // namespace
+
 void PartitionManagerController::setInventoryScannerForTesting(InventoryScanner scanner) {
     if (!interactionBlocked() && scanner) {
-        m_inventory_scanner = scanner;
-        m_apply_inventory_scanner = std::move(scanner);
+        m_inventory_scanner = withoutProgress(scanner);
+        m_apply_inventory_scanner = withoutProgress(std::move(scanner));
+    }
+}
+
+void PartitionManagerController::setInventoryScannerWithProgressForTesting(
+    InventoryScannerWithProgress scanner) {
+    if (!interactionBlocked() && scanner) {
+        m_inventory_scanner = std::move(scanner);
     }
 }
 
 void PartitionManagerController::setApplyInventoryScannerForTesting(InventoryScanner scanner) {
     if (!interactionBlocked() && scanner) {
-        m_apply_inventory_scanner = std::move(scanner);
+        m_apply_inventory_scanner = withoutProgress(std::move(scanner));
     }
 }
 

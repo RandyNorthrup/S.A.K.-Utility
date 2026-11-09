@@ -823,6 +823,16 @@ private:
     int m_timeout_ms;
 };
 
+/// Why a scan gave no disks, in the scan's own words: a scan that timed out, and one that found
+/// nothing, read the same without them.
+QString emptyScanRefusal(const sak::PartitionInventory& inventory) {
+    if (inventory.warnings.isEmpty()) {
+        return QStringLiteral("The inventory scan found no disks");
+    }
+    return QStringLiteral("The inventory scan found no disks: %1")
+        .arg(inventory.warnings.join(QStringLiteral("; ")));
+}
+
 Result<void> refreshInventory(sak::PartitionManagerController& controller, int timeout_seconds) {
     const auto scanned = ControllerWait(controller, timeout_seconds).run([&controller]() {
         controller.refreshInventory();
@@ -832,7 +842,7 @@ Result<void> refreshInventory(sak::PartitionManagerController& controller, int t
         return refused(scanned.error());
     }
     if (controller.inventory().isEmpty()) {
-        return refused(QStringLiteral("The inventory scan found no disks"));
+        return refused(emptyScanRefusal(controller.inventory()));
     }
     return {};
 }
@@ -1148,6 +1158,11 @@ void selfTestOutcomes(const AddCheck& add) {
             !expectedRefusal(refused_job, {QStringLiteral("some other reason")}));
     add(QStringLiteral("step-report-names-its-code"),
         QString::fromLatin1(SAK_CODE_DIGEST).size() == 64);
+    sak::PartitionInventory unfinished;
+    unfinished.warnings = {QStringLiteral("The disk scan did not finish")};
+    add(QStringLiteral("step-empty-scan-says-why"),
+        emptyScanRefusal(unfinished).endsWith(QStringLiteral(": The disk scan did not finish")) &&
+            emptyScanRefusal({}) == QStringLiteral("The inventory scan found no disks"));
 
     sak::PartitionExecutionResult result;
     result.success = true;

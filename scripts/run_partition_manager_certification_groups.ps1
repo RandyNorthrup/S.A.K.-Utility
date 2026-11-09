@@ -96,6 +96,12 @@ function Assert-RowPassed {
     if ("$($report.status)" -cne 'Passed') { throw "$Id failed: $($report.failure)" }
 }
 
+function Assert-RowsPassed {
+    # In the order they ran: the first that failed is the one named, and the run stops there.
+    param([string[]]$Ids)
+    foreach ($id in $Ids) { Assert-RowPassed -Id $id }
+}
+
 function Get-Proof {
     # A disk started alone, in a VM of its own, seen from inside.
     param([string]$Disk, [string]$Name, [string]$Firmware, [string]$RowDir, [string]$MarkerPath = '', [switch]$ExpectNoBoot)
@@ -127,6 +133,7 @@ function Invoke-RowsOnThrowawayDisk {
         Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $Disk }
         Invoke-Rig -Action 'On'
     }
+    Assert-RowsPassed -Ids $Ids
 }
 
 function Invoke-Migration {
@@ -238,7 +245,10 @@ switch ($Group) {
     'vhd' {
         $wanted = if ($Rows.Count) { $Rows } else { $VhdRows + 'vhd.clear-disk-wipe' }
         $onVhd = @($wanted | Where-Object { $_ -cne 'vhd.clear-disk-wipe' })
-        if ($onVhd.Count) { Invoke-GuestRows -Ids $onVhd }
+        if ($onVhd.Count) {
+            Invoke-GuestRows -Ids $onVhd
+            Assert-RowsPassed -Ids $onVhd
+        }
         if ($wanted -ccontains 'vhd.clear-disk-wipe') {
             Invoke-RowsOnThrowawayDisk -Ids @('vhd.clear-disk-wipe') -Disk 'cert-wipe' -SizeMiB 1024 -DiskBus 'Sata'
         }
@@ -246,7 +256,10 @@ switch ($Group) {
     'data' {
         $wanted = if ($Rows.Count) { $Rows } else { $DataRows + 'external.dynamic-to-basic' }
         $onVhd = @($wanted | Where-Object { $_ -cne 'external.dynamic-to-basic' })
-        if ($onVhd.Count) { Invoke-GuestRows -Ids $onVhd }
+        if ($onVhd.Count) {
+            Invoke-GuestRows -Ids $onVhd
+            Assert-RowsPassed -Ids $onVhd
+        }
         if ($wanted -ccontains 'external.dynamic-to-basic') {
             Invoke-RowsOnThrowawayDisk -Ids @('external.dynamic-to-basic') -Disk 'cert-dynamic' -SizeMiB 1024 -DiskBus 'Sata'
         }
@@ -280,11 +293,20 @@ switch ($Group) {
     'usb-virtual' {
         Invoke-RowsOnThrowawayDisk -Ids $(if ($Rows.Count) { $Rows } else { @('external.usb-removable') }) -Disk 'cert-usb' -SizeMiB 8192 -DiskBus 'Usb'
     }
-    'ssd-device' { Invoke-GuestRows -Ids $(if ($Rows.Count) { $Rows } else { @('external.ssd-retrim', 'external.ssd-secure-erase', 'external.hardware-wipe') }) -More @{ PinFile = $PinFile } }
-    'hdd-device' { Invoke-GuestRows -Ids $(if ($Rows.Count) { $Rows } else { @('external.usb-removable', 'external.hdd-defrag-execution') }) -More @{ PinFile = $PinFile } }
+    'ssd-device' {
+        $ids = if ($Rows.Count) { $Rows } else { @('external.ssd-retrim', 'external.ssd-secure-erase', 'external.hardware-wipe') }
+        Invoke-GuestRows -Ids $ids -More @{ PinFile = $PinFile }
+        Assert-RowsPassed -Ids $ids
+    }
+    'hdd-device' {
+        $ids = if ($Rows.Count) { $Rows } else { @('external.usb-removable', 'external.hdd-defrag-execution') }
+        Invoke-GuestRows -Ids $ids -More @{ PinFile = $PinFile }
+        Assert-RowsPassed -Ids $ids
+    }
     'data-device' {
-        Invoke-GuestRows -Ids $(if ($Rows.Count) { $Rows } else { @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number') }) `
-            -More @{ PinFile = $PinFile; DataRowsOnDevice = $true }
+        $ids = if ($Rows.Count) { $Rows } else { @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number') }
+        Invoke-GuestRows -Ids $ids -More @{ PinFile = $PinFile; DataRowsOnDevice = $true }
+        Assert-RowsPassed -Ids $ids
     }
 }
 Say "$Group done"

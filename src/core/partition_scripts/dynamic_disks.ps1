@@ -5,6 +5,8 @@
 # looking at it. Win32_DiskDrive lists every disk, and a disk it lists and Get-Disk does not is looked
 # at directly. Nothing here changes anything, and a standard user may run it: the handles ask for no
 # access, and these four questions need none.
+# Compiling the probe costs a second or more, every scan, so it is compiled only when a disk needs it.
+function Initialize-SakDynamicDiskProbe {
 if (-not ('Sak.DynamicDiskProbe' -as [type])) {
   Add-Type -TypeDefinition @'
 using System;
@@ -121,6 +123,7 @@ public static class DynamicDiskProbe {
 }
 '@
 }
+}
 
 # Each mounted volume and the disks it lies on. A volume Windows will not answer for is left out: the
 # disk then shows no volume there, and a conversion needs one.
@@ -208,6 +211,7 @@ function Get-SakDynamicDisks {
     return
   }
   if ($hidden.Count -eq 0) { return }
+  Initialize-SakDynamicDiskProbe
   $facts = @{}
   foreach ($drive in $hidden) {
     try {

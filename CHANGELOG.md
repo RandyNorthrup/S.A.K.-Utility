@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **A slow PC no longer reads as having no disks** - Partition Manager's disk scan stopped after 30 seconds and then
+  said "The disk scan found no disks". It now keeps going while it is still moving, says "Scanning disk N of M" as it
+  goes, and stops only after 30 seconds with no progress or 5 minutes in all. A scan that stops says "The disk scan did
+  not finish" and the last step it reached, and Apply refuses on it as before. A volume or partition list that does not
+  answer within 20 seconds is that volume's or that disk's error, and the other disks still list. Apply's own re-read
+  works the same way. The scan no longer loads the BitLocker module, or compiles its dynamic-disk probe, when it has no
+  use for them.
 - **USB hard disks can be defragmented** - Windows often cannot see through a USB bridge and reports the drive's
   media type as Unspecified, so Disk Defrag refused the hard disk behind it. S.A.K. now asks the drive itself: when
   Windows reports Unspecified and the drive reports a rotation rate, it counts as a hard disk. A standard scan cannot

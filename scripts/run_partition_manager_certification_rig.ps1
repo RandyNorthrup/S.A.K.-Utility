@@ -76,6 +76,7 @@ param(
 $ErrorActionPreference = 'Stop'
 # Under pwsh -File a list arrives as one comma-joined string: it binds to the first element only.
 $Rows = @($Rows | ForEach-Object { "$_" -split ',' } | Where-Object { $_ })
+. (Join-Path $PSScriptRoot 'partition_manager_rig_sign_in.ps1')
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Script:GuestRoot = 'C:\SAKCert'
 $Script:GuestEvidence = 'C:\SAKCert\evidence'
@@ -284,6 +285,17 @@ function Invoke-GuestLogin {
     Start-Sleep -Seconds 25
 }
 
+function Invoke-RigVmSignIn {
+    # Types the sign-in, and takes it as done only when Windows names who is signed in.
+    param([string]$VmName = $Vm)
+    $type = { Invoke-GuestLogin -VmName $VmName }
+    $read = {
+        $list = (Invoke-MacVBox "`"`$V`" guestproperty get '$VmName' /VirtualBox/GuestInfo/OS/LoggedInUsersList 2>&1 || true") -join ' '
+        if ($list -match 'Value: (\S.*)') { $Matches[1].Trim() }
+    }
+    return (Invoke-RigSignIn -VmName $VmName -TypeSignIn $type -SignedInUsers $read)
+}
+
 function Start-RigVm {
     param([string]$VmName = $Vm)
     Invoke-MacVBox "`"`$V`" startvm '$VmName' --type headless 2>&1 | tail -1"
@@ -297,15 +309,7 @@ function Start-RigVm {
     Start-Sleep -Seconds 15
     # The elevated task runs in a signed-in session, and quietly does not run without one. A
     # first boot of a changed machine can take the keystrokes before the sign-in screen is ready.
-    $users = ''
-    for ($attempt = 0; $attempt -lt 4; $attempt++) {
-        if ($attempt -gt 0 -or $ready -match 'Value: true') { Invoke-GuestLogin -VmName $VmName }
-        $users = (Invoke-MacVBox "`"`$V`" guestproperty get '$VmName' /VirtualBox/GuestInfo/OS/LoggedInUsersList 2>&1 || true") -join ' '
-        if ($users -match 'Value: \S') { break }
-        Start-Sleep -Seconds 30
-    }
-    if ($users -notmatch 'Value: \S') { throw "$VmName did not sign in" }
-    "signed in: $users"
+    "signed in: $(Invoke-RigVmSignIn -VmName $VmName)"
 }
 
 function Stop-RigVm {
@@ -428,7 +432,7 @@ function Invoke-RigRows {
         # the guest's copy of it does not.
         $archive = "sakcert-evidence-$PID.zip"
         $wanted = ($Rows | ForEach-Object { "'$Script:GuestEvidence\$_'" }) -join ','
-        Invoke-GuestPS -Code "if (Test-Path '$Script:GuestRoot\$archive') { Remove-Item '$Script:GuestRoot\$archive' }; Compress-Archive -Path @($wanted) -DestinationPath '$Script:GuestRoot\$archive' -Force" -VmName $VmName | Out-Null
+        Invoke-GuestPS -Code "if (Test-Path '$Script:GuestRoot\$archive') { Remove-Item '$Script:GuestRoot\$archive' }; Compress-Archive -Path @(@($wanted) | Where-Object { Test-Path -LiteralPath `$_ }) -DestinationPath '$Script:GuestRoot\$archive' -Force" -VmName $VmName | Out-Null
         Get-FromGuest -GuestPath "$Script:GuestRoot\$archive" -LocalFolder $local -VmName $VmName
         foreach ($row in $Rows) { Remove-RigFile -Path (Join-Path $local $row) }
         Expand-Archive -LiteralPath (Join-Path $local $archive) -DestinationPath $local -Force
@@ -529,7 +533,7 @@ function Invoke-RigBootProof {
     $result.shot = Split-Path -Leaf (Get-RigShot -VmName $ProofName -Name $ProofName -Folder $shots)
     try {
         if ($result.reached_sign_in) {
-            Invoke-GuestLogin -VmName $ProofName
+            Invoke-RigVmSignIn -VmName $ProofName | Out-Null
             $facts = Get-RigBootFacts -VmName $ProofName
             $result.firmware = "$($facts.firmware)"
             $result.system_drive = "$($facts.system_drive)"
@@ -664,7 +668,7 @@ switch ($Action) {
         }
         if ($state -notmatch 'Value: true') { throw "$ProofName did not reach sign-in within $WaitMinutes minutes" }
         Start-Sleep -Seconds 15
-        Invoke-GuestLogin -VmName $ProofName
+        Invoke-RigVmSignIn -VmName $ProofName | Out-Null
     }
     'VmFirmware' {
         if ((Get-VmState -VmName $ProofName) -notin 'poweroff', 'aborted') { throw 'Firmware changes only with the VM off' }
@@ -682,7 +686,7 @@ switch ($Action) {
         }
         if ($result.reached_sign_in) {
             Start-Sleep -Seconds 15
-            Invoke-GuestLogin -VmName $ProofName
+            Invoke-RigVmSignIn -VmName $ProofName | Out-Null
             $facts = Get-RigBootFacts -VmName $ProofName
             $result.firmware = "$($facts.firmware)"
             $result.system_drive = "$($facts.system_drive)"

@@ -123,7 +123,7 @@ function Test-PureAdmissionContract {
         "step-pin-refuses-other-model", "step-pin-refuses-other-size", "step-pin-refuses-two-matches",
         "step-pin-refuses-no-match", "step-job-accepted", "step-job-refuses-confirmation-of-another-disk",
         "step-job-refuses-no-expectation", "step-job-refused-needs-a-reason", "step-report-withholds-a-password",
-        "step-refusal-must-name-the-reason", "step-report-names-its-code",
+        "step-refusal-must-name-the-reason", "step-report-names-its-code", "step-empty-scan-says-why",
         "step-execution-needs-every-queued-step", "step-execution-passes-with-every-step",
         "step-execution-refuses-a-skipped-step", "step-has-a-builder-for-each-operation"
     )

@@ -283,6 +283,10 @@ struct PartitionInventory {
     QDateTime captured_at;
     QString layout_hash;
     QStringList warnings;
+    /// The scan stopped before it finished: it stopped making progress, or ran past its ceiling.
+    /// It lists no disk, its warning says why, and the panel says it did not finish, not that the
+    /// PC has no disks.
+    bool scan_did_not_finish{false};
 
     [[nodiscard]] bool isEmpty() const noexcept { return disks.isEmpty(); }
 

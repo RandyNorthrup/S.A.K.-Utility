@@ -1392,6 +1392,11 @@ QString failedScanText(const PartitionInventory& inventory) {
     if (!inventory.disks.isEmpty() || inventory.warnings.isEmpty()) {
         return {};
     }
+    // A scan that stopped did not find nothing: its warning says it did not finish, and why.
+    if (inventory.scan_did_not_finish) {
+        return QObject::tr("%1. Click Scan Disks to try again.")
+            .arg(inventory.warnings.join(QStringLiteral("; ")));
+    }
     return QObject::tr("The disk scan found no disks: %1. Click Scan Disks to try again.")
         .arg(inventory.warnings.join(QStringLiteral("; ")));
 }
@@ -9367,6 +9372,11 @@ void PartitionManagerPanel::setTestApplyExecutorForReview(
     m_controller->setApplyExecutorForTesting(std::move(executor));
 }
 
+void PartitionManagerPanel::setTestInventoryScannerWithProgressForReview(
+    PartitionManagerController::InventoryScannerWithProgress scanner) {
+    m_controller->setInventoryScannerWithProgressForTesting(std::move(scanner));
+}
+
 void PartitionManagerPanel::setTestElevatedInventoryScannerForReview(
     PartitionManagerController::InventoryScanner scanner) {
     m_controller->setApplyInventoryScannerForTesting(std::move(scanner));
@@ -10100,11 +10110,23 @@ void PartitionManagerPanel::connectControllerSignals() {
     connect(m_controller.get(), &PartitionManagerController::stateChanged, this, [this]() {
         updateActionState();
     });
+    // A slow PC shows it is still moving, disk by disk.
+    connect(m_controller.get(),
+            &PartitionManagerController::inventoryScanProgress,
+            this,
+            [this](int disk, int disks) {
+                const QString text = tr("Scanning disk %1 of %2").arg(disk).arg(disks);
+                if (m_scan_overlay_shown) {
+                    m_table_empty_state->setLoading(text);
+                }
+                Q_EMIT statusMessage(text, 0);
+            });
 }
 
 void PartitionManagerPanel::refreshInventory() {
     m_inventory_load_started = true;
     updateRefreshButtonState();
+    m_scan_overlay_shown = true;
     m_table_empty_state->setLoading(tr("Scanning disks for partitions..."));
     Q_EMIT statusMessage(tr("Scanning disks..."), 0);
     m_controller->refreshInventory();
@@ -10144,6 +10166,7 @@ void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
     // Single completion point for every inventory refresh (scan, apply, partial): the worker
     // always returns an inventory, so lifting the loading overlay here fails closed with no
     // stranded "Scanning" message even when the scan yields zero disks or warnings.
+    m_scan_overlay_shown = false;
     m_table_empty_state->clearLoading();
     // Review 3: a scan that timed out looked like a PC with no disks ("No disks to map", "Ready"),
     // and its warning went only to the Log. A scan that found nothing says why where it is seen.

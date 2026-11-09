@@ -39,6 +39,15 @@ struct PartitionScript {
 /// both run it, so they cannot disagree about which disk is which.
 [[nodiscard]] QString dynamicDiskFunctionsScript();
 
+/// How long one question to a drive or a volume may take before it is that drive's or that
+/// volume's error, in a scan and in a script that asks the same question.
+inline constexpr int kDriveQuerySeconds = 20;
+
+/// PowerShell function Invoke-SakBoundedProgram: runs a program for at most a number of seconds and
+/// says whether it started and finished, with its exit code and output. Public so a test can run
+/// it.
+[[nodiscard]] QString boundedProgramFunctionScript();
+
 /// PowerShell function Get-SakRotationRateRpm: the rotation rate a drive reports through the tool
 /// at @p tool_path, or 0 when it reports none, or the tool is absent, fails, or takes too long.
 /// The scan and the defrag script both run it, so they cannot disagree. It takes the path so a

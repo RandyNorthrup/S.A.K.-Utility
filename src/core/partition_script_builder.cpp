@@ -3506,42 +3506,67 @@ QString movePartitionPayloadError(const MovePartitionScriptPayload& payload,
 
 }  // namespace
 
-QString driveRotationRateFunctionScript(const QString& tool_path) {
-    // Bounded, because a drive behind a USB bridge can sit on a query while a person waits for
-    // Apply. Anything but a rate is not a rate, and the caller then does not call it a hard disk.
-    static constexpr int kDriveRotationRateTimeoutMs = 30'000;
+QString boundedProgramFunctionScript() {
+    // A program that does not answer in time is stopped, and the caller decides what that means
+    // for the drive or volume it asked about. Nothing here waits without a limit.
     return QStringLiteral(R"PS(
-$sakDriveToolPath = %1
-function Get-SakRotationRateRpm {
-  param([int]$DiskNumber)
-  if ([string]::IsNullOrEmpty($sakDriveToolPath) -or
-      -not (Test-Path -LiteralPath $sakDriveToolPath -PathType Leaf)) { return 0 }
+function Invoke-SakBoundedProgram {
+  param([string]$Path, [string]$Arguments, [int]$Seconds)
+  $result = [pscustomobject]@{ Started = $false; Finished = $false; ExitCode = -1; StdOut = ''; StdErr = '' }
+  if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $result }
   $start = New-Object System.Diagnostics.ProcessStartInfo
-  $start.FileName = $sakDriveToolPath
-  $start.Arguments = "-i --json=c /dev/pd$DiskNumber"
+  $start.FileName = $Path
+  $start.Arguments = $Arguments
   $start.UseShellExecute = $false
   $start.CreateNoWindow = $true
   $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
   $process = $null
   try {
     $process = [System.Diagnostics.Process]::Start($start)
-    $output = $process.StandardOutput.ReadToEndAsync()
-    if (-not $process.WaitForExit(%2)) {
+    $result.Started = $true
+    $out = $process.StandardOutput.ReadToEndAsync()
+    $err = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($Seconds * 1000)) {
       $process.Kill()
-      return 0
+      return $result
     }
-    $reported = ($output.Result | ConvertFrom-Json).rotation_rate
-    if ($null -ne $reported -and [int]$reported -gt 0) { return [int]$reported }
-    return 0
+    $process.WaitForExit()
+    $result.Finished = $true
+    $result.ExitCode = $process.ExitCode
+    $result.StdOut = "$($out.Result)"
+    $result.StdErr = "$($err.Result)"
+    return $result
   } catch {
-    return 0
+    return $result
   } finally {
     if ($null -ne $process) { $process.Dispose() }
   }
 }
+)PS");
+}
+
+QString driveRotationRateFunctionScript(const QString& tool_path) {
+    // Bounded, because a drive behind a USB bridge can sit on a query while a person waits for
+    // Apply. Anything but a rate is not a rate, and the caller then does not call it a hard disk.
+    return boundedProgramFunctionScript() +
+           QStringLiteral(R"PS(
+$sakDriveToolPath = %1
+function Get-SakRotationRateRpm {
+  param([int]$DiskNumber)
+  $run = Invoke-SakBoundedProgram -Path $sakDriveToolPath -Arguments "-i --json=c /dev/pd$DiskNumber" -Seconds %2
+  if (-not $run.Finished) { return 0 }
+  try {
+    $reported = ($run.StdOut | ConvertFrom-Json).rotation_rate
+    if ($null -ne $reported -and [int]$reported -gt 0) { return [int]$reported }
+    return 0
+  } catch {
+    return 0
+  }
+}
 )PS")
-        .arg(PartitionScriptBuilder::quotePowerShell(tool_path),
-             QString::number(kDriveRotationRateTimeoutMs));
+               .arg(PartitionScriptBuilder::quotePowerShell(tool_path),
+                    QString::number(kDriveQuerySeconds));
 }
 
 QString bundledDriveRotationRateFunctionScript() {

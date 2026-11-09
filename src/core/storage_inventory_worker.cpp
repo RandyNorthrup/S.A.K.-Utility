@@ -18,11 +18,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <thread>
 
 namespace sak {
@@ -30,8 +32,16 @@ namespace sak {
 namespace {
 
 constexpr auto kHelperScanCancelPoll = std::chrono::milliseconds(200);
-constexpr int kHelperScanTimeoutSeconds = 300;
+constexpr int kMsPerSecond = 1000;
+constexpr int kHelperScanTimeoutSeconds = kInventoryScanCeilingMs / kMsPerSecond;
 constexpr int kHelperScanOutputBytes = 8 * 1024 * 1024;
+// A line the script never ends cannot grow without bound.
+constexpr qsizetype kMaxPendingProgressChars = 4096;
+const QString kScanProgressPrefix = QStringLiteral("SAK-SCAN-PROGRESS ");
+// The groups of "disk N of M" in a progress line.
+constexpr int kDiskGroup = 1;
+constexpr int kDisksGroup = 2;
+const QString kHelperStderrPrefix = QStringLiteral("STDERR|");
 
 bool cancellationRequested(const CancelCheck& should_cancel) {
     return should_cancel && should_cancel();
@@ -689,6 +699,87 @@ void appendInventoryMetadataWarnings(PartitionInventory* inventory) {
 
 }  // namespace
 
+InventoryScanLiveness::InventoryScanLiveness(InventoryScanLimits limits,
+                                             InventoryScanProgressCallback on_progress)
+    : m_limits(limits), m_on_progress(std::move(on_progress)) {}
+
+void InventoryScanLiveness::arm() {
+    std::lock_guard lock(m_mutex);
+    if (!m_armed) {
+        m_armed = true;
+        m_since_progress.start();
+    }
+}
+
+void InventoryScanLiveness::feed(const QString& stderr_chunk) {
+    static const QRegularExpression disk_of(QStringLiteral("^disk (\\d+) of (\\d+)$"));
+    std::optional<InventoryScanProgress> reached;
+    {
+        std::lock_guard lock(m_mutex);
+        m_pending += stderr_chunk;
+        for (qsizetype end = m_pending.indexOf(QLatin1Char('\n')); end >= 0;
+             end = m_pending.indexOf(QLatin1Char('\n'))) {
+            const QString line = m_pending.left(end).trimmed();
+            m_pending.remove(0, end + 1);
+            if (!line.startsWith(kScanProgressPrefix)) {
+                continue;
+            }
+            m_last_step = line.mid(kScanProgressPrefix.size()).trimmed();
+            m_armed = true;
+            m_since_progress.start();
+            const auto match = disk_of.match(m_last_step);
+            if (match.hasMatch()) {
+                reached = InventoryScanProgress{.disk = match.captured(kDiskGroup).toInt(),
+                                                .disks = match.captured(kDisksGroup).toInt()};
+            }
+        }
+        if (m_pending.size() > kMaxPendingProgressChars) {
+            m_pending = m_pending.right(kMaxPendingProgressChars);
+        }
+    }
+    if (reached && m_on_progress) {
+        m_on_progress(*reached);
+    }
+}
+
+bool InventoryScanLiveness::idleExpired() const {
+    std::lock_guard lock(m_mutex);
+    return m_armed && m_since_progress.elapsed() >= m_limits.idle_ms;
+}
+
+void InventoryScanLiveness::markStopped() {
+    std::lock_guard lock(m_mutex);
+    m_stopped = true;
+}
+
+void InventoryScanLiveness::settle(ProcessResult* result) const {
+    std::lock_guard lock(m_mutex);
+    result->std_err = withoutProgressLines(result->std_err);
+    const QString last = m_last_step.isEmpty() ? QStringLiteral("none") : m_last_step;
+    if (m_stopped && !result->succeeded()) {
+        result->cancelled = false;
+        result->timed_out = true;
+        result->std_err =
+            QStringLiteral("The disk scan did not finish: no progress for %1 s (last step: %2)")
+                .arg(m_limits.idle_ms / kMsPerSecond)
+                .arg(last);
+    } else if (result->timed_out) {
+        result->std_err = QStringLiteral("The disk scan did not finish within %1 s (last step: %2)")
+                              .arg(m_limits.ceiling_ms / kMsPerSecond)
+                              .arg(last);
+    }
+}
+
+QString InventoryScanLiveness::withoutProgressLines(const QString& text) {
+    QStringList kept;
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+        if (!line.trimmed().startsWith(kScanProgressPrefix)) {
+            kept.append(line);
+        }
+    }
+    return kept.join(QLatin1Char('\n')).trimmed();
+}
+
 StorageInventoryWorker::StorageInventoryWorker(QObject* parent) : QObject(parent) {}
 
 PartitionInventory StorageInventoryWorker::scan() {
@@ -736,12 +827,33 @@ ProcessResult runPrivilegedInventoryScript(bool process_is_elevated,
 
 namespace {
 
-std::expected<ProcessResult, QString> runInventoryScriptInHelper(const CancelCheck& should_cancel) {
+std::expected<ProcessResult, QString> runInventoryScriptInHelper(
+    const CancelCheck& should_cancel, const InventoryScanProgressCallback& on_progress) {
     const auto broker = ElevationBroker::sessionBroker();
+    // The helper sends the script's standard error back as it comes, so the same progress lines
+    // say here whether the scan is still moving. The clock starts once the helper is running: a
+    // person deciding on the UAC prompt is not a scan that stopped.
+    InventoryScanLiveness liveness({}, on_progress);
+    const auto relay = QObject::connect(
+        broker.get(),
+        &ElevationBroker::progressUpdated,
+        broker.get(),
+        [&liveness](int, const QString& status) {
+            liveness.arm();
+            if (status.startsWith(kHelperStderrPrefix)) {
+                liveness.feed(status.mid(kHelperStderrPrefix.size()));
+            }
+        },
+        Qt::DirectConnection);
     std::atomic_bool finished{false};
-    std::jthread canceller([&finished, &broker, &should_cancel]() {
+    std::jthread canceller([&finished, &broker, &should_cancel, &liveness]() {
         while (!finished.load()) {
             if (cancellationRequested(should_cancel)) {
+                broker->cancelCurrentTask();
+                return;
+            }
+            if (liveness.idleExpired()) {
+                liveness.markStopped();
                 broker->cancelCurrentTask();
                 return;
             }
@@ -755,6 +867,7 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(const CancelChe
     const auto elevated =
         broker->executeTask(QStringLiteral("RunPowerShell"), QStringLiteral("Scan disks"), payload);
     finished.store(true);
+    QObject::disconnect(relay);
     if (!elevated.has_value()) {
         return std::unexpected(elevationErrorText(elevated.error()));
     }
@@ -763,42 +876,96 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(const CancelChe
     result.std_out = elevated->data.value(QStringLiteral("stdout")).toString();
     result.std_err = elevated->data.value(QStringLiteral("stderr")).toString();
     result.cancelled = elevated->data.value(QStringLiteral("cancelled")).toBool(false);
+    result.timed_out = elevated->data.value(QStringLiteral("timed_out")).toBool(false);
     if (!elevated->success && result.exit_code != 0 && result.std_err.trimmed().isEmpty()) {
         result.std_err = elevated->error_message;
     }
+    liveness.settle(&result);
     return result;
 }
 
 }  // namespace
 
+ProcessResult StorageInventoryWorker::runInventoryScript(
+    const QString& script,
+    const InventoryScanLimits& limits,
+    const CancelCheck& should_cancel,
+    const InventoryScanProgressCallback& on_progress) {
+    const QString powershell = systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        ProcessResult result;
+        result.std_err = QStringLiteral(
+            "Cannot resolve the System32 PowerShell path; refusing to launch a bare "
+            "powershell.exe");
+        return result;
+    }
+    InventoryScanLiveness liveness(limits, on_progress);
+    PowerShellInvocation invocation = powerShellInvocation(script, true, true);
+    ProcessStreamingRequest request;
+    request.program = powershell;
+    request.args = std::move(invocation.args);
+    request.std_in = std::move(invocation.std_in);
+    request.timeout_ms = limits.ceiling_ms;
+    request.on_started = [&liveness](qint64) {
+        liveness.arm();
+    };
+    request.on_output = [&liveness](const QString& chunk, bool is_stderr) {
+        if (is_stderr) {
+            liveness.feed(chunk);
+        }
+    };
+    request.should_cancel = [&liveness, &should_cancel]() {
+        if (cancellationRequested(should_cancel)) {
+            return true;
+        }
+        if (liveness.idleExpired()) {
+            liveness.markStopped();
+            return true;
+        }
+        return false;
+    };
+    ProcessResult result = runProcessStreaming(request);
+    liveness.settle(&result);
+    return result;
+}
+
 StorageInventoryScanResult StorageInventoryWorker::scanForBrowsing(
-    const CancelCheck& should_cancel) {
+    const CancelCheck& should_cancel, const InventoryScanProgressCallback& on_progress) {
+    return runBrowsingScanScript(
+        inventoryPowerShellScript(ElevationManager::isElevated()), {}, should_cancel, on_progress);
+}
+
+StorageInventoryScanResult StorageInventoryWorker::runBrowsingScanScript(
+    const QString& script,
+    const InventoryScanLimits& limits,
+    const CancelCheck& should_cancel,
+    const InventoryScanProgressCallback& on_progress) {
     const bool elevated = ElevationManager::isElevated();
-    return finishScan(runPowerShell(inventoryPowerShellScript(elevated),
-                                    sak::kTimeoutProcessLongMs,
-                                    true,
-                                    true,
-                                    should_cancel),
+    return finishScan(runInventoryScript(script, limits, should_cancel, on_progress),
                       elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
                       elevated,
                       should_cancel);
 }
 
-StorageInventoryScanResult StorageInventoryWorker::scanForApply(const CancelCheck& should_cancel) {
+StorageInventoryScanResult StorageInventoryWorker::scanForApply(
+    const CancelCheck& should_cancel, const InventoryScanProgressCallback& on_progress) {
     QStringList notes;
     const ProcessResult result = runPrivilegedInventoryScript(
         ElevationManager::isElevated(),
         {.in_this_process =
-             [&should_cancel]() {
+             [&should_cancel, &on_progress]() {
                  // Here when this process is elevated, or when the helper was refused and the
                  // list is read for the panel at what a standard user can read.
-                 return runPowerShell(inventoryPowerShellScript(ElevationManager::isElevated()),
-                                      sak::kTimeoutProcessLongMs,
-                                      true,
-                                      true,
-                                      should_cancel);
+                 return runInventoryScript(inventoryPowerShellScript(
+                                               ElevationManager::isElevated()),
+                                           {},
+                                           should_cancel,
+                                           on_progress);
              },
-         .in_helper = [&should_cancel]() { return runInventoryScriptInHelper(should_cancel); }},
+         .in_helper =
+             [&should_cancel, &on_progress]() {
+                 return runInventoryScriptInHelper(should_cancel, on_progress);
+             }},
         &notes);
     // With the helper refused, the list still comes back for the panel to show, and the note is the
     // one warning on it: that is what stops the preflight, and what the person is told.
@@ -816,14 +983,11 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
     // Without administrator rights this skips what the browsing scan skips: Windows refuses those
     // reads, and each refusal took five seconds.
     const bool elevated = ElevationManager::isElevated();
-    return finishScan(runPowerShell(inventoryPowerShellScript(elevated),
-                                    sak::kTimeoutProcessLongMs,
-                                    true,
-                                    true,
-                                    should_cancel),
-                      elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
-                      allow_elevation,
-                      should_cancel);
+    return finishScan(
+        runInventoryScript(inventoryPowerShellScript(elevated), {}, should_cancel, {}),
+        elevated ? ReadLevel::Everything : ReadLevel::WhatAStandardUserCanRead,
+        allow_elevation,
+        should_cancel);
 }
 
 StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResult& result,
@@ -835,6 +999,10 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
         inventory.captured_at = QDateTime::currentDateTime();
         if (result.cancelled || cancellationRequested(should_cancel)) {
             inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
+        } else if (result.timed_out) {
+            // Whatever it wrote before it stopped is not a list of this PC's disks.
+            inventory.scan_did_not_finish = true;
+            inventory.warnings.append(result.std_err.trimmed());
         } else {
             inventory.warnings.append(result.std_err.trimmed().isEmpty()
                                           ? QStringLiteral("Inventory scan failed")
@@ -910,14 +1078,25 @@ $ProgressPreference = 'SilentlyContinue'
 $bitLockerCommandAvailable = $false
 $bitLockerCommandError = ''
 $sakElementNotFound = '0x80070490'
-try {
-  $bitLockerCommandAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction Stop)
-} catch {
-  $bitLockerCommandError = "Get-BitLockerVolume is unavailable: $($_.Exception.Message)"
+# Each step says it has started on standard error, so whoever runs this can tell a slow PC that is
+# still moving from a scan that has stopped answering. Standard output stays one JSON document.
+function Write-SakScanProgress {
+  param([string]$Step)
+  [Console]::Error.WriteLine("SAK-SCAN-PROGRESS $Step")
+}
+Write-SakScanProgress 'started'
+# Loading the BitLocker module costs time, and only a scan with administrator rights reads it.
+if ($sakReadAdministratorState) {
+  try {
+    $bitLockerCommandAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction Stop)
+  } catch {
+    $bitLockerCommandError = "Get-BitLockerVolume is unavailable: $($_.Exception.Message)"
+  }
 }
 $physicalDiskQueryFailed = $false
 $physicalDiskQueryError = ''
 $physicalDisks = @()
+Write-SakScanProgress 'physical disks'
 try {
   $physicalDisks = @(Get-PhysicalDisk -ErrorAction Stop)
 } catch {
@@ -942,41 +1121,34 @@ function Get-SakPhysicalDiskFor {
   return $null
 }
 
+# Each lookup is bounded: a volume that does not answer is that volume's error, and the other disks
+# still list. A volume found by none of them, with no error, has none.
 function Get-SakVolumeForPartition {
   param([Parameter(Mandatory = $true)]$Partition)
 
   $errors = @()
   $volume = $null
-  try {
-    $volume = $Partition | Get-Volume -ErrorAction Stop | Select-Object -First 1
-  } catch {
-    if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
-      $errors += "$($_.Exception.Message)"
-    }
+  $lookups = @(@{ Start = { param($p) $p | Get-Volume -AsJob }; Argument = $Partition })
+  if ($Partition.DriveLetter) {
+    $lookups += @{ Start = { param($letter) Get-Volume -DriveLetter $letter -AsJob }; Argument = $Partition.DriveLetter }
   }
-  if (-not $volume -and $Partition.DriveLetter) {
-    try {
-      $volume = Get-Volume -DriveLetter $Partition.DriveLetter -ErrorAction Stop |
-        Select-Object -First 1
-    } catch {
-      if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
-        $errors += "$($_.Exception.Message)"
-      }
-    }
-  }
-  if (-not $volume -and
-      $Partition.PSObject.Properties.Name -contains 'AccessPaths') {
+  if ($Partition.PSObject.Properties.Name -contains 'AccessPaths') {
     foreach ($accessPath in @($Partition.AccessPaths)) {
       if ([string]::IsNullOrWhiteSpace($accessPath)) { continue }
-      try {
-        $volume = Get-Volume -Path $accessPath -ErrorAction Stop | Select-Object -First 1
-      } catch {
-        if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
-          $errors += "$($_.Exception.Message)"
-        }
-      }
-      if ($volume) { break }
+      $lookups += @{ Start = { param($path) Get-Volume -Path $path -AsJob }; Argument = $accessPath }
     }
+  }
+  foreach ($lookup in $lookups) {
+    $answer = Invoke-SakBoundedQuery -Start $lookup.Start -ArgumentList @($lookup.Argument)
+    if (-not $answer.Finished) {
+      $errors += "The volume did not answer within $sakQuerySeconds s"
+      break
+    }
+    if ($answer.ErrorId -and $answer.ErrorId -notlike 'CmdletizationQuery_NotFound*') {
+      $errors += $answer.Error
+    }
+    $volume = @($answer.Items) | Select-Object -First 1
+    if ($volume) { break }
   }
 
   [pscustomobject]@{
@@ -990,8 +1162,14 @@ function Get-SakVolumeForPartition {
 
 static QString inventoryPowerShellDiskPrefixScript() {
     return QStringLiteral(R"PS(
-$disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
+Write-SakScanProgress 'listing disks'
+$sakDiskList = @(@(Get-Disk) + @(Get-SakDynamicDisks))
+$sakDiskCount = $sakDiskList.Count
+$sakDiskIndex = 0
+$disks = $sakDiskList | ForEach-Object {
   $disk = $_
+  $sakDiskIndex++
+  Write-SakScanProgress "disk $sakDiskIndex of $sakDiskCount"
   $physical = Get-SakPhysicalDiskFor -Disk $disk -PhysicalDisks $physicalDisks
   $reliability = $null
   $reliabilityError = ''
@@ -1011,12 +1189,20 @@ $disks = @(@(Get-Disk) + @(Get-SakDynamicDisks)) | ForEach-Object {
       $reliabilityError = "$($_.Exception.Message)"
     }
   }
+)PS");
+}
+
+// The same disk's rotation rate and partitions: split from the prefix only to keep each part short.
+static QString inventoryPowerShellDiskQueriesScript() {
+    return QStringLiteral(R"PS(
   # A USB bridge can hide a drive's type from Windows, which then says Unspecified. That is the
   # only case that asks the drive, and asking it takes administrator rights.
   $rotationRateRpm = 0
   if ($sakReadAdministratorState -and $physical -and "$($physical.MediaType)" -ceq 'Unspecified') {
+    Write-SakScanProgress "rotation rate of disk $sakDiskIndex"
     $rotationRateRpm = Get-SakRotationRateRpm -DiskNumber $disk.Number
   }
+  Write-SakScanProgress "partitions of disk $sakDiskIndex"
   $partitionQuery = if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions') {
     [pscustomobject]@{ Failed = $false; Error = ''; Items = @($disk.DynamicPartitions) }
   } else {
@@ -1061,6 +1247,7 @@ static QString inventoryPowerShellPartitionProbeScript() {
     PartitionQueryError = "$($partitionQuery.Error)"
     Partitions = @($partitionQuery.Items | ForEach-Object {
       $partition = $_
+      Write-SakScanProgress "partition $($partition.PartitionNumber) of disk $sakDiskIndex"
       $volumeQuery = Get-SakVolumeForPartition -Partition $partition
       $volume = $volumeQuery.Volume
       $bitlocker = $null
@@ -1070,6 +1257,7 @@ static QString inventoryPowerShellPartitionProbeScript() {
         if (-not $bitLockerCommandAvailable) {
           $bitLockerError = $bitLockerCommandError
         } else {
+          Write-SakScanProgress "BitLocker of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
           try {
             $bitlocker = Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction Stop
             $bitLockerKnown = $null -ne $bitlocker
@@ -1097,10 +1285,16 @@ static QString inventoryPowerShellPartitionResultScript() {
       $dirtyKnown = $false
       $dirtyError = ''
       if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
-        $dirtyOutput = @(& fsutil.exe dirty query "$($volume.DriveLetter):" 2>&1)
-        $dirtyExit = $LASTEXITCODE
-        $dirtyText = ($dirtyOutput | ForEach-Object { "$_" }) -join ' '
-        if ($dirtyExit -ne 0) {
+        Write-SakScanProgress "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
+        $dirtyRun = Invoke-SakBoundedProgram -Path "$env:SystemRoot\System32\fsutil.exe" `
+          -Arguments "dirty query $($volume.DriveLetter):" -Seconds $sakQuerySeconds
+        $dirtyExit = $dirtyRun.ExitCode
+        $dirtyText = ("$($dirtyRun.StdOut) $($dirtyRun.StdErr)" -replace '\s+', ' ').Trim()
+        if (-not $dirtyRun.Started) {
+          $dirtyError = 'fsutil could not be started'
+        } elseif (-not $dirtyRun.Finished) {
+          $dirtyError = "fsutil did not answer within $sakQuerySeconds s"
+        } elseif ($dirtyExit -ne 0) {
           $dirtyError = if ([string]::IsNullOrWhiteSpace($dirtyText)) {
             "fsutil exited $dirtyExit without error text"
           } else {
@@ -1174,13 +1368,16 @@ function Get-SakPartitionsForDisk {
   $failed = $false
   $message = ''
   $items = @()
-  try {
-    $items = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
-  } catch {
-    if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
-      $failed = $true
-      $message = "$($_.Exception.Message)"
-    }
+  $answer = Invoke-SakBoundedQuery -Start { param($number) Get-Partition -DiskNumber $number -AsJob } `
+    -ArgumentList @($DiskNumber)
+  if (-not $answer.Finished) {
+    $failed = $true
+    $message = "The partition list did not answer within $sakQuerySeconds s"
+  } elseif ($answer.ErrorId -and $answer.ErrorId -notlike 'CmdletizationQuery_NotFound*') {
+    $failed = $true
+    $message = $answer.Error
+  } else {
+    $items = @($answer.Items)
   }
 
   [pscustomobject]@{ Failed = $failed; Error = $message; Items = $items }
@@ -1188,13 +1385,43 @@ function Get-SakPartitionsForDisk {
 )PS");
 }
 
+QString StorageInventoryWorker::boundedQueryFunctionScript() {
+    // A storage query run as a job can be given a time. One that does not answer is left to stop on
+    // its own: waiting for it to stop would be the wait this exists to avoid.
+    return QStringLiteral(R"PS(
+$sakQuerySeconds = %1
+function Invoke-SakBoundedQuery {
+  param([Parameter(Mandatory = $true)][scriptblock]$Start, [object[]]$ArgumentList = @(), [int]$Seconds = $sakQuerySeconds)
+  try {
+    $job = & $Start @ArgumentList
+  } catch {
+    return [pscustomobject]@{ Finished = $true; Items = @(); ErrorId = "$($_.FullyQualifiedErrorId)"; Error = "$($_.Exception.Message)" }
+  }
+  if (-not (Wait-Job -Job $job -Timeout $Seconds)) {
+    if ($job -is [System.Management.Automation.Job2]) { $job.StopJobAsync() }
+    return [pscustomobject]@{ Finished = $false; Items = @(); ErrorId = ''; Error = '' }
+  }
+  try {
+    $items = @(Receive-Job -Job $job -ErrorAction Stop)
+    return [pscustomobject]@{ Finished = $true; Items = $items; ErrorId = ''; Error = '' }
+  } catch {
+    return [pscustomobject]@{ Finished = $true; Items = @(); ErrorId = "$($_.FullyQualifiedErrorId)"; Error = "$($_.Exception.Message)" }
+  } finally {
+    Remove-Job -Job $job -Force
+  }
+}
+)PS")
+        .arg(kDriveQuerySeconds);
+}
+
 QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrator_state) {
     // Both helper functions must be defined BEFORE the Get-Disk pipeline that calls them.
     return QStringLiteral("$sakReadAdministratorState = %1\n")
                .arg(read_administrator_state ? QStringLiteral("$true") : QStringLiteral("$false")) +
-           inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
-           inventoryPowerShellPartitionQueryScript() + dynamicDiskFunctionsScript() +
-           bundledDriveRotationRateFunctionScript() + inventoryPowerShellDiskPrefixScript() +
+           boundedQueryFunctionScript() + inventoryPowerShellHeaderScript() +
+           inventoryPowerShellVolumeLookupScript() + inventoryPowerShellPartitionQueryScript() +
+           dynamicDiskFunctionsScript() + bundledDriveRotationRateFunctionScript() +
+           inventoryPowerShellDiskPrefixScript() + inventoryPowerShellDiskQueriesScript() +
            inventoryPowerShellPartitionProbeScript() + inventoryPowerShellPartitionResultScript() +
            inventoryPowerShellFooterScript();
 }
