@@ -107,7 +107,9 @@ What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key,
    pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json> -PcFile <pc.json>
    ```
 
-   It stops at the first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. A step the rig runs in a guest fails when its log says the job stopped, ran past its time or exited nonzero. A failed row is a finding: fix the code, and a code fix starts again from step 1.
+   With `-PcFile`, the VM rig's groups and the PC's device groups run as two chains at the same time (`scripts/run_partition_manager_certification_chains.ps1`), each in its own pwsh with its own log, `chain-vm-rig.log` and `chain-physical-pc.log`, in the run's evidence folder; `-PlanOnly` shows both. Without it every group is one chain on the VM rig. A chain stops at its first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. The other chain runs on to its end, both results are reported, and the run fails if either failed; the evidence is checked, selected and the block regenerated only once both chains have ended and both passed. A step the rig runs in a guest fails when its log says the job stopped, ran past its time or exited nonzero. A failed row is a finding: fix the code, and a code fix starts again from step 1.
+
+   Each group's guest job has its own limit (`Get-PmGroupJobMinutes` in `scripts/partition_manager_row_evidence.ps1`): `ssd-device` two whole-disk passes of its pinned drive at 15 MiB/s, 20% under the slowest the rehearsal saw (19.1 MB/s), plus 40 minutes, rounded up to the hour, which is 600 minutes for the 256 GB drive; `hdd-device` and `data-device` 60 minutes each (4.1 and 4.5 measured); every other group 240. `-RowMinutes` overrides it for a trial. One whole-disk wipe step is limited to its drive at the same rate plus 30 minutes, and never less than the 6 hours it had.
 6. Read the block below, which step 5 regenerated, with its claim level and the words the site may use.
 7. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
 
@@ -126,7 +128,7 @@ Measured on the rig in the trial of 2026-11-04, one group at a time. The device 
 | `ssd-virtual` and `usb-virtual` | 5 minutes each |
 | The device groups on a PC: two whole-disk passes on the 256 GB SSD, a defrag of 16 GB on the hard drive, and four small data rows | about an hour, not measured |
 
-The whole run is about three and a half hours on the VM rig and an hour on the PC, one after the other, or about five hours with setup. A failed group stops it, and a code fix starts it again from the freeze.
+The whole run is about three and a half hours on the VM rig, with the PC's chain beside it (232 minutes for `ssd-device`, 4.1 for `hdd-device` and 4.5 for `data-device` in the rehearsal of 2026-11-09), so about four hours with setup. A failed group stops its chain, and a code fix starts the run again from the freeze.
 
 The rig signs in to a VM through its keyboard, and takes the sign-in as done only when Windows names who is signed in. It tries four times, waiting up to 90 seconds after each, and a VM that never signs in stops the run as "did not sign in": Windows can report that nobody is signed in before its sign-in screen is drawn, and keys typed then are lost.
 

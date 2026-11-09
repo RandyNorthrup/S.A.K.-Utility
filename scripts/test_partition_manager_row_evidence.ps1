@@ -392,6 +392,22 @@ try {
     Remove-Item -LiteralPath $Script:Root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Job limits (fix round S, H1). The rehearsal's 256 GB NVMe: two passes at 15 MiB/s are 543 minutes, and
+# 40 more is 583, rounded up to 600. A 1 TB drive needs a longer group and a longer pass than 6 hours.
+$Script:Rehearsal = [uint64]256060514304
+$Script:Terabyte = [uint64]1000204886016
+function Assert-Limit { param($Actual, $Expected, [string]$Name) if ($Actual -eq $Expected) { $Script:Passes++ } else { $Script:Failures.Add("$Name : $Actual, not $Expected") } }
+Assert-Limit (Get-PmGroupJobMinutes -Group 'ssd-device' -SsdBytes $Script:Rehearsal) 600 'ssd-device on the rehearsal drive'
+Assert-Limit (Get-PmGroupJobMinutes -Group 'ssd-device' -SsdBytes $Script:Terabyte) 2160 'ssd-device on a 1 TB drive'
+Assert-Limit (Get-PmGroupJobMinutes -Group 'hdd-device') 60 'hdd-device'
+Assert-Limit (Get-PmGroupJobMinutes -Group 'data-device') 60 'data-device'
+Assert-Limit (Get-PmGroupJobMinutes -Group 'vhd') 240 'a VM group'
+Assert-Limit (Get-PmGroupJobMinutes -Group 'boot-bios') 240 'another VM group'
+try { $null = Get-PmGroupJobMinutes -Group 'ssd-device'; $Script:Failures.Add('ssd-device with no drive size was given a limit') } catch { if ("$_" -match 'pinned drive') { $Script:Passes++ } else { $Script:Failures.Add("ssd-device refused for another reason: $_") } }
+Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes $Script:Rehearsal) 21600 'one pass on the rehearsal drive keeps its 6 hours'
+Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes ([uint64]8192 * $Script:MiB)) 21600 'one pass on the 8 GB VDI keeps its 6 hours'
+Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes $Script:Terabyte) 65392 'one pass on a 1 TB drive'
+
 if ($Script:Failures.Count -gt 0) {
     $Script:Failures | ForEach-Object { Write-Host "FAIL $_" }
     throw "$($Script:Failures.Count) evidence guard(s) failed, $($Script:Passes) held"

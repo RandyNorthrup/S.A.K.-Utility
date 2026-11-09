@@ -6992,6 +6992,13 @@ add_test(NAME test_partition_manager_rig_pc_target
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_rig_pc_target.ps1")
 set_tests_properties(test_partition_manager_rig_pc_target PROPERTIES TIMEOUT 300)
 
+# The final run's chains: the VM rig's and the physical PC's groups at the same time, with a stand-in
+# for the group runner (fix round S, H2).
+add_test(NAME test_partition_manager_certification_chains
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_chains.ps1")
+set_tests_properties(test_partition_manager_certification_chains PROPERTIES TIMEOUT 180)
+
 # The rig takes a sign-in to a certification VM as done only when Windows says so.
 add_test(NAME test_partition_manager_rig_sign_in
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7357,7 +7364,8 @@ set(_sak_labels_cert test_apple_filesystem_capability_matrix
     test_partition_manager_code_digest test_partition_manager_row_evidence
     test_partition_manager_certification_status test_partition_manager_matrix_generated
     test_partition_manager_release_claims test_partition_manager_rig_pc_target
-    test_partition_manager_rig_sign_in test_partition_manager_storage_helpers)
+    test_partition_manager_rig_sign_in test_partition_manager_storage_helpers
+    test_partition_manager_certification_chains)
 set(_sak_labels_tooling_extended
     test_process_capture_ownership test_process_capture_ownership_windows_powershell
     test_process_capture_deadline test_process_capture_deadline_windows_powershell

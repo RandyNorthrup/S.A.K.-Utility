@@ -45,7 +45,9 @@ param(
     [string]$PcFile = '',
     [switch]$ReuseBiosDisk,
     [string]$Vm = 'Windows 11',
-    [int]$RowMinutes = 240
+    # Overrides the job limit for this group (a trial). Without it the limit is the group's own:
+    # Get-PmGroupJobMinutes, with ssd-device sized from its pinned drive.
+    [int]$RowMinutes = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,9 +57,16 @@ $Rig = Join-Path $PSScriptRoot 'run_partition_manager_certification_rig.ps1'
 . (Join-Path $PSScriptRoot 'partition_manager_row_evidence.ps1')
 $Script:MiB = [uint64]1048576
 
+function Get-GroupSsdBytes {
+    if ($Group -cne 'ssd-device' -or -not $PinFile -or -not (Test-Path -LiteralPath $PinFile)) { return [uint64]0 }
+    $ssd = (Get-Content -LiteralPath $PinFile -Raw | ConvertFrom-Json).PSObject.Properties['ssd']
+    if ($null -eq $ssd) { return [uint64]0 }
+    return [uint64]"$($ssd.Value.size_bytes)"
+}
+
 function Invoke-Rig {
     param([Parameter(Mandatory = $true)] [string]$Action, [hashtable]$More = @{})
-    $arguments = @{ Action = $Action; CredFile = $CredFile; Vm = $Vm; EvidenceDir = $EvidenceDir; JobMinutes = $RowMinutes }
+    $arguments = @{ Action = $Action; CredFile = $CredFile; Vm = $Vm; EvidenceDir = $EvidenceDir; JobMinutes = $Script:JobMinutes }
     # A step may say more, or say otherwise.
     foreach ($key in $More.Keys) { $arguments[$key] = $More[$key] }
     if ($PcFile) { $arguments.PcFile = $PcFile }
@@ -257,6 +266,8 @@ $DataRows = @('external.file-level-data-recovery', 'external.bitlocker', 'extern
 
 if ($PcFile -and @('ssd-device', 'hdd-device', 'data-device') -cnotcontains $Group) { throw "The group $Group runs on the VM rig. Only the device groups run on a physical PC" }
 if ($Group -clike '*-device' -and -not $PinFile) { throw "The group $Group needs -PinFile" }
+# After the checks above, so a device group with no pins is told that first.
+$Script:JobMinutes = if ($RowMinutes -gt 0) { $RowMinutes } else { Get-PmGroupJobMinutes -Group $Group -SsdBytes (Get-GroupSsdBytes) }
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 switch ($Group) {
     'vhd' {

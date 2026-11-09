@@ -37,6 +37,50 @@ $Script:PmDynamicGptTypes = @('5808c8aa-7e8f-42e0-85d2-e1e90434cfb3', 'af9b60a0-
 $Script:PmVirtualDeviceNames = 'VBOX|VIRTUAL|QEMU|VMWARE|MSFT VIRTUAL'
 $Script:PmMaximumArtifactBytes = 16MB
 
+# Job limits, sized from the drive where a group writes the whole of it (fix round S, H1). The slowest
+# whole-disk write the 2026-11-09 rehearsal saw was 19.1 MB/s, on testpc1's 256 GB NVMe behind USB during
+# its second full overwrite in a row; 15 MiB/s is that less 20%. ssd-device writes the drive twice
+# (ssd-secure-erase, then hardware-wipe) in one guest job, so one limit bounds both passes.
+$Script:PmSlowestWholeDiskBytesPerSecond = [uint64]15 * 1048576
+$Script:PmWholeDiskPassesPerSsdGroup = 2
+# ReTrim, the fixtures and the markers took about 10 minutes; the rest is margin.
+$Script:PmSsdGroupOverheadMinutes = 40
+$Script:PmMinutesPerHour = 60
+# The rehearsal measured hdd-device at 4.1 minutes and data-device at 4.5.
+$Script:PmDeviceGroupMinutes = @{ 'hdd-device' = 60; 'data-device' = 60 }
+# Every other group: what one RowMinutes bounded before.
+$Script:PmDefaultGroupMinutes = 240
+# One whole-disk pass: at least the 6 hours every pass had, and more for a drive too large to
+# finish in that at the slowest rate.
+$Script:PmWholeDiskPassFloorSeconds = 21600
+$Script:PmWholeDiskPassMarginSeconds = 1800
+
+function Get-PmWholeDiskPassSeconds {
+    <#
+    .SYNOPSIS
+        The step limit for one whole-disk wipe of a drive of SizeBytes.
+    #>
+    param([Parameter(Mandatory = $true)] [uint64]$SizeBytes)
+    $seconds = [Math]::Ceiling($SizeBytes / $Script:PmSlowestWholeDiskBytesPerSecond) + $Script:PmWholeDiskPassMarginSeconds
+    return [int][Math]::Max($Script:PmWholeDiskPassFloorSeconds, $seconds)
+}
+
+function Get-PmGroupJobMinutes {
+    <#
+    .SYNOPSIS
+        The job limit for a certification group. ssd-device is sized from its pinned drive, two passes at
+        the slowest rate plus overhead, rounded up to the hour; it refuses without that drive's size.
+    #>
+    param([Parameter(Mandatory = $true)] [string]$Group, [uint64]$SsdBytes = 0)
+    if ($Group -ceq 'ssd-device') {
+        if ($SsdBytes -eq 0) { throw 'ssd-device is sized from its pinned drive, and the pin file gives no ssd size' }
+        $minutes = [Math]::Ceiling($Script:PmWholeDiskPassesPerSsdGroup * $SsdBytes / $Script:PmSlowestWholeDiskBytesPerSecond / $Script:PmMinutesPerHour) + $Script:PmSsdGroupOverheadMinutes
+        return [int]([Math]::Ceiling($minutes / $Script:PmMinutesPerHour) * $Script:PmMinutesPerHour)
+    }
+    if ($Script:PmDeviceGroupMinutes.ContainsKey($Group)) { return [int]$Script:PmDeviceGroupMinutes[$Group] }
+    return [int]$Script:PmDefaultGroupMinutes
+}
+
 function Add-RbDerivedFields {
     <#
     .SYNOPSIS

@@ -219,6 +219,9 @@ try {
             Assert-That ($group.code -ne 0 -and $group.text -match 'external\.ssd-retrim failed: the drill failed it') 'A group stops at the row that failed, and names it' $group.text
         }
     }
+    # Without an override, ssd-device's job limit comes from its pinned drive, and no size is no limit.
+    $unsized = Invoke-Script -Path $Script:Groups -Arguments @('-Group', 'ssd-device', '-Rows', 'external.ssd-retrim', '-EvidenceDir', (Join-Path $Script:Root 'group-unsized'), '-PcFile', $pc, '-PinFile', $pinStub)
+    Assert-That ($unsized.code -ne 0 -and $unsized.text -match 'sized from its pinned drive' -and $unsized.calls -ceq '') 'ssd-device refuses a pin file with no drive size, before it reaches the PC' $unsized.text
     $rowsScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_partition_manager_app_certification.ps1') -Raw
     Assert-That ($rowsScript -match "if \(\`$report\.status -ne 'Passed'\) \{ break \}") 'The rows in the guest stop at the first that fails' ''
 
@@ -270,6 +273,17 @@ try {
         Assert-That ($noDevices.text -cmatch "(?m)^$group on VM rig:") "$group runs when no device is named" $noDevices.text
     }
     Assert-That ($noDevices.text -cnotmatch '-device on|physical PC') 'No device group runs when no device is named' $noDevices.text
+    # Two chains with a PC, at the same time; one without (fix round S, H2).
+    Assert-That ($onPc.text -cmatch '(?m)^Chain vm-rig: vhd, data, boot-uefi, boot-bios$') 'The VM rig is one chain' $onPc.text
+    Assert-That ($onPc.text -cmatch '(?m)^Chain physical-pc: ssd-device, hdd-device, data-device$') 'The physical PC is the other' $onPc.text
+    Assert-That ($onPc.text -match 'run at the same time') 'and they run at the same time' $onPc.text
+    Assert-That ($noDevices.text -cmatch '(?m)^Chain vm-rig: vhd, data, boot-uefi, boot-bios, ssd-virtual, usb-virtual$' -and $noDevices.text -cnotmatch 'physical-pc|same time') 'With no PC every group is one VM chain' $noDevices.text
+    # The whole-disk wipe's step limit is sized from the drive (fix round S, H1).
+    $bodies = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'partition_manager_certification_row_bodies.ps1') -Raw
+    $wipe = $bodies.Substring($bodies.IndexOf('function Invoke-CertWholeDiskWipe'))
+    $wipe = $wipe.Substring(0, $wipe.IndexOf("`n}"))
+    Assert-That ($wipe -match '\$passSeconds = Get-PmWholeDiskPassSeconds -SizeBytes' -and $wipe -match '-Operation ''WipeDisk'' [^\r\n]*-TimeoutSeconds \$passSeconds') 'A whole-disk pass is limited by the size of its drive' $wipe
+    Assert-That ($bodies -notmatch 'TimeoutSeconds 21600') 'No whole-disk pass keeps a fixed 6 hours' ''
     $pcNoPins = Invoke-Script -Path $final -Arguments @('-ReleaseDir', 'x', '-PcFile', $pc, '-PlanOnly')
     Assert-That ($pcNoPins.code -ne 0 -and $pcNoPins.text -match 'needs -PinFile') 'A PC with no pins stops the final run' $pcNoPins.text
 

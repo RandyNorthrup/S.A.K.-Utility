@@ -718,7 +718,9 @@ $Script:CertRowBodies['external.hdd-defrag-execution'] = {
 }
 
 function Invoke-CertWholeDiskWipe {
-    param([string]$Role, [hashtable]$Choices, [int]$TimeoutSeconds)
+    # The step's limit is sized from the drive (Get-PmWholeDiskPassSeconds): a fixed 6 hours would
+    # stop a pass on a drive over about 340 GB at the slowest rate the rehearsal saw.
+    param([string]$Role, [hashtable]$Choices)
     $found = Get-CertReadPin -Role $Role
     Clear-CertWholeDisk -DiskNumber $found.number
     $found = Get-CertReadPin -Role $Role
@@ -734,7 +736,8 @@ function Invoke-CertWholeDiskWipe {
     $offsets = @($placed | Where-Object { (Find-RbMarkerHits -DiskNumber $number -Marker $Script:Marker -Offsets @($_)).marker_hits -eq 1 })
     $before = Find-RbMarkerHits -DiskNumber $number -Marker $Script:Marker -Offsets $offsets
     $found = Get-CertReadPin -Role $Role
-    $report = Invoke-CertStep -Step $(if ($Choices.ContainsKey('ssd_secure_erase') -and $Choices['ssd_secure_erase']) { 'erase' } else { 'wipe' }) -Operation 'WipeDisk' -Pin $found.pin -Choices $Choices -TimeoutSeconds $TimeoutSeconds
+    $passSeconds = Get-PmWholeDiskPassSeconds -SizeBytes ([uint64](Get-Disk -Number $number).Size)
+    $report = Invoke-CertStep -Step $(if ($Choices.ContainsKey('ssd_secure_erase') -and $Choices['ssd_secure_erase']) { 'erase' } else { 'wipe' }) -Operation 'WipeDisk' -Pin $found.pin -Choices $Choices -TimeoutSeconds $passSeconds
     $after = Find-RbMarkerHits -DiskNumber $number -Marker $Script:Marker -Offsets $offsets
     $warnings = @(@($report.queued_operations) | ForEach-Object { @($_.warnings) }) -join ' | '
     return @{ media = $media; independent = [ordered]@{
@@ -746,11 +749,11 @@ function Invoke-CertWholeDiskWipe {
 }
 
 $Script:CertRowBodies['external.ssd-secure-erase'] = {
-    Invoke-CertWholeDiskWipe -Role 'ssd' -Choices @{ ssd_secure_erase = $true } -TimeoutSeconds 21600
+    Invoke-CertWholeDiskWipe -Role 'ssd' -Choices @{ ssd_secure_erase = $true }
 }
 
 $Script:CertRowBodies['external.hardware-wipe'] = {
-    Invoke-CertWholeDiskWipe -Role 'ssd' -Choices @{} -TimeoutSeconds 21600
+    Invoke-CertWholeDiskWipe -Role 'ssd' -Choices @{}
 }
 
 $Script:CertRowBodies['external.bitlocker'] = {

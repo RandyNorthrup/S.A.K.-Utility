@@ -4,8 +4,12 @@
 
 .DESCRIPTION
     Refuses a tree with uncommitted code, or binaries not built from it. Stages those binaries,
-    runs every group in order, stops at the first group that fails, checks every row, selects the
-    run as current, and regenerates the state block. It writes evidence and that block, and commits
+    runs every group, checks every row, selects the run as current, and regenerates the state block.
+    The groups run as chains (run_partition_manager_certification_chains.ps1): with -PcFile, the VM
+    rig's groups and the physical PC's device groups are two chains that run at the same time (owner,
+    2026-11-06); otherwise one chain. A chain stops at its first group that fails, the other runs on to
+    its end, and both results are reported. Selection and the state block run only once both have
+    ended, and only when both passed. It writes evidence and that block, and commits
     nothing: docs and evidence may change after a freeze, code may not.
 
     Without -PinFile the device rows run on virtual disks, except the one only a real hard drive can
@@ -50,7 +54,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Rig = Join-Path $PSScriptRoot 'run_partition_manager_certification_rig.ps1'
-$Groups = Join-Path $PSScriptRoot 'run_partition_manager_certification_groups.ps1'
+$Chains = Join-Path $PSScriptRoot 'run_partition_manager_certification_chains.ps1'
 
 function Resolve-FinalPath {
     param([string]$Path)
@@ -74,11 +78,21 @@ if ($PinFile) {
 } else {
     $plan += @(@{ group = 'data' }, @{ group = 'boot-uefi' }, @{ group = 'boot-bios' }, @{ group = 'ssd-virtual' }, @{ group = 'usb-virtual' })
 }
+# The device groups need the physical PC and the others the VM rig, so with a PC they are two chains.
+# @(): a lone chain must stay a list, or Count counts its keys.
+$chains = @(if ($PcFile) {
+    @([ordered]@{ name = 'vm-rig'; steps = @($plan | Where-Object { -not $_.device }) },
+        [ordered]@{ name = 'physical-pc'; steps = @($plan | Where-Object { $_.device }) })
+} else {
+    @([ordered]@{ name = 'vm-rig'; steps = $plan })
+})
 if ($PlanOnly) {
     foreach ($step in $plan) {
         $where = if ($step.device -and $PcFile) { 'physical PC' } else { 'VM rig' }
         "$($step.group) on $where$(if ($step.device) { ', pinned' }): $(if ($step.rows) { $step.rows -join ',' } else { 'every row' })"
     }
+    foreach ($chain in $chains) { "Chain $($chain.name): $((@($chain.steps) | ForEach-Object { $_.group }) -join ', ')" }
+    if ($chains.Count -gt 1) { 'The chains run at the same time. Selection and the state block wait for both.' }
     return
 }
 
@@ -122,18 +136,14 @@ if ($PinFile) {
 }
 
 $started = Get-Date
-foreach ($step in $plan) {
-    $group = $step.group
-    Say "Group $group"
-    $arguments = @('-NoProfile', '-File', $Groups, '-Group', $group, '-EvidenceDir', $evidence, '-CredFile', $credentials, '-StageDir', $stage)
-    if ($step.rows) { $arguments += @('-Rows', ($step.rows -join ',')) }
-    if ($step.device) {
-        $arguments += @('-PinFile', $pins)
-        if ($pc) { $arguments += @('-PcFile', $pc) }
-    }
-    & pwsh @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Group $group failed. Its evidence is in $evidence" }
-}
+$planFile = Join-Path $evidence 'chains.json'
+ConvertTo-Json -Depth 6 -InputObject @($chains) | Set-Content -LiteralPath $planFile -Encoding UTF8
+Say "Chains: $(($chains | ForEach-Object { "$($_.name) ($((@($_.steps) | ForEach-Object { $_.group }) -join ', '))" }) -join '; ')"
+$arguments = @('-NoProfile', '-File', $Chains, '-PlanFile', $planFile, '-EvidenceDir', $evidence, '-CredFile', $credentials, '-StageDir', $stage)
+if ($pins) { $arguments += @('-PinFile', $pins) }
+if ($pc) { $arguments += @('-PcFile', $pc) }
+& pwsh @arguments
+if ($LASTEXITCODE -ne 0) { throw "A chain failed; both results are above, each chain's log is in $evidence, and nothing was selected" }
 Say "All groups ran in $([int]((Get-Date) - $started).TotalMinutes) minutes"
 
 Say 'Check every row, and select this run as current'
