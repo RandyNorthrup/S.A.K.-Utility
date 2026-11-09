@@ -3,9 +3,10 @@
     Builds a real BIOS install of Windows on a throwaway MBR VDI, for the boot rows to start from.
 
 .DESCRIPTION
-    Runs elevated in the disposable VM. Images this Windows from a snapshot onto two throwaway disks
-    named by their exact sizes: a target that ends up System Reserved, active, then Windows, and a
-    scratch disk for the image. This is a fixture and not the application's path: the rows that use
+    Runs elevated in the disposable VM. Images this Windows onto two throwaway disks named by their
+    exact sizes: a target that ends up System Reserved, active, then Windows, and a scratch disk for
+    the image. The image is captured from a third disk the rig attached: a clone of this VM's own
+    system disk, made with the VM off, so nothing running here can take it away mid-capture. This is a fixture and not the application's path: the rows that use
     it test what the application then does to this disk.
 #>
 
@@ -30,6 +31,17 @@ function Get-Throwaway {
     if ($disk.IsOffline) { Set-Disk -Number $disk.Number -IsOffline $false }
     if ("$($disk.PartitionStyle)" -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
     return $disk
+}
+
+function Get-SourceClone {
+    # The clone is this Windows' disk, so it is the one other disk of exactly the boot disk's size.
+    $boot = @(Get-Disk | Where-Object { $_.IsBoot })
+    if ($boot.Count -ne 1) { throw "Expected one boot disk: found $($boot.Count)" }
+    $found = @(Get-Disk | Where-Object {
+            -not $_.IsBoot -and -not $_.IsSystem -and [uint64]$_.Size -eq [uint64]$boot[0].Size -and
+            "$($_.FriendlyName)" -match 'VBOX HARDDISK' })
+    if ($found.Count -ne 1) { throw "The clone of this Windows' disk: found $($found.Count)" }
+    return $found[0]
 }
 
 function Clear-Letter {
@@ -64,25 +76,36 @@ Add-PartitionAccessPath -DiskNumber $target.Number -PartitionNumber $system.Part
 Add-PartitionAccessPath -DiskNumber $target.Number -PartitionNumber $windows.PartitionNumber -AccessPath 'W:\'
 Add-PartitionAccessPath -DiskNumber $scratch.Number -PartitionNumber $scratchPartition.PartitionNumber -AccessPath 'T:\'
 
-# The capture reads this Windows through a shadow copy for half an hour or more. Windows deletes the
-# oldest copy when shadow storage passes its limit, 1% of C: by default, and on 2026-11-08 System
-# Restore's own scheduled snapshot pushed it past: volsnap deleted the capture's copy, and DISM failed
-# reading it with 0x80070015. So the storage gets room first, and DISM's scratch goes on T:, not C:.
-& vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=40% | Select-Object -Last 1
-Assert-LastExit -What 'Sizing the shadow storage'
-& vssadmin.exe list shadowstorage /for=C: | Where-Object { $_ -match 'Maximum|Used' }
+# The capture used to read this Windows through a shadow copy, for half an hour or more. Twice on
+# 2026-11-08 a System Restore snapshot came in, System Restore put C:'s shadow storage back to 1%,
+# and volsnap deleted the capture's copy (DISM 0x80070015, then 0x80070006). So the source is an
+# offline clone: it is onlined once, which gives it a new signature for the one it shares with this
+# disk, set read-only, and read through its Windows partition's own device, which needs no letter.
+$source = Get-SourceClone
+$online = Join-Path $env:TEMP 'sak-bios-source.txt'
+@("select disk $($source.Number)", 'online disk noerr', 'attributes disk clear readonly noerr') |
+    Set-Content -LiteralPath $online -Encoding ASCII
+& diskpart.exe /s $online | Select-Object -Last 3
+Update-HostStorageCache
+if ((Get-Disk -Number $source.Number).IsOffline) { throw "The clone, disk $($source.Number), did not come online" }
+@("select disk $($source.Number)", 'attributes disk set readonly') | Set-Content -LiteralPath $online -Encoding ASCII
+& diskpart.exe /s $online | Select-Object -Last 1
+Assert-LastExit -What 'Setting the clone read-only'
+Remove-Item -LiteralPath $online
+$sourceWindows = @(Get-Partition -DiskNumber $source.Number | Where-Object { "$($_.Type)" -eq 'Basic' } |
+        Sort-Object Size -Descending | Select-Object -First 1)
+if ($sourceWindows.Count -ne 1) { throw "The clone, disk $($source.Number), has no Windows partition" }
+$raw = "\Device\Harddisk$($source.Number)\Partition$($sourceWindows[0].PartitionNumber)"
 New-Item -ItemType Directory -Force -Path 'T:\scratch' | Out-Null
-$set = New-Object SakMigration.SnapshotSet
-$device = ($set.Create(@((Get-Partition -DriveLetter C | Get-Volume).Path)))[0]
-$raw = $device -replace '^\\\\\?\\GLOBALROOT', ''
 [SakMigration.Io]::MapDrive('R:', $raw)
 try {
-    "capture $(Get-Date -Format HH:mm:ss)"
+    if (-not (Test-Path -LiteralPath 'R:\Windows\System32\config\SYSTEM')) { throw "$raw holds no Windows" }
+    "capture from $raw, disk $($source.Number) read-only, $(Get-Date -Format HH:mm:ss)"
     & dism.exe /English /Capture-Image '/ImageFile:T:\b.wim' '/CaptureDir:R:\' '/Name:BIOS source' /Compress:fast /EA '/ScratchDir:T:\scratch' | Select-Object -Last 2
     Assert-LastExit -What 'DISM capture'
 } finally {
     [SakMigration.Io]::UnmapDrive('R:', $raw)
-    $set.Release()
+    Set-Disk -Number $source.Number -IsOffline $true
 }
 "apply $(Get-Date -Format HH:mm:ss)"
 & dism.exe /English /Apply-Image '/ImageFile:T:\b.wim' /Index:1 '/ApplyDir:W:\' /EA /Compact | Select-Object -Last 2

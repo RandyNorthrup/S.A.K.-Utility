@@ -43,7 +43,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Stage', 'Deploy', 'On', 'Off', 'Snapshot', 'Restore', 'NewDisk', 'AttachDisk', 'DetachDisk', 'DeleteDisk',
         'Rows', 'BootProof', 'VmCreate', 'VmFirmware', 'VmRemove', 'VmFacts', 'UsbList', 'UsbOn', 'UsbOff', 'GuestJob',
-        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins')]
+        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins', 'CloneSystemDisk')]
     [string]$Action,
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$Vm = 'Windows 11',
@@ -689,6 +689,17 @@ switch ($Action) {
         } else {
             Invoke-MacVBox "`"`$V`" storageattach '$Vm' --storagectl SATA --port $Port --device 0 --medium none 2>&1 | tail -1; `"`$V`" showvminfo '$Vm' --machinereadable | grep -E '^`"SATA-$Port-0`"='"
         }
+    }
+    'CloneSystemDisk' {
+        # A full copy of the VM's system disk as it is now, for a fixture to read offline.
+        if ($Disk -notmatch '^[a-z0-9-]+$') { throw 'A disk name is lowercase letters, digits and dashes' }
+        if ((Get-VmState) -notin 'poweroff', 'aborted') { throw 'Clone the system disk only with the VM off: a running Windows changes it while it is copied' }
+        Invoke-MacVBox @"
+S=`$("`$V" showvminfo '$Vm' --machinereadable | grep '^"SATA-ImageUUID-0-0"=' | cut -d'"' -f4)
+[ -n "`$S" ] || { echo 'The VM has no system disk on SATA port 0'; exit 3; }
+"`$V" clonemedium disk "`$S" "`$W/disks/$Disk.vdi" --format VDI 2>&1 | tail -1
+[ -f "`$W/disks/$Disk.vdi" ] || { echo 'The clone was not written'; exit 4; }
+"@
     }
     'DeleteDisk' {
         if ($Disk -notmatch '^[a-z0-9-]+$') { throw 'A disk name is lowercase letters, digits and dashes' }

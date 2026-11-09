@@ -214,17 +214,21 @@ function Invoke-SystemMbr2Gpt {
 }
 
 function Invoke-BuildBiosDisk {
+    # The source is a clone of the VM's own system disk, made with the VM off: an offline copy that
+    # nothing in the guest can delete mid-capture, as System Restore deleted the shadow copy it was.
     param([string]$Disk, [long]$SizeMiB, [long]$ScratchMiB)
-    Invoke-Rig -Action 'NewDisk' -More @{ Disk = $Disk; SizeMiB = $SizeMiB }
-    Invoke-Rig -Action 'NewDisk' -More @{ Disk = "$Disk-scratch"; SizeMiB = $ScratchMiB }
-    Invoke-Rig -Action 'Off'
-    Invoke-Rig -Action 'AttachDisk' -More @{ Disk = $Disk; Port = 2 }
-    Invoke-Rig -Action 'AttachDisk' -More @{ Disk = "$Disk-scratch"; Port = 3 }
-    Invoke-Rig -Action 'On'
     $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-bios-$PID.ps1"
     [IO.File]::WriteAllText($job, "& 'C:\SAKCert\scripts\partition_manager_certification_bios_fixture.ps1' -TargetBytes $([uint64]$SizeMiB * $Script:MiB) -ScratchBytes $([uint64]$ScratchMiB * $Script:MiB)`n")
     $failure = $null
     try {
+        Invoke-Rig -Action 'NewDisk' -More @{ Disk = $Disk; SizeMiB = $SizeMiB }
+        Invoke-Rig -Action 'NewDisk' -More @{ Disk = "$Disk-scratch"; SizeMiB = $ScratchMiB }
+        Invoke-Rig -Action 'Off'
+        Invoke-Rig -Action 'CloneSystemDisk' -More @{ Disk = "$Disk-source" }
+        Invoke-Rig -Action 'AttachDisk' -More @{ Disk = $Disk; Port = 2 }
+        Invoke-Rig -Action 'AttachDisk' -More @{ Disk = "$Disk-scratch"; Port = 3 }
+        Invoke-Rig -Action 'AttachDisk' -More @{ Disk = "$Disk-source"; Port = 4 }
+        Invoke-Rig -Action 'On'
         Invoke-Rig -Action 'GuestJob' -More @{ JobFile = $job; JobMinutes = 180 }
     } catch {
         $failure = $_
@@ -233,7 +237,9 @@ function Invoke-BuildBiosDisk {
         Invoke-Rig -Action 'Off'
         Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
         Invoke-Rig -Action 'DetachDisk' -More @{ Port = 3 }
+        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 4 }
         Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = "$Disk-scratch" }
+        Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = "$Disk-source" }
     }
     # A BIOS install that was not built is no disk to start: it goes, and the group stops here.
     if ($null -ne $failure) {

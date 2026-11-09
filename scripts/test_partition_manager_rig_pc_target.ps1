@@ -192,10 +192,15 @@ try {
     $stoppedRows = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'Rows', '-PcFile', $pc, '-Rows', 'vhd.mine', '-EvidenceDir', $evidence, '-JobMinutes', '1') -Environment @{ SAK_TEST_ZIP = $rowZip; SAK_TEST_JOB_LOG = 'JOB STOPPED: the rows threw at 9' }
     Assert-That ($stoppedRows.code -ne 0 -and $stoppedRows.text -match 'the rows threw') 'Rows that stopped fail the step' $stoppedRows.text
     Assert-That (Test-Path -LiteralPath (Join-Path $evidence 'vhd.mine\report.json')) 'and what they wrote still comes back' ''
-    # The BIOS fixture gives its shadow copy room before it captures through it.
+    # The BIOS fixture captures from an offline clone, read-only, not a shadow copy anything can delete.
     $fixture = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'partition_manager_certification_bios_fixture.ps1') -Raw
-    $sized = $fixture.IndexOf('vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=')
-    Assert-That ($sized -ge 0 -and $sized -lt $fixture.IndexOf('New-Object SakMigration.SnapshotSet') -and $fixture -match "/ScratchDir:T:") 'The BIOS capture has shadow storage to last, and keeps its scratch off C:' ''
+    $groupsText = Get-Content -LiteralPath $Script:Groups -Raw
+    Assert-That ($fixture -notmatch 'SnapshotSet' -and $fixture -match 'attributes disk set readonly' -and $fixture -match '\$raw = "\\Device\\Harddisk') 'The BIOS capture reads an offline clone, read-only, through its own device' ''
+    $cloned = $groupsText.IndexOf("'CloneSystemDisk'")
+    Assert-That ($cloned -gt $groupsText.IndexOf("Invoke-Rig -Action 'Off'", $groupsText.IndexOf('function Invoke-BuildBiosDisk')) -and $cloned -lt $groupsText.IndexOf("'AttachDisk' -More @{ Disk = `"`$Disk-source`"")) 'The clone is made with the VM off, before it is attached' ''
+    Assert-That ($groupsText.Contains("'DeleteDisk' -More @{ Disk = `"`$Disk-source`" }")) 'and deleted afterwards' ''
+    $cloneOnPc = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'CloneSystemDisk', '-PcFile', $pc, '-Disk', 'x')
+    Assert-That ($cloneOnPc.code -ne 0 -and $cloneOnPc.text -match 'needs a VM' -and $cloneOnPc.calls -ceq '') 'Cloning a system disk stops on a physical PC' $cloneOnPc.text
 
     # A group stops at a row that failed, and says which.
     $pinStub = Join-Path $Script:Root 'group-pins.json'
