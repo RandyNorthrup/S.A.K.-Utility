@@ -325,9 +325,30 @@ function Stop-RigVm {
     "state: $(Get-VmState -VmName $VmName)"
 }
 
+function Get-RigJobFailure {
+    <#
+    .SYNOPSIS
+        What a guest job's log says went wrong, or nothing. A job that threw, ran past its time, or
+        exited nonzero failed, and so did one that left no exit line: the step it was is not done.
+        A run of rows may exit nonzero for a row that failed, because the group checks each row.
+    #>
+    param([AllowEmptyCollection()] [string[]]$Lines, [switch]$AllowNonZeroExit)
+    $stopped = @($Lines | Where-Object { "$_" -match '^JOB STOPPED:' })
+    if ($stopped.Count) { return "$($stopped[0])" }
+    $late = @($Lines | Where-Object { "$_" -match '^NOT DONE after ' })
+    if ($late.Count) { return "$($late[0])" }
+    $exits = @($Lines | Where-Object { "$_" -match '^exit\b' })
+    if ($exits.Count -eq 0) { return 'it left no exit line in its log' }
+    if (-not $AllowNonZeroExit -and "$($exits[-1])" -match '^exit\s+(-?\d+)\s*$' -and [int]$Matches[1] -ne 0) {
+        return "it exited $($Matches[1])"
+    }
+    return ''
+}
+
 function Invoke-GuestElevated {
-    # The guest's elevated task runs a stub that runs the job, so a job is an ordinary script.
-    param([string]$LocalScript, [int]$Minutes, [string]$VmName = $Vm)
+    # The guest's elevated task runs a stub that runs the job, so a job is an ordinary script. Its
+    # log is the output; a job that failed by its log stops the step, after the log is shown.
+    param([string]$LocalScript, [int]$Minutes, [string]$VmName = $Vm, [switch]$AllowNonZeroExit)
     $leaf = Split-Path -Leaf $LocalScript
     $stub = Join-Path ([IO.Path]::GetTempPath()) "sakcert-stub-$PID.ps1"
     [IO.File]::WriteAllText($stub, @"
@@ -357,8 +378,11 @@ try {
             if ($state -match 'DONE') { break }
             if ($state -match 'WAITING' -and (Get-Date) -gt $startBy) { throw "The guest's elevated task did not start the job: is anyone signed in?" }
         }
-        if ($state -notmatch 'DONE') { "NOT DONE after $Minutes minutes" }
-        Invoke-GuestPS -Code "if (Test-Path -LiteralPath '$Script:GuestRoot\jobs\$leaf.log') { Get-Content -LiteralPath '$Script:GuestRoot\jobs\$leaf.log' }" -TimeoutMs 900000 -VmName $VmName
+        $log = @(Invoke-GuestPS -Code "if (Test-Path -LiteralPath '$Script:GuestRoot\jobs\$leaf.log') { Get-Content -LiteralPath '$Script:GuestRoot\jobs\$leaf.log' }" -TimeoutMs 900000 -VmName $VmName)
+        if ($state -notmatch 'DONE') { $log = @("NOT DONE after $Minutes minutes") + $log }
+        $log
+        $why = Get-RigJobFailure -Lines $log -AllowNonZeroExit:$AllowNonZeroExit
+        if ($why) { throw "The guest job $leaf failed: $why" }
     } finally { Remove-RigFile -Path $stub }
 }
 
@@ -424,8 +448,15 @@ function Invoke-RigRows {
     }
     # In this process, not through powershell.exe -File: -File would bind only the first row.
     [IO.File]::WriteAllText($job, "& '$Script:GuestRoot\scripts\run_partition_manager_app_certification.ps1' -Rows $rowList -StageRoot '$Script:GuestRoot\stage' -OutputRoot '$Script:GuestEvidence'$extra`n")
+    $failure = $null
     try {
-        Invoke-GuestElevated -LocalScript $job -Minutes $JobMinutes -VmName $VmName
+        # A row that failed exits nonzero, and its group says so from its report. A run of rows that
+        # stopped still brings back what it wrote, and then fails here.
+        try {
+            Invoke-GuestElevated -LocalScript $job -Minutes $JobMinutes -VmName $VmName -AllowNonZeroExit
+        } catch {
+            $failure = $_
+        }
         $local = Resolve-RigPath $EvidenceDir
         New-Item -ItemType Directory -Force -Path $local | Out-Null
         # Only the rows asked for. Another row already here may hold what only the host could see, which
@@ -437,7 +468,11 @@ function Invoke-RigRows {
         foreach ($row in $Rows) { Remove-RigFile -Path (Join-Path $local $row) }
         Expand-Archive -LiteralPath (Join-Path $local $archive) -DestinationPath $local -Force
         Remove-Item -LiteralPath (Join-Path $local $archive)
+    } catch {
+        if ($null -eq $failure) { throw }
+        Write-Host "The rows' evidence could not be brought back: $($_.Exception.Message)"
     } finally { Remove-RigFile -Path $job }
+    if ($null -ne $failure) { throw $failure }
 }
 
 function Get-RigShot {
@@ -507,8 +542,12 @@ function Get-RigBootFacts {
 }
 `$facts | ConvertTo-Json | Set-Content -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json' -Encoding UTF8
 "@)
-    Invoke-GuestElevated -LocalScript $job -Minutes 25 -VmName $VmName | Out-Null
-    Remove-RigFile -Path $job
+    # The disk carries the facts an earlier proof of it wrote. Those go first, so a facts job that
+    # failed cannot leave them to be read as this start's.
+    Invoke-GuestPS -Code "if (Test-Path -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json') { Remove-Item -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json' -Force }" -VmName $VmName | Out-Null
+    try {
+        Invoke-GuestElevated -LocalScript $job -Minutes 25 -VmName $VmName | Out-Null
+    } finally { Remove-RigFile -Path $job }
     return (((Invoke-GuestPS -Code "Get-Content -LiteralPath '$Script:GuestRoot\jobs\boot-facts.json' -Raw" -VmName $VmName) -join "`n") | ConvertFrom-Json)
 }
 

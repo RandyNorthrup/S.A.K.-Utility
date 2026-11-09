@@ -64,13 +64,21 @@ Add-PartitionAccessPath -DiskNumber $target.Number -PartitionNumber $system.Part
 Add-PartitionAccessPath -DiskNumber $target.Number -PartitionNumber $windows.PartitionNumber -AccessPath 'W:\'
 Add-PartitionAccessPath -DiskNumber $scratch.Number -PartitionNumber $scratchPartition.PartitionNumber -AccessPath 'T:\'
 
+# The capture reads this Windows through a shadow copy for half an hour or more. Windows deletes the
+# oldest copy when shadow storage passes its limit, 1% of C: by default, and on 2026-11-08 System
+# Restore's own scheduled snapshot pushed it past: volsnap deleted the capture's copy, and DISM failed
+# reading it with 0x80070015. So the storage gets room first, and DISM's scratch goes on T:, not C:.
+& vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=40% | Select-Object -Last 1
+Assert-LastExit -What 'Sizing the shadow storage'
+& vssadmin.exe list shadowstorage /for=C: | Where-Object { $_ -match 'Maximum|Used' }
+New-Item -ItemType Directory -Force -Path 'T:\scratch' | Out-Null
 $set = New-Object SakMigration.SnapshotSet
 $device = ($set.Create(@((Get-Partition -DriveLetter C | Get-Volume).Path)))[0]
 $raw = $device -replace '^\\\\\?\\GLOBALROOT', ''
 [SakMigration.Io]::MapDrive('R:', $raw)
 try {
     "capture $(Get-Date -Format HH:mm:ss)"
-    & dism.exe /English /Capture-Image '/ImageFile:T:\b.wim' '/CaptureDir:R:\' '/Name:BIOS source' /Compress:fast /EA | Select-Object -Last 2
+    & dism.exe /English /Capture-Image '/ImageFile:T:\b.wim' '/CaptureDir:R:\' '/Name:BIOS source' /Compress:fast /EA '/ScratchDir:T:\scratch' | Select-Object -Last 2
     Assert-LastExit -What 'DISM capture'
 } finally {
     [SakMigration.Io]::UnmapDrive('R:', $raw)

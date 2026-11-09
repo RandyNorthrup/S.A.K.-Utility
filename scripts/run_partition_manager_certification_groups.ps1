@@ -223,12 +223,23 @@ function Invoke-BuildBiosDisk {
     Invoke-Rig -Action 'On'
     $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-bios-$PID.ps1"
     [IO.File]::WriteAllText($job, "& 'C:\SAKCert\scripts\partition_manager_certification_bios_fixture.ps1' -TargetBytes $([uint64]$SizeMiB * $Script:MiB) -ScratchBytes $([uint64]$ScratchMiB * $Script:MiB)`n")
-    Invoke-Rig -Action 'GuestJob' -More @{ JobFile = $job; JobMinutes = 180 }
-    Remove-Item -LiteralPath $job
-    Invoke-Rig -Action 'Off'
-    Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
-    Invoke-Rig -Action 'DetachDisk' -More @{ Port = 3 }
-    Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = "$Disk-scratch" }
+    $failure = $null
+    try {
+        Invoke-Rig -Action 'GuestJob' -More @{ JobFile = $job; JobMinutes = 180 }
+    } catch {
+        $failure = $_
+    } finally {
+        Remove-Item -LiteralPath $job -ErrorAction Ignore
+        Invoke-Rig -Action 'Off'
+        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
+        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 3 }
+        Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = "$Disk-scratch" }
+    }
+    # A BIOS install that was not built is no disk to start: it goes, and the group stops here.
+    if ($null -ne $failure) {
+        Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $Disk }
+        throw "The BIOS install was not built: $($failure.Exception.Message)"
+    }
 }
 
 $VhdRows = @('vhd.create-format-resize-delete', 'vhd.fat32-to-ntfs', 'vhd.quick-partition', 'vhd.quick-partition-custom',

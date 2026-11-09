@@ -107,7 +107,7 @@ What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key,
    pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json> -PcFile <pc.json>
    ```
 
-   It stops at the first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. A failed row is a finding: fix the code, and a code fix starts again from step 1.
+   It stops at the first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. A step the rig runs in a guest fails when its log says the job stopped, ran past its time or exited nonzero. A failed row is a finding: fix the code, and a code fix starts again from step 1.
 6. Read the block below, which step 5 regenerated, with its claim level and the words the site may use.
 7. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
 

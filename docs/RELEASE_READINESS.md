@@ -2217,6 +2217,18 @@ sample files and folders on C:, D: and E: (D:\SAK-Samples held the BitLocker key
 the sample backups and the Settings screenshots with the real SSID), C:\Program Files\SAK-Test, the round's job
 folder and job task. The capture VM was not used and its snapshot was not touched.
 
+### Certification rig: a BIOS install that failed, and a run that went on (2026-11-08)
+
+The second final run, at f0118642, passed vhd 12/12, data 5/5 and boot-uefi, then built its BIOS install and failed in a way the rig did not see. The fixture's guest job logged `JOB STOPPED: DISM capture failed with exit code 21`, and `Invoke-GuestElevated` returned that log without failing, so the group went on to start a disk with no Windows on it. The run was stopped by hand; testpc1 was not reached.
+
+**Why DISM failed.** The fixture captures this Windows through a VSS snapshot of C: mapped as R:, which takes half an hour or more. C:'s shadow storage limit was 5.10 GB, 1% of the volume. Volsnap event 33 deleted shadow copies to stay under it at 22:48, 22:50, 22:57 and 23:02:55; at 23:02:52 System Restore's scheduled task (`srtasks.exe ExecuteScheduledSPPCreation`) had made a new snapshot, and the deletion at 23:02:55 took the oldest, the capture's. dism.log at 23:02:58: `R:\Windows\WinSxS\...\Microsoft.PackageManagement.MetaProvider.PowerShell.dll (HRESULT=0x80070015)`, then `CWimManager::Capture(hr:0x80070015)`. A setting, not the environment, so no retry: the fixture now sets C:'s shadow storage to 40% (checked by its exit code) and logs it before it takes the snapshot, and DISM's scratch goes on T:, so the capture writes less to C:.
+
+**Why the run went on.** `Get-RigJobFailure` now reads a guest job's log, and `Invoke-GuestElevated` fails the step on `JOB STOPPED`, `NOT DONE after`, a nonzero `exit`, or a log with no exit line, after showing the log. A run of rows may exit 1 for a failed row, because its group checks each row's report; a run of rows that stopped still brings back what it wrote, then fails. The BIOS build detaches its disks, deletes its scratch and its unbuilt disk, and stops its group when the fixture fails.
+
+**A second reliance on the silence.** `Get-RigBootFacts` read a fixed `boot-facts.json` from the proof VM's disk. The UEFI and BIOS repair rows start the same disk twice, so a facts job that failed on the second start would have returned the first start's facts. It now deletes that file before the job, and a failed facts job fails the proof.
+
+**Proof.** `test_partition_manager_rig_pc_target` gains ten checks: each failing log fails `GuestJob`, a clean one passes, rows that exit 1 come back, rows that stopped come back and fail, stale boot facts go first, and the fixture sizes shadow storage before its snapshot. Eight drills, one guard each, each red in that test, the scripts restored byte for byte. Not tested here: the group's own cleanup after a failed BIOS build, which needs the VM.
+
 ### Partition Manager: a slow scan read as no disks, and the final run's two stops (2026-11-08)
 
 The first final certification run at 17a40a4d stopped in its VM phase, on two faults. Neither touched testpc1.

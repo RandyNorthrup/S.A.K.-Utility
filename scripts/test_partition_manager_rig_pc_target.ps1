@@ -49,6 +49,7 @@ if ($tool -eq 'ssh') {
     if ($decoded -match 'quser') {
         if ($env:SAK_TEST_NO_CONSOLE -eq '1') { 'No User exists for *' } else { ' technician            console             1  Active      none' }
     } elseif ($decoded -match 'done\.txt.*DONE') { 'DONE' }
+    elseif ($decoded -match "Get-Content -LiteralPath '[^']*\.log'") { if ($env:SAK_TEST_JOB_LOG) { $env:SAK_TEST_JOB_LOG -split '\|' } else { 'exit 0' } }
     elseif ($decoded -match 'ConvertTo-Json') { Get-Content -LiteralPath $env:SAK_TEST_DISKS -Raw }
 }
 exit 0
@@ -150,6 +151,22 @@ try {
     Assert-That ($job.calls -cmatch 'schtasks\.exe /Run /TN SAKCaptureElevated') 'The job runs in the elevated task, not this sign-in' $job.calls
     Assert-That ($job.calls -cnotmatch 'VBoxManage|guestcontrol') 'No VirtualBox is involved' $job.calls
 
+    # A job that failed by its log stops the step: it threw, it ran past its time, it exited nonzero,
+    # or it left no exit line. The BIOS install of 2026-11-08 failed this way and the run went on.
+    foreach ($case in @(
+            @{ log = 'start|JOB STOPPED: DISM capture failed with exit code 21 at 45'; minutes = '1'; want = 'JOB STOPPED: DISM capture failed' },
+            @{ log = 'something|exit 21'; minutes = '1'; want = 'it exited 21' },
+            @{ log = 'output with no end'; minutes = '1'; want = 'it left no exit line' },
+            @{ log = 'exit 0'; minutes = '0'; want = 'NOT DONE after 0 minutes' })) {
+        $bad = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'GuestJob', '-PcFile', $pc, '-JobFile', $jobFile, '-JobMinutes', $case.minutes) -Environment @{ SAK_TEST_JOB_LOG = $case.log }
+        Assert-That ($bad.code -ne 0 -and $bad.text -match ('failed: ' + [regex]::Escape($case.want))) "A guest job whose log says '$($case.want)' fails its step" $bad.text
+    }
+    $good = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'GuestJob', '-PcFile', $pc, '-JobFile', $jobFile, '-JobMinutes', '1') -Environment @{ SAK_TEST_JOB_LOG = 'all fine|exit 0' }
+    Assert-That ($good.code -eq 0) 'A guest job that exited 0 passes' $good.text
+    $rigText = Get-Content -LiteralPath $Script:Rig -Raw
+    $factsAt = $rigText.IndexOf('function Get-RigBootFacts')
+    Assert-That ($factsAt -ge 0 -and $rigText.IndexOf("Remove-Item -LiteralPath '`$Script:GuestRoot\jobs\boot-facts.json'", $factsAt) -gt $factsAt) 'Boot facts from an earlier start of the disk go before a new start is read' ''
+
     # A run brings back only its own rows, so it cannot overwrite what the host added to another.
     $evidence = Join-Path $Script:Root 'evidence'
     $other = Join-Path $evidence 'vhd.other'
@@ -166,6 +183,19 @@ try {
     Assert-That ((Get-Content -LiteralPath (Join-Path $other 'independent.json') -Raw).Trim() -ceq 'what the host added') 'Another row is left as it was'
     Assert-That (Test-Path -LiteralPath (Join-Path $evidence 'vhd.mine\report.json')) 'The row came back'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $evidence 'sakcert-evidence-*.zip'))) 'Its archive is gone'
+    # A row that failed exits 1, and the group reads that from its report; the rows come back.
+    Remove-Item -LiteralPath (Join-Path $evidence 'vhd.mine') -Recurse -Force
+    $failedRow = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'Rows', '-PcFile', $pc, '-Rows', 'vhd.mine', '-EvidenceDir', $evidence, '-JobMinutes', '1') -Environment @{ SAK_TEST_ZIP = $rowZip; SAK_TEST_JOB_LOG = 'ROW vhd.mine: Failed|exit 1' }
+    Assert-That ($failedRow.code -eq 0 -and (Test-Path -LiteralPath (Join-Path $evidence 'vhd.mine\report.json'))) 'Rows that exit 1 for a failed row still come back, for the group to judge' $failedRow.text
+    # Rows that stopped bring back what they wrote, and then fail.
+    Remove-Item -LiteralPath (Join-Path $evidence 'vhd.mine') -Recurse -Force
+    $stoppedRows = Invoke-Script -Path $Script:Rig -Arguments @('-Action', 'Rows', '-PcFile', $pc, '-Rows', 'vhd.mine', '-EvidenceDir', $evidence, '-JobMinutes', '1') -Environment @{ SAK_TEST_ZIP = $rowZip; SAK_TEST_JOB_LOG = 'JOB STOPPED: the rows threw at 9' }
+    Assert-That ($stoppedRows.code -ne 0 -and $stoppedRows.text -match 'the rows threw') 'Rows that stopped fail the step' $stoppedRows.text
+    Assert-That (Test-Path -LiteralPath (Join-Path $evidence 'vhd.mine\report.json')) 'and what they wrote still comes back' ''
+    # The BIOS fixture gives its shadow copy room before it captures through it.
+    $fixture = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'partition_manager_certification_bios_fixture.ps1') -Raw
+    $sized = $fixture.IndexOf('vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=')
+    Assert-That ($sized -ge 0 -and $sized -lt $fixture.IndexOf('New-Object SakMigration.SnapshotSet') -and $fixture -match "/ScratchDir:T:") 'The BIOS capture has shadow storage to last, and keeps its scratch off C:' ''
 
     # A group stops at a row that failed, and says which.
     $pinStub = Join-Path $Script:Root 'group-pins.json'
