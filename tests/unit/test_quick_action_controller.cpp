@@ -137,6 +137,7 @@ private Q_SLOTS:
     void testAcceptedWarningReachesThisRunAndNoOther();
     void testOutcomeTextCarriesTheWarning();
     void testElevatedResultCarriesItsWarningAndWhereItSaved();
+    void anElevatedRunReportsHowLongItTook();
 
     // -- Per-run context ----------------------------------------
     void queuedRunsKeepTheirOwnOutputFolders();
@@ -300,6 +301,23 @@ void TestQuickActionController::testElevatedResultCarriesItsWarningAndWhereItSav
     QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kRunTimeoutMs);
     QCOMPARE(finished.results.at(0).warning, QStringLiteral("not protected"));
     QCOMPARE(finished.results.at(0).output_path, QStringLiteral("E:/keys/run"));
+}
+
+// VM smoke, 2026-11-09: "Verify System Files: Execution complete: ... (0s)" after 12 min 58 s in
+// the helper. The run's duration is the time from the request to the helper's answer.
+void TestQuickActionController::anElevatedRunReportsHowLongItTook() {
+    constexpr int kHelperMs = 1100;
+    QVERIFY(registerFakes(*m_ctrl, m_system, {kVerifySystemFiles}));
+    FinishedRuns finished;
+    finished.watch(*m_ctrl);
+    m_system->helper_ms.store(kHelperMs);
+    m_ctrl->requestRun({kVerifySystemFiles, QStringLiteral("diagnostics"), {}});
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kRunTimeoutMs);
+    const auto& result = finished.results.at(0);
+    QVERIFY(result.success);
+    QVERIFY2(result.duration_ms >= kHelperMs, qPrintable(QString::number(result.duration_ms)));
+    QVERIFY2(sak::QuickActionController::completionLine(result).endsWith(QStringLiteral("(1s)")),
+             qPrintable(sak::QuickActionController::completionLine(result)));
 }
 
 // ============================================================================

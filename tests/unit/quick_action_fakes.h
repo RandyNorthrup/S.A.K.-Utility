@@ -62,6 +62,8 @@ struct FakeSystem {
     std::optional<sak::ElevatedTaskResult> elevated_result;
     /// What every fake action says about its output folder, when set.
     QString output_folder_warning;
+    /// How long the fake helper takes over each task.
+    std::atomic<int> helper_ms{0};
 
     QStringList inProcessRuns() {
         const std::lock_guard<std::mutex> lock(mutex);
@@ -156,6 +158,9 @@ public:
             m_system->elevated_payloads << payload;
         }
         Q_EMIT progressUpdated(40, QStringLiteral("fake helper working"));
+        if (const int ms = m_system->helper_ms.load(); ms > 0) {
+            QThread::msleep(static_cast<unsigned long>(ms));
+        }
         while (m_system->hold.load() && !m_system->helper_cancel_pending.load()) {
             QThread::msleep(kHoldPollMs);
         }

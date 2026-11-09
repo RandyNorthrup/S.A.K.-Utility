@@ -15,6 +15,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonObject>
@@ -467,8 +468,14 @@ void QuickActionController::startElevated(QuickAction* action) {
             &QThread::started,
             context,
             [broker, outcome, thread, context, action_name, task_id, payload]() {
+                // Timed here, from the request to the helper's answer: the helper's result carries
+                // no duration, so every elevated run used to log "(0s)" -- a 13-minute Verify
+                // System Files among them (VM smoke, 2026-11-09).
+                QElapsedTimer clock;
+                clock.start();
                 outcome->result = makeElevatedActionResult(
                     broker->executeTask(task_id, action_name, payload), outcome->status);
+                outcome->result.duration_ms = clock.elapsed();
                 context->deleteLater();
                 thread->quit();
             });
