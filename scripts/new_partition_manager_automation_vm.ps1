@@ -305,15 +305,15 @@ if ((Test-VmExists -MachineName $VmName)) {
     Remove-ExistingVm -MachineName $VmName
 }
 
-$baseFolder = if ($BaseFolder) {
+$BaseFolder = if ($BaseFolder) {
     [System.IO.Path]::GetFullPath($BaseFolder)
 } else {
     Join-Path $env:USERPROFILE "VirtualBox VMs"
 }
-$vmFolder = Join-Path $baseFolder $VmName
+$vmFolder = Join-Path $BaseFolder $VmName
 New-Item -ItemType Directory -Path $vmFolder -Force | Out-Null
 
-Invoke-VBox -Arguments @("createvm", "--name", $VmName, "--ostype", "Windows11_64", "--basefolder", $baseFolder, "--register") | Out-Null
+Invoke-VBox -Arguments @("createvm", "--name", $VmName, "--ostype", "Windows11_64", "--basefolder", $BaseFolder, "--register") | Out-Null
 Invoke-VBox -Arguments @(
     "modifyvm", $VmName,
     "--memory", ([string]$MemoryMb),

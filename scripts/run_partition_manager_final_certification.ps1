@@ -54,7 +54,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Rig = Join-Path $PSScriptRoot 'run_partition_manager_certification_rig.ps1'
-$Chains = Join-Path $PSScriptRoot 'run_partition_manager_certification_chains.ps1'
+$ChainsScript = Join-Path $PSScriptRoot 'run_partition_manager_certification_chains.ps1'
 
 function Resolve-FinalPath {
     param([string]$Path)
@@ -102,8 +102,8 @@ if ($code.code_dirty) { throw 'The tree has uncommitted code. Commit it, and bui
 
 $work = Resolve-FinalPath $WorkDir
 $stage = Join-Path $work 'stage'
-$runName = if ($RunName) { $RunName } else { "$($code.code_commit)".Substring(0, 12) }
-$evidence = Join-Path (Join-Path $work 'runs') $runName
+$RunName = if ($RunName) { $RunName } else { "$($code.code_commit)".Substring(0, 12) }
+$evidence = Join-Path (Join-Path $work 'runs') $RunName
 $credentials = Resolve-FinalPath $CredFile
 New-Item -ItemType Directory -Force -Path $evidence | Out-Null
 
@@ -139,7 +139,7 @@ $started = Get-Date
 $planFile = Join-Path $evidence 'chains.json'
 ConvertTo-Json -Depth 6 -InputObject @($chains) | Set-Content -LiteralPath $planFile -Encoding UTF8
 Say "Chains: $(($chains | ForEach-Object { "$($_.name) ($((@($_.steps) | ForEach-Object { $_.group }) -join ', '))" }) -join '; ')"
-$arguments = @('-NoProfile', '-File', $Chains, '-PlanFile', $planFile, '-EvidenceDir', $evidence, '-CredFile', $credentials, '-StageDir', $stage)
+$arguments = @('-NoProfile', '-File', $ChainsScript, '-PlanFile', $planFile, '-EvidenceDir', $evidence, '-CredFile', $credentials, '-StageDir', $stage)
 if ($pins) { $arguments += @('-PinFile', $pins) }
 if ($pc) { $arguments += @('-PcFile', $pc) }
 & pwsh @arguments

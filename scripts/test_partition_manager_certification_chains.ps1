@@ -1,12 +1,17 @@
 <#
 .SYNOPSIS
-    Proves how the final run's chains run, with a stand-in for the group runner.
+    Proves how the final run's chains run, with a stand-in for the group runner, and that the final run
+    really starts them.
 
 .DESCRIPTION
     run_partition_manager_certification_chains.ps1 runs the VM rig's groups and the physical PC's device
     groups as two chains at the same time (fix round S, H2; owner ruling 2026-11-06). The stand-in records
-    when each group ran and what it was given, and fails or dawdles where the environment says. Nothing
-    reaches a VM, a PC or a disk.
+    when each group ran and what it was given, and fails or dawdles where the environment says.
+
+    The final run itself is then run for real, without -PlanOnly, from a copy beside stand-ins for the rig,
+    the chains script, selection, the claim check and python: it must start the chains script through
+    -File with both chains, and select and update the claim only after they have passed. Nothing reaches
+    a VM, a PC or a disk.
 #>
 
 [CmdletBinding()]
@@ -70,6 +75,107 @@ function Get-Ran {
     return [pscustomobject]@{ start = [long](& $value 'start'); end = [long](& $value 'end'); pid = (& $value 'pid'); pin = (& $value 'pin'); pc = (& $value 'pc'); rows = (& $value 'rows') }
 }
 
+# The final run's own launch. On 2026-11-09 it wrote its plan over the chains script's path ($chains is
+# $Chains) and started nothing; only -PlanOnly had ever been run. So the real script runs here, copied
+# beside stand-ins for every sibling it calls through $PSScriptRoot, and for python, which works out the
+# digest. Each stand-in writes one line to calls.log beside it.
+$Script:FinalScript = Join-Path $PSScriptRoot 'run_partition_manager_final_certification.ps1'
+$Script:LaunchDigest = '5ab0' * 16
+$Script:LaunchCommit = '0123456789abcdef0123456789abcdef01234567'
+
+$Script:LaunchStandIns = @{
+    'run_partition_manager_certification_rig.ps1'    = @'
+param([string]$Action, [string]$CredFile = '', [string]$ReleaseDir = '', [string]$StageDir = '', [string]$PcFile = '')
+$ErrorActionPreference = 'Stop'
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'calls.log') -Value "rig $Action pc='$PcFile'"
+if ($Action -eq 'Stage') {
+    New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $StageDir 'sak_utility.exe'), 'MZ step client built from DIGEST')
+}
+exit 0
+'@
+    'run_partition_manager_certification_chains.ps1' = @'
+param([string]$PlanFile, [string]$EvidenceDir, [string]$CredFile = '', [string]$StageDir = '', [string]$PinFile = '', [string]$PcFile = '', [string]$GroupsScript = '', [string]$Chain = '')
+$ErrorActionPreference = 'Stop'
+$log = Join-Path $PSScriptRoot 'calls.log'
+$plan = @(Get-Content -LiteralPath $PlanFile -Raw | ConvertFrom-Json)
+$said = @($plan | ForEach-Object { "$($_.name)=$(@($_.steps | ForEach-Object { $_.group }) -join ',')" }) -join ';'
+Add-Content -LiteralPath $log -Value "chains start", "chains script $PSCommandPath", "chains command line $([Environment]::CommandLine)"
+Add-Content -LiteralPath $log -Value "chains plan=$PlanFile evidence=$EvidenceDir cred=$CredFile stage=$StageDir pin=$PinFile pc=$PcFile", "chains groups $said"
+$exitCode = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'chains-exit.txt') -Raw)
+Start-Sleep -Milliseconds 300
+Add-Content -LiteralPath $log -Value "chains end $exitCode"
+exit $exitCode
+'@
+    'select_partition_manager_evidence.ps1'          = @'
+param([string]$RunDir, [string[]]$DenyNames, [string]$CodeDigest)
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'calls.log') -Value "select run=$RunDir digest=$CodeDigest deny=$($DenyNames -join ',')"
+'@
+    'check_partition_manager_release_claims.ps1'     = @'
+param([switch]$Update)
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'calls.log') -Value "claims update=$Update"
+'@
+}
+
+function Invoke-FinalLaunch {
+    # Runs a copy of the real final script, without -PlanOnly, where the stand-in chains exit with $ChainsExit.
+    param([string]$Name, [int]$ChainsExit)
+    $root = Join-Path $Script:Root $Name
+    $scripts = Join-Path $root 'scripts'
+    $bin = Join-Path $root 'bin'
+    New-Item -ItemType Directory -Force -Path $scripts, $bin | Out-Null
+    Copy-Item -LiteralPath $Script:FinalScript -Destination $scripts
+    foreach ($standIn in $Script:LaunchStandIns.GetEnumerator()) {
+        [IO.File]::WriteAllText((Join-Path $scripts $standIn.Key), $standIn.Value.Replace('DIGEST', $Script:LaunchDigest))
+    }
+    Set-Content -LiteralPath (Join-Path $scripts 'chains-exit.txt') -Value "$ChainsExit"
+    $digestJson = "{`"code_digest`": `"$($Script:LaunchDigest)`", `"code_commit`": `"$($Script:LaunchCommit)`", `"code_dirty`": false}"
+    Set-Content -LiteralPath (Join-Path $bin 'python.cmd') -Value "@echo python %* >>`"$scripts\calls.log`"", "@echo $digestJson"
+    $files = [ordered]@{
+        cred = @{ path = Join-Path $root 'cred.json'; json = '{"denyNames": ["HOST-OF-RIG"]}' }
+        pins = @{ path = Join-Path $root 'pins.json'; json = '{"ssd": {}, "hdd": {}}' }
+        pc   = @{ path = Join-Path $root 'pc.json'; json = '{"host": "pc.invalid", "deny_names": ["PC-ITSELF"]}' }
+    }
+    foreach ($file in $files.Values) { Set-Content -LiteralPath $file.path -Value $file.json }
+    $path = $env:PATH
+    $env:PATH = "$bin;$path"
+    try {
+        $output = & (Get-Process -Id $PID).Path -NoProfile -NonInteractive -File (Join-Path $scripts 'run_partition_manager_final_certification.ps1') `
+            -ReleaseDir (Join-Path $root 'Release') -CredFile $files.cred.path -PinFile $files.pins.path -PcFile $files.pc.path 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $env:PATH = $path
+    }
+    $log = Join-Path $scripts 'calls.log'
+    return [pscustomobject]@{
+        code      = $code
+        text      = (@($output | ForEach-Object { "$_" }) -join "`n")
+        calls     = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
+        scripts   = $scripts
+        root      = $root
+        evidence  = Join-Path $root "temp\partition-manager-final\runs\$($Script:LaunchCommit.Substring(0, 12))"
+        cred      = $files.cred.path
+        pins      = $files.pins.path
+        pc        = $files.pc.path
+    }
+}
+
+function Get-CallIndex {
+    # Where in calls.log the first line starting with $Prefix is, or -1.
+    param($Launch, [string]$Prefix)
+    for ($index = 0; $index -lt $Launch.calls.Count; $index++) {
+        if ($Launch.calls[$index].StartsWith($Prefix, [StringComparison]::Ordinal)) { return $index }
+    }
+    return -1
+}
+
+function Get-CallLine {
+    param($Launch, [string]$Prefix)
+    $index = Get-CallIndex -Launch $Launch -Prefix $Prefix
+    if ($index -lt 0) { return '' }
+    return $Launch.calls[$index]
+}
+
 New-Item -ItemType Directory -Force -Path $Script:Root | Out-Null
 try {
     $Script:StandIn = Write-StandIn
@@ -117,12 +223,36 @@ try {
     }
     Assert-That ($pcFails.text -match 'Chain physical-pc: FAILED, CHAIN FAILED AT ssd-device' -and $pcFails.text -match 'Chain vm-rig: passed') 'Both results are reported' $pcFails.text
 
-    # The final run selects nothing unless every chain passed, and only after the chains have ended.
-    $final = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_partition_manager_final_certification.ps1') -Raw
-    $chainsAt = $final.IndexOf('& pwsh @arguments')
-    $throwAt = $final.IndexOf('if ($LASTEXITCODE -ne 0) { throw "A chain failed', $chainsAt)
-    $selectAt = $final.IndexOf('select_partition_manager_evidence.ps1')
-    Assert-That ($chainsAt -gt 0 -and $throwAt -gt $chainsAt -and $selectAt -gt $throwAt) 'Selection follows the chains, and a failed chain stops it' ''
+    # The final run, launched for real: it starts the chains script through -File, with both chains.
+    $launch = Invoke-FinalLaunch -Name 'launch-passes' -ChainsExit 0
+    $calls = $launch.calls -join "`n"
+    $chainsScript = Join-Path $launch.scripts 'run_partition_manager_certification_chains.ps1'
+    Assert-That ($launch.code -eq 0) 'A final run whose chains pass passes' "$($launch.text)`n$calls"
+    Assert-That ((Get-CallLine -Launch $launch -Prefix 'chains script ') -ieq "chains script $chainsScript") 'The final run starts the chains script itself' "$($launch.text)`n$calls"
+    $commandLine = Get-CallLine -Launch $launch -Prefix 'chains command line '
+    Assert-That ($commandLine -match "-File\s+`"?$([regex]::Escape($chainsScript))`"?\s") 'It starts it through -File' $commandLine
+    $stage = Join-Path $launch.root 'temp\partition-manager-final\stage'
+    $expected = "chains plan=$(Join-Path $launch.evidence 'chains.json') evidence=$($launch.evidence) cred=$($launch.cred) stage=$stage pin=$($launch.pins) pc=$($launch.pc)"
+    Assert-That ((Get-CallLine -Launch $launch -Prefix 'chains plan=') -ieq $expected) 'It gives it the plan, the evidence, the credentials, the stage, the pins and the PC' "$expected`n$calls"
+    Assert-That ((Get-CallLine -Launch $launch -Prefix 'chains groups ') -ceq 'chains groups vm-rig=vhd,data,boot-uefi,boot-bios;physical-pc=ssd-device,hdd-device,data-device') 'The plan holds both chains, each with its groups in order' $calls
+    foreach ($step in @("rig Stage pc=''", "rig Deploy pc=''", "rig Deploy pc='$($launch.pc)'", "rig On pc='$($launch.pc)'")) {
+        $at = Get-CallIndex -Launch $launch -Prefix $step
+        Assert-That ($at -ge 0 -and $at -lt (Get-CallIndex -Launch $launch -Prefix 'chains start')) "It runs $step before the chains" $calls
+    }
+    # Selection and the claim update come after both chains have ended, in that order.
+    $endAt = Get-CallIndex -Launch $launch -Prefix 'chains end 0'
+    $selectAt = Get-CallIndex -Launch $launch -Prefix 'select '
+    $claimsAt = Get-CallIndex -Launch $launch -Prefix 'claims update=True'
+    Assert-That ($endAt -ge 0 -and $selectAt -gt $endAt -and $claimsAt -gt $selectAt) 'Selection follows the chains, and the claim update follows selection' $calls
+    $select = Get-CallLine -Launch $launch -Prefix 'select '
+    Assert-That ($select -ieq "select run=$($launch.evidence) digest=$($Script:LaunchDigest) deny=HOST-OF-RIG,PC-ITSELF") 'Selection reads this run, at this digest, with every name to deny' $select
+
+    # A chain fails: nothing is selected and the claim is not touched.
+    $failed = Invoke-FinalLaunch -Name 'launch-fails' -ChainsExit 1
+    $failedCalls = $failed.calls -join "`n"
+    Assert-That ($failed.code -ne 0 -and $failed.text -match 'A chain failed') 'A final run whose chain fails fails' "$($failed.text)`n$failedCalls"
+    Assert-That ((Get-CallIndex -Launch $failed -Prefix 'chains end 1') -ge 0) 'Its chains ran' $failedCalls
+    Assert-That ((Get-CallIndex -Launch $failed -Prefix 'select ') -lt 0 -and (Get-CallIndex -Launch $failed -Prefix 'claims ') -lt 0) 'Nothing is selected and the claim is not updated' $failedCalls
 } finally {
     Remove-Item -LiteralPath $Script:Root -Recurse -Force -ErrorAction SilentlyContinue
 }

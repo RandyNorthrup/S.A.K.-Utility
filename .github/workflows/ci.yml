@@ -76,7 +76,7 @@ jobs:
       shell: pwsh
       run: '& scripts/check_qrc_resources.ps1'
 
-    - name: PowerShell syntax (whole tree)
+    - name: PowerShell syntax and variable casing (whole tree)
       if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
       shell: pwsh
       run: '& scripts/check_powershell_syntax.ps1'

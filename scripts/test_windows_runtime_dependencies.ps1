@@ -13,8 +13,8 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $verifier = Join-Path $ProjectRoot "scripts\verify_windows_runtime_dependencies.ps1"
 . (Join-Path $ProjectRoot "scripts\assert_built_target.ps1")
-$exePath = Assert-FreshBuiltTarget -Path $ExePath -ReleaseDir $ReleaseDir
-$releaseRoot = Split-Path -Parent $exePath
+$ExePath = Assert-FreshBuiltTarget -Path $ExePath -ReleaseDir $ReleaseDir
+$releaseRoot = Split-Path -Parent $ExePath
 
 function Assert-RuntimeContract {
     param([bool]$Condition, [string]$Message)
@@ -188,7 +188,7 @@ foreach ($executable in @("sak_utility.exe", "partition_manager_live_certifier.e
 # Qt imports in that mode, and only the app's without it.
 $packageFixture = Join-Path $fixtureRoot "whole-package"
 New-Item -ItemType Directory -Path (Join-Path $packageFixture "platforms") -ErrorAction Stop | Out-Null
-Copy-Item -LiteralPath $exePath -Destination $packageFixture -ErrorAction Stop
+Copy-Item -LiteralPath $ExePath -Destination $packageFixture -ErrorAction Stop
 Copy-Item -LiteralPath (Join-Path $releaseRoot "platforms\qwindows.dll") `
     -Destination (Join-Path $packageFixture "platforms") -ErrorAction Stop
 $pluginMissing = "platforms\qwindows.dll: Qt6Gui.dll"

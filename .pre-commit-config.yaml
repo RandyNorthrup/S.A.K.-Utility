@@ -112,11 +112,12 @@ repos:
         files: ^(tests/|scripts/test_[^/]*\.ps1$|scripts/check_test_registration\.ps1$)|(^|/)CMakeLists\.txt$|\.cmake$
 
       # -------------------------------------------------------------------
-      # PowerShell syntax - parse changed scripts without executing them.
+      # PowerShell syntax - parse changed scripts without executing them, and reject one
+      # variable written under two casings (PowerShell names ignore case).
       # -------------------------------------------------------------------
       - id: powershell-syntax
         name: "PowerShell syntax check"
-        description: "Reject malformed .ps1 files"
+        description: "Reject malformed .ps1 files, and a variable written under two casings in one scope"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/check_powershell_syntax.ps1
         language: system

@@ -132,9 +132,9 @@ function Invoke-PcPS {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix + $Code + "`n;exit 0"))
     $port = if ("$($Script:Pc.port)") { @('-p', "$($Script:Pc.port)") } else { @() }
     $output = & ssh -n @(Get-PcSshOptions) @port "$($Script:Pc.host)" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded" 2>&1
-    $code = $LASTEXITCODE
+    $exitCode = $LASTEXITCODE
     $text = @($output | ForEach-Object { "$_" })
-    if ($code -ne 0) { throw "The command on $($Script:Pc.host) failed with exit code ${code}: $($text -join ' | ')" }
+    if ($exitCode -ne 0) { throw "The command on $($Script:Pc.host) failed with exit code ${exitCode}: $($text -join ' | ')" }
     return $text
 }
 
