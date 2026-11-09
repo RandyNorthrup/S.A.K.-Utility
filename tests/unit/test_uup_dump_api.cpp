@@ -141,6 +141,25 @@ sak::NetworkTransferResult runInjectedMetadata(
     return consumeMetadataReply(reply);
 }
 
+/// One build per title, in the order given.
+QList<UupDumpApi::BuildInfo> buildsTitled(const QStringList& titles) {
+    QList<UupDumpApi::BuildInfo> builds;
+    for (const QString& title : titles) {
+        UupDumpApi::BuildInfo build;
+        build.title = title;
+        builds.append(build);
+    }
+    return builds;
+}
+
+QStringList titlesOf(const QList<UupDumpApi::BuildInfo>& builds) {
+    QStringList titles;
+    for (const auto& build : builds) {
+        titles.append(build.title);
+    }
+    return titles;
+}
+
 }  // namespace
 
 class TestUupDumpApi : public QObject {
@@ -154,6 +173,8 @@ private Q_SLOTS:
     void metadataFetch_malformedFailsClosed();
     void metadataFetch_positiveControl();
     void publicReleaseListsOnlyPublicReleases();
+    void buildsListNewestReleaseFirst();
+    void buildsOfOneReleaseKeepTheOrderTheyCameIn();
     void aPassingServiceErrorIsAskedOnceMore();
     void aCancelDuringTheWaitAsksNothingMore();
     void metadataFetch_isCentralizedAndBounded();
@@ -340,6 +361,71 @@ void TestUupDumpApi::publicReleaseListsOnlyPublicReleases() {
     api.fetchAvailableBuilds(QStringLiteral("amd64"), Channel::Retail);
     QTRY_COMPARE(fetched.size(), 1);
     QCOMPARE(fetched.first().uuid, QStringLiteral("public"));
+}
+
+// Round S (N1): the VM's Public Release list read 26H1, 25H2, 26H2, 23H2, listid.php's date order,
+// which mixes the versions because each month's update of every version is added together. Newest
+// release first, by the "version YYHn" label; a title with none follows, in the order it came in.
+void TestUupDumpApi::buildsListNewestReleaseFirst() {
+    const QString v26h1 = QStringLiteral("Windows 11, version 26H1 (28000.3365)");
+    const QString v25h2 = QStringLiteral("Windows 11, version 25H2 (26200.9818)");
+    const QString v26h2 = QStringLiteral("Windows 11, version 26H2 (26300.9818)");
+    const QString v23h2 = QStringLiteral("Windows 11, version 23H2 (22631.7654)");
+    const QString v24h2 = QStringLiteral("Windows 11, version 24H2 (26100.7171)");
+    const QString insider = QStringLiteral("Windows 11 Insider Preview 29704.1000 (rs_prerelease)");
+    const QString preview = QStringLiteral("Preview Update for Windows 11 (26200.9818)");
+    // The VM's order, with an unlabelled title among them and a second after them: a title sort
+    // would put "Preview" before "Windows", which the order they came in does not.
+    const QStringList arrived{v26h1, insider, v25h2, v26h2, preview, v23h2, v24h2};
+    QCOMPARE(titlesOf(UupDumpApi::inReleaseOrder(buildsTitled(arrived))),
+             (QStringList{v26h2, v26h1, v25h2, v24h2, v23h2, insider, preview}));
+
+    // And the list the reply handler hands on, so the order is not left to the dialog.
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral(
+            R"json({"response":{"builds":{)json"
+            R"json("0":{"uuid":"26H1","title":"Windows 11, version 26H1 (28000.3365)","build":"28000.3365","arch":"amd64","created":50},)json"
+            R"json("1":{"uuid":"25H2","title":"Windows 11, version 25H2 (26200.9818)","build":"26200.9818","arch":"amd64","created":40},)json"
+            R"json("2":{"uuid":"26H2","title":"Windows 11, version 26H2 (26300.9818)","build":"26300.9818","arch":"amd64","created":30},)json"
+            R"json("3":{"uuid":"23H2","title":"Windows 11, version 23H2 (22631.7654)","build":"22631.7654","arch":"amd64","created":20},)json"
+            R"json("4":{"uuid":"24H2","title":"Windows 11, version 24H2 (26100.7171)","build":"26100.7171","arch":"amd64","created":10})json"
+            R"json(}}})json");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QStringList fetched;
+    connect(&api, &UupDumpApi::buildsFetched, &api, [&fetched](const auto& builds) {
+        for (const auto& build : builds) {
+            fetched.append(build.uuid);
+        }
+    });
+    api.fetchAvailableBuilds(QStringLiteral("amd64"), UupDumpApi::ReleaseChannel::Retail);
+    QTRY_COMPARE(fetched.size(), 5);
+    QCOMPARE(fetched,
+             (QStringList{QStringLiteral("26H2"),
+                          QStringLiteral("26H1"),
+                          QStringLiteral("25H2"),
+                          QStringLiteral("24H2"),
+                          QStringLiteral("23H2")}));
+}
+
+// Round S (N1): builds of one version, and titles with no version label, keep the order they came
+// in (newest added first). Four dozen, as a real list is hundreds long: std::sort orders up to 32
+// by insertion, which keeps ties as they are, so a shorter list would not show an unstable sort.
+void TestUupDumpApi::buildsOfOneReleaseKeepTheOrderTheyCameIn() {
+    constexpr int kTiedPairs = 24;
+    QStringList arrived;
+    QStringList labelled;
+    QStringList unlabelled;
+    for (int index = 0; index < kTiedPairs; ++index) {
+        labelled.append(QStringLiteral("Windows 11, version 25H2 (26200.%1)").arg(index));
+        unlabelled.append(QStringLiteral("Windows 11 Insider Preview %1.1000").arg(index));
+        arrived << labelled.last() << unlabelled.last();
+    }
+    QCOMPARE(titlesOf(UupDumpApi::inReleaseOrder(buildsTitled(arrived))), labelled + unlabelled);
 }
 
 // Review 3 (testpc1): Download & Build ISO failed at once with "Network metadata request returned

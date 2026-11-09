@@ -64,6 +64,13 @@ int listHeightForRows(QListWidget* list, int rows) {
     return (rows * row) + list->frameWidth() + list->frameWidth();
 }
 
+/// The line under the build list while no build is chosen. Blank, it was an empty band under the
+/// list's rows (round S, N3); taken out until a build is chosen, it would move the groups below it
+/// down a line at the first click, as the list's growth did (review 4, Y9).
+QString noBuildChosenText() {
+    return WindowsISODownloadDialog::tr("No build selected.");
+}
+
 }  // namespace
 
 // ============================================================================
@@ -199,7 +206,7 @@ void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* main_layout) 
                                    "and channel above."));
     build_layout->addWidget(m_buildListWidget);
 
-    m_buildInfoLabel = new QLabel("", build_group);
+    m_buildInfoLabel = new QLabel(noBuildChosenText(), build_group);
     m_buildInfoLabel->setWordWrap(true);
     m_buildInfoLabel->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
@@ -409,6 +416,8 @@ void WindowsISODownloadDialog::onFetchBuildsClicked() {
     m_editionCombo->setEnabled(false);
     m_builds.clear();
     m_selectedUpdateId.clear();
+    // The last build's line goes with the list: it named a build no longer offered.
+    m_buildInfoLabel->setText(noBuildChosenText());
     updateStartButton();
 
     m_statusLabel->setText("Fetching available builds...");

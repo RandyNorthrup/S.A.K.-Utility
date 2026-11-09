@@ -174,6 +174,16 @@ public:
     [[nodiscard]] static bool buildBelongsToChannel(const BuildInfo& build, ReleaseChannel channel);
 
     /**
+     * @brief @p builds with the newest feature update first, by the "version YYHn" in each title:
+     *        year, then half (26H2, 26H1, 25H2, 24H2, 23H2). In listid.php's date order the VM's
+     *        Public Release list read 26H1, 25H2, 26H2, 23H2: each month's update of every
+     *        version is added together. Builds of one version keep the order they came in. A
+     *        title with no such label (an Insider or preview build) is kept, after every
+     *        labelled one, in the order it came in. Pure; unit-testable.
+     */
+    [[nodiscard]] static QList<BuildInfo> inReleaseOrder(QList<BuildInfo> builds);
+
+    /**
      * @brief Whether a failed metadata answer is worth asking for once more. UUP dump answers
      *        get.php with HTTP 400 now and then under load: review 3's Download & Build failed
      *        at once with it, and the next try downloaded. Pure; unit-testable.
@@ -183,7 +193,8 @@ public:
 Q_SIGNALS:
     /**
      * @brief Emitted when builds are fetched from the database
-     * @param builds List of available builds, sorted by date (newest first)
+     * @param builds List of available builds, newest release first (inReleaseOrder), and newest
+     *        added first within a release
      */
     void buildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
 

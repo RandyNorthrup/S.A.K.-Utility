@@ -30,7 +30,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
+#include <utility>
 
 constexpr int kGbDisplayPrecision = 2;
 // The UUP dump JSON endpoints return small documents; a peer that streams past this
@@ -214,6 +216,39 @@ bool UupDumpApi::buildBelongsToChannel(const BuildInfo& build, ReleaseChannel ch
     return kPublicRelease.match(build.title.trimmed()).hasMatch();
 }
 
+namespace {
+
+/// Windows has two feature updates a year, H1 and H2.
+constexpr int kReleaseHalvesPerYear = 2;
+/// The rank of a title with no "version YYHn" label: below every labelled one.
+constexpr int kUnlabelledReleaseRank = -1;
+
+/// A feature update's place in Windows' release order, from the "version YYHn" in @p title:
+/// 23H2 < 24H2 < 25H2 < 26H1 < 26H2. kUnlabelledReleaseRank when the title has no such label.
+int releaseRank(const QString& title) {
+    static const QRegularExpression kVersionLabel(
+        QStringLiteral(R"(\bversion (?<year>\d{2})H(?<half>[12])\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch label = kVersionLabel.match(title);
+    if (!label.hasMatch()) {
+        return kUnlabelledReleaseRank;
+    }
+    const int year = label.captured(QStringLiteral("year")).toInt();
+    const int half = label.captured(QStringLiteral("half")).toInt();
+    return (year * kReleaseHalvesPerYear) + half - 1;
+}
+
+}  // namespace
+
+QList<UupDumpApi::BuildInfo> UupDumpApi::inReleaseOrder(QList<BuildInfo> builds) {
+    // Stable, so builds of one version keep the order they came in. An unlabelled title ranks
+    // below every label, so it is kept, after them all, in the order it came in.
+    std::ranges::stable_sort(builds, std::ranges::greater{}, [](const BuildInfo& build) {
+        return releaseRank(build.title);
+    });
+    return builds;
+}
+
 QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
     return {ReleaseChannel::Retail,
             ReleaseChannel::ReleasePreview,
@@ -298,9 +333,11 @@ void UupDumpApi::onBuildsFetchReply() {
         }
     }
 
-    // Sort by creation date (newest first)
+    // Newest added first, then newest release first: date order alone mixed the versions, since
+    // each month's update of every version is added together (26H1, 25H2, 26H2, 23H2 on the VM).
     std::ranges::sort(builds,
                       [](const BuildInfo& a, const BuildInfo& b) { return a.created > b.created; });
+    builds = inReleaseOrder(std::move(builds));
 
     // An empty set is not a successful result: a garbage or unexpected response yields no
     // usable build, so fail closed the way the language/edition handlers do rather than

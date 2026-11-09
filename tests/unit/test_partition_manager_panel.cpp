@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/color_constants.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_panel.h"
@@ -112,6 +113,7 @@ private Q_SLOTS:
     void diskMapLegendColorsMatchRenderedRoles();
     void unallocatedRoleUsesDarkGrayPalette();
     void ribbonButtonsUseIcons8SvgSources();
+    void theRefreshIconStandsOutOnItsBlueButton();
     void diskMapUsesCompactSpacing();
     void diskMapHighlightsOnlySelectedPartition();
     void diskMapHighlightsSelectedDiskRow();
@@ -248,6 +250,63 @@ double wcagContrast(const QColor& first, const QColor& second) {
     const double a = luminance(first);
     const double b = luminance(second);
     return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
+}
+
+/// WCAG 2's bar for a graphic a person needs to see: 3:1 from what is around it.
+constexpr double kWcagGraphicContrast = 3.0;
+/// A pixel this opaque is the drawing's own colour, not its anti-aliased rim.
+constexpr int kSolidInkAlpha = 250;
+/// Fewer solid pixels than this is not a drawing to judge.
+constexpr int kLeastSolidInkPixels = 20;
+
+/// @p css ("rgba(r, g, b, a)" or "#rrggbb") drawn over the opaque @p backdrop: what a translucent
+/// stop of the theme's button gradients shows on the surface under the button.
+QColor cssOver(const QString& css, const QColor& backdrop) {
+    static const QRegularExpression kRgba(
+        QStringLiteral(R"(rgba\((\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\))"));
+    const QRegularExpressionMatch match = kRgba.match(css);
+    if (!match.hasMatch()) {
+        return QColor(css);
+    }
+    const double alpha = match.captured(4).toDouble();
+    const auto mix = [alpha](int top, int base) {
+        return qRound((alpha * top) + ((1.0 - alpha) * base));
+    };
+    return QColor(mix(match.captured(1).toInt(), backdrop.red()),
+                  mix(match.captured(2).toInt(), backdrop.green()),
+                  mix(match.captured(3).toInt(), backdrop.blue()));
+}
+
+/// The weakest contrast with @p background among @p icon's solid pixels, and how many there are.
+struct SolidInk {
+    double weakest{std::numeric_limits<double>::max()};
+    int pixels{0};
+};
+
+SolidInk solidInkOn(const QImage& icon, const QColor& background) {
+    SolidInk ink;
+    for (int y = 0; y < icon.height(); ++y) {
+        for (int x = 0; x < icon.width(); ++x) {
+            const QColor pixel = icon.pixelColor(x, y);
+            if (pixel.alpha() >= kSolidInkAlpha) {
+                ++ink.pixels;
+                ink.weakest = std::min(ink.weakest, wcagContrast(pixel, background));
+            }
+        }
+    }
+    return ink;
+}
+
+/// The ribbon button that scans the disks (its caption reads Scan Disks, then Refresh Disks).
+QToolButton* refreshRibbonButton(const QWidget& panel) {
+    const auto buttons = panel.findChildren<QToolButton*>(QStringLiteral("partitionRibbonButton"));
+    for (QToolButton* button : buttons) {
+        if (button->property("iconPath").toString() ==
+            QStringLiteral(":/icons/icons/icons8-pm-refresh.svg")) {
+            return button;
+        }
+    }
+    return nullptr;
 }
 
 class ScopedModalInspection {
@@ -2361,6 +2420,49 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
                      button->height() >= button->sizeHint().height(),
                  qPrintable(
                      QStringLiteral("Ribbon label must not be truncated: %1").arg(it.key())));
+    }
+}
+
+// Round S (N2): on the dark theme the Refresh Disks icon, a drawing all in one dark blue
+// (#1565C0), all but vanished on its blue ribbon button: 1.04:1 on the gradient's middle stop
+// (1.00:1 on the light theme's bottom stop). Its solid ink stands 3:1 or more, WCAG's bar for a
+// graphic, from every stop of the button's gradient in both themes: over the ribbon's fill as the
+// panel makes it (the window colour, lighter), and over the page itself, which the theme's
+// transparent QFrame rule may show through.
+void PartitionManagerPanelTests::theRefreshIconStandsOutOnItsBlueButton() {
+    // Put back exactly what was there: the tests after this one draw the disk map with no theme
+    // applied, and a theme left behind changed their pixels (diskMapUsesCompactSpacing).
+    const QString previous_style = qApp->styleSheet();
+    const QPalette previous_palette = QApplication::palette();
+    const QVariant previous_mode = qApp->property("sakThemeMode");
+    const auto restore = qScopeGuard([previous_style, previous_palette, previous_mode] {
+        qApp->setStyleSheet(previous_style);
+        QApplication::setPalette(previous_palette);
+        qApp->setProperty("sakThemeMode", previous_mode);
+    });
+    for (const auto mode : {sak::ui::AppThemeMode::Dark, sak::ui::AppThemeMode::Light}) {
+        sak::ui::applyWindows11Theme(*qApp, mode);
+        const char* theme = mode == sak::ui::AppThemeMode::Dark ? "dark" : "light";
+        sak::PartitionManagerPanel panel;
+        const QToolButton* refresh = refreshRibbonButton(panel);
+        QVERIFY2(refresh != nullptr, theme);
+        const QImage icon =
+            refresh->icon().pixmap(refresh->iconSize(), QIcon::Normal, QIcon::Off).toImage();
+        const QColor page = QApplication::palette().color(QPalette::Window);
+        for (const QColor& surface : {page.lighter(), page}) {
+            for (const char* stop : {sak::ui::kColorPrimaryButtonNormalTop,
+                                     sak::ui::kColorPrimaryButtonNormalMiddle,
+                                     sak::ui::kColorPrimaryButtonNormalBottom}) {
+                const QColor behind = cssOver(QString::fromLatin1(stop), surface);
+                const SolidInk ink = solidInkOn(icon, behind);
+                QVERIFY2(ink.pixels >= kLeastSolidInkPixels, theme);
+                QVERIFY2(ink.weakest >= kWcagGraphicContrast,
+                         qPrintable(QStringLiteral("%1 theme: ink at %2:1 on %3 (%4 over %5)")
+                                        .arg(QLatin1String(theme))
+                                        .arg(ink.weakest, 0, 'f', 2)
+                                        .arg(behind.name(), QLatin1String(stop), surface.name())));
+            }
+        }
     }
 }
 

@@ -9430,6 +9430,10 @@ void PartitionManagerPanel::createRibbon(QVBoxLayout* root) {
         createRibbonButton(ribbon, tr("Redo"), kIconRedo, tr("Redo last undone operation"));
     m_refresh_button =
         createRibbonButton(ribbon, tr("Scan Disks"), kIconRefresh, tr("Scan disk inventory"));
+    // Its drawing is all one dark blue, #1565C0, which all but vanished on the ribbon's blue
+    // button: 1.04:1 on the dark theme's gradient (round S, N2). Drawn as its caption is, in
+    // white, as the theme's other toned buttons draw their icons (ButtonIconEngine).
+    m_refresh_button->setIcon(sak::buttonIcon(kIconRefresh));
     m_dry_run_button =
         createRibbonButton(ribbon, tr("Dry Run"), kIconDryRun, tr("Preview scripts only"));
 

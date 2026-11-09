@@ -24,6 +24,7 @@
 #include "sak/layout_constants.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/network_transfer_runner.h"
 #include "sak/style_constants.h"
 #include "sak/windows11_theme.h"
 #include "sak/windows_iso_download_dialog.h"
@@ -58,6 +59,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 using namespace sak;
 
@@ -129,6 +131,48 @@ public:
 private:
     QTimer m_timer;
 };
+
+constexpr int kHttpOk = 200;
+/// The VM's Public Release builds in uupDumpAnswer.
+constexpr int kVmBuildCount = 4;
+
+/// UUP dump's answer to every request the Windows ISO dialog makes, each endpoint reading only its
+/// own keys: the VM's four Public Release builds, one language and one edition.
+sak::NetworkTransferResult uupDumpAnswer() {
+    sak::NetworkTransferResult result;
+    result.success = true;
+    result.http_status = kHttpOk;
+    result.body = QByteArrayLiteral(
+        R"json({"response":{"builds":{)json"
+        R"json("0":{"uuid":"vm-26h1","title":"Windows 11, version 26H1 (28000.3365)","build":"28000.3365","arch":"amd64","created":40},)json"
+        R"json("1":{"uuid":"vm-25h2","title":"Windows 11, version 25H2 (26200.9818)","build":"26200.9818","arch":"amd64","created":30},)json"
+        R"json("2":{"uuid":"vm-26h2","title":"Windows 11, version 26H2 (26300.9818)","build":"26300.9818","arch":"amd64","created":20},)json"
+        R"json("3":{"uuid":"vm-23h2","title":"Windows 11, version 23H2 (22631.7654)","build":"22631.7654","arch":"amd64","created":10}},)json"
+        R"json("langList":["en-us"],"langFancyNames":{"en-us":"English (United States)"},)json"
+        R"json("editionList":["PROFESSIONAL"],"editionFancyNames":{"PROFESSIONAL":"Windows Pro"}}})json");
+    return result;
+}
+
+/// The @p T in @p dialog whose accessible name is @p name, or nullptr.
+template <typename T>
+T* namedChild(const QWidget& dialog, const QString& name) {
+    for (T* child : dialog.findChildren<T*>()) {
+        if (child->accessibleName() == name) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+/// The push button in @p dialog that reads @p text, or nullptr.
+QPushButton* buttonReading(const QWidget& dialog, const QString& text) {
+    for (QPushButton* button : dialog.findChildren<QPushButton*>()) {
+        if (button->text() == text) {
+            return button;
+        }
+    }
+    return nullptr;
+}
 
 QPushButton* findNextButton(QWidget* panel) {
     const auto buttons = panel->findChildren<QPushButton*>();
@@ -393,6 +437,51 @@ private Q_SLOTS:
         dialog.fitToHeight(kTallRoom);
         QCoreApplication::processEvents();
         QCOMPARE(form->verticalScrollBar()->maximum(), 0);
+    }
+    // Round S (N3): on the VM the Available Builds group had an empty band under the list's four
+    // rows: the line that names the chosen build, blank until one was chosen. It says that none is
+    // until one is, and again once the list is fetched anew (it went on naming a build no longer
+    // listed); and four builds fill the list's four rows.
+    void theBuildLineIsNeverABlankBandUnderTheList() {
+        sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+        // Every request the dialog makes is answered here: no network, and no error box.
+        const sak::ScopedNetworkMetadataFaultInjector answer(
+            [](const auto&) { return std::optional{uupDumpAnswer()}; });
+        ModalAnswerer errors;
+        WindowsISODownloader downloader;
+        WindowsISODownloadDialog dialog(&downloader);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        auto* builds = namedChild<QListWidget>(dialog, QStringLiteral("Builds"));
+        const auto* edition = namedChild<QComboBox>(dialog, QStringLiteral("Edition"));
+        QPushButton* fetch = buttonReading(dialog, QStringLiteral("Fetch Builds"));
+        QVERIFY(builds != nullptr && edition != nullptr && fetch != nullptr);
+        // The line is the group's one label of its own; the list's empty-state text is the list's.
+        const auto lines =
+            builds->parentWidget()->findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly);
+        QCOMPARE(lines.size(), 1);
+        const QLabel* line = lines.first();
+        const QString none = QStringLiteral("No build selected.");
+        QCOMPARE(line->text(), none);
+
+        fetch->click();
+        QTRY_COMPARE(builds->count(), kVmBuildCount);
+        QCOMPARE(line->text(), none);
+        const int row = builds->sizeHintForRow(0);
+        const int unused = builds->viewport()->height() - (builds->count() * row);
+        QVERIFY2(unused < row,
+                 qPrintable(QStringLiteral("%1 px under %2 rows of %3 px")
+                                .arg(unused)
+                                .arg(builds->count())
+                                .arg(row)));
+
+        builds->setCurrentRow(0);
+        QVERIFY2(line->text().startsWith(QStringLiteral("Build: ")), qPrintable(line->text()));
+        QTRY_VERIFY(edition->isEnabled());  // its language and edition answers are in
+        fetch->click();
+        QCOMPARE(line->text(), none);
+        QTRY_COMPARE(builds->count(), kVmBuildCount);
+        QVERIFY2(errors.titles.isEmpty(), qPrintable(errors.titles.join(QStringLiteral(", "))));
     }
     // Review 4 (Y12): the raw flash's "ALL DATA ... PERMANENTLY ERASED" confirmation offered a
     // blue Yes, while Batch Uninstall's destructive action is red. Yes is the danger tone, and No
