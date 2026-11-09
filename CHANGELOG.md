@@ -8,6 +8,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Reset Network keeps settings typed in by hand** - Windows' TCP/IP reset clears an adapter's static IPv4 setup,
+  and on a stock Windows 11 the adapter came back with only a self-assigned 169.254.x.x address, no gateway and no
+  working DNS, before and after the restart, with no warning. Reset Network now reads every adapter first and names,
+  in its question, each one with settings typed in by hand (addresses, gateways and DNS, IPv4 and IPv6) and what will
+  happen to them, and any turned-off adapter whose settings Windows does not show. Before it changes anything it saves
+  them to data\network-backups beside the program, and it refuses to run if it cannot. After the reset it puts them
+  back, each gateway with the metric it had (one Windows chose stays Windows' choice), turns DHCP back on where it was
+  on, and checks that every adapter that was up has DHCP or an address that is not self-assigned; an adapter that does
+  not is a failure that names the saved file.
+- **A static gateway no longer jumps the queue** - Set Static IP pinned the gateway's route metric at 1, and Restore
+  Settings at 0, so on a PC with more than one network that adapter took over the default route. Both now leave the
+  metric to Windows, as its own adapter dialog does: the address is set, then the gateway is added as a route with no
+  metric.
+- **Reset Network no longer reports a reset that worked as failed** - `netsh int ip reset` and `int ipv6 reset` exit 1
+  on a stock Windows 11 when Windows refuses one protected item, although every other item resets and netsh asks for a
+  restart. S.A.K. reads netsh's answer: that case is a reset that needs a restart, and any other failure is still a
+  failure (on a Windows in another language netsh's text is not recognised, so a non-zero exit stays a failure). The
+  check afterwards waits, within a limit, for the adapters to finish restarting instead of failing after 5 seconds; if
+  they are still restarting at the limit, the result says so and asks for a check after the restart. What the check
+  prints and the verdict now come from the same reading.
+- **A self-assigned address reads as one** - The adapter list showed an adapter with only a 169.254.x.x address as
+  "Connected". It now reads "No valid address", and its tooltip says Windows assigned it because no DHCP server
+  answered and nothing is set by hand.
+- **Restore Settings starts on the right adapter** - From the toolbar, the adapter list starts on the adapter the
+  backup was made from, then one of the same type, and only then the first; it started on the first (a Bluetooth
+  adapter, for an Ethernet backup). Backups now record the adapter's type. A right-click restore still starts on the
+  adapter clicked.
+- **Elevated quick actions log how long they took** - Verify System Files, Check Disk Errors, Reset Network and the
+  other actions that run through the elevated helper logged "(0s)"; they now log the time from the request to the
+  helper's answer.
+- **Windows ISO builds newest first** - The build list is in Windows' release order, newest first (26H2, 26H1, 25H2,
+  24H2, 23H2), and builds of one version keep their order. The line under the list says "No build selected." until a
+  build is chosen, instead of a blank band.
+- **Refresh Disks in dark** - Partition Manager's Refresh Disks icon is drawn white on its blue button, as the
+  caption is; it had all but vanished in the dark theme.
+
 - **A slow PC no longer reads as having no disks** - Partition Manager's disk scan stopped after 30 seconds and then
   said "The disk scan found no disks". It now keeps going while it is still moving, says "Scanning disk N of M" as it
   goes, and stops only after 30 seconds with no progress or 5 minutes in all. A scan that stops says "The disk scan did

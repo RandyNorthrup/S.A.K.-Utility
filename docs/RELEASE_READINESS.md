@@ -624,27 +624,40 @@ DESIGN DECISIONS, the owner may want to overrule:
 - SFC's unreadable result stays unknown rather than being read from CBS.log's [SR] lines, which have
   never been seen from a real run here.
 
-INCOMPLETE, VM smoke:
+VM smoke, run on 2026-11-09 at f7619773 on the Windows 11 VM (`E:\SAK-Utility-Test-Scratch\vm-smoke\results.md`;
+fix round S's proof under `E:\SAK-Utility-Test-Scratch\fixround-s\`). Each line that was INCOMPLETE here:
 
-- Time a real flash at the 64 MB buffer against 256 MB, on one real image and one real drive. If 64 MB
-  is measurably slower, raise it. Round 3 settled on 64 MB everywhere without a timing.
-- Flush Cache unelevated. `DnsFlushResolverCache` was not run here, because it changes this PC's DNS
-  state. Microsoft's pages for `ipconfig /flushdns` and `Clear-DnsClientCache` state no administrator
-  requirement, and do not say there is none, so this stays unproven. If it needs an administrator after
-  all, the button says "Failed to flush the DNS resolver cache." The action registry and the tooltip say
-  Standard. `include/sak/elevation_tier.h`, which said Elevated, was read only by tests and is gone.
-- Diagnose on a Windows with no msdt.exe: the plan is tested, the launch of Settings is not. This PC
-  has msdt.exe and it was not launched.
-- Restore Settings on a non-English Windows, end to end. The script's output is tested on this PC
-  (English) and the JSON reader on other languages' names.
-- Reset Network, Backup Settings' restore, and every other network apply: command building and result
-  handling only, by standing rule.
-- SFC and Check Disk results on real runs: fixed output only. Nothing here ran `sfc`, `dism /online` or
-  `Repair-Volume`.
-- A real mapped drive through Check Disk, elevated. Windows may hide it from an elevated process, which
-  is why the report says network drives are not checked whether or not it names one.
-- The assistant's Unattended prompt and the workflow notice through a real model run. No paid API was
-  called: the tests stop at the run or use the approval hook.
+- PROVEN, and the buffer stays 64 MB: a real flash at 64 MB against 256 MB, testpc2's Samsung stick and a Debian live
+  ISO (3.83 GB), three each. Medians 86.27 s and 85.17 s in all (write 37.83 s, 101.2 MB/s, against 36.87 s, 103.8
+  MB/s): 1.3%, about a second, for four times the memory per target. `vm-smoke\tp2-flash-b64\`, `tp2-flash-b256\`.
+- PROVEN: Flush Cache unelevated. The app's standard session said "DNS cache flushed"
+  (`vm-smoke\cap-std2\vs_flush_cache_standard2.png`); as a real standard account `DnsFlushResolverCache` returned
+  TRUE while `ipconfig /flushdns` said it needs elevation (`vm-smoke\logs\b_flush_standard_account.log`).
+- PROVEN: Diagnose on a Windows with no msdt.exe opened Settings at Troubleshoot
+  (`vm-smoke\shots\b_nomsdt_settings_opened.png`); with msdt.exe it opened the troubleshooter.
+- STILL OPEN, not feasible on the VM: Restore Settings on a non-English Windows. A display language needs Windows
+  Update and Features on Demand, which the guest's hygiene turns off.
+- PROVEN: Backup Settings, Restore Settings refused in a standard session and applied elevated
+  (`vm-smoke\cap-quick\`, `vm-smoke\shots\b_restore_elevated_state.png`), and, after fix round S, Reset Network on a
+  static and a DHCP adapter, each with a restart (below). Still command building and result handling only: Set Static
+  IP, Set DNS, Enable DHCP, enable, disable and rename from the adapter menu.
+- PROVEN: SFC and Check Disk real runs through the helper from a standard session
+  (`vm-smoke\cap-sfc\`, `vm-smoke\cap-std2\`).
+- PROVEN: a real mapped drive through Check Disk, elevated: "Drive Y: - skipped, it is a network drive"
+  (`vm-smoke\cap-elev\ve_check_disk_mapped.png`).
+- STILL OPEN, by instruction: the assistant's Unattended prompt and the workflow notice through a real model run
+  (a paid API).
+- Also proven by the smoke: cold start, single instance and clean exit, limited and elevated; a Defender scan of
+  the package; Mark of the Web (the unsigned publisher warning, no SmartScreen block); the helper's UAC start from a
+  standard session and a 13-minute helper task; Chrome and Firefox profile backup with the running-browser prompt,
+  restore onto another account, and the Chrome bookmark opened there (Firefox's is in the restored places.sqlite,
+  its first-run card hid the Library). Not feasible there: a UUP conversion end to end (a 4-5 GB download and an
+  hour's conversion on the throttling Mac) and a Windows USB (the Mac passes no USB device to the VM; proven on testpc1
+  and a Hyper-V Gen 2 boot).
+- STILL OPEN: the repeat of check A on the signed release bytes,
+  `E:\SAK-Utility-Test-Scratch\vm-smoke\REPEAT_A_ON_SIGNED_BYTES.md`.
+- DESIGN DECISION: the flasher ejects the stick after each flash ("Unmount drives on completion", on by default), so
+  a second flash onto the same stick needs it replugged. That is what the setting promises.
 
 ### Leftovers of rounds 5 and 4b (2026-11-02)
 
@@ -2376,6 +2389,68 @@ broader unanchored set, which adds the 21 cert-tooling and tooling-extended test
 test_windows_runtime_dependencies' stale-build guard, after the local drills had relinked sak_gui.lib but not the
 app; a full relink and rerun were clean). Two loaded -j 6 runs of the 20 changed test executables, each repeated
 twice: green. T2: run 42503233394 (d8a44a0f) and run 42511319680 (823baafb) green.
+
+### Fix round S: what the VM smoke found (2026-11-09)
+
+From the VM smoke at f7619773 (`E:\SAK-Utility-Test-Scratch\vm-smoke\results.md`). Each fix has a test that went red
+with its guard broken, each guard drilled on its own and restored byte for byte (26 drills on testpc2 in `W:\sak`, and
+the rest in lane2; logs in `E:\SAK-Utility-Test-Scratch\fixround-s\drills\`).
+
+- FIXED, data-loss class (S1): Reset Network left a static adapter offline. `netsh int ip reset` clears an
+  adapter's static IPv4 setup; DHCP stays off, so it came back with only 169.254.x.x, no gateway and no DNS, before
+  and after the restart, and nothing warned. Reset Network now reads every adapter first
+  (`src/core/network_reset_safeguard.cpp`, read-only cmdlets, the persistent store and the registry: language-neutral)
+  and its question names each adapter with settings typed in by hand, IPv4 and IPv6, and any turned-off adapter
+  Windows does not report. Before any change it saves them to `data\network-backups` and refuses to run if it cannot.
+  After the reset it puts them back, each gateway with the metric it had (automatic stays automatic, below), turns
+  DHCP back on where it was on, and checks that every adapter that was up has DHCP or an address that is not
+  self-assigned, with every address typed in by hand back. An adapter that fails the check is a failure that names
+  the saved file. Tests: `test_network_reset_safeguard` (fixtures captured on the VM), `test_reset_network_action`
+  (the whole reset against faked processes answering with the VM's output), `test_network_diagnostic_panel`.
+- FIXED (S2): a reset that worked reported "failed". `netsh int ip reset` and `int ipv6 reset` exit 1 on a stock
+  Windows 11 26200: 33 items OK, one protected item "Access is denied.", and "Restart the computer to complete this
+  action". That reads as done with a restart; any other failed item, a timeout, or a non-zero exit with output not
+  recognised (another language) is still a failure. The check waits up to 90 s for the adapters instead of failing at
+  5 s, and an adapter still restarting at the limit is a restart pending with a warning, not a failure. What the check
+  prints and the verdict come from one reading. Fixtures: netsh's stdout byte for byte from the VM.
+- FIXED (S3): an adapter with only a 169.254.x.x address read "Connected". It reads "No valid address", with a
+  tooltip that says why.
+- FIXED (S4): quick actions run through the elevated helper logged "(0s)". The controller times the request to the
+  helper's answer.
+- FIXED (N1-N4): the Windows ISO build list is in release order, newest first; the line under it reads "No build
+  selected." instead of a blank band; Refresh Disks is drawn white on its blue button (1.04:1 before in dark, 5.21:1
+  or more after, both themes over 3:1); Restore Settings from the toolbar starts on the backed-up adapter's name, then
+  its type, then the first, and backups record the type.
+- FIXED (H1, H2, scripts): each certification group has its own job limit, ssd-device sized from its pinned drive
+  (600 minutes for the 256 GB drive), hdd-device and data-device 60, and a whole-disk wipe step is sized from its
+  drive; the final run runs the VM rig's groups and the physical PC's as two chains at the same time
+  (`docs/PARTITION_MANAGER_CERTIFICATION.md`). Tests: `test_partition_manager_row_evidence`,
+  `test_partition_manager_rig_pc_target`, `test_partition_manager_certification_chains`.
+- PROVEN on the VM (`E:\SAK-Utility-Test-Scratch\fixround-s\vm\`, pictures in
+  `E:\SAK-Utility-Test-Scratch\capture\fixround-s\`), each pass from `pre-round8` with the guest hygiene on: static
+  10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3: the question named them; the result "Network settings reset
+  successfully; settings typed in by hand were put back - REBOOT REQUIRED"; after the reset and after a restart the
+  same address, gateway (effective metric 281 as before) and DNS, DNS resolving, HTTPS 200, Winsock 28 entries,
+  firewall 494 to 394 rules (`proof-static\`, which pinned the captured metric, 256, before the automatic-metric fix;
+  `proof-gateway-reset\` is the static pass on the final code). DHCP: the same result without the put-back, DHCP on and working after
+  the reset and the restart (`proof-dhcp\`). The adapter list after `netsh int ip reset` by hand read "No valid
+  address" at 169.254.193.132. The VM was left at `pre-round8`, powered off.
+- FIXED, found on the way: a static gateway's metric. Measured on the VM (`fixround-s\vm\gwmetric\`): Windows' own
+  setting reads route print "Default", effective metric 281, Get-NetRoute 256 and the interface's DefaultGatewayMetric
+  0; `netsh ... set address ... gateway=` with no `gwmetric`, which Set Static IP sent, pins 1 (effective 26), and
+  `gwmetric=0`, which Restore Settings sent, pins 0 (effective 25), so on a PC with more than one adapter either took
+  the default route. Only the address set with `gateway=none` and the gateway added as a route with no metric is
+  automatic, so Set Static IP, Restore Settings and the assistant's static-IP action all do that now, and Reset Network
+  records whether each gateway's metric was automatic (DefaultGatewayMetric 0 beside a route metric that is not) and
+  puts it back that way. Tests: `test_network_adapter_admin` (the commands sent, recorded),
+  `test_network_reset_safeguard`; four drills in lane2. On the VM from `pre-round8`, each from a fresh restore: the
+  menu's Set Static IP ("Static IP set on Ethernet" in the app log) left route print "Default", Get-NetRoute 256 and
+  registry metric 0 (`fixround-s\vm\proof-gateway\`), and Reset Network put back the address and then the gateway
+  with the same: "Default", effective 281, after the reset and after a restart, DNS and HTTPS working
+  (`fixround-s\vm\proof-gateway-reset\`).
+- DESIGN DECISION: the disabled-adapter case. Windows reports no settings for a turned-off adapter, so Reset Network
+  names it in its question and asks the technician to note any settings by hand; it does not read them from the
+  registry and cannot put them back.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
