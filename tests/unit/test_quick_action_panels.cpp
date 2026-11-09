@@ -12,6 +12,7 @@
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/elevation_manager.h"
 #include "sak/network_diagnostic_panel.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action.h"
 #include "sak/quick_action_controller.h"
 #include "sak/running_operations.h"
@@ -47,6 +48,7 @@ namespace {
 using namespace quick_action_fakes;
 
 constexpr int kRunTimeoutMs = 10'000;
+constexpr int kDialogPollMs = 5;
 
 /// Every action the three panels offer, registered on the one controller they share.
 const QStringList kAllPanelActions{kScreenshotSettings,
@@ -83,6 +85,45 @@ void answerNextQuestion(QMessageBox::StandardButton answer, bool* asked) {
         box->button(answer)->click();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     });
+}
+
+/// What Reset Network's read-only capture of the adapters answers in these tests: one DHCP adapter,
+/// nothing typed in by hand, so the question has nothing extra to say.
+constexpr auto kDhcpOnlyCapture =
+    R"({"sak_network_capture":1,"adapters":[{"name":"Ethernet","status":"Up",)"
+    R"("ipv4":{"present":true,"dhcp":true},"ipv6":{"present":true,"dhcp":true}}]})";
+
+/// Clicks Reset Network and answers its question with @p answer. The panel reads every adapter
+/// first (a read-only PowerShell capture, answered here from kDhcpOnlyCapture; any other process
+/// fails) and asks only once that read is back, so the question is awaited rather than expected
+/// inside the click. Returns whether the question was asked.
+bool clickResetAndAnswer(QPushButton* reset, QMessageBox::StandardButton answer) {
+    const sak::ScopedProcessFaultInjector capture(
+        [](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            const bool is_capture =
+                args.join(QLatin1Char(' ')).contains(QStringLiteral("sak_network_capture"));
+            result.exit_code = is_capture ? 0 : 1;
+            result.std_out = is_capture ? QString::fromLatin1(kDhcpOnlyCapture) : QString();
+            return result;
+        });
+    bool asked = false;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    QObject::connect(&poll, &QTimer::timeout, &poll, [&asked, answer]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (asked || box == nullptr || box->button(answer) == nullptr) {
+            return;
+        }
+        asked = true;
+        box->button(answer)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    });
+    poll.start();
+    reset->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    static_cast<void>(QTest::qWaitFor([&asked]() { return asked; }, kRunTimeoutMs));
+    return asked;
 }
 
 /// Accepts the next folder dialog in @p folder, recording where it started.
@@ -589,11 +630,7 @@ void QuickActionPanelTests::networkResetConfirmsThenRunsElevatedAndRestoresTheBu
     QVERIFY(reset != nullptr);
 
     m_system->hold.store(true);
-    bool asked = false;
-    answerNextQuestion(QMessageBox::Yes, &asked);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY2(asked, "a network reset must be confirmed");
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::Yes), "a network reset must be confirmed");
     QVERIFY(!reset->isEnabled());
     QCOMPARE(reset->text(), QStringLiteral("Resetting..."));
     QTRY_COMPARE_WITH_TIMEOUT(
@@ -617,11 +654,7 @@ void QuickActionPanelTests::networkResetDeclinedRunsNothing() {
     QPushButton* reset = buttonNamed(panel, QStringLiteral("Reset network settings"));
     QVERIFY(reset != nullptr);
 
-    bool asked = false;
-    answerNextQuestion(QMessageBox::No, &asked);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY(asked);
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::No), "a network reset must be confirmed");
     QTest::qWait(50);
     QVERIFY(m_system->elevatedTasks().isEmpty());
     QVERIFY(reset->isEnabled());
@@ -639,11 +672,7 @@ void QuickActionPanelTests::exitCancelsARunningElevatedQuickAction() {
     QVERIFY(reset != nullptr);
 
     m_system->hold.store(true);
-    bool asked = false;
-    answerNextQuestion(QMessageBox::Yes, &asked);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY(asked);
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::Yes), "a network reset must be confirmed");
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
     QVERIFY(sak::RunningOperations::runningNames().contains(QStringLiteral("Network reset")));
 
@@ -671,11 +700,7 @@ void QuickActionPanelTests::eachPanelReactsOnlyToItsOwnRuns() {
     QPushButton* reset = buttonNamed(network, QStringLiteral("Reset network settings"));
     QVERIFY(power != nullptr && reset != nullptr);
 
-    bool asked = false;
-    answerNextQuestion(QMessageBox::Yes, &asked);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY(asked);
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::Yes), "a network reset must be confirmed");
     QTRY_VERIFY_WITH_TIMEOUT(texts(network_status).contains(QStringLiteral("fake elevated ok")),
                              kRunTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(reset->isEnabled(), kRunTimeoutMs);
@@ -712,11 +737,7 @@ void QuickActionPanelTests::aClickWhileAnotherCallersRunIsGoingSaysQueued() {
     QVERIFY(power != nullptr && reset != nullptr);
 
     m_system->hold.store(true);
-    bool asked = false;
-    answerNextQuestion(QMessageBox::Yes, &asked);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY(asked);
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::Yes), "a network reset must be confirmed");
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
 
     power->click();
@@ -752,11 +773,7 @@ void QuickActionPanelTests::aQueuedPanelRunKeepsTheFolderItsUserChose() {
     QVERIFY(report != nullptr && reset != nullptr);
 
     m_system->hold.store(true);
-    bool confirmed = false;
-    answerNextQuestion(QMessageBox::Yes, &confirmed);
-    reset->click();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    QVERIFY(confirmed);
+    QVERIFY2(clickResetAndAnswer(reset, QMessageBox::Yes), "a network reset must be confirmed");
     QTRY_COMPARE_WITH_TIMEOUT(m_system->elevatedTasks().size(), 1, kRunTimeoutMs);
 
     bool asked = false;

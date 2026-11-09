@@ -27,6 +27,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 namespace sak {
 
 /// @brief The outcome of an adapter administration attempt.
@@ -92,20 +94,19 @@ inline constexpr int kMaxAdapterNameLength = 255;
 //
 // The two call sites that reconfigure IPv4 -- the restore wizard / assistant path through
 // EthernetConfigManager, and the technician's diagnostic panel -- issued DIFFERENT netsh commands
-// for the same operation. Both are unified onto the builders below, and the two places they
-// genuinely differed are named policies rather than a fork, because each difference changes what
-// the machine does and neither can be certified here (live netsh apply certification is
-// forbidden on this machine, so nothing may be "verified" by running it):
+// for the same operation. Both are unified onto the builders below, and the one place they still
+// differ is a named policy rather than a fork:
 //
-//   * gwmetric. The restore path pins `gwmetric=0`; the panel omitted it. netsh's own help
-//     documents gwmetric only as "the metric for the default gateway" -- it does NOT document 0 as
-//     meaning "automatic", so these are not known to be equivalent, and on a multi-homed machine
-//     the gateway metric decides which interface carries the default route.
 //   * register. The restore path passes `register=primary` (register under the primary DNS suffix
 //     only); the panel omitted it and took netsh's own default, which netsh's help does not state.
 //
-// Keeping both as named values preserves each caller's certified behaviour exactly while removing
-// the duplicate implementation. Changing either is now a one-line change in one file.
+// They also differed in the gateway's metric, and both were wrong (fix round S, measured on the
+// Windows 11 VM): the panel's `set address ... gateway=` with no `gwmetric` pins the route metric
+// at 1, and the restore path's `gwmetric=0` pins it at 0, where Windows' own adapter dialog leaves
+// it automatic (route print "Default", effective 281 against 26 and 25 on that VM). On a PC with
+// more than one adapter that metric decides which carries the default route. Only an address set
+// with `gateway=none` and the gateway then added as a route with no metric leaves it automatic, so
+// both paths now do that.
 // ---------------------------------------------------------------------------
 
 /// @brief True when @p value is a complete dotted IPv4 quad and nothing else.
@@ -131,14 +132,6 @@ inline constexpr int kMaxAdapterNameLength = 255;
 /// @brief Why a DNS server list would be refused, or an empty string when it is usable.
 [[nodiscard]] QString staticDnsProblem(const QStringList& servers);
 
-/// @brief Whether a static-IPv4 apply pins the default gateway's routing metric.
-enum class GatewayMetric {
-    /// Omit `gwmetric=` entirely and let Windows assign the gateway metric.
-    WindowsAssigned,
-    /// Pass `gwmetric=0`.
-    PinnedZero,
-};
-
 /// @brief Which DNS suffix a static primary-DNS apply registers the connection under.
 enum class DnsRegistration {
     /// Omit `register=` and take netsh's own default.
@@ -151,32 +144,25 @@ enum class DnsRegistration {
 /// @note Two named instances exist (kRestoreIpv4Dialect, kTechnicianIpv4Dialect) so no caller
 ///       invents a third combination by accident.
 struct AdapterIpv4Dialect {
-    GatewayMetric gateway_metric{GatewayMetric::WindowsAssigned};
     DnsRegistration dns_registration{DnsRegistration::NetshDefault};
 };
 
-/// @brief What EthernetConfigManager's restore path has always issued (pinned metric, primary-only
-///        registration). Used by the assistant actions and the profile restore wizard.
-inline constexpr AdapterIpv4Dialect kRestoreIpv4Dialect{GatewayMetric::PinnedZero,
-                                                        DnsRegistration::PrimarySuffixOnly};
+/// @brief What EthernetConfigManager's restore path has always issued (primary-only registration).
+///        Used by the assistant actions and the profile restore wizard.
+inline constexpr AdapterIpv4Dialect kRestoreIpv4Dialect{DnsRegistration::PrimarySuffixOnly};
 
-/// @brief What the diagnostic panel has always issued (Windows-assigned metric, netsh's default
-///        registration). Used when a technician types a configuration into the panel.
-inline constexpr AdapterIpv4Dialect kTechnicianIpv4Dialect{GatewayMetric::WindowsAssigned,
-                                                           DnsRegistration::NetshDefault};
+/// @brief What the diagnostic panel has always issued (netsh's default registration). Used when a
+///        technician types a configuration into the panel.
+inline constexpr AdapterIpv4Dialect kTechnicianIpv4Dialect{DnsRegistration::NetshDefault};
 
-/// @brief The netsh argument vector that assigns a static IPv4 configuration.
+/// @brief The netsh argument vector that assigns a static IPv4 address, with no gateway
+///        (`gateway=none`, which also removes any the adapter had). A gateway goes on afterwards
+///        as a route (adapterDefaultGatewayArgs), which is how its metric stays automatic.
 /// @param adapter_name MUST already be a resolved, system-sourced name.
-/// @param gateway Optional; when empty, no `gateway=` (and therefore no `gwmetric=`) is emitted,
-///        because netsh documents gwmetric as settable only alongside a gateway.
-/// @note Uses the named-tag form throughout (`name=`, `address=`, ...). The panel previously used
-///       the positional form; netsh's own help documents both, with the same operand order, so
-///       this is a spelling change rather than a behaviour change.
+/// @note Uses the named-tag form throughout (`name=`, `address=`, ...).
 [[nodiscard]] QStringList adapterStaticIpv4Args(const QString& adapter_name,
                                                 const QString& address,
-                                                const QString& mask,
-                                                const QString& gateway,
-                                                GatewayMetric gateway_metric);
+                                                const QString& mask);
 
 /// @brief The netsh argument vector that returns an adapter's IPv4 address to DHCP.
 [[nodiscard]] QStringList adapterDhcpAddressArgs(const QString& adapter_name);
@@ -196,10 +182,13 @@ inline constexpr AdapterIpv4Dialect kTechnicianIpv4Dialect{GatewayMetric::Window
                                                    const QString& address,
                                                    int index);
 
-/// @brief Assign a static IPv4 configuration to an adapter.
+/// @brief Assign a static IPv4 configuration to an adapter: the address, then the gateway as a
+///        route whose metric Windows chooses, as its own adapter dialog does.
 /// @param adapter_name An exact, system-sourced adapter name.
 /// @param gateway Optional. Every non-empty address argument must be a dotted IPv4 quad; anything
 ///        else is refused before netsh runs.
+/// @return Success only when both steps succeeded. A gateway that could not be added after the
+///         address was set is a failure that says the address is set and the gateway is not.
 [[nodiscard]] AdapterAdminOutcome setAdapterStaticIpv4(const QString& adapter_name,
                                                        const QString& address,
                                                        const QString& mask,
@@ -242,6 +231,64 @@ struct DhcpApplyOutcome {
 
 /// @brief Switch an adapter's IPv4 address AND DNS to automatic (DHCP).
 [[nodiscard]] DhcpApplyOutcome setAdapterDhcpMode(const QString& adapter_name);
+
+// ---------------------------------------------------------------------------
+// Putting settings back after a network reset
+//
+// Reset Network records every adapter's settings first and puts the ones typed in by hand back
+// afterwards (network_reset_safeguard.h). It restores what was there, so it passes the gateway
+// metric Windows had stored rather than either dialect's policy, and it can put back more than
+// one address, more than one gateway and IPv6 settings, which the single-adapter restore above
+// never carried.
+// ---------------------------------------------------------------------------
+
+/// @brief True when @p value is the address an IPv4 adapter gives itself when nothing else
+///        configures it (169.254.0.0/16, "self-assigned" or APIPA). It cannot reach other
+///        networks. False for anything that is not a dotted IPv4 quad.
+[[nodiscard]] bool isSelfAssignedIpv4(const QString& value);
+
+/// @brief True when @p value is a plain IPv6 address: no zone index, no prefix, no brackets.
+[[nodiscard]] bool isIpv6Literal(const QString& value);
+
+/// @brief The IP family a command addresses.
+enum class IpFamily {
+    V4,
+    V6,
+};
+
+/// @brief `add address` for one more static IPv4 address beside the first.
+[[nodiscard]] QStringList adapterAdditionalIpv4AddressArgs(const QString& adapter_name,
+                                                           const QString& address,
+                                                           const QString& mask);
+
+/// @brief `add address` for a static IPv6 address, "address/prefix".
+[[nodiscard]] QStringList adapterIpv6AddressArgs(const QString& adapter_name,
+                                                 const QString& address_with_prefix);
+
+/// @brief `add route` for a default gateway (0.0.0.0/0 or ::/0) through @p next_hop.
+/// @param metric The route metric to pin, or nullopt for none: Windows then chooses it, and
+///        `route print` shows "Default". `metric=0` pins 0, it does not mean automatic.
+[[nodiscard]] QStringList adapterDefaultGatewayArgs(IpFamily family,
+                                                    const QString& adapter_name,
+                                                    const QString& next_hop,
+                                                    std::optional<int> metric);
+
+/// @brief `set dnsservers source=static` for @p family's primary server, netsh's own registration.
+[[nodiscard]] QStringList adapterFamilyPrimaryDnsArgs(IpFamily family,
+                                                      const QString& adapter_name,
+                                                      const QString& address);
+
+/// @brief `add dnsservers` for @p family's server at 1-based @p index (2 and up).
+[[nodiscard]] QStringList adapterFamilyAdditionalDnsArgs(IpFamily family,
+                                                         const QString& adapter_name,
+                                                         const QString& address,
+                                                         int index);
+
+/// @brief Run one argument vector built by a builder in this header, through the System32 netsh,
+///        with the same failure rule as every other adapter command here.
+/// @param netsh_args MUST come from a builder above, with a resolved, system-sourced name.
+[[nodiscard]] AdapterAdminOutcome runAdapterCommand(const QStringList& netsh_args,
+                                                    const QString& success_message);
 
 /// @brief Release the adapter's current DHCP lease (`ipconfig /release`).
 [[nodiscard]] AdapterAdminOutcome releaseAdapterDhcpLease(const QString& adapter_name);

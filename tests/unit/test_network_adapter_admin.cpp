@@ -8,7 +8,9 @@
 ///        no network hardware.
 
 #include "sak/network_adapter_admin.h"
+#include "sak/process_runner.h"
 
+#include <QFileInfo>
 #include <QtTest/QtTest>
 
 class TestNetworkAdapterAdmin : public QObject {
@@ -41,17 +43,23 @@ private Q_SLOTS:
 
     // -- IPv4 argument vectors --------------------------------------------
     void staticIpArgs_buildTheNamedTagForm();
-    void staticIpArgs_pinTheGatewayMetricOnlyForTheRestoreDialect();
-    void staticIpArgs_omitGatewayAndMetricWhenNoGatewayIsGiven();
+    void gatewayRoute_isAutomaticUnlessAMetricIsGiven();
+    void staticIp_setsTheAddressThenTheGatewayAsAnAutomaticRoute();
     void dhcpArgs_addressAndDnsDifferOnlyInTheSubcommand();
     void dnsArgs_registerTokenIsTheOnlyDialectDifference();
     void dnsArgs_secondariesStartAtIndexTwo();
-    void ipv4Dialects_differInBothNamedWays();
+    void ipv4Dialects_differOnlyInRegistration();
 
     // -- fail-closed guards, reachable with no adapter present -------------
     void staticIp_refusesMalformedAddresses();
     void staticDns_refusesEmptyListAndMalformedServers();
     void adapterOps_refuseAnEmptyAdapterName();
+
+    // -- putting settings back after a network reset ------------------------
+    void selfAssigned_isOnly169dot254();
+    void ipv6Literal_refusesZonesPrefixesAndIpv4();
+    void restoreGateway_pinsOnlyWhatWasPinned();
+    void restoreBuilders_addAddressesGatewaysAndDnsPerFamily();
 };
 
 // ---------------------------------------------------------------------------
@@ -280,11 +288,12 @@ void TestNetworkAdapterAdmin::ipv4_rejectsPartialAndDecoratedForms() {
 // ---------------------------------------------------------------------------
 
 void TestNetworkAdapterAdmin::staticIpArgs_buildTheNamedTagForm() {
+    // The address alone, and no gateway: `gateway=none` clears any the adapter had. The gateway
+    // goes on afterwards as a route, the only form that leaves its metric automatic (fix round S,
+    // VM).
     const QStringList args = sak::adapterStaticIpv4Args(QStringLiteral("Ethernet 2"),
                                                         QStringLiteral("192.168.1.50"),
-                                                        QStringLiteral("255.255.255.0"),
-                                                        QStringLiteral("192.168.1.1"),
-                                                        sak::GatewayMetric::WindowsAssigned);
+                                                        QStringLiteral("255.255.255.0"));
     QCOMPARE(args,
              (QStringList{QStringLiteral("interface"),
                           QStringLiteral("ipv4"),
@@ -294,50 +303,76 @@ void TestNetworkAdapterAdmin::staticIpArgs_buildTheNamedTagForm() {
                           QStringLiteral("source=static"),
                           QStringLiteral("address=192.168.1.50"),
                           QStringLiteral("mask=255.255.255.0"),
-                          QStringLiteral("gateway=192.168.1.1")}));
-}
-
-void TestNetworkAdapterAdmin::staticIpArgs_pinTheGatewayMetricOnlyForTheRestoreDialect() {
-    const auto build = [](sak::GatewayMetric metric) {
-        return sak::adapterStaticIpv4Args(QStringLiteral("Ethernet"),
-                                          QStringLiteral("10.0.0.9"),
-                                          QStringLiteral("255.0.0.0"),
-                                          QStringLiteral("10.0.0.1"),
-                                          metric);
-    };
-    const QStringList assigned = build(sak::GatewayMetric::WindowsAssigned);
-    const QStringList pinned = build(sak::GatewayMetric::PinnedZero);
-
-    // THE difference the two call sites disagreed on before they were unified, and the reason it
-    // is a parameter rather than a decision made silently during the merge: gwmetric decides which
-    // interface carries the default route on a multi-homed machine.
-    QCOMPARE(pinned.size(), assigned.size() + 1);
-    QCOMPARE(pinned.mid(0, assigned.size()), assigned);
-    QCOMPARE(pinned.last(), QStringLiteral("gwmetric=0"));
-    QVERIFY(!assigned.contains(QStringLiteral("gwmetric=0")));
-    // Nothing else may leak in: no vector may carry a bare "gwmetric" token in any other spelling.
-    for (const QString& arg : assigned) {
+                          QStringLiteral("gateway=none")}));
+    for (const QString& arg : args) {
         QVERIFY(!arg.startsWith(QStringLiteral("gwmetric")));
     }
 }
 
-void TestNetworkAdapterAdmin::staticIpArgs_omitGatewayAndMetricWhenNoGatewayIsGiven() {
-    // netsh documents gwmetric as settable only alongside a gateway, so emitting it alone would be
-    // rejected outright. Even the pinning dialect must drop it when there is no gateway.
-    const QStringList args = sak::adapterStaticIpv4Args(QStringLiteral("Ethernet"),
-                                                        QStringLiteral("10.0.0.9"),
-                                                        QStringLiteral("255.0.0.0"),
-                                                        QString(),
-                                                        sak::GatewayMetric::PinnedZero);
-    QCOMPARE(args,
+void TestNetworkAdapterAdmin::gatewayRoute_isAutomaticUnlessAMetricIsGiven() {
+    // Measured on the Windows 11 VM: `set address ... gateway=` with no gwmetric pins metric 1 and
+    // `gwmetric=0` pins 0; a route added with no metric reads "Default" in route print, as Windows'
+    // own adapter dialog leaves it. `metric=0` is a pinned 0, not automatic.
+    const QStringList automatic = sak::adapterDefaultGatewayArgs(
+        sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.0.1"), std::nullopt);
+    QCOMPARE(automatic,
              (QStringList{QStringLiteral("interface"),
                           QStringLiteral("ipv4"),
-                          QStringLiteral("set"),
-                          QStringLiteral("address"),
-                          QStringLiteral("name=Ethernet"),
-                          QStringLiteral("source=static"),
-                          QStringLiteral("address=10.0.0.9"),
-                          QStringLiteral("mask=255.0.0.0")}));
+                          QStringLiteral("add"),
+                          QStringLiteral("route"),
+                          QStringLiteral("prefix=0.0.0.0/0"),
+                          QStringLiteral("interface=Ethernet"),
+                          QStringLiteral("nexthop=10.0.0.1")}));
+    const QStringList zero = sak::adapterDefaultGatewayArgs(
+        sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.0.1"), 0);
+    QCOMPARE(zero.last(), QStringLiteral("metric=0"));
+}
+
+void TestNetworkAdapterAdmin::staticIp_setsTheAddressThenTheGatewayAsAnAutomaticRoute() {
+    // What Set Static IP and Restore Settings really send: recorded, not run.
+    QList<QStringList> calls;
+    const sak::ScopedProcessFaultInjector injector(
+        [&calls](const QString& program,
+                 const QStringList& args) -> std::optional<sak::ProcessResult> {
+            calls << (QStringList{QFileInfo(program).fileName().toLower()} + args);
+            sak::ProcessResult ok;
+            ok.exit_code = 0;
+            ok.std_out = QStringLiteral("Ok.");
+            return ok;
+        });
+    const auto outcome = sak::setAdapterStaticIpv4(QStringLiteral("Ethernet"),
+                                                   QStringLiteral("10.0.2.15"),
+                                                   QStringLiteral("255.255.255.0"),
+                                                   QStringLiteral("10.0.2.2"),
+                                                   sak::kTechnicianIpv4Dialect);
+    QVERIFY2(outcome.succeeded, qPrintable(outcome.message));
+    QCOMPARE(calls.size(), 2);
+    QCOMPARE(calls.at(0).join(QLatin1Char(' ')),
+             QStringLiteral("netsh.exe interface ipv4 set address name=Ethernet source=static "
+                            "address=10.0.2.15 mask=255.255.255.0 gateway=none"));
+    QCOMPARE(calls.at(1).join(QLatin1Char(' ')),
+             QStringLiteral(
+                 "netsh.exe interface ipv4 add route prefix=0.0.0.0/0 interface=Ethernet "
+                 "nexthop=10.0.2.2"));
+    // The restore path sends the same two commands; its dialect changes DNS registration only.
+    calls.clear();
+    QVERIFY(sak::setAdapterStaticIpv4(QStringLiteral("Ethernet"),
+                                      QStringLiteral("10.0.2.15"),
+                                      QStringLiteral("255.255.255.0"),
+                                      QStringLiteral("10.0.2.2"),
+                                      sak::kRestoreIpv4Dialect)
+                .succeeded);
+    QCOMPARE(calls.size(), 2);
+    QVERIFY(!calls.at(1).join(QLatin1Char(' ')).contains(QStringLiteral("metric")));
+    // No gateway, no route.
+    calls.clear();
+    QVERIFY(sak::setAdapterStaticIpv4(QStringLiteral("Ethernet"),
+                                      QStringLiteral("10.0.2.15"),
+                                      QStringLiteral("255.255.255.0"),
+                                      QString(),
+                                      sak::kTechnicianIpv4Dialect)
+                .succeeded);
+    QCOMPARE(calls.size(), 1);
 }
 
 void TestNetworkAdapterAdmin::dhcpArgs_addressAndDnsDifferOnlyInTheSubcommand() {
@@ -405,16 +440,12 @@ void TestNetworkAdapterAdmin::dnsArgs_secondariesStartAtIndexTwo() {
              QStringLiteral("index=3"));
 }
 
-void TestNetworkAdapterAdmin::ipv4Dialects_differInBothNamedWays() {
-    // The two shipped dialects are the whole record of how the panel and the restore path
-    // disagreed. If a later edit collapses them into the same values, that is a live-routing and
-    // DNS-registration change and must be a deliberate decision, not a quiet one.
-    QVERIFY(sak::kRestoreIpv4Dialect.gateway_metric != sak::kTechnicianIpv4Dialect.gateway_metric);
+void TestNetworkAdapterAdmin::ipv4Dialects_differOnlyInRegistration() {
+    // The shipped dialects are the whole record of how the panel and the restore path disagree. The
+    // gateway metric is no longer one of them: both leave it automatic.
     QVERIFY(sak::kRestoreIpv4Dialect.dns_registration !=
             sak::kTechnicianIpv4Dialect.dns_registration);
-    QCOMPARE(sak::kRestoreIpv4Dialect.gateway_metric, sak::GatewayMetric::PinnedZero);
     QCOMPARE(sak::kRestoreIpv4Dialect.dns_registration, sak::DnsRegistration::PrimarySuffixOnly);
-    QCOMPARE(sak::kTechnicianIpv4Dialect.gateway_metric, sak::GatewayMetric::WindowsAssigned);
     QCOMPARE(sak::kTechnicianIpv4Dialect.dns_registration, sak::DnsRegistration::NetshDefault);
 }
 
@@ -495,6 +526,94 @@ void TestNetworkAdapterAdmin::adapterOps_refuseAnEmptyAdapterName() {
     QVERIFY(!sak::setAdapterDhcpMode(QStringLiteral("   ")).succeeded);
     QVERIFY(!sak::releaseAdapterDhcpLease(QString()).succeeded);
     QVERIFY(!sak::renewAdapterDhcpLease(QString()).succeeded);
+}
+
+// ---------------------------------------------------------------------------
+// Putting settings back after a network reset
+// ---------------------------------------------------------------------------
+
+void TestNetworkAdapterAdmin::selfAssigned_isOnly169dot254() {
+    QVERIFY(sak::isSelfAssignedIpv4(QStringLiteral("169.254.193.132")));
+    QVERIFY(sak::isSelfAssignedIpv4(QStringLiteral("169.254.0.1")));
+    QVERIFY(!sak::isSelfAssignedIpv4(QStringLiteral("10.0.2.15")));
+    QVERIFY(!sak::isSelfAssignedIpv4(QStringLiteral("169.25.1.1")));
+    QVERIFY(!sak::isSelfAssignedIpv4(QStringLiteral("169.2540.1.1")));
+    QVERIFY(!sak::isSelfAssignedIpv4(QStringLiteral("169.254.1")));
+    QVERIFY(!sak::isSelfAssignedIpv4(QStringLiteral("169.254.193.132/16")));
+}
+
+void TestNetworkAdapterAdmin::ipv6Literal_refusesZonesPrefixesAndIpv4() {
+    QVERIFY(sak::isIpv6Literal(QStringLiteral("fd17:625c:f037:2:bf9a:5448:a14:9b3b")));
+    QVERIFY(sak::isIpv6Literal(QStringLiteral("fe80::2")));
+    QVERIFY(sak::isIpv6Literal(QStringLiteral("::")));
+    QVERIFY(!sak::isIpv6Literal(QStringLiteral("fe80::2%14")));
+    QVERIFY(!sak::isIpv6Literal(QStringLiteral("fd00::5/64")));
+    QVERIFY(!sak::isIpv6Literal(QStringLiteral("10.0.2.15")));
+    QVERIFY(!sak::isIpv6Literal(QStringLiteral("fd00::g")));
+    QVERIFY(!sak::isIpv6Literal(QString()));
+}
+
+void TestNetworkAdapterAdmin::restoreGateway_pinsOnlyWhatWasPinned() {
+    // A reset puts back the metric a gateway had: a pinned one pinned, an automatic one with none.
+    const QStringList pinned = sak::adapterDefaultGatewayArgs(
+        sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.2.2"), 256);
+    QCOMPARE(pinned.last(), QStringLiteral("metric=256"));
+    const QStringList automatic = sak::adapterDefaultGatewayArgs(
+        sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.2.2"), std::nullopt);
+    QCOMPARE(automatic.last(), QStringLiteral("nexthop=10.0.2.2"));
+}
+
+void TestNetworkAdapterAdmin::restoreBuilders_addAddressesGatewaysAndDnsPerFamily() {
+    QCOMPARE(sak::adapterAdditionalIpv4AddressArgs(QStringLiteral("Ethernet"),
+                                                   QStringLiteral("10.0.2.16"),
+                                                   QStringLiteral("255.255.255.0")),
+             (QStringList{QStringLiteral("interface"),
+                          QStringLiteral("ipv4"),
+                          QStringLiteral("add"),
+                          QStringLiteral("address"),
+                          QStringLiteral("name=Ethernet"),
+                          QStringLiteral("address=10.0.2.16"),
+                          QStringLiteral("mask=255.255.255.0")}));
+    QCOMPARE(sak::adapterIpv6AddressArgs(QStringLiteral("Ethernet"), QStringLiteral("fd00::5/64")),
+             (QStringList{QStringLiteral("interface"),
+                          QStringLiteral("ipv6"),
+                          QStringLiteral("add"),
+                          QStringLiteral("address"),
+                          QStringLiteral("interface=Ethernet"),
+                          QStringLiteral("address=fd00::5/64")}));
+    QCOMPARE(sak::adapterDefaultGatewayArgs(
+                 sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.2.3"), 10),
+             (QStringList{QStringLiteral("interface"),
+                          QStringLiteral("ipv4"),
+                          QStringLiteral("add"),
+                          QStringLiteral("route"),
+                          QStringLiteral("prefix=0.0.0.0/0"),
+                          QStringLiteral("interface=Ethernet"),
+                          QStringLiteral("nexthop=10.0.2.3"),
+                          QStringLiteral("metric=10")}));
+    const QStringList v6_route = sak::adapterDefaultGatewayArgs(
+        sak::IpFamily::V6, QStringLiteral("Ethernet"), QStringLiteral("fd00::1"), 256);
+    QCOMPARE(v6_route.at(1), QStringLiteral("ipv6"));
+    QCOMPARE(v6_route.at(4), QStringLiteral("prefix=::/0"));
+    QCOMPARE(sak::adapterFamilyPrimaryDnsArgs(
+                 sak::IpFamily::V6, QStringLiteral("Ethernet"), QStringLiteral("fd00::53")),
+             (QStringList{QStringLiteral("interface"),
+                          QStringLiteral("ipv6"),
+                          QStringLiteral("set"),
+                          QStringLiteral("dnsservers"),
+                          QStringLiteral("name=Ethernet"),
+                          QStringLiteral("source=static"),
+                          QStringLiteral("address=fd00::53")}));
+    QCOMPARE(sak::adapterFamilyAdditionalDnsArgs(
+                 sak::IpFamily::V4, QStringLiteral("Ethernet"), QStringLiteral("10.0.2.4"), 2),
+             (QStringList{QStringLiteral("interface"),
+                          QStringLiteral("ipv4"),
+                          QStringLiteral("add"),
+                          QStringLiteral("dnsservers"),
+                          QStringLiteral("name=Ethernet"),
+                          QStringLiteral("address=10.0.2.4"),
+                          QStringLiteral("index=2")}));
+    QVERIFY(!sak::runAdapterCommand({}, QStringLiteral("nothing")).succeeded);
 }
 
 QTEST_MAIN(TestNetworkAdapterAdmin)

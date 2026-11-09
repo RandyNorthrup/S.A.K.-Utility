@@ -75,6 +75,7 @@ QJsonObject EthernetConfigSnapshot::toJson() const {
     obj["adapterName"] = adapterName;
     obj["description"] = description;
     obj["macAddress"] = macAddress;
+    obj["adapterType"] = adapterType;
     obj["dhcpEnabled"] = dhcpEnabled;
     obj["ipv4Address"] = ipv4Address;
     obj["ipv4SubnetMask"] = ipv4SubnetMask;
@@ -100,6 +101,7 @@ EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) 
     snap.adapterName = obj["adapterName"].toString();
     snap.description = obj["description"].toString();
     snap.macAddress = obj["macAddress"].toString();
+    snap.adapterType = obj["adapterType"].toString();
     snap.dhcpEnabled = obj["dhcpEnabled"].toBool();
     snap.ipv4Address = obj["ipv4Address"].toString();
     snap.ipv4SubnetMask = obj["ipv4SubnetMask"].toString();
@@ -413,6 +415,30 @@ QStringList EthernetConfigManager::adapterNamesFromJson(const QString& json) {
     // Windows returns them in its own order, which is no use to someone choosing from a list.
     names.sort(Qt::CaseInsensitive);
     return names;
+}
+
+int EthernetConfigManager::preferredRestoreTarget(const QList<RestoreCandidate>& candidates,
+                                                  const QString& backup_name,
+                                                  const QString& backup_type) {
+    if (candidates.isEmpty()) {
+        return -1;
+    }
+    // The VM smoke restored an Ethernet backup with the list starting on "Bluetooth Network
+    // Connection", the first name alphabetically: one Enter from a wrong adapter.
+    const auto by_name = std::ranges::find_if(candidates, [&backup_name](const auto& candidate) {
+        return !backup_name.isEmpty() &&
+               candidate.name.compare(backup_name, Qt::CaseInsensitive) == 0;
+    });
+    if (by_name != candidates.cend()) {
+        return static_cast<int>(std::distance(candidates.cbegin(), by_name));
+    }
+    const auto by_type = std::ranges::find_if(candidates, [&backup_type](const auto& candidate) {
+        return !backup_type.isEmpty() &&
+               candidate.type.compare(backup_type, Qt::CaseInsensitive) == 0;
+    });
+    return by_type == candidates.cend()
+               ? 0
+               : static_cast<int>(std::distance(candidates.cbegin(), by_type));
 }
 
 // -- Private -----------------------------------------------------------------

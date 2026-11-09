@@ -10,6 +10,8 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QHostAddress>
+
 #include <algorithm>
 
 namespace sak {
@@ -260,27 +262,16 @@ AdapterAdminOutcome renameAdapter(const QString& adapter_name, const QString& ne
 
 QStringList adapterStaticIpv4Args(const QString& adapter_name,
                                   const QString& address,
-                                  const QString& mask,
-                                  const QString& gateway,
-                                  GatewayMetric gateway_metric) {
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("address"),
-                        QStringLiteral("name=") + adapter_name,
-                        QStringLiteral("source=static"),
-                        QStringLiteral("address=") + address,
-                        QStringLiteral("mask=") + mask};
-    if (gateway.isEmpty()) {
-        // No gateway means no gwmetric: netsh documents gwmetric as settable only alongside a
-        // gateway, so emitting it alone would be rejected rather than merely ignored.
-        return args;
-    }
-    args << QStringLiteral("gateway=") + gateway;
-    if (gateway_metric == GatewayMetric::PinnedZero) {
-        args << QStringLiteral("gwmetric=0");
-    }
-    return args;
+                                  const QString& mask) {
+    return {QStringLiteral("interface"),
+            QStringLiteral("ipv4"),
+            QStringLiteral("set"),
+            QStringLiteral("address"),
+            QStringLiteral("name=") + adapter_name,
+            QStringLiteral("source=static"),
+            QStringLiteral("address=") + address,
+            QStringLiteral("mask=") + mask,
+            QStringLiteral("gateway=none")};
 }
 
 QStringList adapterDhcpAddressArgs(const QString& adapter_name) {
@@ -334,6 +325,8 @@ AdapterAdminOutcome setAdapterStaticIpv4(const QString& adapter_name,
                                          const QString& mask,
                                          const QString& gateway,
                                          AdapterIpv4Dialect dialect) {
+    // The dialect differs only in DNS registration now; the address and gateway are set one way.
+    static_cast<void>(dialect);
     if (adapter_name.trimmed().isEmpty()) {
         return {false, QStringLiteral("No adapter name was supplied")};
     }
@@ -341,9 +334,22 @@ AdapterAdminOutcome setAdapterStaticIpv4(const QString& adapter_name,
     if (!problem.isEmpty()) {
         return {false, problem};
     }
-    return runAdapterNetsh(
-        adapterStaticIpv4Args(adapter_name, address, mask, gateway, dialect.gateway_metric),
+    const AdapterAdminOutcome set_address = runAdapterNetsh(
+        adapterStaticIpv4Args(adapter_name, address, mask),
         QStringLiteral("Set a static IPv4 configuration on '%1'").arg(adapter_name));
+    if (!set_address.succeeded || gateway.isEmpty()) {
+        return set_address;
+    }
+    const AdapterAdminOutcome add_gateway = runAdapterNetsh(
+        adapterDefaultGatewayArgs(IpFamily::V4, adapter_name, gateway, std::nullopt),
+        set_address.message);
+    if (!add_gateway.succeeded) {
+        return {false,
+                QStringLiteral("Set the static address on '%1', but its gateway %2 could not be "
+                               "added. %3")
+                    .arg(adapter_name, gateway, add_gateway.message)};
+    }
+    return add_gateway;
 }
 
 DnsApplyOutcome setAdapterStaticDns(const QString& adapter_name,
@@ -430,6 +436,109 @@ DhcpApplyOutcome setAdapterDhcpMode(const QString& adapter_name) {
     return {true,
             true,
             QStringLiteral("Set '%1' to automatic (DHCP), including DNS").arg(adapter_name)};
+}
+
+// ---------------------------------------------------------------------------
+// Putting settings back after a network reset
+// ---------------------------------------------------------------------------
+
+bool isSelfAssignedIpv4(const QString& value) {
+    return isDottedIpv4(value) && value.startsWith(QStringLiteral("169.254."));
+}
+
+bool isIpv6Literal(const QString& value) {
+    // QHostAddress accepts a zone index ("fe80::1%14") and IPv4 text; neither belongs in a netsh
+    // address token for an IPv6 command, so both are refused before parsing.
+    if (value.isEmpty() || value.contains(QLatin1Char('%')) || value.contains(QLatin1Char('/')) ||
+        !value.contains(QLatin1Char(':'))) {
+        return false;
+    }
+    const QHostAddress address(value);
+    return address.protocol() == QAbstractSocket::IPv6Protocol;
+}
+
+namespace {
+
+QString familyToken(IpFamily family) {
+    return family == IpFamily::V4 ? QStringLiteral("ipv4") : QStringLiteral("ipv6");
+}
+
+QString defaultRoutePrefix(IpFamily family) {
+    return family == IpFamily::V4 ? QStringLiteral("0.0.0.0/0") : QStringLiteral("::/0");
+}
+
+}  // namespace
+
+QStringList adapterAdditionalIpv4AddressArgs(const QString& adapter_name,
+                                             const QString& address,
+                                             const QString& mask) {
+    return {QStringLiteral("interface"),
+            QStringLiteral("ipv4"),
+            QStringLiteral("add"),
+            QStringLiteral("address"),
+            QStringLiteral("name=") + adapter_name,
+            QStringLiteral("address=") + address,
+            QStringLiteral("mask=") + mask};
+}
+
+QStringList adapterIpv6AddressArgs(const QString& adapter_name,
+                                   const QString& address_with_prefix) {
+    return {QStringLiteral("interface"),
+            QStringLiteral("ipv6"),
+            QStringLiteral("add"),
+            QStringLiteral("address"),
+            QStringLiteral("interface=") + adapter_name,
+            QStringLiteral("address=") + address_with_prefix};
+}
+
+QStringList adapterDefaultGatewayArgs(IpFamily family,
+                                      const QString& adapter_name,
+                                      const QString& next_hop,
+                                      std::optional<int> metric) {
+    QStringList args = {QStringLiteral("interface"),
+                        familyToken(family),
+                        QStringLiteral("add"),
+                        QStringLiteral("route"),
+                        QStringLiteral("prefix=") + defaultRoutePrefix(family),
+                        QStringLiteral("interface=") + adapter_name,
+                        QStringLiteral("nexthop=") + next_hop};
+    if (metric.has_value()) {
+        args << QStringLiteral("metric=") + QString::number(*metric);
+    }
+    return args;
+}
+
+QStringList adapterFamilyPrimaryDnsArgs(IpFamily family,
+                                        const QString& adapter_name,
+                                        const QString& address) {
+    return {QStringLiteral("interface"),
+            familyToken(family),
+            QStringLiteral("set"),
+            QStringLiteral("dnsservers"),
+            QStringLiteral("name=") + adapter_name,
+            QStringLiteral("source=static"),
+            QStringLiteral("address=") + address};
+}
+
+QStringList adapterFamilyAdditionalDnsArgs(IpFamily family,
+                                           const QString& adapter_name,
+                                           const QString& address,
+                                           int index) {
+    return {QStringLiteral("interface"),
+            familyToken(family),
+            QStringLiteral("add"),
+            QStringLiteral("dnsservers"),
+            QStringLiteral("name=") + adapter_name,
+            QStringLiteral("address=") + address,
+            QStringLiteral("index=") + QString::number(index)};
+}
+
+AdapterAdminOutcome runAdapterCommand(const QStringList& netsh_args,
+                                      const QString& success_message) {
+    if (netsh_args.isEmpty()) {
+        return {false, QStringLiteral("No adapter command was supplied")};
+    }
+    return runAdapterNetsh(netsh_args, success_message);
 }
 
 AdapterAdminOutcome releaseAdapterDhcpLease(const QString& adapter_name) {

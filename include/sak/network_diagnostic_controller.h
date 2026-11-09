@@ -178,7 +178,15 @@ public:
     // -- Ethernet Config --
 
     /// @brief Backup the current Ethernet adapter settings to a JSON file
-    void backupEthernetSettings(const QString& adapterName, const QString& filePath);
+    /// @param adapterType The adapter's type as the adapter list names it, kept in the backup so
+    ///        a restore can start on an adapter of the same kind.
+    void backupEthernetSettings(const QString& adapterName,
+                                const QString& filePath,
+                                const QString& adapterType = {});
+
+    /// @brief The adapter name and type a backup file was made from; both empty when the file
+    ///        cannot be read (the reason goes to errorOccurred).
+    [[nodiscard]] QPair<QString, QString> ethernetBackupIdentity(const QString& filePath);
 
     /// @brief Restore Ethernet adapter settings from a JSON backup file
     void restoreEthernetSettings(const QString& filePath, const QString& targetAdapter);

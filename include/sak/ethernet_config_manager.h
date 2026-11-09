@@ -24,6 +24,9 @@ struct EthernetConfigSnapshot {
     QString adapterName;  ///< Windows adapter name (e.g. "Ethernet")
     QString description;  ///< Adapter description (e.g. "Intel I219-V")
     QString macAddress;   ///< Physical address for identification
+    /// The adapter's type as the adapter list names it ("Ethernet", "WiFi", "Bluetooth", ...), so a
+    /// restore can start on an adapter of the same kind. Empty in backups made before it existed.
+    QString adapterType;
 
     // IPv4 settings
     bool dhcpEnabled = false;
@@ -44,6 +47,13 @@ struct EthernetConfigSnapshot {
 
     /// @brief Validate that all required fields are present
     [[nodiscard]] bool isValid() const;
+};
+
+/// @brief An adapter a backup could be restored to.
+struct RestoreCandidate {
+    QString name;
+    /// As the adapter list names it; empty when the list does not know it.
+    QString type;
 };
 
 /// @brief Adapter identity fields needed for deterministic MAC lookup.
@@ -134,6 +144,13 @@ public:
 
     /// @brief The names in the JSON array listEthernetAdapters reads. Empty for anything else.
     [[nodiscard]] static QStringList adapterNamesFromJson(const QString& json);
+
+    /// @brief Which of @p candidates a restore of a backup from @p backup_name should start on:
+    ///        the adapter of that name (case-insensitive), else the first of @p backup_type, else
+    ///        the first candidate. Returns -1 only when there are no candidates.
+    [[nodiscard]] static int preferredRestoreTarget(const QList<RestoreCandidate>& candidates,
+                                                    const QString& backup_name,
+                                                    const QString& backup_type);
 
     /// @brief Select @p adapterName out of a Get-NetIPConfiguration JSON scan and map it into a
     ///        snapshot. Language-neutral, unlike the netsh label scrape it replaced.

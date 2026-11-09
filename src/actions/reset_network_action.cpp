@@ -9,28 +9,45 @@
 #include "sak/action_constants.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/network_adapter_admin.h"
 #include "sak/process_runner.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QThread>
 
+#include <algorithm>
+#include <utility>
+
 namespace sak {
 
 namespace {
 
-// The verify probe only certifies the reset if it exited cleanly AND emitted its
-// success sentinel. A non-terminating cmdlet error leaves exit code 0 with no
-// sentinel, so checking the sentinel closes the "vacuous verify" gap.
-bool verificationFailed(const ProcessResult& proc) {
-    return ResetNetworkAction::stepFailed(proc.timed_out, proc.exit_code) ||
-           !proc.std_out.contains(QStringLiteral("VERIFY_OK"));
+QString netshResetError(const QString& label, int exit_code, const NetshResetReading& reading) {
+    return QStringLiteral("%1 reset failed (exit %2): %3")
+        .arg(label)
+        .arg(exit_code)
+        .arg(reading.detail);
 }
+
+QString indented(const QStringList& lines) {
+    QStringList out;
+    for (const QString& line : lines) {
+        out << QStringLiteral("  ") + line;
+    }
+    return out.join(QLatin1Char('\n'));
+}
+
 }  // namespace
 
-ResetNetworkAction::ResetNetworkAction(QObject* parent) : QuickAction(parent) {}
+ResetNetworkAction::ResetNetworkAction(QObject* parent)
+    : ResetNetworkAction(ResetNetworkOptions{}, parent) {}
+
+ResetNetworkAction::ResetNetworkAction(ResetNetworkOptions options, QObject* parent)
+    : QuickAction(parent), m_options(std::move(options)) {}
 
 QString ResetNetworkAction::buildAdapterResetScript() {
     // Restart-NetAdapter is non-terminating: a per-adapter failure would leave
@@ -64,11 +81,18 @@ void ResetNetworkAction::execute() {
     m_requires_reboot = false;
     m_winsock_backup_path.clear();
     m_firewall_backup_path.clear();
+    m_settings_backup_path.clear();
+    m_before = {};
+    m_put_back.clear();
+    m_notes.clear();
+    m_verification.clear();
+    m_warning.clear();
     QStringList errors;
 
-    // Capture a Winsock backup before touching anything destructive; abort the
-    // whole reset if it cannot be captured (emits its own failed result).
-    if (!executeBackupWinsock(errors, start_time)) {
+    // Record every adapter's settings, then capture a Winsock backup, before touching anything
+    // destructive; abort the whole reset if either cannot be captured (each emits its own failed
+    // result).
+    if (!executeRecordSettings(start_time) || !executeBackupWinsock(errors, start_time)) {
         return;
     }
     if (!executeFlushDns(errors)) {
@@ -83,8 +107,43 @@ void ResetNetworkAction::execute() {
         emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
-
+    // The stack is reset now. A cancel from here only shortens the waits: stopping without these
+    // two steps would leave an adapter set up by hand with no address, the outcome they prevent.
+    executePutBack(errors);
+    executeVerify(errors);
     executeBuildReport(errors, start_time);
+}
+
+bool ResetNetworkAction::executeRecordSettings(const QDateTime& start_time) {
+    Q_EMIT executionProgress("Recording every adapter's settings...", progress::kStep3);
+    QString problem;
+    auto capture = captureNetworkSettings(m_options.capture_timeout_ms,
+                                          [this]() { return isCancelled(); });
+    if (!capture) {
+        problem = capture.error();
+    } else {
+        const QString folder = m_options.backup_directory.isEmpty() ? networkBackupDirectory()
+                                                                    : m_options.backup_directory;
+        const auto saved = saveNetworkCapture(*capture, folder);
+        if (saved) {
+            m_before = *capture;
+            m_settings_backup_path = *saved;
+            return true;
+        }
+        problem = saved.error();
+    }
+    // Fail closed: `netsh int ip reset` clears settings typed in by hand, so a reset with no record
+    // of them could leave a customer's PC offline with nothing to put back.
+    ExecutionResult result;
+    result.success = false;
+    result.message = "Network reset aborted: the adapters' settings could not be recorded first";
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    result.log =
+        "Aborted before any change, because the reset clears settings typed in by hand and they "
+        "could not be recorded:\n" +
+        problem;
+    finishWithResult(result, ActionStatus::Failed);
+    return false;
 }
 
 bool ResetNetworkAction::executeBackupWinsock(QStringList& errors, const QDateTime& start_time) {
@@ -188,30 +247,41 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
 
     // Step 4: Reset TCP/IP stack
     Q_EMIT executionProgress("Resetting TCP/IP stack...", progress::kStep45);
-    {
-        const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
-                                              QStringList() << "int" << "ip" << "reset",
-                                              sak::kTimeoutNetworkReadMs,
-                                              [this]() { return isCancelled(); });
-        if (proc.timed_out) {
-            errors << "TCP/IP reset timed out";
-        } else if (proc.exit_code != 0) {
-            errors << QString("TCP/IP reset failed (exit %1)").arg(proc.exit_code);
-        }
-    }
-    {
-        const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
-                                              QStringList() << "int" << "ipv6" << "reset",
-                                              sak::kTimeoutNetworkReadMs,
-                                              [this]() { return isCancelled(); });
-        if (proc.timed_out) {
-            errors << "IPv6 reset timed out";
-        } else if (proc.exit_code != 0) {
-            errors << QString("IPv6 reset failed (exit %1)").arg(proc.exit_code);
-        }
-    }
+    executeNetshReset(QStringLiteral("ip"), QStringLiteral("TCP/IP"), errors);
+    executeNetshReset(QStringLiteral("ipv6"), QStringLiteral("IPv6"), errors);
 
     return !isCancelled();
+}
+
+void ResetNetworkAction::executeNetshReset(const QString& family,
+                                           const QString& label,
+                                           QStringList& errors) {
+    if (isCancelled()) {
+        return;
+    }
+    const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
+                                          QStringList() << "int" << family << "reset",
+                                          sak::kTimeoutNetworkReadMs,
+                                          [this]() { return isCancelled(); });
+    // netsh exits 1 on a stock Windows 11 when one protected item is refused, although every
+    // other item reset and it asks for a restart (VM smoke, 2026-11-09). Read what it printed.
+    const NetshResetReading reading = readNetshReset(proc.std_out, proc.exit_code, proc.timed_out);
+    switch (reading.verdict) {
+    case NetshResetVerdict::Failed:
+        errors << netshResetError(label, proc.exit_code, reading);
+        if (!proc.std_out.trimmed().isEmpty()) {
+            m_notes << QStringLiteral("%1 reset output:\n%2").arg(label, proc.std_out.trimmed());
+        }
+        return;
+    case NetshResetVerdict::DoneRestartRequired:
+        m_requires_reboot = true;
+        break;
+    case NetshResetVerdict::Done:
+        break;
+    }
+    if (!reading.detail.isEmpty()) {
+        m_notes << QStringLiteral("%1 reset: %2").arg(label, reading.detail);
+    }
 }
 
 bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
@@ -370,62 +440,108 @@ bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     return !isCancelled();
 }
 
-void ResetNetworkAction::executeBuildReport(const QStringList& errors,
-                                            const QDateTime& start_time) {
+SettleResult ResetNetworkAction::settle(
+    const std::function<bool(const NetworkSettingsCapture&)>& settled) {
+    QElapsedTimer clock;
+    clock.start();
+    const SettleProbe probe{
+        .capture = [this]() { return captureNetworkSettings(m_options.capture_timeout_ms); },
+        .now_ms = [&clock]() { return clock.elapsed(); },
+        .sleep_ms = [](int ms) { QThread::msleep(static_cast<unsigned long>(ms)); },
+        .cancelled = [this]() { return isCancelled(); }};
+    return waitForSettledNetwork(
+        probe, settled, m_options.settle_budget_ms, m_options.settle_poll_ms);
+}
+
+void ResetNetworkAction::executePutBack(QStringList& errors) {
+    if (std::ranges::none_of(m_before.adapters, [](const AdapterSettings& adapter) {
+            return adapter.hasStaticSettings() || adapter.ipv4.dhcp;
+        })) {
+        return;
+    }
+    Q_EMIT executionProgress("Putting back settings typed in by hand...", progress::kStep90);
+    // Windows may still be restarting the adapters: read them once it answers. If it never does
+    // within the budget, everything typed in by hand is put back in full.
+    const SettleResult read = settle([](const NetworkSettingsCapture&) { return true; });
+    QStringList problems;
+    const QList<ReapplyStep> steps = planSettingsReapply(m_before, read.capture, &problems);
+    errors << problems;
+    for (const ReapplyStep& step : steps) {
+        const AdapterAdminOutcome outcome = runAdapterCommand(step.netsh_args, step.description);
+        if (outcome.succeeded) {
+            m_put_back << QStringLiteral("%1: %2").arg(step.adapter, step.description);
+        } else {
+            errors << QStringLiteral("Could not put back %1 on %2: %3")
+                          .arg(step.description, step.adapter, outcome.message);
+        }
+    }
+}
+
+void ResetNetworkAction::executeVerify(QStringList& errors) {
     // Step 9: Verify network configuration
     Q_EMIT executionProgress("Verifying network configuration...", progress::kStep95);
-
-    // $ErrorActionPreference='Stop' + try/catch promotes any cmdlet error to a
-    // terminating one (exit 1), and the trailing VERIFY_OK sentinel proves the
-    // probe ran to completion; without it a non-terminating error would exit 0
-    // and certify the reset on a vacuous verification.
-    const QString verify_script =
-        "$ErrorActionPreference = 'Stop'\n"
-        "try {\n"
-        "    $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
-        "    $ipConfigs = Get-NetIPConfiguration\n"
-        "    Write-Output \"Active adapters: $($adapters.Count)\"\n"
-        "    Write-Output \"Configured IPs: $($ipConfigs.Count)\"\n"
-        "    Write-Output 'VERIFY_OK'\n"
-        "} catch {\n"
-        "    Write-Error $_.Exception.Message\n"
-        "    exit 1\n"
-        "}\n";
-
-    const ProcessResult verify_proc = runPowerShell(verify_script, sak::kTimeoutProcessShortMs);
-    if (!verify_proc.std_err.trimmed().isEmpty()) {
-        Q_EMIT logMessage("Network verification warning: " + verify_proc.std_err.trimmed());
+    const SettleResult result = settle([this](const NetworkSettingsCapture& after) {
+        return allAdaptersUsable(checkAdaptersAfterReset(m_before, after));
+    });
+    if (!result.capture.has_value()) {
+        // Still settling: the adapters were restarting for the whole wait. That is a restart
+        // pending, not a failure -- and the person is told to check after it.
+        m_requires_reboot = true;
+        m_warning = QStringLiteral(
+                        "Windows was still restarting the adapters, so S.A.K. could not check "
+                        "them (%1). Check the connection after the restart.")
+                        .arg(result.last_error);
+        m_verification << QStringLiteral("not checked: the adapters were still restarting");
+        return;
     }
-    const QString verify_output = verify_proc.std_out;
-
-    // Gate success on the verify probe: a timed-out / non-zero verification, or a
-    // run that never emitted its success sentinel, means we could not confirm the
-    // reset landed, so it must not be reported as a clean success.
-    QStringList all_errors = errors;
-    if (verificationFailed(verify_proc)) {
-        all_errors << QString("Network verification failed (exit %1)").arg(verify_proc.exit_code);
+    // The lines shown and the verdict come from the same checks, so they cannot disagree.
+    for (const AdapterCheck& check : checkAdaptersAfterReset(m_before, *result.capture)) {
+        m_verification << QStringLiteral("%1: %2").arg(check.adapter, check.detail);
+        if (!check.usable) {
+            errors << QStringLiteral("%1 has %2. Its settings from before the reset are in %3")
+                          .arg(check.adapter, check.detail, m_settings_backup_path);
+        }
     }
+    if (m_verification.isEmpty()) {
+        m_verification << QStringLiteral("no adapter that was up needed checking");
+    }
+}
 
+void ResetNetworkAction::executeBuildReport(const QStringList& errors,
+                                            const QDateTime& start_time) {
     ExecutionResult result;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    result.success = all_errors.isEmpty();
-    result.message = all_errors.isEmpty() ? "Network settings reset successfully"
-                                          : QString("Network reset completed with %1")
-                                                .arg(countOf(all_errors.size(),
-                                                             QStringLiteral("issue"),
-                                                             QStringLiteral("issues")));
-
+    result.success = errors.isEmpty();
+    result.message =
+        errors.isEmpty()
+            ? "Network settings reset successfully"
+            : QString("Network reset completed with %1")
+                  .arg(countOf(errors.size(), QStringLiteral("issue"), QStringLiteral("issues")));
+    if (!m_put_back.isEmpty()) {
+        result.message += QStringLiteral("; settings typed in by hand were put back");
+    }
     if (m_requires_reboot) {
         result.message += " - REBOOT REQUIRED for Winsock/TCP-IP changes";
     }
+    result.warning = m_warning;
+    result.output_path = m_settings_backup_path;
 
-    result.log = QString("Winsock backup: %1\nFirewall rules backup: %2\n\nVerification:\n%3")
-                     .arg(m_winsock_backup_path.isEmpty() ? "unavailable" : m_winsock_backup_path,
-                          m_firewall_backup_path.isEmpty() ? "unavailable" : m_firewall_backup_path,
-                          verify_output);
-
-    if (!all_errors.isEmpty()) {
-        result.log += "\nErrors:\n" + all_errors.join("\n");
+    result.log = QString(
+                     "Settings recorded before the reset: %1\nWinsock backup: %2\nFirewall rules "
+                     "backup: %3\n")
+                     .arg(m_settings_backup_path,
+                          m_winsock_backup_path.isEmpty() ? "unavailable" : m_winsock_backup_path,
+                          m_firewall_backup_path.isEmpty() ? "unavailable"
+                                                           : m_firewall_backup_path);
+    if (!m_put_back.isEmpty()) {
+        result.log += "\nPut back:\n" + indented(m_put_back) + "\n";
+    }
+    result.log += "\nVerification:\n" + indented(m_verification) + "\n";
+    if (!m_notes.isEmpty()) {
+        result.log += "\nNotes:\n" + indented(m_notes) + "\n";
+    }
+    if (!errors.isEmpty()) {
+        result.log += "\nErrors:\n" + errors.join("\n");
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);

@@ -4170,7 +4170,8 @@ add_test(NAME test_microsoft_defender_action
 message(STATUS "Added unit test: test_microsoft_defender_action")
 
 # test_reset_network_action -- B6-12/13 pure seams (adapter reset fails closed;
-# a timed-out / non-zero step counts as a failure for the final verdict)
+# a timed-out / non-zero step counts as a failure for the final verdict), and the whole reset run
+# against faked processes answering with the real netsh output (fix round S)
 add_executable(test_reset_network_action
     unit/actions/test_reset_network_action.cpp
 )
@@ -4190,6 +4191,9 @@ target_link_libraries(test_reset_network_action PRIVATE
 
 target_include_directories(test_reset_network_action PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_reset_network_action PRIVATE
+    SAK_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 
 add_test(NAME test_reset_network_action
@@ -4517,6 +4521,9 @@ target_link_libraries(test_network_diagnostic_panel PRIVATE
 )
 target_include_directories(test_network_diagnostic_panel PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_network_diagnostic_panel PRIVATE
+    SAK_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 add_test(NAME test_network_diagnostic_panel COMMAND test_network_diagnostic_panel
          -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_panel.txt,txt" -o -,txt
@@ -6018,6 +6025,30 @@ add_test(NAME test_network_adapter_admin COMMAND test_network_adapter_admin
          -o "${TEST_OUTPUT_DIR}/test_network_adapter_admin.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_network_adapter_admin")
+
+# test_network_reset_safeguard -- Reset Network's record of every adapter, its reading of netsh's
+# answer and its put-back plan, against output captured on a stock Windows 11 26200 VM (fix round S)
+add_executable(test_network_reset_safeguard
+    unit/test_network_reset_safeguard.cpp
+)
+set_target_properties(test_network_reset_safeguard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_reset_safeguard PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_reset_safeguard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_network_reset_safeguard PRIVATE
+    SAK_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+add_test(NAME test_network_reset_safeguard COMMAND test_network_reset_safeguard
+         -o "${TEST_OUTPUT_DIR}/test_network_reset_safeguard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_reset_safeguard")
 
 add_executable(test_wifi_profile_scanner
     unit/test_wifi_profile_scanner.cpp

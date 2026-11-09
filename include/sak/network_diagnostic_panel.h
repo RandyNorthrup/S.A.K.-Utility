@@ -9,6 +9,7 @@
 // sak::AdapterAdminOutcome -- the outcome type every adapter mutation this panel launches returns.
 #include "sak/network_adapter_admin.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/network_reset_safeguard.h"
 #include "sak/quick_action_controller.h"
 
 #include <QComboBox>
@@ -25,6 +26,7 @@
 #include <QTextEdit>
 #include <QWidget>
 
+#include <expected>
 #include <functional>
 #include <memory>
 #include <type_traits>
@@ -272,8 +274,16 @@ private:
     // -- Adapter context menu helpers --
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
     /// The adapter a backup is restored to: the only one there is, or the user's choice from a list
-    /// that starts on the selected adapter. Empty if they cancel.
-    [[nodiscard]] QString chooseRestoreTarget(const QStringList& adapters);
+    /// that starts on @p preferred. Empty if they cancel.
+    [[nodiscard]] QString chooseRestoreTarget(const QStringList& adapters,
+                                              const QString& preferred);
+    /// Restore a backup file. @p clicked_adapter is the adapter a right-click chose; from the
+    /// toolbar it is empty, and the list starts on the backed-up adapter's name, then its type.
+    void restoreEthernetSettings(const QString& clicked_adapter);
+    /// Ask before a reset, naming what it clears, from a read-only capture of every adapter.
+    void confirmResetNetwork(const std::expected<sak::NetworkSettingsCapture, QString>& capture);
+    /// "Connected", "No valid address" (only a self-assigned 169.254.x.x) or "Disconnected".
+    [[nodiscard]] QString adapterStatusText(const NetworkAdapterInfo& adapter) const;
     // Runs ONE adapter operation from sak/network_adapter_admin.h on a worker thread and reports
     // its outcome back on the GUI thread. This panel supplies the thread, the confirmation dialogs
     // and the reporting; it does not build or run the command. Per the owner's R5-IDX-19b ruling

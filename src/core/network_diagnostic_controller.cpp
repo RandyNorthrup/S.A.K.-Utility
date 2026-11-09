@@ -1586,7 +1586,8 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
 // -- Ethernet Config Backup/Restore ------------------------------------------
 
 void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterName,
-                                                         const QString& filePath) {
+                                                         const QString& filePath,
+                                                         const QString& adapterType) {
     if (adapterName.isEmpty() || filePath.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Adapter name and file path are required for backup"));
         return;
@@ -1600,6 +1601,7 @@ void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterN
             QStringLiteral("Failed to capture settings for adapter: %1").arg(adapterName));
         return;
     }
+    snapshot.adapterType = adapterType;
 
     if (m_ethernetConfigManager->saveToFile(snapshot, filePath)) {
         Q_EMIT ethernetBackupComplete(filePath);
@@ -1638,6 +1640,12 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
                                  "Some settings failed to restore -- check log for details"),
                              sak::kTimerStatusDefaultMs);
     }
+}
+
+QPair<QString, QString> NetworkDiagnosticController::ethernetBackupIdentity(
+    const QString& filePath) {
+    const EthernetConfigSnapshot snapshot = m_ethernetConfigManager->loadFromFile(filePath);
+    return {snapshot.adapterName, snapshot.adapterType};
 }
 
 QStringList NetworkDiagnosticController::listEthernetAdapters() const {

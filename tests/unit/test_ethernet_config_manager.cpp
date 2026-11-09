@@ -42,6 +42,10 @@ private Q_SLOTS:
     void snapshot_toJson_dhcpEnabled();
     void snapshot_toJson_staticIp();
     void snapshot_toJson_multipleDns();
+    void snapshot_keepsTheAdapterType();
+
+    // -- choosing where a backup goes back -----------------------------------
+    void restoreTarget_byNameThenTypeThenFirst();
 
     // -- File I/O (atomic write) -----------------------------------
     void saveToFile_atomicRoundTrip();
@@ -335,6 +339,7 @@ void TestEthernetConfigManager::snapshot_toJson_allFields() {
     snapshot.adapterName = "Test";
     snapshot.description = "Intel I219-V";
     snapshot.macAddress = "11:22:33:44:55:66";
+    snapshot.adapterType = "Ethernet";
     snapshot.dhcpEnabled = true;
     snapshot.ipv4Address = "10.1.2.3";
     snapshot.ipv4SubnetMask = "255.255.255.0";
@@ -350,6 +355,7 @@ void TestEthernetConfigManager::snapshot_toJson_allFields() {
         "adapterName": "Test",
         "description": "Intel I219-V",
         "macAddress": "11:22:33:44:55:66",
+        "adapterType": "Ethernet",
         "dhcpEnabled": true,
         "ipv4Address": "10.1.2.3",
         "ipv4SubnetMask": "255.255.255.0",
@@ -361,11 +367,11 @@ void TestEthernetConfigManager::snapshot_toJson_allFields() {
                                                               &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
 
-    // Deep compare: pins the exact 10 key names (a rename adds/removes a key),
+    // Deep compare: pins the exact 11 key names (a rename adds/removes a key),
     // the value bound to each key (a swap moves a value), and each value's JSON
     // type (dhcpEnabled must stay a bool, ipv4DnsServers an ordered array).
     QCOMPARE(json, expectedDoc.object());
-    QCOMPARE(json.size(), 10);
+    QCOMPARE(json.size(), 11);
 }
 
 void TestEthernetConfigManager::snapshot_fromJson_emptyObject() {
@@ -531,6 +537,45 @@ void TestEthernetConfigManager::lookupAdapterMac_fixtureAdapterHasMacFormat() {
     QVERIFY(!interfaces.first().systemName.isEmpty());
     QCOMPARE(EthernetConfigManager::lookupAdapterMac(interfaces.first().systemName, interfaces),
              expectedMac);
+}
+
+void TestEthernetConfigManager::snapshot_keepsTheAdapterType() {
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = QStringLiteral("Ethernet");
+    snapshot.adapterType = QStringLiteral("Ethernet");
+    QCOMPARE(EthernetConfigSnapshot::fromJson(snapshot.toJson()).adapterType,
+             QStringLiteral("Ethernet"));
+    // A backup made before the field existed reads as "type unknown", not as an error.
+    QJsonObject older = snapshot.toJson();
+    older.remove(QStringLiteral("adapterType"));
+    QVERIFY(EthernetConfigSnapshot::fromJson(older).adapterType.isEmpty());
+}
+
+void TestEthernetConfigManager::restoreTarget_byNameThenTypeThenFirst() {
+    // The VM smoke: an Ethernet backup, and the list started on the Bluetooth adapter because it
+    // sorts first.
+    const QList<RestoreCandidate> adapters{
+        {QStringLiteral("Bluetooth Network Connection"), QStringLiteral("Bluetooth")},
+        {QStringLiteral("Ethernet"), QStringLiteral("Ethernet")},
+        {QStringLiteral("Ethernet 2"), QStringLiteral("Ethernet")},
+        {QStringLiteral("Wi-Fi"), QStringLiteral("WiFi")}};
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Ethernet"), QStringLiteral("Ethernet")),
+             1);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("ETHERNET 2"), QString()),
+             2);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QStringLiteral("WiFi")),
+             3);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QStringLiteral("ethernet")),
+             1);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QString()),
+             0);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(adapters, QString(), QString()), 0);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget({}, QStringLiteral("Ethernet"), {}), -1);
 }
 
 QTEST_MAIN(TestEthernetConfigManager)

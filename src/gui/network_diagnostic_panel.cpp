@@ -10,12 +10,14 @@
 #include "sak/csv_escape.h"
 #include "sak/detachable_log_window.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/ethernet_config_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/network_adapter_admin.h"
 #include "sak/network_constants.h"
 #include "sak/network_diagnostic_controller.h"
+#include "sak/network_reset_safeguard.h"
 #include "sak/port_scanner.h"
 #include "sak/process_runner.h"
 #include "sak/running_operations.h"
@@ -237,6 +239,40 @@ constexpr int kPortRangePartCount = 2;
 constexpr int kWifiStrongSignalDbm = -50;
 constexpr int kWifiUsableSignalDbm = -70;
 constexpr int kToolTabDnsIndex = 3;
+/// The read-only capture behind the Reset Network confirmation. Bounded: a scan that never
+/// answers ends in a refusal rather than a confirmation that never comes.
+constexpr int kResetPreviewTimeoutMs = 30'000;
+
+/// Connected, with IPv4 addresses, and every one of them self-assigned (169.254.x.x): Windows found
+/// no DHCP server and no address typed in by hand. The VM smoke saw one read as "Connected".
+bool hasOnlySelfAssignedIpv4(const NetworkAdapterInfo& adapter) {
+    return !adapter.ipv4Addresses.isEmpty() &&
+           std::ranges::all_of(adapter.ipv4Addresses,
+                               [](const QString& address) { return isSelfAssignedIpv4(address); });
+}
+
+QString selfAssignedExplanation(const NetworkAdapterInfo& adapter) {
+    return QObject::tr(
+               "Windows gave this adapter the self-assigned address %1 because no DHCP "
+               "server answered and no address is set by hand. It cannot reach other "
+               "networks over IPv4.")
+        .arg(adapter.ipv4Addresses.join(QStringLiteral(", ")));
+}
+
+/// A logged message box whose text is shown as written. Adapter names are set by any local user,
+/// so text built from them is never read as rich text.
+QMessageBox::StandardButton showPlainBox(QMessageBox::Icon icon,
+                                         const QString& title,
+                                         const QString& text,
+                                         QMessageBox::StandardButtons buttons) {
+    logDialogInfo(title, text, {});
+    QMessageBox box(icon, title, text, buttons, QApplication::activeWindow());
+    box.setTextFormat(Qt::PlainText);
+    if (buttons.testFlag(QMessageBox::No)) {
+        box.setDefaultButton(QMessageBox::No);
+    }
+    return static_cast<QMessageBox::StandardButton>(box.exec());
+}
 
 }  // namespace
 
@@ -2154,14 +2190,22 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
         m_adapterTable->setItem(row, 0, name_item);
         m_adapterTable->setItem(row, 1, new QTableWidgetItem(adapterTypeLabel(a.adapterType)));
 
-        auto* status_item = new QTableWidgetItem(a.isConnected ? tr("Connected")
-                                                               : tr("Disconnected"));
-        status_item->setForeground(a.isConnected ? ui::themedColor(ui::kColorSuccess)
-                                                 : ui::themedColor(ui::kColorError));
+        auto* status_item = new QTableWidgetItem(adapterStatusText(a));
+        const bool self_assigned_only = a.isConnected && hasOnlySelfAssignedIpv4(a);
+        status_item->setForeground(!a.isConnected       ? ui::themedColor(ui::kColorError)
+                                   : self_assigned_only ? ui::themedColor(ui::kColorWarning)
+                                                        : ui::themedColor(ui::kColorSuccess));
+        if (self_assigned_only) {
+            status_item->setToolTip(selfAssignedExplanation(a));
+        }
         m_adapterTable->setItem(row, KAdapterColumnStatus, status_item);
 
         const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
-        m_adapterTable->setItem(row, KAdapterColumnAddress, new QTableWidgetItem(ip));
+        auto* address_item = new QTableWidgetItem(ip);
+        if (self_assigned_only) {
+            address_item->setToolTip(selfAssignedExplanation(a));
+        }
+        m_adapterTable->setItem(row, KAdapterColumnAddress, address_item);
         m_adapterTable->setItem(row, KAdapterColumnMac, new QTableWidgetItem(a.macAddress));
 
         const auto speed = a.linkSpeedBps > 0 ? QStringLiteral("%1 Mbps").arg(
@@ -2173,6 +2217,13 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
     m_adapterTable->setSortingEnabled(true);
     Q_EMIT statusMessage(QStringLiteral("%1 adapters found").arg(adapters.size()),
                          sak::kTimerStatusMessageMs);
+}
+
+QString NetworkDiagnosticPanel::adapterStatusText(const NetworkAdapterInfo& adapter) const {
+    if (!adapter.isConnected) {
+        return tr("Disconnected");
+    }
+    return hasOnlySelfAssignedIpv4(adapter) ? tr("No valid address") : tr("Connected");
 }
 
 QString NetworkDiagnosticPanel::formatAdapterIdentity(const NetworkAdapterInfo& adapter) const {
@@ -2279,7 +2330,7 @@ void NetworkDiagnosticPanel::onCopyAdapterConfig() {
     config += QStringLiteral("Name: %1\n").arg(a.name);
     config += QStringLiteral("Type: %1\n").arg(adapterTypeLabel(a.adapterType));
     config += QStringLiteral("MAC: %1\n").arg(a.macAddress);
-    config += QStringLiteral("Status: %1\n").arg(a.isConnected ? "Connected" : "Disconnected");
+    config += QStringLiteral("Status: %1\n").arg(adapterStatusText(a));
     config += QStringLiteral("DHCP: %1\n").arg(a.dhcpEnabled ? "Enabled" : "Disabled");
     config += QStringLiteral("IPv4: %1\n").arg(a.ipv4Addresses.join(", "));
     config += QStringLiteral("IPv6: %1\n").arg(a.ipv6Addresses.join(", "));
@@ -2337,10 +2388,11 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
         return;
     }
 
-    m_controller->backupEthernetSettings(adapter.name, file_path);
+    m_controller->backupEthernetSettings(adapter.name, file_path, adapter.adapterType);
 }
 
-QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters) {
+QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters,
+                                                    const QString& preferred) {
     // If there's only one adapter, use it directly
     if (adapters.size() == 1) {
         return adapters.first();
@@ -2358,10 +2410,10 @@ QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters)
     for (const auto& name : adapters) {
         adapter_combo->addItem(name);
     }
-    // Right-clicking an adapter means that adapter. The list is alphabetical, so leaving the first
-    // one chosen would quietly aim this at another adapter.
-    if (const auto* selected = selectedAdapter(); selected != nullptr) {
-        adapter_combo->setCurrentText(selected->name);
+    // The list is alphabetical, so leaving the first one chosen would quietly aim this at another
+    // adapter: the VM smoke's Ethernet backup started on "Bluetooth Network Connection".
+    if (!preferred.isEmpty()) {
+        adapter_combo->setCurrentText(preferred);
     }
     layout->addWidget(adapter_combo);
 
@@ -2376,6 +2428,10 @@ QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters)
 }
 
 void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
+    restoreEthernetSettings(QString());
+}
+
+void NetworkDiagnosticPanel::restoreEthernetSettings(const QString& clicked_adapter) {
     Q_ASSERT(m_controller);
     QString file_path = QFileDialog::getOpenFileName(this,
                                                      tr("Open Adapter Settings Backup"),
@@ -2396,7 +2452,21 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
         return;
     }
 
-    const QString target_adapter = chooseRestoreTarget(adapters);
+    // Right-clicking an adapter means that adapter. Otherwise start on the adapter the backup was
+    // made from, then one of its type, and only then the first in the list.
+    QString preferred = clicked_adapter;
+    if (preferred.isEmpty()) {
+        const auto [backup_name, backup_type] = m_controller->ethernetBackupIdentity(file_path);
+        QList<sak::RestoreCandidate> candidates;
+        for (const QString& name : adapters) {
+            const auto known = std::ranges::find_if(
+                m_adapters, [&name](const NetworkAdapterInfo& info) { return info.name == name; });
+            candidates.append({name, known == m_adapters.cend() ? QString() : known->adapterType});
+        }
+        preferred = adapters.value(sak::EthernetConfigManager::preferredRestoreTarget(
+            candidates, backup_name, backup_type));
+    }
+    const QString target_adapter = chooseRestoreTarget(adapters, preferred);
     if (target_adapter.isEmpty()) {
         return;
     }
@@ -2507,9 +2577,9 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(QMenu& menu,
         menu.addAction(tr("Backup Settings..."),
                        this,
                        &NetworkDiagnosticPanel::onBackupEthernetSettings);
-        menu.addAction(tr("Restore Settings..."),
-                       this,
-                       &NetworkDiagnosticPanel::onRestoreEthernetSettings);
+        menu.addAction(tr("Restore Settings..."), this, [this, name = adapter.name]() {
+            restoreEthernetSettings(name);
+        });
         menu.addSeparator();
     }
 
@@ -2594,7 +2664,7 @@ void NetworkDiagnosticPanel::populateStatusTree(QTreeWidget* tree,
             : tr("N/A");
     addStatusCategory(tree,
                       tr("Connection"),
-                      {{tr("Status"), adapter.isConnected ? tr("Connected") : tr("Disconnected")},
+                      {{tr("Status"), adapterStatusText(adapter)},
                        {tr("Media State"), adapter.mediaState},
                        {tr("Link Speed"), speed_text}});
 
@@ -3105,9 +3175,10 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
     Q_EMIT logOutput(
         tr("Setting static IP on '%1': %2 / %3 gw %4").arg(adapter_name, ip, mask, gateway));
 
-    // kTechnicianIpv4Dialect is what this panel has always issued: no gwmetric, so Windows assigns
-    // the gateway metric. The restore/assistant path pins gwmetric=0 instead. Both now run the SAME
-    // code; the dialect is the one named difference between them (R5-IDX-19b).
+    // The same code the restore/assistant path runs (R5-IDX-19b): the address, then the gateway as
+    // a route whose metric Windows chooses, as its own adapter dialog does. The dialect differs
+    // only in DNS registration. This used to omit gwmetric, which netsh reads as metric 1 (fix
+    // round S).
     launchAdapterWork(
         [adapter_name, ip, mask, gateway]() {
             return sak::setAdapterStaticIpv4(
@@ -4790,17 +4861,50 @@ void NetworkDiagnosticPanel::createResetNetworkAction() {
 }
 
 void NetworkDiagnosticPanel::onResetNetworkClicked() {
+    // Read every adapter first (read-only, no elevation), so the confirmation can name the
+    // settings typed in by hand that the reset clears. The action records them again, elevated,
+    // right before it changes anything; this read is for the person deciding.
+    using Capture = std::expected<sak::NetworkSettingsCapture, QString>;
+    m_resetNetworkBtn->setEnabled(false);
+    m_resetNetworkBtn->setText(tr("Checking adapters..."));
+    auto* watcher = new QFutureWatcher<Capture>(this);
+    connect(watcher, &QFutureWatcher<Capture>::finished, this, [this, watcher]() {
+        const Capture capture = watcher->result();
+        watcher->deleteLater();
+        confirmResetNetwork(capture);
+    });
+    watcher->setFuture(
+        QtConcurrent::run([]() { return sak::captureNetworkSettings(kResetPreviewTimeoutMs); }));
+}
+
+void NetworkDiagnosticPanel::confirmResetNetwork(
+    const std::expected<sak::NetworkSettingsCapture, QString>& capture) {
+    m_resetNetworkBtn->setEnabled(true);
+    m_resetNetworkBtn->setText(tr("Reset Network"));
+    if (!capture) {
+        // Fail closed, as the action does: the reset clears settings typed in by hand, so it does
+        // not run without a record of them.
+        showPlainBox(QMessageBox::Warning,
+                     tr("Reset Network"),
+                     tr("S.A.K. could not read the adapters' settings, so it will not reset the "
+                        "network. The reset clears settings typed in by hand, and they have to be "
+                        "recorded first.\n\n%1")
+                         .arg(capture.error()),
+                     QMessageBox::Ok);
+        return;
+    }
     // A network reset is destructive (Winsock/TCP-IP/firewall/adapter reset, dropped
     // leases) and requires a reboot, so confirm before running it -- it must not fire
     // from a single click with no prompt.
-    auto confirm = sak::showQuestionLogged(
-        this,
-        tr("Reset Network"),
-        tr("Reset the network stack now?\n\n"
-           "This resets Winsock, TCP/IP, the Windows Firewall, and network adapters, and "
-           "may drop your connection until you reboot."),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
+    QString text = tr(
+        "Reset the network stack now?\n\n"
+        "This resets Winsock, TCP/IP, the Windows Firewall, and network adapters, and "
+        "may drop your connection until you reboot.");
+    if (const QString detail = sak::resetConfirmationDetail(*capture); !detail.isEmpty()) {
+        text += QStringLiteral("\n\n") + detail;
+    }
+    const auto confirm = showPlainBox(
+        QMessageBox::Question, tr("Reset Network"), text, QMessageBox::Yes | QMessageBox::No);
     if (confirm != QMessageBox::Yes) {
         return;
     }
@@ -4815,9 +4919,17 @@ void NetworkDiagnosticPanel::onResetNetworkClicked() {
 void NetworkDiagnosticPanel::onResetNetworkFinished(const QuickAction::ExecutionResult& result) {
     m_resetNetworkBtn->setEnabled(true);
     m_resetNetworkBtn->setText(tr("Reset Network"));
-    // On success the action's own message is the point: it says when a reboot is required.
-    const QString msg = result.success ? result.message
-                                       : QString("Reset failed: %1").arg(result.message);
+    // On success the action's own message is the point: it says when a reboot is required. What
+    // still needs the person -- adapters not checked yet -- and where the settings recorded before
+    // the reset are go on the same line. What was put back, and each adapter's check, are in the
+    // run's details, which the controller writes to this panel's Log.
+    QString msg = result.success ? result.message : QString("Reset failed: %1").arg(result.message);
+    if (!result.warning.isEmpty()) {
+        msg += QStringLiteral(" - ") + result.warning;
+    }
+    if (!result.output_path.isEmpty()) {
+        msg += tr(" - settings from before the reset saved to %1").arg(result.output_path);
+    }
     Q_EMIT logOutput(msg);
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     if (!result.success) {

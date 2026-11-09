@@ -332,6 +332,69 @@ QByteArray readAll(const QString& path) {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+
+/// Answers Reset Network's read-only adapter capture with what the VM printed, or with a failure.
+/// Everything else fails, so nothing on this PC is read or changed.
+class ResetCaptureFake {
+public:
+    explicit ResetCaptureFake(QString capture_json)
+        : m_injector([json = std::move(capture_json)](
+                         const QString& program,
+                         const QStringList& args) -> std::optional<sak::ProcessResult> {
+            sak::ProcessResult result;
+            const bool capture =
+                program.endsWith(QStringLiteral("powershell.exe"), Qt::CaseInsensitive) &&
+                args.join(QLatin1Char(' ')).contains(QStringLiteral("sak_network_capture"));
+            result.exit_code = capture && !json.isEmpty() ? 0 : 1;
+            result.std_out = capture ? json : QString();
+            result.std_err = json.isEmpty() ? QStringLiteral("Get-NetAdapter : Access denied")
+                                            : QString();
+            return result;
+        }) {}
+
+private:
+    sak::ScopedProcessFaultInjector m_injector;
+};
+
+QString networkResetFixture(const QString& name) {
+    return QString::fromUtf8(readAll(QDir(QStringLiteral(SAK_TEST_FIXTURE_DIR))
+                                         .filePath(QStringLiteral("network_reset/") + name)));
+}
+
+/// Clicks Reset Network and returns the text of the box it opens, answering it with @p answer.
+QString resetNetworkBoxText(sak::NetworkDiagnosticPanel& panel,
+                            QMessageBox::StandardButton answer) {
+    QPushButton* reset = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("Reset Network")) {
+            reset = button;
+        }
+    }
+    if (reset == nullptr) {
+        return QStringLiteral("no Reset Network button");
+    }
+    QString text;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    QObject::connect(&poll, &QTimer::timeout, &poll, [&text, answer]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box == nullptr || !text.isEmpty()) {
+            return;
+        }
+        text = box->text();
+        QAbstractButton* button = box->button(answer);
+        if (button != nullptr) {
+            button->click();
+        } else {
+            box->reject();
+        }
+    });
+    poll.start();
+    reset->click();
+    // An empty answer is the failure the caller reports, so the wait's own result adds nothing.
+    static_cast<void>(QTest::qWaitFor([&text]() { return !text.isEmpty(); }, kDialogTimeoutMs));
+    return text;
+}
 }  // namespace
 
 class NetworkDiagnosticPanelTests : public QObject {
@@ -386,6 +449,14 @@ private Q_SLOTS:
     void accessibleNameHoldsLabel_data();
     void accessibleNameHoldsLabel();
     void everyButtonsNameHoldsItsLabel();
+    // Fix round S (VM smoke): the reset cleared a static IPv4 setup without a word.
+    void resetNetworkNamesTheSettingsTypedInByHand();
+    void resetNetworkRefusesWhenTheSettingsCannotBeRead();
+    // Fix round S: an adapter with only 169.254.x.x read "Connected".
+    void aSelfAssignedAddressIsNoValidAddress();
+    // Fix round S: an Ethernet backup's restore started on the Bluetooth adapter.
+    void toolbarRestoreStartsOnTheBackedUpAdapter_data();
+    void toolbarRestoreStartsOnTheBackedUpAdapter();
 
 private:
     static void runReportFlow(const QString& report_path, QByteArray* written);
@@ -1098,6 +1169,110 @@ void NetworkDiagnosticPanelTests::theAdapterTableSpellsWiFi() {
     QVERIFY(table != nullptr && table->rowCount() == 1);
     QCOMPARE(table->item(0, 1)->text(), QStringLiteral("Wi-Fi"));
     QCOMPARE(sak::adapterTypeLabel(QStringLiteral("Ethernet")), QStringLiteral("Ethernet"));
+}
+
+void NetworkDiagnosticPanelTests::resetNetworkNamesTheSettingsTypedInByHand() {
+    const ResetCaptureFake capture(
+        networkResetFixture(QStringLiteral("capture_vm_static_before.json")));
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    const QString text = resetNetworkBoxText(panel, QMessageBox::No);
+    QVERIFY2(text.startsWith(QStringLiteral("Reset the network stack now?")), qPrintable(text));
+    QVERIFY2(text.contains(
+                 QStringLiteral("Ethernet: IPv4 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3")),
+             qPrintable(text));
+    QVERIFY(text.contains(QStringLiteral("puts them back after the reset")));
+}
+
+void NetworkDiagnosticPanelTests::resetNetworkRefusesWhenTheSettingsCannotBeRead() {
+    const ResetCaptureFake capture{QString()};
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    QSignalSpy finished(&quick_actions, &sak::QuickActionController::runFinished);
+    const QString text = resetNetworkBoxText(panel, QMessageBox::Ok);
+    QVERIFY2(text.contains(QStringLiteral("so it will not reset the network")), qPrintable(text));
+    QVERIFY(text.contains(QStringLiteral("Reading the adapters' settings failed (exit 1)")));
+    QTest::qWait(kDialogPollMs);
+    QCOMPARE(finished.count(), 0);
+}
+
+void NetworkDiagnosticPanelTests::aSelfAssignedAddressIsNoValidAddress() {
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo apipa;
+    apipa.name = QStringLiteral("Ethernet");
+    apipa.adapterType = QStringLiteral("Ethernet");
+    apipa.isConnected = true;
+    apipa.ipv4Addresses = {QStringLiteral("169.254.193.132")};
+    sak::NetworkAdapterInfo working = apipa;
+    working.name = QStringLiteral("Ethernet 2");
+    working.ipv4Addresses = {QStringLiteral("10.0.2.15")};
+    Q_EMIT controller->adaptersScanComplete({apipa, working});
+    auto* table = panel.adapterWidget()->findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    const int status_column = 2;
+    QCOMPARE(table->item(0, status_column)->text(), QStringLiteral("No valid address"));
+    QVERIFY2(table->item(0, status_column)
+                 ->toolTip()
+                 .contains(QStringLiteral("self-assigned address 169.254.193.132")),
+             qPrintable(table->item(0, status_column)->toolTip()));
+    QCOMPARE(table->item(1, status_column)->text(), QStringLiteral("Connected"));
+    QVERIFY(table->item(1, status_column)->toolTip().isEmpty());
+}
+
+void NetworkDiagnosticPanelTests::toolbarRestoreStartsOnTheBackedUpAdapter_data() {
+    QTest::addColumn<QByteArray>("backup");
+    QTest::addColumn<QString>("expected");
+    QTest::newRow("by name") << QByteArray(R"({"adapterName":"Wi-Fi","adapterType":"WiFi",)")
+                             << QStringLiteral("Wi-Fi");
+    QTest::newRow("by type") << QByteArray(R"({"adapterName":"Office WLAN","adapterType":"WiFi",)")
+                             << QStringLiteral("Wi-Fi");
+    QTest::newRow("neither") << QByteArray(R"({"adapterName":"Office WLAN",)")
+                             << QStringLiteral("Ethernet");
+}
+
+void NetworkDiagnosticPanelTests::toolbarRestoreStartsOnTheBackedUpAdapter() {
+    QFETCH(QByteArray, backup);
+    QFETCH(QString, expected);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    const auto restore_dialogs =
+        qScopeGuard([]() { QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false); });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("backup.json"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        backup +
+        R"("backupTimestamp":"2026-11-09T09:00:00","dhcpEnabled":true,"computerName":"PC"})");
+    file.close();
+    FakeAdapterCommands commands;
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    QVERIFY(waitForStartupScan(panel));
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::NetworkAdapterInfo wired;
+    wired.name = QStringLiteral("Ethernet");
+    wired.adapterType = QStringLiteral("Ethernet");
+    sak::NetworkAdapterInfo wireless;
+    wireless.name = QStringLiteral("Wi-Fi");
+    wireless.adapterType = QStringLiteral("WiFi");
+    Q_EMIT controller->adaptersScanComplete({wired, wireless});
+
+    AdapterDialogDriver driver(path, QMessageBox::No);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onRestoreEthernetSettings", Qt::QueuedConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(driver.boxes_seen.contains(QStringLiteral("Confirm Restore")),
+                             kDialogTimeoutMs);
+    QCOMPARE(driver.adapters_offered,
+             QStringList({QStringLiteral("Ethernet"), QStringLiteral("Wi-Fi")}));
+    QCOMPARE(driver.adapter_chosen_first, expected);
+    QVERIFY(commands.netshCalls().isEmpty());
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

@@ -657,7 +657,10 @@ set(SAK_CORE_SOURCES
     src/core/network_diagnostic_controller.cpp
     src/core/ethernet_config_manager.cpp
     src/core/network_adapter_admin.cpp
+    src/core/network_reset_safeguard.cpp
+    src/core/network_reset_recovery.cpp
     include/sak/network_adapter_admin.h
+    include/sak/network_reset_safeguard.h
     include/sak/network_diagnostic_types.h
     include/sak/network_adapter_inspector.h
     include/sak/connectivity_tester.h
