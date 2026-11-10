@@ -17,7 +17,9 @@ anywhere", full review-ledger coverage) could never close.
 - [ ] Shipped binaries are Authenticode-signed. The Azure signing credential is valid to 2028
       (owner confirmed); the first signed release run is still to do.
 - [ ] Windows 11 VM smoke passes on the release bytes.
-- [ ] No known crash, data-loss or unpatched-security item remains in the list below.
+- [x] No known crash, data-loss or unpatched-security item remains in the list below (2026-11-10). Two open
+      non-defects stay tracked there: item 7's unbounded GUI-thread joins, a hang risk not observed, and item 4's
+      MCPS-9, an evidence gap.
 - [x] Hardware-only claims (partition external gates, Apple kernel, Windows 10) are labeled
       uncertified by the computed claim level in `certification/`.
 
@@ -2632,6 +2634,15 @@ operation stays in the queue as pending, to be applied again or removed, and doe
   TESTPC2 (4 times, `external.usb-removable`), accepted for 0.9.3 (no domain, user or address). The step client should
   drop ServerName and the ObjectId's host from what it serialises; and every future run's PcFile should list the PC's
   own computer name in `deny_names`, so selection refuses evidence that carries it.
+- Decide whether release signing should sign the third-party GPL filesystem tools at all. `release.yml` signs every
+  unsigned .exe and .dll, which changes the bytes of the e2fsprogs and hfsprogs binaries and hfsprogs' msys-2.0.dll
+  that `tools/filesystem/manifest.json` pins and the application checks before it runs one ("Filesystem tool hash
+  mismatch"). For 0.9.3 the release workflow re-pins the PACKAGE's manifest to the signed bytes, publishes the
+  upstream-to-signed mapping (`filesystem-tools-signed-sha256.txt`), and asks the application's own manifest
+  validation about the package before and after signing (`.github/release-tools/`). The alternative: the signing catalog
+  skips manifest-pinned files and `verify_authenticode_signatures.ps1` accepts an unsigned file whose hash matches
+  its pin, so the shipped manifest stays the repository's. That is a `scripts/` change, which the certification
+  digest covers.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
@@ -3371,6 +3382,14 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
   `main` and every PR (sharded build, anchored label selection); `release.yml` is T3 on tags;
   `nightly.yml` is T4. Open: `release.yml` and `nightly.yml` can be dispatched only from the
   default branch, so neither has run yet.
+- Found 2026-11-10, before the first signed run: release signing signs the unsigned filesystem tools whose SHA-256
+  `tools/filesystem/manifest.json` pins, so a signed package's ext and HFS tools would have been refused by the app
+  ("Filesystem tool hash mismatch"), and no T3 step checked packaged tool hashes after signing. `release.yml` now
+  builds a check from the application's own manifest validation
+  (`.github/release-tools/filesystem_manifest_check`), runs it before signing, requires it to refuse the signed tools,
+  re-pins the package's manifest to the signed bytes (`.github/release-tools/repin_signed_filesystem_tools.ps1`), runs it
+  again, and publishes the upstream-to-signed mapping. Whether to sign these tools at all is on the "For after
+  0.9.3" list.
 - Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
   `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
   error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test
