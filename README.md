@@ -215,6 +215,7 @@ More for contributors: [CONTRIBUTING.md](CONTRIBUTING.md), [tests/README.md](tes
 - **How do I...?** Start with the [wiki](https://sakutility.com/wiki).
 - **Found a bug or want a feature?** [Open an issue](https://github.com/RandyNorthrup/S.A.K.-Utility/issues).
 - **Want to talk?** Join the [Discord](https://discord.gg/pMh2n9kSK3).
+- **Want to support it?** [Buy me a coffee](https://www.paypal.com/donate/?hosted_button_id=Q9VC7B42R7K82) through PayPal.
 
 ## License and credits
 
