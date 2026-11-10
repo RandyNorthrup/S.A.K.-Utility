@@ -2643,6 +2643,13 @@ operation stays in the queue as pending, to be applied again or removed, and doe
   skips manifest-pinned files and `verify_authenticode_signatures.ps1` accepts an unsigned file whose hash matches
   its pin, so the shipped manifest stays the repository's. That is a `scripts/` change, which the certification
   digest covers.
+- `scripts/bundle_smartmontools.ps1`: on the release runner its check of an existing, correctly pinned smartctl.exe
+  failed while the same check passes on a workstation, and its catch prints no reason (`release.yml`'s diagnostic
+  step now prints what each part of the check sees). Its re-download path then rewrites the tracked README.txt
+  with `Set-Content -Encoding UTF8`, which under PowerShell 7 drops the byte-order mark the tracked file has. The
+  release workflow no longer bundles into the checkout. The script should name the check that failed, and a
+  re-bundle should leave a tracked file unchanged when its content is the same. A `scripts/` change, which the
+  certification digest covers.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
@@ -3389,7 +3396,18 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
   (`.github/release-tools/filesystem_manifest_check`), runs it before signing, requires it to refuse the signed tools,
   re-pins the package's manifest to the signed bytes (`.github/release-tools/repin_signed_filesystem_tools.ps1`), runs it
   again, and publishes the upstream-to-signed mapping. Whether to sign these tools at all is on the "For after
-  0.9.3" list.
+  0.9.3" list. Swept the same day: of the 22 unsigned .exe and .dll files the release signs (the four `sak_*`
+  binaries, zlib, bzip2 and liblzma, and 15 bundled third-party files), only the six under `tools/filesystem` are
+  pinned at runtime. The application finds the elevated helper by its image path, and runs 7-Zip, aria2c, the UUP
+  converter, iperf3 and smartctl after a path-containment check only; its one signer check is on choco.exe, which
+  Chocolatey signed, so the signing catalog leaves it alone. Build-time pins (`bundle_uup_tools.ps1`,
+  `bundle_iperf3.ps1`, `bundle_smartmontools.ps1`) are checked before signing.
+- Found 2026-11-10 by the first `release.yml` dry run: its readiness gate refused the certification evidence ("the
+  evidence is for other code") because "Bundle smartmontools" rewrote the tracked `tools/smartmontools/README.txt`
+  in the checkout, and the certification digest covers it. The release workflow now bundles smartmontools and iPerf3
+  into the runner's temp folder and requires the tracked binaries to match those pinned copies byte for byte, checks
+  that no step has changed a tracked file (after bundling and before readiness), and prints what the
+  smartmontools existing-binary check sees on the runner.
 - Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
   `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
   error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test

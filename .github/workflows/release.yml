@@ -82,25 +82,91 @@ jobs:
         & (Join-Path $tools gitleaks.exe) version
         & (Join-Path $tools trufflehog.exe) --version
 
-    # The package ships these tools. Each script is idempotent and skips a tool already present
-    # in the checkout. (The old workflow also restored tools/uup/uupmc from an actions cache
-    # keyed only on the bundle script. Those files are tracked, so a restore could overwrite a
-    # newer checkout with stale bytes; the cache is gone.)
-    - name: Bundle smartmontools
+    # Diagnostic only, never fails the run. On 2026-11-10 bundle_smartmontools.ps1 decided the
+    # tracked smartctl.exe "failed trust/version check" on this runner, though it matches the pin
+    # and the same check passes on a workstation; the script's catch hides why. This repeats the
+    # check's parts against the tracked binary and prints what each one saw
+    # (docs/RELEASE_READINESS.md, "For after 0.9.3").
+    - name: Diagnose the smartmontools existing-binary check
       shell: pwsh
-      run: '& scripts/bundle_smartmontools.ps1'
+      continue-on-error: true
+      run: |
+        $exe = (Resolve-Path -LiteralPath tools/smartmontools/smartctl.exe).Path
+        $source = Get-Content -LiteralPath scripts/bundle_smartmontools.ps1 -Raw
+        $pin = [regex]::Match($source, '\$PinnedSmartctlSha256\s*=\s*"([0-9A-Fa-f]{64})"').Groups[1].Value
+        $version = [regex]::Match($source, '(?m)^\$Version\s*=\s*"([^"]+)"').Groups[1].Value
+        $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+        "PowerShell $($PSVersionTable.PSVersion); ErrorActionPreference $ErrorActionPreference; PSNativeCommandUseErrorActionPreference $PSNativeCommandUseErrorActionPreference"
+        "hash $hash; pin $pin; hash matches pin: $($hash -eq $pin)"
+        try {
+          $global:LASTEXITCODE = 0
+          $line = & $exe --version 2>&1 | Select-String "smartctl" | Select-Object -First 1
+          "as the script runs it: exit $LASTEXITCODE; first line '$line'; version $version matched: $("$line" -match [regex]::Escape($version))"
+        } catch {
+          "as the script runs it, it threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
+        }
+        try {
+          $global:LASTEXITCODE = 0
+          $all = @(& $exe --version 2>&1)
+          "run on its own: exit $LASTEXITCODE; $($all.Count) line(s); stderr records: $(@($all | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count)"
+          $all | Select-Object -First 2 | ForEach-Object { "  $_" }
+        } catch {
+          "run on its own, it threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
+        }
+        exit 0
+
+    # The package ships these tools, and the tracked copies under tools/ are part of the tree the
+    # Partition Manager certification is bound to. So the bundle scripts never write into the
+    # checkout here: on 2026-11-10 a re-bundle in place rewrote tools/smartmontools/README.txt and
+    # moved the certification digest. Each script bundles a fresh copy from its pinned download
+    # into the runner's temp folder, in its own process (the scripts end with exit), and the
+    # tracked binaries must be byte-identical to that copy. (The old workflow also restored
+    # tools/uup/uupmc from an actions cache; those files are tracked and the cache is gone.)
+    - name: Bundle smartmontools (pinned copy) and compare with the tracked binary
+      shell: pwsh
+      run: |
+        $fresh = Join-Path $env:RUNNER_TEMP 'smartmontools-pinned'
+        pwsh -NoProfile -NonInteractive -File scripts/bundle_smartmontools.ps1 -DestinationPath $fresh
+        if ($LASTEXITCODE -ne 0) { throw "bundle_smartmontools.ps1 exited $LASTEXITCODE" }
+        $tracked = (Get-FileHash -LiteralPath tools/smartmontools/smartctl.exe -Algorithm SHA256).Hash
+        $pinned = (Get-FileHash -LiteralPath (Join-Path $fresh 'smartctl.exe') -Algorithm SHA256).Hash
+        if ($tracked -ne $pinned) { throw "tools/smartmontools/smartctl.exe ($tracked) is not the pinned download ($pinned)" }
+        Write-Host "Tracked smartctl.exe matches the pinned download: $tracked"
 
     - name: Verify UUP tools (aria2c + uupmc, pinned SHA-256)
       shell: pwsh
       run: '& scripts/bundle_uup_tools.ps1'
 
-    - name: Bundle iPerf3
+    - name: Bundle iPerf3 (pinned copy) and compare with the tracked binaries
       shell: pwsh
-      run: '& scripts/bundle_iperf3.ps1'
+      run: |
+        $fresh = Join-Path $env:RUNNER_TEMP 'iperf3-pinned'
+        pwsh -NoProfile -NonInteractive -File scripts/bundle_iperf3.ps1 -DestinationPath $fresh
+        if ($LASTEXITCODE -ne 0) { throw "bundle_iperf3.ps1 exited $LASTEXITCODE" }
+        foreach ($name in 'iperf3.exe', 'cygwin1.dll') {
+          $tracked = (Get-FileHash -LiteralPath (Join-Path 'tools/iperf3' $name) -Algorithm SHA256).Hash
+          $pinned = (Get-FileHash -LiteralPath (Join-Path $fresh $name) -Algorithm SHA256).Hash
+          if ($tracked -ne $pinned) { throw "tools/iperf3/$name ($tracked) is not the pinned download ($pinned)" }
+          Write-Host "Tracked $name matches the pinned download: $tracked"
+        }
 
     - name: Partition filesystem tool manifest
       shell: pwsh
       run: '& scripts/check_partition_filesystem_tool_manifest.ps1'
+
+    # No step may change a tracked file: the certification evidence is bound to the digest of the
+    # tracked tree, and a changed file surfaces only later, as "the evidence is for other code".
+    # This names the file at once. It runs again before the readiness gate.
+    - name: The checkout is still the committed tree (after bundling)
+      shell: pwsh
+      run: |
+        $changed = @(git status --porcelain --untracked-files=no)
+        if ($LASTEXITCODE -ne 0) { throw "git status exited $LASTEXITCODE" }
+        if ($changed.Count -gt 0) {
+          $changed | ForEach-Object { Write-Host $_ }
+          throw "A release step changed $($changed.Count) tracked file(s)"
+        }
+        Write-Host "No tracked file has changed."
 
     - name: Configure
       shell: pwsh
@@ -210,6 +276,17 @@ jobs:
     - name: Startup E2E smoke from clean extracted package
       shell: pwsh
       run: '& scripts/run_portable_e2e_smoke.ps1 -PackageRoot "build/Release/clean-smoke-extract"'
+
+    - name: The checkout is still the committed tree (before readiness)
+      shell: pwsh
+      run: |
+        $changed = @(git status --porcelain --untracked-files=no)
+        if ($LASTEXITCODE -ne 0) { throw "git status exited $LASTEXITCODE" }
+        if ($changed.Count -gt 0) {
+          $changed | ForEach-Object { Write-Host $_ }
+          throw "A release step changed $($changed.Count) tracked file(s)"
+        }
+        Write-Host "No tracked file has changed."
 
     - name: Release readiness gate from clean extracted package
       shell: pwsh
