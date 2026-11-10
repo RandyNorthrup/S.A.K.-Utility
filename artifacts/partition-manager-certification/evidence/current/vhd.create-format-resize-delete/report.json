@@ -1,0 +1,128 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "vhd.create-format-resize-delete",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "started_utc":  "2026-11-10T15:53:14.4599963Z",
+    "completed_utc":  "2026-11-10T15:56:13.3262555Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "innotek GmbH",
+                "machine_model":  "VirtualBox",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "virtual_disk",
+                  "kind":  "VHDX in a VM",
+                  "model":  "Msft Virtual Disk",
+                  "bus_type":  "File Backed Virtual",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "1073741824",
+                  "serial_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+    "steps":  [
+                  {
+                      "id":  "create",
+                      "operation":  "Create",
+                      "expect":  "success",
+                      "report":  "create.client.json",
+                      "observed":  {
+                                       "client_pid":  4164,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  5408,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  },
+                  {
+                      "id":  "format",
+                      "operation":  "Format",
+                      "expect":  "success",
+                      "report":  "format.client.json",
+                      "observed":  {
+                                       "client_pid":  2340,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  3732,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  },
+                  {
+                      "id":  "resize",
+                      "operation":  "Resize",
+                      "expect":  "success",
+                      "report":  "resize.client.json",
+                      "observed":  {
+                                       "client_pid":  9580,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  1244,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  },
+                  {
+                      "id":  "delete",
+                      "operation":  "Delete",
+                      "expect":  "success",
+                      "report":  "delete.client.json",
+                      "observed":  {
+                                       "client_pid":  3196,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  5912,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "3d2dcf8bcc7cbe8277feffee0991a347c0bf0628916324f27579333c2cbe5f50",
+                          "bytes":  162340
+                      },
+                      {
+                          "path":  "create.client.json",
+                          "sha256":  "4170c1a27eb9faed577d76033ae65384f1d082b241e87f41dfaf185f261200d2",
+                          "bytes":  10999
+                      },
+                      {
+                          "path":  "format.client.json",
+                          "sha256":  "d119973d04e43cd027beeab6378880a8fb6913e96c8e53646d46954887845030",
+                          "bytes":  3638
+                      },
+                      {
+                          "path":  "resize.client.json",
+                          "sha256":  "63e2527964ceffb834e4554b7270d0de1b9ad1053eafa68a0b4e1603fd454587",
+                          "bytes":  3247
+                      },
+                      {
+                          "path":  "delete.client.json",
+                          "sha256":  "1023360edbde270b80afac0dbe2f6f31ca2bda551001d8f1a24f635604719011",
+                          "bytes":  3134
+                      }
+                  ]
+}

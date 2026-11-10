@@ -1,0 +1,68 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "external.dynamic-to-basic",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "6fc109ad-a070-468f-add2-4f5f29f8a51c",
+    "started_utc":  "2026-11-10T16:38:04.3500035Z",
+    "completed_utc":  "2026-11-10T16:39:04.6419424Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "innotek GmbH",
+                "machine_model":  "VirtualBox",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "virtual_machine",
+                  "kind":  "VirtualBox VDI",
+                  "model":  "VBOX HARDDISK",
+                  "bus_type":  "SATA",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "1073741824",
+                  "serial_sha256":  "d948abc71d7fa5c1f3cbc5f9ad36d52e034fdb2a8cc28904dad5af90999f7c00"
+              },
+    "steps":  [
+                  {
+                      "id":  "convert",
+                      "operation":  "ConvertDynamicDiskToBasic",
+                      "expect":  "success",
+                      "report":  "convert.client.json",
+                      "observed":  {
+                                       "client_pid":  7440,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  9648,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "644875d5f5b2497caf5289bf30c07704cd4925ae8d18b097adc1970fef8f0df9",
+                          "bytes":  9616
+                      },
+                      {
+                          "path":  "convert.client.json",
+                          "sha256":  "705cafddd0d23b19466efba87088fa15ec1510826909c8a0bf1e54f8ea544823",
+                          "bytes":  9532
+                      }
+                  ]
+}

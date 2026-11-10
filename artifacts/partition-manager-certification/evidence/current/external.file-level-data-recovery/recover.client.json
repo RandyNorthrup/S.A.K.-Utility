@@ -1,0 +1,39 @@
+{
+    "client": {
+        "allow_elevated_client": true,
+        "elevated": true,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:32:44.110Z",
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "operation": "FileRecovery",
+    "recovery_restore": {
+        "restored": 4,
+        "source_not_mutated": true,
+        "warnings": [
+        ]
+    },
+    "recovery_scan": {
+        "bytes_read": "268435456",
+        "candidates": 4,
+        "source_opened_read_only": true,
+        "warnings": [
+        ]
+    },
+    "route": "in-process",
+    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "scenario_id": "external.file-level-data-recovery",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:32:35.075Z",
+    "status": "Passed",
+    "step": "recover",
+    "tool": "partition-manager-scenario-step"
+}

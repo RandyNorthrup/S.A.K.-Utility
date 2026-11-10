@@ -138,58 +138,58 @@ A proof VM is shut down from inside its Windows, as a person would. Pulling the 
 
 <!-- BEGIN GENERATED certification-state: do not edit by hand. Regenerate with scripts/check_partition_manager_release_claims.ps1 -Update -->
 
-Current claim level: `CodeCompleteOnly`.
-Accepted VHD evidence: 0/12.
-Accepted external evidence: 0/18.
-Incomplete VHD scenarios: vhd.create-format-resize-delete, vhd.fat32-to-ntfs, vhd.quick-partition, vhd.quick-partition-custom, vhd.quick-partition-mbr, vhd.adjacent-extend, vhd.recovered-partition-restore, vhd.empty-style-conversion, vhd.clear-disk-wipe, vhd.image-clone, vhd.image-restore, vhd.partition-clone-region.
-Incomplete external gates: external.system-mbr2gpt, external.os-migration-reboot, external.boot-repair-uefi, external.boot-repair-bios, external.usb-removable, external.file-level-data-recovery, external.ssd-retrim, external.hdd-defrag-execution, external.ssd-secure-erase, external.bitlocker, external.bitlocker-mutation, external.allocate-free-space, external.partition-move, external.cluster-size-change, external.primary-logical-conversion, external.volume-serial-number, external.dynamic-to-basic, external.hardware-wipe.
+Current claim level: `NamedDevicesValidated`.
+Accepted VHD evidence: 12/12.
+Accepted external evidence: 18/18.
+Incomplete VHD scenarios: none.
+Incomplete external gates: none.
 
-On this evidence, destructive certification remains partial because VHD evidence is incomplete and VM/hardware/lab evidence is incomplete.
-Do not mark the Partition Manager destructive paths fully certified until those reports exist.
+Every row passed on the selected evidence, and each row that needs a real device ran on
+the one named below. That says those devices, and no others.
 
 What the site may say for this evidence:
 
-> On the v0.9.3 code, Partition Manager has automated tests, and its disk operations have not been validated on disposable disks. Writes to Apple file systems were validated with Apple's own tools. Back up before changing a disk.
+> On the v0.9.3 code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Some operations were also tested on one SAMSUNG MZVL2512HCJQ-00BH1 512 GB NVMe SSD and one Seagate Expansion Desk 8 TB USB disk. Internal SATA drives were not tested, and results on other devices may differ. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize. Writes to Apple file systems were validated with Apple's own tools. Back up before changing a disk.
 
 Disposable-VHD scenarios (`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`):
 
 | Scenario | Name | Accepted on this evidence | Ran on |
 |---|---|---|---|
-| `vhd.create-format-resize-delete` | Create, format, resize, and delete data partition | no | nothing yet |
-| `vhd.fat32-to-ntfs` | FAT32 to NTFS in-place conversion | no | nothing yet |
-| `vhd.quick-partition` | Quick Partition equal-size data-disk layout | no | nothing yet |
-| `vhd.quick-partition-custom` | Quick Partition custom size and label layout | no | nothing yet |
-| `vhd.quick-partition-mbr` | Quick Partition MBR four-data-partition layout | no | nothing yet |
-| `vhd.adjacent-extend` | Adjacent free-space Extend Partition Wizard path | no | nothing yet |
-| `vhd.recovered-partition-restore` | Recovered partition write-back candidate restore | no | nothing yet |
-| `vhd.empty-style-conversion` | Empty data disk GPT/MBR conversion | no | nothing yet |
-| `vhd.clear-disk-wipe` | Clear-level non-system disk wipe | no | nothing yet |
-| `vhd.image-clone` | Offline VHD image clone and sentinel verification | no | nothing yet |
-| `vhd.image-restore` | Offline VHD image restore and overwrite verification | no | nothing yet |
-| `vhd.partition-clone-region` | Partition clone to raw target region | no | nothing yet |
+| `vhd.create-format-resize-delete` | Create, format, resize, and delete data partition | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.fat32-to-ntfs` | FAT32 to NTFS in-place conversion | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition` | Quick Partition equal-size data-disk layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition-custom` | Quick Partition custom size and label layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition-mbr` | Quick Partition MBR four-data-partition layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.adjacent-extend` | Adjacent free-space Extend Partition Wizard path | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.recovered-partition-restore` | Recovered partition write-back candidate restore | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.empty-style-conversion` | Empty data disk GPT/MBR conversion | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.clear-disk-wipe` | Clear-level non-system disk wipe | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `vhd.image-clone` | Offline VHD image clone and sentinel verification | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.image-restore` | Offline VHD image restore and overwrite verification | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.partition-clone-region` | Partition clone to raw target region | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
 
 External VM/hardware/lab gates (same matrix):
 
 | Gate | Name | Accepted on this evidence | Ran on |
 |---|---|---|---|
-| `external.system-mbr2gpt` | System MBR-to-GPT conversion in disposable boot VM | no | nothing yet |
-| `external.os-migration-reboot` | OS migration target boot and firmware-order proof | no | nothing yet |
-| `external.boot-repair-uefi` | UEFI boot repair with intentionally broken BCD | no | nothing yet |
-| `external.boot-repair-bios` | BIOS/MBR boot repair with intentionally broken BCD | no | nothing yet |
-| `external.usb-removable` | USB removable disk destructive operation proof | no | nothing yet |
-| `external.file-level-data-recovery` | File-level Data Recovery scan and restore proof | no | nothing yet |
-| `external.ssd-retrim` | SSD/NVMe ReTrim proof | no | nothing yet |
-| `external.hdd-defrag-execution` | Direct in-app HDD defrag execution proof | no | nothing yet |
-| `external.ssd-secure-erase` | SSD/NVMe secure erase command execution proof | no | nothing yet |
-| `external.bitlocker` | BitLocker locked/unlocked data-volume blocker proof | no | nothing yet |
-| `external.bitlocker-mutation` | In-app BitLocker unlock/suspend/resume mutation proof | no | nothing yet |
-| `external.allocate-free-space` | Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof | no | nothing yet |
-| `external.partition-move` | Offline partition start-move proof | no | nothing yet |
-| `external.cluster-size-change` | Existing-volume cluster-size change proof | no | nothing yet |
-| `external.primary-logical-conversion` | Primary/logical conversion on disposable MBR disk | no | nothing yet |
-| `external.volume-serial-number` | Volume serial-number metadata mutation proof | no | nothing yet |
-| `external.dynamic-to-basic` | Dynamic disk to basic conversion proof | no | nothing yet |
-| `external.hardware-wipe` | Non-system hardware wipe on disposable physical disk | no | nothing yet |
+| `external.system-mbr2gpt` | System MBR-to-GPT conversion in disposable boot VM | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.os-migration-reboot` | OS migration target boot and firmware-order proof | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.boot-repair-uefi` | UEFI boot repair with intentionally broken BCD | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.boot-repair-bios` | BIOS/MBR boot repair with intentionally broken BCD | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.usb-removable` | USB removable disk destructive operation proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.file-level-data-recovery` | File-level Data Recovery scan and restore proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.ssd-retrim` | SSD/NVMe ReTrim proof | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
+| `external.hdd-defrag-execution` | Direct in-app HDD defrag execution proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.ssd-secure-erase` | SSD/NVMe secure erase command execution proof | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
+| `external.bitlocker` | BitLocker locked/unlocked data-volume blocker proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.bitlocker-mutation` | In-app BitLocker unlock/suspend/resume mutation proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.allocate-free-space` | Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.partition-move` | Offline partition start-move proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.cluster-size-change` | Existing-volume cluster-size change proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.primary-logical-conversion` | Primary/logical conversion on disposable MBR disk | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.volume-serial-number` | Volume serial-number metadata mutation proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.dynamic-to-basic` | Dynamic disk to basic conversion proof | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.hardware-wipe` | Non-system hardware wipe on disposable physical disk | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
 
 Apple filesystem driver capabilities (`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`):
 
@@ -547,7 +547,7 @@ Partition 2, 134,217,728 bytes, with File Explorer create/write/read,
 duplicate-finder, advanced-search, delete-file, negative-read, and
 delete-directory proof at
 `artifacts\file-management-live-certification\disk2-apfs-script-after-fix\file-management-live-certification.json`.
-HFS+ passed on Best Buy serial `DD564198838A8`, Disk 3 Partition 3, with File
+HFS+ passed on the Best Buy NVMe enclosure, Disk 3 Partition 3, with File
 Explorer create/write/read, duplicate-finder, advanced-search, rename,
 delete-file, negative-read, and delete-directory proof at
 `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.

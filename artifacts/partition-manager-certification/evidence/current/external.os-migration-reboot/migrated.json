@@ -1,0 +1,10 @@
+{
+  "reached_sign_in": true,
+  "firmware": "UEFI",
+  "system_drive": "C:",
+  "repair_scan": "NoErrorsFound",
+  "only_disk_attached": true,
+  "source_marker_present": false,
+  "shot": "sakcert-migrated.png",
+  "source_marker": "80101d42-6fbe-48f8-a428-f1b036bf4280"
+}

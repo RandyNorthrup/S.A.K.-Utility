@@ -1,0 +1,93 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:02:24.222Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 1,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "89e00abf-b753-42cb-9989-852a622fcf0c",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Restore recovered partition on Disk 1 at 128.0 MB\r\n",
+                "success": true,
+                "summary": "Restore Recovered Partition - Disk 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "RestoreRecoveredPartition",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "89e00abf-b753-42cb-9989-852a622fcf0c",
+            "payload": {
+                "offset_bytes": "134217728",
+                "partition_style": "GPT",
+                "restore_acknowledged": true,
+                "size_bytes": "268435456",
+                "type_id": "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}"
+            },
+            "script_sha256": "911f22fb4c07df6a7f3462d695f07092aaa9cd591fd7fbbdca54ff17f5b96263",
+            "summary": "Restore Recovered Partition - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "600224806A922BFB1FFC419A5BB8AD9C",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "1073741824"
+            },
+            "type": "Restore Recovered Partition",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "18b6f3f75560fbed2ee8835073f2adb2c717e90263690ea5a668236b967ee955",
+        "layout_hash": "c0f06ead8499a988cb50ce0352a7f5ee806654952a141c37dca8c88f142a5396",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.recovered-partition-restore",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:01:59.649Z",
+    "status": "Passed",
+    "step": "restore",
+    "tool": "partition-manager-scenario-step"
+}

@@ -40,14 +40,15 @@ repos:
     rev: v6.0.0
     hooks:
       # Vendored tool bundles stay byte-identical to their upstream release (Chocolatey's
-      # helper scripts are Authenticode signed), and a unified diff's blank context line is
-      # a single space; rewriting either corrupts it.
+      # helper scripts are Authenticode signed), certification evidence stays byte-identical to
+      # the hashes its reports record, and a unified diff's blank context line is a single
+      # space; rewriting any of them corrupts it.
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|\.patch$
+        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|^artifacts/partition-manager-certification/evidence/|\.patch$
         stages: [pre-commit]
       - id: end-of-file-fixer
-        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|\.patch$
+        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|^artifacts/partition-manager-certification/evidence/|\.patch$
         stages: [pre-commit]
       - id: check-yaml
         stages: [pre-commit]

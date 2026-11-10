@@ -1,0 +1,24 @@
+{
+    "media_type":  "SSD",
+    "retrim_logged":  true,
+    "deleted_clusters_after_retrim":  {
+                                          "places_read":  1,
+                                          "marker_hits":  0,
+                                          "all_zero_places":  1
+                                      },
+    "files_before":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  24,
+                         "digest":  "633df21ee467e9a131d342f0bec22d95e5a83e7b195ef98750f1437bec4e64ad"
+                     },
+    "files_after":  {
+                        "root":  "T:\\fixture",
+                        "file_count":  24,
+                        "digest":  "633df21ee467e9a131d342f0bec22d95e5a83e7b195ef98750f1437bec4e64ad"
+                    },
+    "health":  {
+                   "repair_scan":  "NoErrorsFound",
+                   "chkdsk_exit_code":  0,
+                   "dirty":  false
+               }
+}

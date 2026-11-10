@@ -1,0 +1,228 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T15:57:36.502Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "cd8cc663-4d0e-405b-8677-7212fb599b81",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Delete all partitions on Disk 1\r\n",
+                "success": true,
+                "summary": "Delete All Partitions - Disk 1"
+            },
+            {
+                "error_message": "",
+                "operation_id": "2f5c7fec-003f-46bf-a143-d20db94239be",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Create 247.0 MB NTFS partition on Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nE           SAKQP1       NTFS           Fixed     Healthy      OK                    232.43 MB 247 MB\r\n{\"CimClass\":{\"CimSuperClassName\":\"MSFT_StorageObject\",\"CimSuperClass\":{\"CimSuperClassName\":null,\"CimSuperClass\":null,\"CimClassProperties\":\"ObjectId PassThroughClass PassThroughIds PassThroughNamespace PassThroughServer UniqueId\",\"CimClassQualifiers\":\"Abstract = True locale = 1033\",\"CimClassMethods\":\"\",\"CimSystemProperties\":\"Microsoft.Management.Infrastructure.CimSystemProperties\"},\"CimClassProperties\":[\"ObjectId\",\"PassThroughClass\",\"PassThroughIds\",\"PassThroughNamespace\",\"PassThroughServer\",\"UniqueId\",\"AccessPaths\",\"DiskId\",\"DiskNumber\",\"DriveLetter\",\"GptType\",\"Guid\",\"IsActive\",\"IsBoot\",\"IsDAX\",\"IsHidden\",\"IsOffline\",\"IsReadOnly\",\"IsShadowCopy\",\"IsSystem\",\"MbrType\",\"NoDefaultDriveLetter\",\"Offset\",\"OperationalStatus\",\"PartitionNumber\",\"Size\",\"TransitionState\"],\"CimClassQualifiers\":[\"dynamic = True\",\"locale = 1033\",\"provider = \\\"StorageWMI\\\"\"],\"CimClassMethods\":[\"DeleteObject\",\"GetAccessPaths\",\"AddAccessPath\",\"RemoveAccessPath\",\"Resize\",\"GetSupportedSize\",\"Online\",\"Offline\",\"SetAttributes\"],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null}},\"CimInstanceProperties\":[{\"Name\":\"ObjectId\",\"Value\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-100000000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"CimType\":14,\"Flags\":\"Property, Key, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PassThroughClass\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughIds\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughNamespace\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughServer\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"UniqueId\",\"Value\":\"{00000000-0000-0000-0000-100000000000}60022480D158AB31D63CCA3E2EC313EA\",\"CimType\":14,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"AccessPaths\",\"Value\":\"E:\\\\ \\\\\\\\?\\\\Volume{46fa1eca-fddd-4143-b00e-a453fff117a4}\\\\\",\"CimType\":30,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskId\",\"Value\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskNumber\",\"Value\":1,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DriveLetter\",\"Value\":\"E\",\"CimType\":12,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"GptType\",\"Value\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Guid\",\"Value\":\"{46fa1eca-fddd-4143-b00e-a453fff117a4}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsActive\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsBoot\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsDAX\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsHidden\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsOffline\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsReadOnly\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsShadowCopy\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsSystem\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"MbrType\",\"Value\":null,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"NoDefaultDriveLetter\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Offset\",\"Value\":1048576,\"CimType\":8,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"OperationalStatus\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PartitionNumber\",\"Value\":1,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Size\",\"Value\":258998272,\"CimType\":8,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"TransitionState\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false}],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null},\"OperationalStatus\":\"Online\",\"Type\":\"Basic\",\"DiskPath\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"ObjectId\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-100000000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"PassThroughClass\":null,\"PassThroughIds\":null,\"PassThroughNamespace\":null,\"PassThroughServer\":null,\"UniqueId\":\"{00000000-0000-0000-0000-100000000000}60022480D158AB31D63CCA3E2EC313EA\",\"AccessPaths\":[\"E:\\\\\",\"\\\\\\\\?\\\\Volume{46fa1eca-fddd-4143-b00e-a453fff117a4}\\\\\"],\"DiskId\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"DiskNumber\":1,\"DriveLetter\":\"E\",\"GptType\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"Guid\":\"{46fa1eca-fddd-4143-b00e-a453fff117a4}\",\"IsActive\":false,\"IsBoot\":false,\"IsDAX\":false,\"IsHidden\":false,\"IsOffline\":false,\"IsReadOnly\":false,\"IsShadowCopy\":false,\"IsSystem\":false,\"MbrType\":null,\"NoDefaultDriveLetter\":false,\"Offset\":1048576,\"PartitionNumber\":1,\"Size\":258998272,\"TransitionState\":1,\"PSComputerName\":null}\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Create Partition - Disk 1 unallocated region at 1.0 MB"
+            },
+            {
+                "error_message": "",
+                "operation_id": "f87a47cd-cf58-4f87-8b46-5c6fc426d0df",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Create 247.0 MB NTFS partition on Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nF           SAKQP2       NTFS           Fixed     Healthy      OK                    232.43 MB 247 MB\r\n{\"CimClass\":{\"CimSuperClassName\":\"MSFT_StorageObject\",\"CimSuperClass\":{\"CimSuperClassName\":null,\"CimSuperClass\":null,\"CimClassProperties\":\"ObjectId PassThroughClass PassThroughIds PassThroughNamespace PassThroughServer UniqueId\",\"CimClassQualifiers\":\"Abstract = True locale = 1033\",\"CimClassMethods\":\"\",\"CimSystemProperties\":\"Microsoft.Management.Infrastructure.CimSystemProperties\"},\"CimClassProperties\":[\"ObjectId\",\"PassThroughClass\",\"PassThroughIds\",\"PassThroughNamespace\",\"PassThroughServer\",\"UniqueId\",\"AccessPaths\",\"DiskId\",\"DiskNumber\",\"DriveLetter\",\"GptType\",\"Guid\",\"IsActive\",\"IsBoot\",\"IsDAX\",\"IsHidden\",\"IsOffline\",\"IsReadOnly\",\"IsShadowCopy\",\"IsSystem\",\"MbrType\",\"NoDefaultDriveLetter\",\"Offset\",\"OperationalStatus\",\"PartitionNumber\",\"Size\",\"TransitionState\"],\"CimClassQualifiers\":[\"dynamic = True\",\"locale = 1033\",\"provider = \\\"StorageWMI\\\"\"],\"CimClassMethods\":[\"DeleteObject\",\"GetAccessPaths\",\"AddAccessPath\",\"RemoveAccessPath\",\"Resize\",\"GetSupportedSize\",\"Online\",\"Offline\",\"SetAttributes\"],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null}},\"CimInstanceProperties\":[{\"Name\":\"ObjectId\",\"Value\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-800f00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"CimType\":14,\"Flags\":\"Property, Key, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PassThroughClass\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughIds\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughNamespace\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughServer\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"UniqueId\",\"Value\":\"{00000000-0000-0000-0000-800f00000000}60022480D158AB31D63CCA3E2EC313EA\",\"CimType\":14,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"AccessPaths\",\"Value\":\"F:\\\\ \\\\\\\\?\\\\Volume{2c10c17d-b657-438a-9bcc-10fbb3b250b9}\\\\\",\"CimType\":30,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskId\",\"Value\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskNumber\",\"Value\":1,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DriveLetter\",\"Value\":\"F\",\"CimType\":12,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"GptType\",\"Value\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Guid\",\"Value\":\"{2c10c17d-b657-438a-9bcc-10fbb3b250b9}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsActive\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsBoot\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsDAX\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsHidden\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsOffline\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsReadOnly\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsShadowCopy\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsSystem\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"MbrType\",\"Value\":null,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"NoDefaultDriveLetter\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Offset\",\"Value\":260046848,\"CimType\":8,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"OperationalStatus\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PartitionNumber\",\"Value\":2,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Size\",\"Value\":258998272,\"CimType\":8,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"TransitionState\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false}],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null},\"OperationalStatus\":\"Online\",\"Type\":\"Basic\",\"DiskPath\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"ObjectId\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-800f00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"PassThroughClass\":null,\"PassThroughIds\":null,\"PassThroughNamespace\":null,\"PassThroughServer\":null,\"UniqueId\":\"{00000000-0000-0000-0000-800f00000000}60022480D158AB31D63CCA3E2EC313EA\",\"AccessPaths\":[\"F:\\\\\",\"\\\\\\\\?\\\\Volume{2c10c17d-b657-438a-9bcc-10fbb3b250b9}\\\\\"],\"DiskId\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"DiskNumber\":1,\"DriveLetter\":\"F\",\"GptType\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"Guid\":\"{2c10c17d-b657-438a-9bcc-10fbb3b250b9}\",\"IsActive\":false,\"IsBoot\":false,\"IsDAX\":false,\"IsHidden\":false,\"IsOffline\":false,\"IsReadOnly\":false,\"IsShadowCopy\":false,\"IsSystem\":false,\"MbrType\":null,\"NoDefaultDriveLetter\":false,\"Offset\":260046848,\"PartitionNumber\":2,\"Size\":258998272,\"TransitionState\":1,\"PSComputerName\":null}\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Create Partition - Disk 1 unallocated region at 248.0 MB"
+            },
+            {
+                "error_message": "",
+                "operation_id": "595a9ce2-992a-4a7d-915e-b9aa81abb2e9",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Create 247.0 MB NTFS partition on Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nG           SAKQP3       NTFS           Fixed     Healthy      OK                    232.43 MB 247 MB\r\n{\"CimClass\":{\"CimSuperClassName\":\"MSFT_StorageObject\",\"CimSuperClass\":{\"CimSuperClassName\":null,\"CimSuperClass\":null,\"CimClassProperties\":\"ObjectId PassThroughClass PassThroughIds PassThroughNamespace PassThroughServer UniqueId\",\"CimClassQualifiers\":\"Abstract = True locale = 1033\",\"CimClassMethods\":\"\",\"CimSystemProperties\":\"Microsoft.Management.Infrastructure.CimSystemProperties\"},\"CimClassProperties\":[\"ObjectId\",\"PassThroughClass\",\"PassThroughIds\",\"PassThroughNamespace\",\"PassThroughServer\",\"UniqueId\",\"AccessPaths\",\"DiskId\",\"DiskNumber\",\"DriveLetter\",\"GptType\",\"Guid\",\"IsActive\",\"IsBoot\",\"IsDAX\",\"IsHidden\",\"IsOffline\",\"IsReadOnly\",\"IsShadowCopy\",\"IsSystem\",\"MbrType\",\"NoDefaultDriveLetter\",\"Offset\",\"OperationalStatus\",\"PartitionNumber\",\"Size\",\"TransitionState\"],\"CimClassQualifiers\":[\"dynamic = True\",\"locale = 1033\",\"provider = \\\"StorageWMI\\\"\"],\"CimClassMethods\":[\"DeleteObject\",\"GetAccessPaths\",\"AddAccessPath\",\"RemoveAccessPath\",\"Resize\",\"GetSupportedSize\",\"Online\",\"Offline\",\"SetAttributes\"],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null}},\"CimInstanceProperties\":[{\"Name\":\"ObjectId\",\"Value\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-f01e00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"CimType\":14,\"Flags\":\"Property, Key, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PassThroughClass\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughIds\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughNamespace\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughServer\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"UniqueId\",\"Value\":\"{00000000-0000-0000-0000-f01e00000000}60022480D158AB31D63CCA3E2EC313EA\",\"CimType\":14,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"AccessPaths\",\"Value\":\"G:\\\\ \\\\\\\\?\\\\Volume{b91a4944-17dc-4c31-bc44-679aad6ea786}\\\\\",\"CimType\":30,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskId\",\"Value\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskNumber\",\"Value\":1,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DriveLetter\",\"Value\":\"G\",\"CimType\":12,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"GptType\",\"Value\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Guid\",\"Value\":\"{b91a4944-17dc-4c31-bc44-679aad6ea786}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsActive\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsBoot\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsDAX\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsHidden\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsOffline\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsReadOnly\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsShadowCopy\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsSystem\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"MbrType\",\"Value\":null,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"NoDefaultDriveLetter\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Offset\",\"Value\":519045120,\"CimType\":8,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"OperationalStatus\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PartitionNumber\",\"Value\":3,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Size\",\"Value\":258998272,\"CimType\":8,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"TransitionState\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false}],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null},\"OperationalStatus\":\"Online\",\"Type\":\"Basic\",\"DiskPath\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"ObjectId\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-f01e00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"PassThroughClass\":null,\"PassThroughIds\":null,\"PassThroughNamespace\":null,\"PassThroughServer\":null,\"UniqueId\":\"{00000000-0000-0000-0000-f01e00000000}60022480D158AB31D63CCA3E2EC313EA\",\"AccessPaths\":[\"G:\\\\\",\"\\\\\\\\?\\\\Volume{b91a4944-17dc-4c31-bc44-679aad6ea786}\\\\\"],\"DiskId\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"DiskNumber\":1,\"DriveLetter\":\"G\",\"GptType\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"Guid\":\"{b91a4944-17dc-4c31-bc44-679aad6ea786}\",\"IsActive\":false,\"IsBoot\":false,\"IsDAX\":false,\"IsHidden\":false,\"IsOffline\":false,\"IsReadOnly\":false,\"IsShadowCopy\":false,\"IsSystem\":false,\"MbrType\":null,\"NoDefaultDriveLetter\":false,\"Offset\":519045120,\"PartitionNumber\":3,\"Size\":258998272,\"TransitionState\":1,\"PSComputerName\":null}\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Create Partition - Disk 1 unallocated region at 495.0 MB"
+            },
+            {
+                "error_message": "",
+                "operation_id": "b5376878-9f47-4fd0-91d2-be4072e2b31a",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Create 250.0 MB NTFS partition on Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nH           SAKQP4       NTFS           Fixed     Healthy      OK                    235.41 MB 250 MB\r\n{\"CimClass\":{\"CimSuperClassName\":\"MSFT_StorageObject\",\"CimSuperClass\":{\"CimSuperClassName\":null,\"CimSuperClass\":null,\"CimClassProperties\":\"ObjectId PassThroughClass PassThroughIds PassThroughNamespace PassThroughServer UniqueId\",\"CimClassQualifiers\":\"Abstract = True locale = 1033\",\"CimClassMethods\":\"\",\"CimSystemProperties\":\"Microsoft.Management.Infrastructure.CimSystemProperties\"},\"CimClassProperties\":[\"ObjectId\",\"PassThroughClass\",\"PassThroughIds\",\"PassThroughNamespace\",\"PassThroughServer\",\"UniqueId\",\"AccessPaths\",\"DiskId\",\"DiskNumber\",\"DriveLetter\",\"GptType\",\"Guid\",\"IsActive\",\"IsBoot\",\"IsDAX\",\"IsHidden\",\"IsOffline\",\"IsReadOnly\",\"IsShadowCopy\",\"IsSystem\",\"MbrType\",\"NoDefaultDriveLetter\",\"Offset\",\"OperationalStatus\",\"PartitionNumber\",\"Size\",\"TransitionState\"],\"CimClassQualifiers\":[\"dynamic = True\",\"locale = 1033\",\"provider = \\\"StorageWMI\\\"\"],\"CimClassMethods\":[\"DeleteObject\",\"GetAccessPaths\",\"AddAccessPath\",\"RemoveAccessPath\",\"Resize\",\"GetSupportedSize\",\"Online\",\"Offline\",\"SetAttributes\"],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null}},\"CimInstanceProperties\":[{\"Name\":\"ObjectId\",\"Value\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-602e00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"CimType\":14,\"Flags\":\"Property, Key, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PassThroughClass\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughIds\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughNamespace\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"PassThroughServer\",\"Value\":null,\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"UniqueId\",\"Value\":\"{00000000-0000-0000-0000-602e00000000}60022480D158AB31D63CCA3E2EC313EA\",\"CimType\":14,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"AccessPaths\",\"Value\":\"H:\\\\ \\\\\\\\?\\\\Volume{c291bb81-4155-45e7-ad39-164fd1c3d8b1}\\\\\",\"CimType\":30,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskId\",\"Value\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DiskNumber\",\"Value\":1,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"DriveLetter\",\"Value\":\"H\",\"CimType\":12,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"GptType\",\"Value\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Guid\",\"Value\":\"{c291bb81-4155-45e7-ad39-164fd1c3d8b1}\",\"CimType\":14,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsActive\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsBoot\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsDAX\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsHidden\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsOffline\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsReadOnly\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsShadowCopy\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"IsSystem\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"MbrType\",\"Value\":null,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified, NullValue\",\"IsValueModified\":false},{\"Name\":\"NoDefaultDriveLetter\",\"Value\":false,\"CimType\":1,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Offset\",\"Value\":778043392,\"CimType\":8,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"OperationalStatus\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"PartitionNumber\",\"Value\":4,\"CimType\":6,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"Size\",\"Value\":262144000,\"CimType\":8,\"Flags\":\"Property, Required, ReadOnly, NotModified\",\"IsValueModified\":false},{\"Name\":\"TransitionState\",\"Value\":1,\"CimType\":4,\"Flags\":\"Property, ReadOnly, NotModified\",\"IsValueModified\":false}],\"CimSystemProperties\":{\"Namespace\":\"ROOT/Microsoft/Windows/Storage\",\"ServerName\":\"DESKTOP-EB5HH3F\",\"ClassName\":\"MSFT_Partition\",\"Path\":null},\"OperationalStatus\":\"Online\",\"Type\":\"Basic\",\"DiskPath\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"ObjectId\":\"{1}\\\\\\\\DESKTOP-EB5HH3F\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\WSP_Partition.ObjectId=\\\"{d0b34ba2-6a7a-11f1-af5d-806e6f6e6963}:PR:{00000000-0000-0000-0000-602e00000000}\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\\\"\",\"PassThroughClass\":null,\"PassThroughIds\":null,\"PassThroughNamespace\":null,\"PassThroughServer\":null,\"UniqueId\":\"{00000000-0000-0000-0000-602e00000000}60022480D158AB31D63CCA3E2EC313EA\",\"AccessPaths\":[\"H:\\\\\",\"\\\\\\\\?\\\\Volume{c291bb81-4155-45e7-ad39-164fd1c3d8b1}\\\\\"],\"DiskId\":\"\\\\\\\\?\\\\scsi#disk\\u0026ven_msft\\u0026prod_virtual_disk#2\\u00261f4adffe\\u00260\\u0026000001#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}\",\"DiskNumber\":1,\"DriveLetter\":\"H\",\"GptType\":\"{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}\",\"Guid\":\"{c291bb81-4155-45e7-ad39-164fd1c3d8b1}\",\"IsActive\":false,\"IsBoot\":false,\"IsDAX\":false,\"IsHidden\":false,\"IsOffline\":false,\"IsReadOnly\":false,\"IsShadowCopy\":false,\"IsSystem\":false,\"MbrType\":null,\"NoDefaultDriveLetter\":false,\"Offset\":778043392,\"PartitionNumber\":4,\"Size\":262144000,\"TransitionState\":1,\"PSComputerName\":null}\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Create Partition - Disk 1 unallocated region at 742.0 MB"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "QuickPartition",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "cd8cc663-4d0e-405b-8677-7212fb599b81",
+            "payload": {
+            },
+            "script_sha256": "d771d03efcc339097d647526c579e73d6ccf73f137768c75559cd2cea60d434a",
+            "summary": "Delete All Partitions - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480D158AB31D63CCA3E2EC313EA",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "1073741824"
+            },
+            "type": "Delete All Partitions",
+            "warnings": [
+            ]
+        },
+        {
+            "id": "2f5c7fec-003f-46bf-a143-d20db94239be",
+            "payload": {
+                "allocation_unit_bytes": "4096",
+                "file_system": "NTFS",
+                "full_format": false,
+                "gpt_type": "{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}",
+                "label": "SAKQP1",
+                "relative_offset_bytes": "0",
+                "size_bytes": "258998272"
+            },
+            "script_sha256": "b26e1b3b77285e1a729c760f0d990e5a307b8fc9bd8322a4fca908d876d3eabf",
+            "summary": "Create Partition - Disk 1 unallocated region at 1.0 MB",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480D158AB31D63CCA3E2EC313EA",
+                "drive_letter": "",
+                "kind": "Unallocated",
+                "offset_bytes": "1048576",
+                "partition_number": 0,
+                "size_bytes": "258998272"
+            },
+            "type": "Create Partition",
+            "warnings": [
+            ]
+        },
+        {
+            "id": "f87a47cd-cf58-4f87-8b46-5c6fc426d0df",
+            "payload": {
+                "allocation_unit_bytes": "4096",
+                "file_system": "NTFS",
+                "full_format": false,
+                "gpt_type": "{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}",
+                "label": "SAKQP2",
+                "relative_offset_bytes": "0",
+                "size_bytes": "258998272"
+            },
+            "script_sha256": "3e1f5621034cda924e908a22a1541d49d7a69d434894309ecb21886bcc78825f",
+            "summary": "Create Partition - Disk 1 unallocated region at 248.0 MB",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480D158AB31D63CCA3E2EC313EA",
+                "drive_letter": "",
+                "kind": "Unallocated",
+                "offset_bytes": "260046848",
+                "partition_number": 0,
+                "size_bytes": "258998272"
+            },
+            "type": "Create Partition",
+            "warnings": [
+            ]
+        },
+        {
+            "id": "595a9ce2-992a-4a7d-915e-b9aa81abb2e9",
+            "payload": {
+                "allocation_unit_bytes": "4096",
+                "file_system": "NTFS",
+                "full_format": false,
+                "gpt_type": "{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}",
+                "label": "SAKQP3",
+                "relative_offset_bytes": "0",
+                "size_bytes": "258998272"
+            },
+            "script_sha256": "70f86a2580496b1bd55c81233d2c589adac3b16417f50a87c31ca5ad2a0fc45c",
+            "summary": "Create Partition - Disk 1 unallocated region at 495.0 MB",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480D158AB31D63CCA3E2EC313EA",
+                "drive_letter": "",
+                "kind": "Unallocated",
+                "offset_bytes": "519045120",
+                "partition_number": 0,
+                "size_bytes": "258998272"
+            },
+            "type": "Create Partition",
+            "warnings": [
+            ]
+        },
+        {
+            "id": "b5376878-9f47-4fd0-91d2-be4072e2b31a",
+            "payload": {
+                "allocation_unit_bytes": "4096",
+                "file_system": "NTFS",
+                "full_format": false,
+                "gpt_type": "{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}",
+                "label": "SAKQP4",
+                "relative_offset_bytes": "0",
+                "size_bytes": "262144000"
+            },
+            "script_sha256": "6132cd75cac8ffb09fb2fa6529691aeb27183094b0cb7caf3aa8da605c1a0055",
+            "summary": "Create Partition - Disk 1 unallocated region at 742.0 MB",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480D158AB31D63CCA3E2EC313EA",
+                "drive_letter": "",
+                "kind": "Unallocated",
+                "offset_bytes": "778043392",
+                "partition_number": 0,
+                "size_bytes": "262144000"
+            },
+            "type": "Create Partition",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "4565d819eff3832be18e683081a02bb22d1e729a8288885c501f7cb69fd0dcab",
+        "layout_hash": "8454f1f61cf9c200e02ebdb329e5da6bd969132d6029accd869028cf2ea13f5c",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.quick-partition",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T15:56:51.677Z",
+    "status": "Passed",
+    "step": "layout",
+    "tool": "partition-manager-scenario-step"
+}

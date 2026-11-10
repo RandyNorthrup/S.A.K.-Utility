@@ -1,0 +1,95 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:12:22.361Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "536870912"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "d734b491-ab49-4a3c-8acf-818e1aaaae4e",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Create Image from \\\\.\\PhysicalDrive1 to C:\\SAKCert\\work\\restore-source.img\r\nRunning full clone verification\r\n",
+                "success": true,
+                "summary": "Create Image - Disk 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "CreateImage",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "d734b491-ab49-4a3c-8acf-818e1aaaae4e",
+            "payload": {
+                "overwrite_confirmed": false,
+                "source_capture_mode": "OfflineDisk",
+                "source_offset_bytes": "0",
+                "source_path": "\\\\.\\PhysicalDrive1",
+                "source_size_bytes": "536870912",
+                "target_path": "C:\\SAKCert\\work\\restore-source.img",
+                "verify_mode": "Full"
+            },
+            "script_sha256": "8b63f5b334c0525e4fe3de8577968b7115d8f16966902c5bb233b778dc693569",
+            "summary": "Create Image - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480DB8FEF77B9A93F11D2C05021",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "536870912"
+            },
+            "type": "Create Image",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "01ec7960917b8c06d07a612afd03a989648f12a7f504c83b6e017a849a86d54e",
+        "layout_hash": "73ea434d20064ee4397cabcf02d04e31ca6d02c7717dd717fe79d1331ec1540f",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.image-restore",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:11:21.186Z",
+    "status": "Passed",
+    "step": "create_image",
+    "tool": "partition-manager-scenario-step"
+}

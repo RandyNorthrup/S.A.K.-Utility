@@ -1,0 +1,20 @@
+{
+    "media_type":  "Unspecified",
+    "rotation_rate_rpm":  5425,
+    "defrag_logged":  true,
+    "files_before":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  65,
+                         "digest":  "3b333ffa50e795fd95063cce8d45b965e104eafa4c6ac7c3fd4413d39bc7e961"
+                     },
+    "files_after":  {
+                        "root":  "T:\\fixture",
+                        "file_count":  65,
+                        "digest":  "3b333ffa50e795fd95063cce8d45b965e104eafa4c6ac7c3fd4413d39bc7e961"
+                    },
+    "health":  {
+                   "repair_scan":  "NoErrorsFound",
+                   "chkdsk_exit_code":  0,
+                   "dirty":  false
+               }
+}

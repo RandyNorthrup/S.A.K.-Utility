@@ -1,0 +1,68 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "external.ssd-retrim",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "dbf4576c-b378-4960-bd27-2d144d5596de",
+    "started_utc":  "2026-11-10T15:53:43.2675868Z",
+    "completed_utc":  "2026-11-10T15:54:28.7185750Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "HP",
+                "machine_model":  "HP EliteDesk 800 G6 Desktop Mini PC",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "physical",
+                  "kind":  "NVMe inside a physical PC",
+                  "model":  "SAMSUNG MZVL2512HCJQ-00BH1",
+                  "bus_type":  "NVMe",
+                  "media_type":  "SSD",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "512110190592",
+                  "serial_sha256":  "53a53c0c25394c9d6ea8ce84e1ac35d148e95e481855f2f4ee42da1540500318"
+              },
+    "steps":  [
+                  {
+                      "id":  "retrim",
+                      "operation":  "OptimizeSsd",
+                      "expect":  "success",
+                      "report":  "retrim.client.json",
+                      "observed":  {
+                                       "client_pid":  14592,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  15068,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "b9ba2e5af5f0faaeaecab68f063147df3d85f4c720eae609ff05d19ded59080d",
+                          "bytes":  992
+                      },
+                      {
+                          "path":  "retrim.client.json",
+                          "sha256":  "6d03b6348383b584703c82cd508ac58a29d220137d747244aa906db6300a1838",
+                          "bytes":  3872
+                      }
+                  ]
+}

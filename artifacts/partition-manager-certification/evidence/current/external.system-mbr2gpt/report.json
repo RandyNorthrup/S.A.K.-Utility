@@ -1,0 +1,73 @@
+{
+  "tool": "partition-manager-row-report",
+  "schema_version": 1,
+  "scenario_id": "external.system-mbr2gpt",
+  "status": "Passed",
+  "failure": "",
+  "run_id": "99f157fa-3318-43c5-b92f-b1d6e8aa5e56",
+  "started_utc": "2026-11-10T18:35:12.6812213Z",
+  "completed_utc": "2026-11-10T18:38:44.8060855Z",
+  "code": {
+    "digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "commit": "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+    "dirty": false
+  },
+  "binaries": {
+    "client_sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+    "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+    "app_sha256": "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+  },
+  "rig": {
+    "machine_manufacturer": "innotek GmbH",
+    "machine_model": "VirtualBox",
+    "firmware": "Legacy",
+    "os_caption": "Microsoft Windows 11 Pro",
+    "os_build": "26200",
+    "consent_prompt_answered_by_policy": true
+  },
+  "media": {
+    "class": "virtual_machine",
+    "kind": "Windows on a VirtualBox VDI",
+    "model": "VBOX HARDDISK",
+    "bus_type": "SATA",
+    "media_type": "Unspecified",
+    "rotation_rate_rpm": 0,
+    "size_bytes": "107374182400",
+    "serial_sha256": "15e3499a31001812a7dd7a2130f6d0d5d45500448419dc0b8a67d506ca9cb274"
+  },
+  "steps": [
+    {
+      "id": "convert",
+      "operation": "ConvertPartitionStyle",
+      "expect": "success",
+      "report": "convert.client.json",
+      "observed": {
+        "client_pid": 9028,
+        "exit_code": 0,
+        "client_token_elevated": false,
+        "helper_pid": 7960,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+        "helper_token_elevated": true
+      }
+    }
+  ],
+  "independent_file": "independent.json",
+  "artifacts": [
+    {
+      "path": "boot-after-conversion.json",
+      "sha256": "69a7dde0bf9e0106145ed6346e142c4a2c55e8bc90f5e5008c88e2c41a1802b3",
+      "bytes": 114
+    },
+    {
+      "path": "convert.client.json",
+      "sha256": "f31acdfd1a3909793a563825d80dea9d78771c038f56d89f8cf452d2a0b9ce78",
+      "bytes": 4079
+    },
+    {
+      "path": "independent.json",
+      "sha256": "2fc56794dd72ba3de0ce9bb27bd3fa212b801768d98a96c80196a695fa87e5f6",
+      "bytes": 41162
+    }
+  ]
+}

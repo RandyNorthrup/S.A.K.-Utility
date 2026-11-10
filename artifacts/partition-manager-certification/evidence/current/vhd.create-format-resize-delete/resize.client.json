@@ -1,0 +1,90 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T15:55:39.436Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "665535e6-c40a-44fe-b335-fbcd591ea93c",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Resize Disk 1 Partition 2 to 384.0 MB\r\n",
+                "success": true,
+                "summary": "Resize Partition - Disk 1 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "Resize",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "665535e6-c40a-44fe-b335-fbcd591ea93c",
+            "payload": {
+                "adjacent_free_bytes": "788529152",
+                "target_size_bytes": "402653184"
+            },
+            "script_sha256": "b94f2d1af1dbba225a04c5093ab11dd8d808ebb1c3027c86410ae4ffad5b60ce",
+            "summary": "Resize Partition - Disk 1 Partition 2",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "6002248010491C97D9EF24756AD36D39",
+                "drive_letter": "E",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "268435456"
+            },
+            "type": "Resize Partition",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "ab5b47822e7565457b6ddef4dde9387025e6943f29672eb46b98bf705752843a",
+        "layout_hash": "8f60a9fd13d1f87ad1112feafcee9aa05daaf7577d75f5da92359012f9e830d9",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.create-format-resize-delete",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T15:55:10.494Z",
+    "status": "Passed",
+    "step": "resize",
+    "tool": "partition-manager-scenario-step"
+}

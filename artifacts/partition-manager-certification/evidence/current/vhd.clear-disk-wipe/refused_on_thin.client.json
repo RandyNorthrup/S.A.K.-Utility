@@ -1,0 +1,88 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:28:24.946Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 2,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "268435456"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed.",
+        "steps": [
+            {
+                "error_message": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed.",
+                "operation_id": "4db6a7ba-b31f-484d-a2c3-0507a7b02044",
+                "skipped": false,
+                "stderr": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. \r\nNothing was changed.\r\nAt line:3 char:80\r\n+ ... q 'Thin') { throw 'Wipe Disk needs a full format, and Windows does no ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : OperationStopped: (Wipe Disk needs...ng was changed.:String) [], RuntimeException\r\n    + FullyQualifiedErrorId : Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk \r\n   , such as a virtual disk file. Nothing was changed.\r\n \r\n",
+                "stdout": "SAK Partition Manager: Wipe Disk 2\r\n",
+                "success": false,
+                "summary": "Wipe Disk - Disk 2"
+            }
+        ],
+        "success": false,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "failed",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "WipeDisk",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "4db6a7ba-b31f-484d-a2c3-0507a7b02044",
+            "payload": {
+            },
+            "script_sha256": "804c73dc6d5b4fbae53e20fa96676f91db47fe438d3005c28266835a4fb028eb",
+            "summary": "Wipe Disk - Disk 2",
+            "target": {
+                "disk_number": 2,
+                "disk_unique_id": "60022480978111E6ADDF3B577ECF324D",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "268435456"
+            },
+            "type": "Wipe Disk",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "dca44cf7d9f7d01807331fbc602b8f831e8cb9d3a9d4f58403147923748cb16b",
+        "layout_hash": "b15e34d3db7c2d1c84453db36117d4d71cfff12ed3e37bef812b8ccd88e03162",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "2b9ac762-54b4-4554-886f-995218727b0c",
+    "scenario_id": "vhd.clear-disk-wipe",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:28:09.209Z",
+    "status": "Passed",
+    "step": "refused_on_thin",
+    "tool": "partition-manager-scenario-step"
+}

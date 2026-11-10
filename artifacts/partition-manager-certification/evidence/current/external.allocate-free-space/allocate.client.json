@@ -1,0 +1,98 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:15:44.729Z",
+    "disk_before": {
+        "bus_type": "USB",
+        "disk_number": 3,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Seagate Expansion Desk",
+        "partition_count": 3,
+        "partition_style": "GPT",
+        "serial_sha256": "0e434ef9d4c8ca050e8fa2236522db797182adb708af387035dfddf2be557b2d",
+        "size_bytes": "8001563221504"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "d6a60c5d-2fd8-4c2b-a2a0-a2d1fc9394c8",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Allocate 64.0 MB from Disk 3 Partition 3 to Partition 2\r\nBacking up donor U:\\ to C:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:15:28 AM\r\n   Source : C:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\\r\n\t  New Dir          5\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-392be680f578416d92a78678e5aa68a4\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           123,548,734 Bytes/sec.\r\n   Speed :             7,069.515 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:15:28 AM\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:15:33 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\\r\n     Dest : U:\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\\r\n\t  New Dir          5\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.allocate-free-space\\sak-allocate-backup-60928f7b3b36444da7d456876782fcab\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         1\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           131,606,260 Bytes/sec.\r\n   Speed :             7,530.571 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:15:33 AM\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nU           SAKDONOR     NTFS           Fixed     Healthy      OK                     304.7 MB 320 MB\r\nNoErrorsFound\r\nNoErrorsFound\r\n\r\n\r\n\r\nDiskNumber PartitionNumber DriveLetter    Offset      Size Type    \r\n---------- --------------- -----------    ------      ---- ----    \r\n         3               1           \u0000     17408  16759808 Reserved\r\n         3               2           T  16777216 268435456 Basic   \r\n         3               3           U 285212672 335544320 Basic   \r\n\r\n\r\n",
+                "success": true,
+                "summary": "Allocate Free Space - Disk 3 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "AllocateFreeSpace",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "d6a60c5d-2fd8-4c2b-a2a0-a2d1fc9394c8",
+            "payload": {
+                "backup_directory": "C:\\SAKCert\\work\\backup-external.allocate-free-space",
+                "backup_volume_guid": "\\\\?\\VOLUME{A0941E0D-16DB-4D04-ADF3-270F0EC76BFC}\\",
+                "backup_volume_identity_error": "",
+                "bytes_to_allocate": "67108864",
+                "source_drive_letter": "U",
+                "source_file_system": "NTFS",
+                "source_label": "SAKDONOR",
+                "source_partition_number": "3",
+                "source_size_bytes": "402653184",
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "7a0622e5e5cc66142a6f8d6acb8b237008607722b0bfa95572c15baa172f7a92",
+            "summary": "Allocate Free Space - Disk 3 Partition 2",
+            "target": {
+                "disk_number": 3,
+                "disk_unique_id": "3E4141413351564B",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "201326592"
+            },
+            "type": "Allocate Free Space",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "7983fd16b2c6ac3375e528eb955be5274ccbe16dcda08cd6b8a90ddca15faa3c",
+        "layout_hash": "585cd4ca86e827b148b971de5eb4ddae55bda985a67080ee62ce099b512e7177",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "ae08318e-a0ac-4dda-a9d0-c8c3a0d2444f",
+    "scenario_id": "external.allocate-free-space",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:15:16.988Z",
+    "status": "Passed",
+    "step": "allocate",
+    "tool": "partition-manager-scenario-step"
+}

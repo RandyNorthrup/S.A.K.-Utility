@@ -1,0 +1,88 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:13:47.964Z",
+    "disk_before": {
+        "bus_type": "USB",
+        "disk_number": 3,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Seagate Expansion Desk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "0e434ef9d4c8ca050e8fa2236522db797182adb708af387035dfddf2be557b2d",
+        "size_bytes": "8001563221504"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "b2c08e66-09c1-48ab-a7c0-2d3aac10fee0",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Delete Disk 3 Partition 2\r\n",
+                "success": true,
+                "summary": "Delete Partition - Disk 3 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "Delete",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "b2c08e66-09c1-48ab-a7c0-2d3aac10fee0",
+            "payload": {
+            },
+            "script_sha256": "b272d8d242874138c779d9c11dc88356d4b3ceaace4c26d881caf21af71f37d3",
+            "summary": "Delete Partition - Disk 3 Partition 2",
+            "target": {
+                "disk_number": 3,
+                "disk_unique_id": "3E4141413351564B",
+                "drive_letter": "D",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "1073741824"
+            },
+            "type": "Delete Partition",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "8832f8f362a8d0438e76cce7b40a84944effb9d5c7de34b84e8d3d2f82baaf7b",
+        "layout_hash": "ea782dc5eb6c2eb9aeb0296eb59fde15bf7a865b599bd5bf5974d926a17982b1",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "76cd81fd-2359-4d47-952e-c8ebff17e70b",
+    "scenario_id": "external.usb-removable",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:13:31.737Z",
+    "status": "Passed",
+    "step": "delete",
+    "tool": "partition-manager-scenario-step"
+}

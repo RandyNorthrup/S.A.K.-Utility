@@ -1,0 +1,97 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:14:17.158Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 2,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 1,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "805306368"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "4007bec7-e482-4cf7-bea3-ca90d661fc2e",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Restore Image from C:\\SAKCert\\work\\restore-source.img to \\\\.\\PhysicalDrive2\r\nRestore Image content fingerprint verified\r\n",
+                "success": true,
+                "summary": "Restore Image - Disk 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "RestoreImage",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "4007bec7-e482-4cf7-bea3-ca90d661fc2e",
+            "payload": {
+                "source_path": "C:\\SAKCert\\work\\restore-source.img",
+                "source_sha256": "392255628bffd0584fe373b0b54348fd97e152316ea8c07ee2d1f2c341b48fc0",
+                "source_size_bytes": "536870912",
+                "target_disk_serial_number": "",
+                "target_disk_size_bytes": "805306368",
+                "target_disk_unique_id": "60022480D529A52EFE9524C757859F59",
+                "target_path": "\\\\.\\PhysicalDrive2",
+                "target_size_bytes": "805306368",
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "09befa9581bab8ba1fb6228a09fee80bc602214d83f0416b4dba74815c51d88b",
+            "summary": "Restore Image - Disk 2",
+            "target": {
+                "disk_number": 2,
+                "disk_unique_id": "60022480D529A52EFE9524C757859F59",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "805306368"
+            },
+            "type": "Restore Image",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "b5450a13bd937f28642953db2c0bc9ac4d15ee8042ebe90aa0323d1987b00126",
+        "layout_hash": "73ea434d20064ee4397cabcf02d04e31ca6d02c7717dd717fe79d1331ec1540f",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.image-restore",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:13:26.977Z",
+    "status": "Passed",
+    "step": "restore_image",
+    "tool": "partition-manager-scenario-step"
+}

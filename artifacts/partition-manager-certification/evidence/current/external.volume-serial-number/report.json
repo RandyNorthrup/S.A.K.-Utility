@@ -1,0 +1,68 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "external.volume-serial-number",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "ae08318e-a0ac-4dda-a9d0-c8c3a0d2444f",
+    "started_utc":  "2026-11-10T16:17:09.6011213Z",
+    "completed_utc":  "2026-11-10T16:17:45.5062786Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "HP",
+                "machine_model":  "HP EliteDesk 800 G6 Desktop Mini PC",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "physical",
+                  "kind":  "USB on a physical PC",
+                  "model":  "Seagate Expansion Desk",
+                  "bus_type":  "USB",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  5425,
+                  "size_bytes":  "8001563221504",
+                  "serial_sha256":  "0e434ef9d4c8ca050e8fa2236522db797182adb708af387035dfddf2be557b2d"
+              },
+    "steps":  [
+                  {
+                      "id":  "change",
+                      "operation":  "ChangeVolumeSerialNumber",
+                      "expect":  "success",
+                      "report":  "change.client.json",
+                      "observed":  {
+                                       "client_pid":  5996,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  1380,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "e51554aaecfbc06bfee4bcb54ccda8d680dfbf655baf8c494f06e73b018d9003",
+                          "bytes":  1208
+                      },
+                      {
+                          "path":  "change.client.json",
+                          "sha256":  "5e74cc2a75d30f3f25fdd5950c85709b4de076c68f586d4963929bec180cf90b",
+                          "bytes":  9169
+                      }
+                  ]
+}

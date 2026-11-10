@@ -1,0 +1,88 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "vhd.image-restore",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "started_utc":  "2026-11-10T16:10:39.5615428Z",
+    "completed_utc":  "2026-11-10T16:21:17.0326134Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "innotek GmbH",
+                "machine_model":  "VirtualBox",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "virtual_disk",
+                  "kind":  "VHDX in a VM",
+                  "model":  "Msft Virtual Disk",
+                  "bus_type":  "File Backed Virtual",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "536870912",
+                  "serial_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+    "steps":  [
+                  {
+                      "id":  "create_image",
+                      "operation":  "CreateImage",
+                      "expect":  "success",
+                      "report":  "create_image.client.json",
+                      "observed":  {
+                                       "client_pid":  8880,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  8156,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  },
+                  {
+                      "id":  "restore_image",
+                      "operation":  "RestoreImage",
+                      "expect":  "success",
+                      "report":  "restore_image.client.json",
+                      "observed":  {
+                                       "client_pid":  1232,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  7524,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "5e25dae947e5c33cd204d3291706dc083ebe55a01e89764e2063e8f793a86497",
+                          "bytes":  1720
+                      },
+                      {
+                          "path":  "create_image.client.json",
+                          "sha256":  "adbd0c9fdd2b3fbed9b5f5ea805f6c73dab26df42e4c7d0a664cca5410c40085",
+                          "bytes":  3531
+                      },
+                      {
+                          "path":  "restore_image.client.json",
+                          "sha256":  "4d81b6c97b8c5512f95e217f574bad6b053b07912399d7cc60adfe2b4987932a",
+                          "bytes":  3744
+                      }
+                  ]
+}

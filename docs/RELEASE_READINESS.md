@@ -1533,7 +1533,7 @@ top). Judgement calls and items that were not defects are named below.
 
 **Read-back from the media (release item).** A check that reads back what was just written proves nothing about
 the drive when Windows answers the read from the pages it still holds from the write. Measured read-only on
-testpc1's USB DISK 3.0 stick (pinned by model, serial 067D19C65080 and size 31042043904): install2.swm, 2,839,447,229
+testpc1's USB DISK 3.0 stick (pinned by model, serial and size 31042043904): install2.swm, 2,839,447,229
 bytes on its FAT32 volume, read with an ordinary buffered handle took 44.3 s and then 0.5 s (5.4 GB/s, the cache),
 and with FILE_FLAG_NO_BUFFERING 44.2 s (61.3 MB/s, the stick). The raw device \\.\PhysicalDrive3 read 1 GiB in 16.2 s
 buffered, twice, and 16.2 s unbuffered: Windows does not cache a raw disk handle. So the paths at risk were the ones
@@ -1834,7 +1834,7 @@ wrong is that the wizard took that place to a review saying Apply would create i
 validator, refused it. The page now runs the queue's own check (`PartitionSafetyValidator::validate` on the operation
 Finish would queue, against the inventory the wizard opened on) as each field changes, says in red why a place
 cannot be written back, and keeps Next off. Proved on testpc1 with Rig A built on the disposable Seagate (pinned by
-model, serial NAAA3QVK and size 8001563221504): MSR at 17408, E: 3 GB at 16 MiB, F: 2 GB at 3238002688, the VM's
+model, serial and size 8001563221504): MSR at 17408, E: 3 GB at 16 MiB, F: 2 GB at 3238002688, the VM's
 layout exactly. With this round's package, at 1048576 for 1073741824 the page read "This candidate cannot be written
 back: Recovered partition candidate overlaps an existing partition." in red with Next off, in light and dark; at
 6442450944 for 1073741824, in the free space after F:, it took the place and its Review read "Write-back candidate:
@@ -1847,7 +1847,7 @@ operation was refused at the queue ("Dynamic-to-basic conversion requires one mo
 had it reached the helper, its script refuses a disk that is not dynamic ("Disk N is not a dynamic disk now") before
 it backs anything up, deletes a volume or runs diskpart; nothing would have changed. The ribbon button and the menu
 entry are grayed out for a basic disk with the reason as their tip, and the action itself warns instead of opening.
-Proved on testpc1 with Rig D, the disposable USB DISK 3.0 stick (pinned by serial 067D19C65080 and size 31042043904)
+Proved on testpc1 with Rig D, the disposable USB DISK 3.0 stick (pinned by serial and size 31042043904)
 as Disk 3, basic MBR with one NTFS volume: with Disk 3 picked, its menu shows Convert Dynamic Disk to Basic grayed
 out. Nothing was converted. Windows does not make a USB disk dynamic, so a dynamic disk's case is the unit test's
 and the capture VM's.
@@ -2626,6 +2626,12 @@ operation stays in the queue as pending, to be applied again or removed, and doe
 - The assistant's apply-result path (`cancelledApplyResult` in `app_mutating_actions.cpp`) has no unit test.
 - The marker strip on the elevated path has no direct test; the VM re-check's Log window is its only proof.
 - A shadow copy that is created but cannot be read back is left behind by a step that succeeds (logged as INCOMPLETE in this file).
+- The step client writes the storage objects it reads into its reports as Windows gives them, and each carries the
+  local computer name: `"ServerName":"<name>"` and the host part of its ObjectId (`{1}\\<name>\root/...`). The
+  certified evidence at ab9cc504 holds the lab VM's random name (DESKTOP-EB5HH3F, 50 times in 6 files) and the label
+  TESTPC2 (4 times, `external.usb-removable`), accepted for 0.9.3 (no domain, user or address). The step client should
+  drop ServerName and the ObjectId's host from what it serialises; and every future run's PcFile should list the PC's
+  own computer name in `deny_names`, so selection refuses evidence that carries it.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
@@ -3966,7 +3972,7 @@ Required before a release candidate is published:
   create-directory, write/read, duplicate finder scan, advanced search,
   delete-file, negative read, and delete-directory at
   `artifacts\file-management-live-certification\disk2-apfs-script-after-fix\file-management-live-certification.json`;
-  HFS+ on Best Buy serial `DD564198838A8`, disk 3 partition 3, passed the same
+  HFS+ on the Best Buy NVMe enclosure, disk 3 partition 3, passed the same
   lane plus rename at
   `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
   APFS destructive File Management proof is Apple-native certified across the
@@ -4364,7 +4370,7 @@ known expendable external media:
 powershell -NoProfile -File `
   scripts\launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1 `
   -DiskNumber 2 `
-  -ExpectedSerialNumber DD564198838A8 `
+  -ExpectedSerialNumber <serial> `
   -ExpectedFriendlyNamePattern "Best Buy|NS-PCNVMEHDE" `
   -Force
 ```

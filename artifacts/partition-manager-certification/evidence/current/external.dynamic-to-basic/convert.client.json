@@ -1,0 +1,96 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:38:54.522Z",
+    "disk_before": {
+        "bus_type": "IDE",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "VBOX HARDDISK",
+        "partition_count": 1,
+        "partition_style": "MBR",
+        "serial_sha256": "d948abc71d7fa5c1f3cbc5f9ad36d52e034fdb2a8cc28904dad5af90999f7c00",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "89eb2183-05c3-44e8-b23c-a5382347f8c7",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Convert Dynamic Disk 1 to Basic\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:38:39 AM\r\n   Source : C:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\\r\n\t  New Dir          5\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-09bc4109e8a345a68698c8e6f94e8358\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           147,655,804 Bytes/sec.\r\n   Speed :             8,448.933 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:38:39 AM\r\n\r\nMicrosoft DiskPart version 10.0.26100.1150\r\n\r\nCopyright (C) Microsoft Corporation.\r\nOn computer: DESKTOP-EB5HH3F\r\n\r\nVolume 0 is the selected volume.\r\n\r\nDiskPart successfully deleted the volume.\r\n\r\nDisk 1 is now the selected disk.\r\n\r\nDiskPart successfully converted the selected disk to basic format.\r\n\r\nDiskPart succeeded in creating the specified partition.\r\n\r\n\r\n    0 percent completed\r\n  100 percent completed\r\n\r\n\r\nDiskPart successfully formatted the volume.\r\n\r\nDiskPart successfully assigned the drive letter or mount point.\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:38:43 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\\r\n     Dest : T:\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\\r\n\t  New Dir          5\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.dynamic-to-basic\\sak-dynamic-basic-backup-8fd41af031c546c09c5d2e2801d52d95\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           208,754,758 Bytes/sec.\r\n   Speed :            11,945.043 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:38:43 AM\r\n\r\nNoErrorsFound\r\n\r\n\r\nNumber         : 1\r\nPartitionStyle : MBR\r\nIsBoot         : False\r\nIsSystem       : False\r\nIsReadOnly     : False\r\n\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Convert Dynamic Disk to Basic - Disk 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "ConvertDynamicDiskToBasic",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "89eb2183-05c3-44e8-b23c-a5382347f8c7",
+            "payload": {
+                "backup_directory": "C:\\SAKCert\\work\\backup-external.dynamic-to-basic",
+                "backup_volume_guid": "\\\\?\\VOLUME{92E38F2A-9B38-4F3D-B65E-8472CA9BBC3B}\\",
+                "backup_volume_identity_error": "",
+                "drive_letter": "T",
+                "file_system": "NTFS",
+                "label": "SAKDYN",
+                "source_size_bytes": "402653184",
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "ed2e1b06665115f9e732e9f4bfe60d331b0c23a6be7d658f38c84aac33a6b3b9",
+            "summary": "Convert Dynamic Disk to Basic - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "dynamic:0bdc509a",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "1073741824"
+            },
+            "type": "Convert Dynamic Disk to Basic",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "4ebce66eb1cd228216ba69423a2eb0727d1f8832da64f9d350aad0428e0e4f06",
+        "layout_hash": "416f53dcde393029c467bbee8a8f6389a31c022f66b95b2d20e94ca921ad7e2c",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "6fc109ad-a070-468f-add2-4f5f29f8a51c",
+    "scenario_id": "external.dynamic-to-basic",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:38:20.859Z",
+    "status": "Passed",
+    "step": "convert",
+    "tool": "partition-manager-scenario-step"
+}

@@ -1,0 +1,96 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:17:02.608Z",
+    "disk_before": {
+        "bus_type": "USB",
+        "disk_number": 3,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Seagate Expansion Desk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "0e434ef9d4c8ca050e8fa2236522db797182adb708af387035dfddf2be557b2d",
+        "size_bytes": "8001563221504"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "d20124d2-ad51-4d67-8968-71e78a8d0429",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Change T: cluster size to 16384 bytes\r\nBacking up T:\\ to C:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:16:50 AM\r\n   Source : C:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\\r\n\t  New Dir          6\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t    New File  \t\t      13\tmetadata.txt\r 41%  \r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-35200e9a430c446abb41b6c967850088\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         9         9         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           90,356,731 Bytes/sec.\r\n   Speed :            5,170.253 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:16:51 AM\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:16:54 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\\r\n     Dest : T:\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\\r\n\t  New Dir          6\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t    New File  \t\t      13\tmetadata.txt\r 41%  \r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.cluster-size-change\\sak-cluster-backup-8666b50ae8c04c9fa6e2052489ec5189\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         1\r\n   Files :         9         9         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           123,549,000 Bytes/sec.\r\n   Speed :             7,069.530 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:16:54 AM\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\nT           SAKCLUSTER   NTFS           Fixed     Healthy      OK                    367.97 MB 383.98 MB\r\nNoErrorsFound\r\nVolume Name : SAKCLUSTER\r\nVolume Serial Number : 0xece4f30b\r\nMax Component Length : 255\r\nFile System Name : NTFS\r\nIs ReadWrite\r\nNot Thinly-Provisioned\r\nSupports Case-sensitive filenames\r\nPreserves Case of filenames\r\nSupports Unicode in filenames\r\nPreserves & Enforces ACL's\r\nSupports Disk Quotas\r\nSupports Sparse files\r\nSupports Reparse Points\r\nReturns Handle Close Result Information\r\nSupports POSIX-style Unlink and Rename\r\nSupports Bypass IO\r\nSupports Case-Sensitive Directories\r\nSupports Object Identifiers\r\nSupports Encrypted File System\r\nSupports Named Streams\r\nSupports Transactions\r\nSupports Hard Links\r\nSupports Extended Attributes\r\nSupports Open By FileID\r\nSupports USN Journal\r\nNTFS Volume Serial Number :        0xa6ece527ece4f30b\r\nNTFS Version      :                3.1\r\nLFS Version       :                1.1\r\nTotal Sectors     :                786,431  (384.0 MB)\r\nTotal Clusters    :                 24,575  (384.0 MB)\r\nFree Clusters     :                 23,431  (366.1 MB)\r\nTotal Reserved Clusters :              256  (  4.0 MB)\r\nReserved For Storage Reserve :           0  (  0.0 KB)\r\nBytes Per Sector  :                512\r\nBytes Per Physical Sector :        4096\r\nBytes Per Cluster :                16384  (16 KB)\r\nBytes Per FileRecord Segment    :  1024\r\nClusters Per FileRecord Segment :  0\r\nMft Valid Data Length :            256.00 KB\r\nMft Start Lcn  :                   0x0000000000002000\r\nMft2 Start Lcn :                   0x0000000000000001\r\nMft Zone Start :                   0x0000000000002000\r\nMft Zone End   :                   0x0000000000002c00\r\nMFT Zone Size  :                   48.00 MB\r\nMax Device Trim Extent Count :     0\r\nMax Device Trim Byte Count :       0\r\nMax Volume Trim Extent Count :     62\r\nMax Volume Trim Byte Count :       0x40000000\r\nResource Manager Identifier :      AD940FCA-DD21-11F1-A35A-0093374329CE\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Change Cluster Size - Disk 3 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "ChangeClusterSize",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "d20124d2-ad51-4d67-8968-71e78a8d0429",
+            "payload": {
+                "allocation_unit_bytes": "16384",
+                "backup_directory": "C:\\SAKCert\\work\\backup-external.cluster-size-change",
+                "backup_volume_guid": "\\\\?\\VOLUME{A0941E0D-16DB-4D04-ADF3-270F0EC76BFC}\\",
+                "backup_volume_identity_error": "",
+                "drive_letter": "T",
+                "file_system": "NTFS",
+                "label": "SAKCLUSTER",
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "a35b3d11de43ccfe06f6a9c93021fc6d334d0df175dbd3a6d54f22c56df00025",
+            "summary": "Change Cluster Size - Disk 3 Partition 2",
+            "target": {
+                "disk_number": 3,
+                "disk_unique_id": "3E4141413351564B",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "402653184"
+            },
+            "type": "Change Cluster Size",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "cd2acab5e8c32925f5e8a1629fec690b460d41b506236a13455d1250333f562c",
+        "layout_hash": "5bdc544da8ada94f1232bce05509b191e0d791135b858efc7d219ba0f04ec7bb",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "ae08318e-a0ac-4dda-a9d0-c8c3a0d2444f",
+    "scenario_id": "external.cluster-size-change",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:16:39.604Z",
+    "status": "Passed",
+    "step": "change",
+    "tool": "partition-manager-scenario-step"
+}
