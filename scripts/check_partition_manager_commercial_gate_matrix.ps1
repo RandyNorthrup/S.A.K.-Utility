@@ -175,7 +175,7 @@ $gates = @(
         name = "Direct HDD defrag execution"
         ids = @("external.hdd-defrag-execution")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Disk Defrag", "Queue HDD defrag through cancellable elevated Apply") },
+            @{ path = $uiPath; patterns = @("Disk Defrag", "Queue HDD defrag through elevated Apply") },
             @{ path = $panelTestPath; patterns = @("Disk Defrag", "Queue HDD defrag") }
         )
     },

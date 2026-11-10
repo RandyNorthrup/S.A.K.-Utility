@@ -8,6 +8,37 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
+  It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,
+  or one before anything was sent; a step stopped while Windows carries its work on still reads "May still be running
+  in Windows". A step's output no longer keeps the empty lines that stood around the markers taken out of it.
+- **Wipe Disk works on a new drive** - A disk with no partition table failed at once with "Clear-Disk : The disk has
+  not been initialized." Wipe Disk now clears only a disk that has a table, and on a new one starts from initializing
+  it; the rest of the wipe is unchanged.
+- **The close prompt reads right and follows the work** - It asked "Partition changes is running. Exit anyway?". Every
+  close and restart prompt now reads "Still running: <names>." followed by "Cancel and exit?", "Cancel and restart as
+  administrator?", "Exit anyway?" or "Restart as administrator anyway?", whatever the names are. While it is open it
+  follows the work it asks about: when a step Windows was carrying out ends, its note goes; when the work ends, the
+  prompt closes before the work's result appears, so "complete" never opens over a prompt still saying "running".
+- **No internal lines in the log** - The lines Partition Manager's scripts write for the application (the markers of a
+  step Windows carries out, and the cleanup's) no longer reach the Log window, a result or a report.
+- **A stopped step's leftovers are removed** - Cancelling or closing kills a step's script, and the cleanup at its
+  end never ran: a step that backs a volume up first (Allocate Free Space, Change Cluster Size, Move, Primary/Logical,
+  Volume Serial, Dynamic-to-Basic) left its VSS shadow copy and that copy's link in the temp folder, and Wipe Free
+  Space left cipher's EFSTMPWP folder of fill files on the volume. Each script now names what it makes the moment it
+  exists, and after a stop S.A.K. Utility removes exactly those: a shadow copy only by its own ID, its link only while
+  it is still a link, and cipher's folder only when it was not there before the wipe started and holds nothing but
+  plain files. The result says what was removed and what could not be, with why.
+- **Cancel no longer calls work Windows goes on with "cancelled"** - A full format (Wipe Disk, Wipe Partition, and
+  Format or Create with a full format), a defrag, an SSD ReTrim, a partition shrink (Resize, Split) and a file system
+  scan are carried out by Windows, which finishes them after S.A.K. Utility stops the step's script: a Wipe Disk's
+  full format kept writing for half an hour after the app and its helper were gone, while the app said "Partition
+  operation batch cancelled". While Windows has such a step, Partition Manager's Cancel is off and the panel says the
+  step cannot be stopped once it has started and that Windows continues it even if S.A.K. Utility is closed, with
+  when it started and that no time estimate is available. Closing then asks "Exit anyway?" and says closing will not
+  stop it, instead of offering "Exit after cancelling". A batch stopped while such a step ran names that step as
+  possibly still running in Windows, and a Check Disk Errors run stopped during a drive's scan says Windows may still
+  finish that read-only scan. The Optimize Drives dialog no longer calls the defrag and the ReTrim "cancellable".
 - **Reset Network keeps settings typed in by hand** - Windows' TCP/IP reset clears an adapter's static IPv4 setup,
   and on a stock Windows 11 the adapter came back with only a self-assigned 169.254.x.x address, no gateway and no
   working DNS, before and after the restart, with no warning. Reset Network now reads every adapter first and names,

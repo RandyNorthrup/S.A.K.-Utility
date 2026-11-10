@@ -28,6 +28,14 @@ struct StorageInventoryScanResult {
 inline constexpr int kInventoryScanIdleLimitMs = 30'000;
 /// However much progress it makes, a scan ends here.
 inline constexpr int kInventoryScanCeilingMs = 300'000;
+/// The longest one call in a scan may wait. Right after a clone's raw write took a disk offline and
+/// online, the Storage WMI provider took 36 s to load again before Get-PhysicalDisk answered
+/// (2026-11-09); this is that, with room.
+inline constexpr int kInventoryQueryCapSeconds = 90;
+/// How often a call that is still waiting says so, well inside the idle limit.
+inline constexpr int kInventoryHeartbeatSeconds = 5;
+/// The exit code of a scan that stopped at a step it cannot go on without.
+inline constexpr int kInventoryScanDidNotFinishExitCode = 3;
 
 /// How far a scan has got: the disk it is on, of how many.
 struct InventoryScanProgress {
@@ -124,8 +132,10 @@ public:
         const InventoryScanLimits& limits,
         const CancelCheck& should_cancel,
         const InventoryScanProgressCallback& on_progress);
-    /// PowerShell function Invoke-SakBoundedQuery: starts a storage query as a job and gives it a
-    /// set time, so one volume that does not answer is that volume's error. Public for a test.
+    /// PowerShell functions Invoke-SakBoundedQuery (a storage query run as a job) and
+    /// Invoke-SakBoundedCall (any other call, in a runspace of its own): each gives a call a set
+    /// time, says every few seconds that it is still waiting, and reports a call that ran out of
+    /// time by its step. Stop-SakScan ends a scan that cannot go on. Public for a test.
     [[nodiscard]] static QString boundedQueryFunctionScript();
     /// The scan a press of Apply runs before it writes anything, and again afterwards. It runs in
     /// the session's elevated helper, whose start is the job's one prompt, so it reads what the

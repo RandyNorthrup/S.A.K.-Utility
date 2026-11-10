@@ -534,6 +534,8 @@ set(SAK_CORE_SOURCES
     ${SAK_PARTITION_SCRIPTS_CPP}
     src/core/partition_operation_queue.cpp
     src/core/partition_executor.cpp
+    src/core/windows_continued_work.cpp
+    src/core/partition_stop_cleanup.cpp
     src/core/partition_manager_controller.cpp
     src/core/partition_report_generator.cpp
     include/sak/crash_reporter.h

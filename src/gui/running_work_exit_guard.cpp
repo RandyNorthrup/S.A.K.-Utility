@@ -12,6 +12,7 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QWidget>
 
 #include <utility>
@@ -51,8 +52,9 @@ bool RunningWorkExitGuard::proceedNowOrAfterCancelling(Intent intent,
     logInfo("{} requested while running: {}",
             intent == Intent::Exit ? "Exit" : "Restart as administrator",
             running.join(QStringLiteral(", ")).toStdString());
-    if (!askToCancel(intent, running)) {
-        logInfo("Exit declined; running work continues");
+    if (!askToCancel(intent, running, RunningOperations::cannotStopNotes())) {
+        logInfo(m_prompt_outlived ? "The work the exit prompt asked about ended; nothing cancelled"
+                                  : "Exit declined; running work continues");
         return false;
     }
     RunningOperations::cancelAllRunning();
@@ -64,17 +66,17 @@ bool RunningWorkExitGuard::isWaitingForCancellation() const {
     return m_poll.isActive();
 }
 
+// "Still running: X." reads right whatever X is: one name or several, and a name that is itself
+// a plural ("Partition changes is running" did not). The question after it has no pronoun to
+// agree with the names either.
+QString RunningWorkExitGuard::stillRunning(const QStringList& names) {
+    return tr("Still running: %1.").arg(joinedNames(names));
+}
+
 QString RunningWorkExitGuard::question(Intent intent, const QStringList& names) {
-    const bool one = names.size() == 1;
-    const QString running = one ? tr("%1 is running.").arg(joinedNames(names))
-                                : tr("%1 are running.").arg(joinedNames(names));
-    if (intent == Intent::RestartElevated) {
-        return running + QLatin1Char(' ') +
-               (one ? tr("Cancel it and restart as administrator?")
-                    : tr("Cancel them and restart as administrator?"));
-    }
-    return running + QLatin1Char(' ') +
-           (one ? tr("Cancel it and exit?") : tr("Cancel them and exit?"));
+    return stillRunning(names) + QLatin1Char(' ') +
+           (intent == Intent::RestartElevated ? tr("Cancel and restart as administrator?")
+                                              : tr("Cancel and exit?"));
 }
 
 QString RunningWorkExitGuard::proceedButtonText(Intent intent) {
@@ -82,25 +84,79 @@ QString RunningWorkExitGuard::proceedButtonText(Intent intent) {
                                              : tr("Exit after cancelling");
 }
 
+QString RunningWorkExitGuard::questionWhenSomeCannotStop(Intent intent, const QStringList& names) {
+    return stillRunning(names) + QLatin1Char(' ') +
+           (intent == Intent::RestartElevated ? tr("Restart as administrator anyway?")
+                                              : tr("Exit anyway?"));
+}
+
+QString RunningWorkExitGuard::proceedAnywayButtonText(Intent intent) {
+    return intent == Intent::RestartElevated ? tr("Restart anyway") : tr("Exit anyway");
+}
+
+QString RunningWorkExitGuard::informativeText(const QStringList& cannot_stop_notes) {
+    if (cannot_stop_notes.isEmpty()) {
+        return tr(
+            "Each operation is asked to stop at its next safe point, and S.A.K. Utility "
+            "waits for it before it closes.");
+    }
+    return cannot_stop_notes.join(QStringLiteral("\n\n")) + QStringLiteral("\n\n") +
+           tr("Everything else S.A.K. Utility can stop is asked to stop at its next safe point, "
+              "and S.A.K. Utility waits for that before it closes.");
+}
+
 QString RunningWorkExitGuard::stoppingText(const QStringList& names) {
     return tr("Waiting for %1 to stop...").arg(joinedNames(names));
 }
 
-bool RunningWorkExitGuard::askToCancel(Intent intent, const QStringList& names) {
+bool RunningWorkExitGuard::askToCancel(Intent intent,
+                                       const QStringList& names,
+                                       const QStringList& cannot_stop_notes) {
+    m_prompt_outlived = false;
     QMessageBox box(m_window);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("S.A.K. Utility"));
-    box.setText(question(intent, names));
-    box.setInformativeText(
-        tr("Each operation is asked to stop at its next safe point, and S.A.K. Utility waits for "
-           "it before it closes."));
-    const QPushButton* const go_ahead = box.addButton(proceedButtonText(intent),
-                                                      QMessageBox::AcceptRole);
+    QPushButton* const go_ahead = box.addButton(QString(), QMessageBox::AcceptRole);
     QPushButton* const keep_running = box.addButton(QMessageBox::Cancel);
     box.setDefaultButton(keep_running);
     box.setEscapeButton(keep_running);
+    showPrompt(&box, go_ahead, intent, names, cannot_stop_notes);
+    // While the prompt is open it follows the work it asks about: a note that goes is taken out,
+    // and work that ends closes it before that work's result appears over it.
+    RunningOperations::setChangeListener([this, &box, go_ahead, intent](const QObject* finished) {
+        refreshPrompt(&box, go_ahead, intent, finished);
+    });
+    const auto stop_following = qScopeGuard([]() { RunningOperations::setChangeListener({}); });
     box.exec();
-    return box.clickedButton() == go_ahead;
+    return !m_prompt_outlived && box.clickedButton() == go_ahead;
+}
+
+void RunningWorkExitGuard::showPrompt(QMessageBox* box,
+                                      QPushButton* go_ahead,
+                                      Intent intent,
+                                      const QStringList& names,
+                                      const QStringList& cannot_stop_notes) {
+    // Work Windows finishes on its own is not promised a stop: the prompt says so, and its button
+    // goes ahead "anyway" rather than "after cancelling".
+    const bool some_cannot_stop = !cannot_stop_notes.isEmpty();
+    box->setText(some_cannot_stop ? questionWhenSomeCannotStop(intent, names)
+                                  : question(intent, names));
+    box->setInformativeText(informativeText(cannot_stop_notes));
+    go_ahead->setText(some_cannot_stop ? proceedAnywayButtonText(intent)
+                                       : proceedButtonText(intent));
+}
+
+void RunningWorkExitGuard::refreshPrompt(QMessageBox* box,
+                                         QPushButton* go_ahead,
+                                         Intent intent,
+                                         const QObject* finished_owner) {
+    const QStringList names = RunningOperations::runningNames(finished_owner);
+    if (names.isEmpty()) {
+        m_prompt_outlived = true;
+        box->reject();
+        return;
+    }
+    showPrompt(box, go_ahead, intent, names, RunningOperations::cannotStopNotes(finished_owner));
 }
 
 void RunningWorkExitGuard::waitForCancellation(const QStringList& names,

@@ -39,12 +39,24 @@ QString diskRows(const PartitionInventory& inventory) {
     return rows;
 }
 
+// A step whose script was stopped while Windows carried out its work did not fail: Windows may
+// still be finishing it. A step a cancel stopped did not fail either.
+QString stepStatus(const PartitionExecutionStep& step) {
+    if (step.success) {
+        return QStringLiteral("Success");
+    }
+    if (step.may_still_run_in_windows) {
+        return QStringLiteral("May still be running in Windows");
+    }
+    return step.cancelled ? QStringLiteral("Cancelled") : QStringLiteral("Failed");
+}
+
 QString stepRows(const PartitionExecutionResult& result) {
     QString rows;
     for (const auto& step : result.steps) {
         rows += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td><pre>%4</pre></td></tr>")
                     .arg(escapeHtml(step.summary))
-                    .arg(step.success ? QStringLiteral("Success") : QStringLiteral("Failed"))
+                    .arg(stepStatus(step))
                     .arg(escapeHtml(step.error_message))
                     .arg(escapeHtml(step.stdout_text.left(kPartitionReportOutputPreviewChars)));
     }
@@ -65,8 +77,7 @@ QJsonArray disksToJson(const PartitionInventory& inventory) {
 QString PartitionReportGenerator::generateLogText(const PartitionExecutionResult& result) {
     QStringList lines{result.message};
     for (const auto& step : result.steps) {
-        lines.append(QStringLiteral("%1: %2").arg(
-            step.success ? QStringLiteral("Success") : QStringLiteral("Failed"), step.summary));
+        lines.append(QStringLiteral("%1: %2").arg(stepStatus(step), step.summary));
         for (const QString* detail : {&step.error_message, &step.stdout_text, &step.stderr_text}) {
             if (!detail->trimmed().isEmpty()) {
                 lines.append(detail->trimmed());
@@ -158,6 +169,12 @@ QJsonObject PartitionReportGenerator::operationStepToJson(const PartitionExecuti
     object[QStringLiteral("summary")] = step.summary;
     object[QStringLiteral("success")] = step.success;
     object[QStringLiteral("skipped")] = step.skipped;
+    object[QStringLiteral("may_still_run_in_windows")] = step.may_still_run_in_windows;
+    object[QStringLiteral("cancelled")] = step.cancelled;
+    object[QStringLiteral("stop_cleanup_removed")] =
+        QJsonArray::fromStringList(step.stop_cleanup_removed);
+    object[QStringLiteral("stop_cleanup_not_removed")] =
+        QJsonArray::fromStringList(step.stop_cleanup_not_removed);
     object[QStringLiteral("stdout")] = step.stdout_text;
     object[QStringLiteral("stderr")] = step.stderr_text;
     object[QStringLiteral("error_message")] = step.error_message;

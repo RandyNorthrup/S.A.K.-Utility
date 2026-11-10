@@ -25,10 +25,13 @@
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_queue.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/partition_report_generator.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
+#include "sak/partition_stop_cleanup.h"
 #include "sak/process_runner.h"
 #include "sak/storage_inventory_worker.h"
+#include "sak/windows_continued_work.h"
 
 #include "../support/byte_writer.h"
 #include "../support/ext_fixture.h"
@@ -51,7 +54,9 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 
@@ -1647,6 +1652,22 @@ private Q_SLOTS:
     void partitionExecutor_honorsPreDispatchCancel();
     void partitionExecutor_exceptionClearsOwnedBroker();
     void partitionExecutor_scriptOutputGoesToTheLog();
+    void windowsContinued_markerRoundTripsAndTracksTheOpenPhase();
+    void windowsContinued_textSaysItCannotBeStopped();
+    void windowsContinued_everyOutlivingStepMarksItsPhase();
+    void windowsContinued_stepsThatStopWhenKilledCarryNoMarker();
+    void partitionExecutor_streamedMarkerReportsTheWindowsPhase();
+    void partitionExecutor_stopDuringWindowsPhaseIsNotCalledCancelled();
+    void partitionExecutor_windowsPhaseReachesAnotherThread();
+    void stopCleanup_scriptsMarkWhatTheyMakeAndUnmake();
+    void stopCleanup_trackerFollowsOnlyWhatTheAppMade();
+    void stopCleanup_scriptRemovesExactlyWhatItIsGiven();
+    void stopCleanup_reportNamesRemovedAndKept();
+    void partitionExecutor_cleansUpWhatAStoppedStepLeft();
+    void scriptBuilder_wipeDiskStartsOnANewDrive();
+    void partitionExecutor_scriptMarkersNeverReachAPerson();
+    void partitionExecutor_cancelledStepReadsCancelled();
+    void withoutScriptMarkers_collapsesOnlyWhatStrippingLeft();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
@@ -1918,6 +1939,10 @@ private Q_SLOTS:
     void inventoryScan_aScanPastItsCeilingDidNotFinish();
     void inventoryScan_oneVolumeThatDoesNotAnswerIsThatVolumesError();
     void inventoryScan_writesProgressAndSkipsWhatItCannotUse();
+    void inventoryScan_aSlowCallThatSaysItIsWaitingFinishes();
+    void inventoryScan_aCallPastItsOwnLimitSaysWhichStep();
+    void inventoryScan_aWaitingLineKeepsItsStep();
+    void inventoryScan_everySlowCallIsBoundedAndNamed();
     void scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay();
     void driveRotationRateFunction_readsWhatTheToolReports();
     void diskMediaHeuristics_readTheModelStringToo();
@@ -17533,10 +17558,19 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
              "Inventory JSON must distinguish clean from unknown dirty state.");
     QVERIFY2(script.contains(QStringLiteral("DirtyBitError = \"$dirtyError\"")),
              "Dirty-bit query failures must be surfaced in inventory JSON.");
-    QCOMPARE(script.count(QStringLiteral("SilentlyContinue")), 1);
-    QVERIFY2(script.contains(QStringLiteral("Get-PhysicalDisk -ErrorAction Stop")),
+    // Nothing in the scan is silenced but progress records: every SilentlyContinue sets the
+    // progress preference, in the scan and in the runspace its bounded calls run in. An error on a
+    // RAW disk is that disk's answer, never swallowed.
+    QVERIFY2(!script.contains(QRegularExpression(
+                 QStringLiteral("-ErrorAction\\s+SilentlyContinue|ErrorActionPreference\\s*=\\s*"
+                                "'SilentlyContinue'"))),
+             "An error in the scan must not be silenced.");
+    QCOMPARE(script.count(QStringLiteral("SilentlyContinue")),
+             script.count(QStringLiteral("$ProgressPreference = 'SilentlyContinue'")));
+    QVERIFY2(script.contains(QStringLiteral("-Script { Get-PhysicalDisk -ErrorAction Stop }")),
              "Physical-disk discovery errors must be captured, not silenced.");
-    QVERIFY2(script.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")),
+    QVERIFY2(script.contains(QStringLiteral("$drive | Get-StorageReliabilityCounter -ErrorAction "
+                                            "Stop }")),
              "Storage reliability errors must be captured, not silenced.");
     QVERIFY2(script.contains(QStringLiteral("VolumeLookupFailed")),
              "Volume lookup failures must be carried to the parser.");
@@ -22149,11 +22183,12 @@ void PartitionManagerCoreTests::disksAreListedInNumberOrder() {
 // Get-Disk does not list a dynamic disk, so a scan built on it alone hid a real disk.
 void PartitionManagerCoreTests::scanListsWhatGetDiskLeavesOut() {
     const QString script = StorageInventoryWorker::inventoryPowerShellScript();
-    QVERIFY2(script.contains(QStringLiteral("@(@(Get-Disk) + @(Get-SakDynamicDisks))")),
+    QVERIFY2(script.contains(QStringLiteral("$sakDiskList = @(@($listed.Items) + "
+                                            "@($dynamic.Items))")),
              "the scan must walk both lists");
     QVERIFY2(script.indexOf(QStringLiteral("function Get-SakDynamicDisks")) <
-                 script.indexOf(QStringLiteral("@(@(Get-Disk)")),
-             "and the function has to exist before the pipeline calls it");
+                 script.indexOf(QStringLiteral("-Script { Get-SakDynamicDisks }")),
+             "and the function has to exist before the call that runs it");
     QVERIFY(script.contains(QStringLiteral("Win32_DiskDrive")));
     QVERIFY2(script.contains(QStringLiteral("$disk.DynamicPartitions")),
              "a dynamic disk's volumes stand in for the partitions Get-Partition cannot list");
@@ -22840,8 +22875,9 @@ void PartitionManagerCoreTests::standardUserScanLeavesOnlyAnUnspecifiedDrivePend
     // The question takes administrator rights, and the scan asks it only for Unspecified.
     const QString script = StorageInventoryWorker::inventoryPowerShellScript(true);
     QVERIFY(script.contains(QStringLiteral("function Get-SakRotationRateRpm")));
+    // Defined before the disk pipeline that asks it.
     QVERIFY(script.indexOf(QStringLiteral("function Get-SakRotationRateRpm")) <
-            script.indexOf(QStringLiteral("$sakDiskList = @(@(Get-Disk)")));
+            script.indexOf(QStringLiteral("Get-SakRotationRateRpm -DiskNumber $disk.Number")));
     QVERIFY(
         script.contains(QStringLiteral("if ($sakReadAdministratorState -and $physical -and "
                                        "\"$($physical.MediaType)\" -ceq 'Unspecified')")));
@@ -23041,6 +23077,188 @@ void PartitionManagerCoreTests::inventoryScan_oneVolumeThatDoesNotAnswerIsThatVo
     });
     QVERIFY2(said, qPrintable(inventory.warnings.join('|')));
     QVERIFY(inventory.disks.at(1).partitions.first().volume.has_value());
+}
+
+namespace {
+
+// The scan's bounded calls with a one-second heartbeat, ahead of a stand-in body that reads no
+// disk.
+QString boundedStandIn(const QString& body) {
+    return StorageInventoryWorker::boundedQueryFunctionScript() + boundedProgramFunctionScript() +
+           QStringLiteral(
+               "$sakHeartbeatSeconds = 1\n"
+               "[Console]::Error.WriteLine('SAK-SCAN-PROGRESS stand-in')\n") +
+           body;
+}
+
+}  // namespace
+
+// A call that takes longer than the quiet limit, and says every second that it is still waiting,
+// is a slow call, not a scan that stopped: each kind of bounded call, a storage job, a runspace
+// call and a program, gets its answer.
+void PartitionManagerCoreTests::inventoryScan_aSlowCallThatSaysItIsWaitingFinishes() {
+    QElapsedTimer took;
+    took.start();
+    const auto scan = StorageInventoryWorker::runBrowsingScanScript(
+        boundedStandIn(QStringLiteral(
+            "$job = Invoke-SakBoundedQuery -Step 'slow job' -Seconds 30 "
+            "-Start { Start-Job { Start-Sleep -Seconds 10; 'job answered' } }\n"
+            "$call = Invoke-SakBoundedCall -Step 'slow call' -Seconds 30 "
+            "-Script { Start-Sleep -Seconds 10; 'call answered' }\n"
+            "$program = Invoke-SakBoundedProgram "
+            "-Path \"$env:SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" "
+            "-Arguments '-NoProfile -Command Start-Sleep -Seconds 10' -Seconds 30 -WaitSeconds 1 "
+            "-OnWait { param($seconds) Write-SakScanWaiting -Step 'slow program' -Seconds $seconds "
+            "}\n"
+            "if (\"$($job.Items)\" -ne 'job answered' -or \"$($call.Items)\" -ne 'call answered' "
+            "-or -not $program.Finished) {\n"
+            "  Stop-SakScan -Step 'stand-in' -Detail \"job $($job.Finished) call $($call.Finished) "
+            "program $($program.Finished)\"\n"
+            "}\n"
+            "'[]'\n")),
+        {.idle_ms = 8000, .ceiling_ms = 120'000},
+        {},
+        {});
+    QVERIFY2(!scan.inventory.scan_did_not_finish, qPrintable(scan.inventory.warnings.join('|')));
+    QVERIFY2(scan.inventory.warnings.isEmpty(), qPrintable(scan.inventory.warnings.join('|')));
+    QVERIFY2(took.elapsed() >= 3 * 10'000, "each stand-in must outlast the quiet limit");
+}
+
+// A call that reaches its own limit ends the scan, which says it did not finish and at which step,
+// and ends at once although the call is still running.
+void PartitionManagerCoreTests::inventoryScan_aCallPastItsOwnLimitSaysWhichStep() {
+    for (const auto& [step, start] :
+         {// A .NET wait, which a pipeline stop cannot break, as a storage call that never answers
+          // cannot be: the scan must still end at once, and end only its own process.
+          std::pair{QStringLiteral("stuck call"),
+                    QStringLiteral("$answer = Invoke-SakBoundedCall -Step 'stuck call' -Seconds 3 "
+                                   "-Script { [System.Threading.Thread]::Sleep(120000) }\n")},
+          std::pair{QStringLiteral("stuck job"),
+                    QStringLiteral("$answer = Invoke-SakBoundedQuery -Step 'stuck job' -Seconds 3 "
+                                   "-Start { Start-Job { Start-Sleep -Seconds 120 } }\n")}}) {
+        QElapsedTimer took;
+        took.start();
+        const auto scan = StorageInventoryWorker::runBrowsingScanScript(
+            boundedStandIn(start +
+                           QStringLiteral("if (-not $answer.Finished) { Stop-SakScan -Step '%1' "
+                                          "-Detail 'it did not answer within 3 s' }\n'[]'\n")
+                               .arg(step)),
+            {.idle_ms = 6000, .ceiling_ms = 120'000},
+            {},
+            {});
+        QCOMPARE(scan.inventory.warnings,
+                 QStringList{QStringLiteral("The disk scan did not finish (%1): it did not answer "
+                                            "within 3 s")
+                                 .arg(step)});
+        QVERIFY2(scan.inventory.scan_did_not_finish, qPrintable(step));
+        QVERIFY(scan.inventory.disks.isEmpty());
+        QVERIFY2(took.elapsed() < 9000, qPrintable(step + QStringLiteral(" kept the scan open")));
+    }
+}
+
+// A scan that goes quiet while a call was waiting names the call's step, not the waiting line.
+void PartitionManagerCoreTests::inventoryScan_aWaitingLineKeepsItsStep() {
+    sak::InventoryScanLiveness liveness({.idle_ms = 1000, .ceiling_ms = 5000}, {});
+    liveness.feed(
+        QStringLiteral("SAK-SCAN-PROGRESS physical disks\n"
+                       "SAK-SCAN-PROGRESS waiting: physical disks, 25 s\n"));
+    liveness.markStopped();
+    ProcessResult result;
+    result.exit_code = 1;
+    liveness.settle(&result);
+    QCOMPARE(result.std_err,
+             QStringLiteral("The disk scan did not finish: no progress for 1 s (last step: "
+                            "physical disks)"));
+}
+
+namespace {
+
+// One row per call site: how it read when it was asked without a bound, and what it must read
+// now. Each site is checked on its own, the old form first, so a site asked bare again fails
+// by its own name.
+struct CallSite {
+    QString site;
+    QString bare;
+    QStringList bounded;
+};
+
+std::array<CallSite, 10> scanCallSites() {
+    return {{
+        {QStringLiteral("BitLocker module"),
+         QStringLiteral("$null -ne (Get-Command Get-BitLockerVolume"),
+         {QStringLiteral("Invoke-SakBoundedCall -Step 'BitLocker module' -Script { "
+                         "[bool](Get-Command Get-BitLockerVolume -ErrorAction Stop) }")}},
+        {QStringLiteral("physical disks"),
+         QStringLiteral("@(Get-PhysicalDisk -ErrorAction Stop)"),
+         {QStringLiteral("Invoke-SakBoundedCall -Step 'physical disks' -Script { "
+                         "Get-PhysicalDisk -ErrorAction Stop }"),
+          QStringLiteral("Get-PhysicalDisk did not finish (physical disks) within "
+                         "$sakQuerySeconds s")}},
+        {QStringLiteral("listing disks"),
+         QStringLiteral("@(@(Get-Disk) + "),
+         {QStringLiteral("Invoke-SakBoundedQuery -Step 'listing disks' -Start { Get-Disk "
+                         "-AsJob }"),
+          QStringLiteral("Stop-SakScan -Step 'listing disks'")}},
+        {QStringLiteral("dynamic disks"),
+         QStringLiteral("@(Get-SakDynamicDisks))"),
+         {QStringLiteral("Invoke-SakBoundedCall -Step 'dynamic disks' -Script { "
+                         "Get-SakDynamicDisks }"),
+          QStringLiteral("Stop-SakScan -Step 'dynamic disks'")}},
+        {QStringLiteral("reliability of a disk"),
+         QStringLiteral("$physical | Get-StorageReliabilityCounter"),
+         {QStringLiteral("Invoke-SakBoundedCall -Step $reliabilityStep -ArgumentList "
+                         "@($physical)"),
+          QStringLiteral("-Script { param($drive) $drive | Get-StorageReliabilityCounter "
+                         "-ErrorAction Stop }"),
+          QStringLiteral("Get-StorageReliabilityCounter did not finish ($reliabilityStep)")}},
+        {QStringLiteral("rotation rate of a disk"),
+         QStringLiteral("Get-SakRotationRateRpm -DiskNumber $disk.Number\n"),
+         {QStringLiteral("-OnWait { param($seconds) Write-SakScanWaiting -Step $rotationStep "
+                         "-Seconds $seconds }")}},
+        {QStringLiteral("partitions of a disk"),
+         QStringLiteral("-ArgumentList @($DiskNumber)\n"),
+         {QStringLiteral("-ArgumentList @($DiskNumber) -Step \"partitions of disk "
+                         "$DiskNumber\"")}},
+        {QStringLiteral("volume of a partition"),
+         QStringLiteral("-ArgumentList @($lookup.Argument)\n"),
+         {QStringLiteral("-Step \"volume of partition $($Partition.PartitionNumber)\"")}},
+        {QStringLiteral("BitLocker of a volume"),
+         QStringLiteral("Get-BitLockerVolume -MountPoint \"$($volume.DriveLetter):\""),
+         {QStringLiteral("Invoke-SakBoundedCall -Step $bitLockerStep -ArgumentList "
+                         "@(\"$($volume.DriveLetter):\")"),
+          QStringLiteral("-Script { param($mountPoint) Get-BitLockerVolume -MountPoint "
+                         "$mountPoint -ErrorAction Stop }"),
+          QStringLiteral("Get-BitLockerVolume did not finish ($bitLockerStep)")}},
+        {QStringLiteral("dirty bit of a volume"),
+         QStringLiteral("-Seconds $sakQuerySeconds\n"),
+         {QStringLiteral("-OnWait { param($seconds) Write-SakScanWaiting -Step $dirtyStep "
+                         "-Seconds $seconds }")}},
+    }};
+}
+
+}  // namespace
+
+// Every call in the scan that can be slow is bounded, says while it waits what it waits on, and
+// says by step when it ran out of time. Nothing is asked outside a bounded call.
+void PartitionManagerCoreTests::inventoryScan_everySlowCallIsBoundedAndNamed() {
+    const QString script = StorageInventoryWorker::inventoryPowerShellScript(true);
+    const auto sites = scanCallSites();
+    for (const CallSite& call : sites) {
+        QVERIFY2(!script.contains(call.bare),
+                 qPrintable(call.site + QStringLiteral(": asked without a bound")));
+        for (const QString& bounded : call.bounded) {
+            QVERIFY2(script.contains(bounded),
+                     qPrintable(call.site + QStringLiteral(": not bounded as ") + bounded));
+        }
+    }
+    // The limits are the ones chosen from the evidence, and the heartbeat is inside the quiet
+    // limit.
+    QVERIFY(script.contains(
+        QStringLiteral("$sakQuerySeconds = %1\n").arg(sak::kInventoryQueryCapSeconds)));
+    QVERIFY(script.contains(
+        QStringLiteral("$sakHeartbeatSeconds = %1\n").arg(sak::kInventoryHeartbeatSeconds)));
+    static_assert(sak::kInventoryHeartbeatSeconds * 1000 * 2 <= sak::kInventoryScanIdleLimitMs,
+                  "a waiting call must say so at least twice inside the quiet limit");
 }
 
 void PartitionManagerCoreTests::inventoryScan_writesProgressAndSkipsWhatItCannotUse() {
@@ -24412,6 +24630,899 @@ void PartitionManagerCoreTests::strongIndex_findersResolveByTypedIndexAndFailClo
     QCOMPARE(partition->partition_number.value(), 1u);
     QVERIFY2(PartitionSafetyValidator::findPartition(*disk, PartitionNumber{999}) == nullptr,
              "an absent partition number must fail closed to nullptr");
+}
+
+namespace {
+
+constexpr auto kWindowsContinuedBegin = "SAK-WINDOWS-CONTINUES|BEGIN|";
+constexpr uint64_t kOneGibibyte = 1024ULL * 1024ULL * 1024ULL;
+
+// Every line that starts work Windows finishes on its own -- a full format, a defrag, a ReTrim, a
+// file system scan -- carries its Begin marker, which the statement's own line wraps.
+QStringList unmarkedWindowsContinuedLines(const QString& script) {
+    static const QRegularExpression kContinuedCmdlet(
+        QStringLiteral("Format-Volume[^\\n]*-Full\\b|Optimize-Volume[^\\n]*-(Defrag|ReTrim)\\b|"
+                       "Repair-Volume[^\\n]*-Scan\\b"));
+    QStringList unmarked;
+    for (const QString& line : script.split(QLatin1Char('\n'))) {
+        if (kContinuedCmdlet.match(line).hasMatch() &&
+            !line.contains(QLatin1String(kWindowsContinuedBegin))) {
+            unmarked.append(line.trimmed());
+        }
+    }
+    return unmarked;
+}
+
+PartitionTarget windowsContinuedPartitionTarget() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{3};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = kOneGibibyte;
+    target.offset_bytes = 1'048'576;
+    target.drive_letter = QStringLiteral("T");
+    return target;
+}
+
+PartitionScript windowsContinuedScript(PartitionOperationType type,
+                                       const PartitionTarget& target,
+                                       const QJsonObject& payload = {}) {
+    return PartitionScriptBuilder().buildScript(
+        PartitionOperationPlanner::makeOperation(type, target, payload));
+}
+
+QJsonObject windowsFormatPayload(bool full) {
+    return QJsonObject{{QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                       {QStringLiteral("label"), QStringLiteral("Data")},
+                       {QStringLiteral("full_format"), full}};
+}
+
+QJsonObject windowsCreatePayload(bool full) {
+    return QJsonObject{{QStringLiteral("size_bytes"), QStringLiteral("33554432")},
+                       {QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                       {QStringLiteral("label"), QStringLiteral("Data")},
+                       {QStringLiteral("full_format"), full}};
+}
+
+PartitionTarget windowsCreateTarget() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Unallocated;
+    target.disk_number = DiskNumber{5};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 64ULL * 1024ULL * 1024ULL;
+    return target;
+}
+
+PartitionTarget windowsDiskTarget(uint32_t number) {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{number};
+    pinDiskTargetIdentity(&target);
+    return target;
+}
+
+QJsonObject windowsAllocatePayload() {
+    return QJsonObject{{QStringLiteral("source_partition_number"), QStringLiteral("3")},
+                       {QStringLiteral("source_size_bytes"), QStringLiteral("536870912")},
+                       {QStringLiteral("bytes_to_allocate"), QStringLiteral("134217728")},
+                       {QStringLiteral("source_drive_letter"), QStringLiteral("S")},
+                       {QStringLiteral("source_file_system"), QStringLiteral("NTFS")},
+                       {QStringLiteral("source_label"), QStringLiteral("Donor")},
+                       {QStringLiteral("backup_directory"), QStringLiteral("C:\\SAKBackups")},
+                       {QStringLiteral("target_wipe_confirmed"), true}};
+}
+
+QJsonObject windowsClusterPayload() {
+    return QJsonObject{{QStringLiteral("drive_letter"), QStringLiteral("T")},
+                       {QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                       {QStringLiteral("allocation_unit_bytes"), QStringLiteral("4096")},
+                       {QStringLiteral("label"), QStringLiteral("Data")},
+                       {QStringLiteral("backup_directory"), QStringLiteral("C:\\SAKBackups")},
+                       {QStringLiteral("target_wipe_confirmed"), true}};
+}
+
+struct ContinuedScriptCase {
+    QString name;
+    PartitionScript script;
+    QString work;
+};
+
+QVector<ContinuedScriptCase> windowsContinuedScriptCases() {
+    const PartitionTarget partition = windowsContinuedPartitionTarget();
+    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("536870912")}};
+    const QJsonObject split{{QStringLiteral("first_size_bytes"), QStringLiteral("536870912")}};
+    const QJsonObject ssd{{QStringLiteral("ssd_secure_erase"), true}};
+    using Type = PartitionOperationType;
+    return {
+        {QStringLiteral("Wipe Disk"),
+         windowsContinuedScript(Type::WipeDisk, windowsDiskTarget(4)),
+         QStringLiteral("full-format")},
+        {QStringLiteral("Wipe Disk, SSD"),
+         windowsContinuedScript(Type::WipeDisk, windowsDiskTarget(4), ssd),
+         QStringLiteral("retrim")},
+        {QStringLiteral("Wipe Partition"),
+         windowsContinuedScript(Type::WipePartition, partition),
+         QStringLiteral("full-format")},
+        {QStringLiteral("Format, full"),
+         windowsContinuedScript(Type::Format, partition, windowsFormatPayload(true)),
+         QStringLiteral("full-format")},
+        {QStringLiteral("Create, full"),
+         windowsContinuedScript(Type::Create, windowsCreateTarget(), windowsCreatePayload(true)),
+         QStringLiteral("full-format")},
+        {QStringLiteral("HDD defrag"),
+         windowsContinuedScript(Type::DefragVolume, partition),
+         QStringLiteral("defragment")},
+        {QStringLiteral("HDD defrag's scan"),
+         windowsContinuedScript(Type::DefragVolume, partition),
+         QStringLiteral("volume-scan")},
+        {QStringLiteral("SSD ReTrim"),
+         windowsContinuedScript(Type::OptimizeSsd, partition),
+         QStringLiteral("retrim")},
+        {QStringLiteral("Resize, shrink"),
+         windowsContinuedScript(Type::Resize, partition, shrink),
+         QStringLiteral("partition-shrink")},
+        {QStringLiteral("Split"),
+         windowsContinuedScript(Type::Split, partition, split),
+         QStringLiteral("partition-shrink")},
+        {QStringLiteral("Check File System"),
+         windowsContinuedScript(Type::CheckFileSystem, partition),
+         QStringLiteral("volume-scan")},
+        {QStringLiteral("Scan File Systems"),
+         windowsContinuedScript(Type::SurfaceTest, windowsDiskTarget(7)),
+         QStringLiteral("volume-scan")},
+        {QStringLiteral("Allocate Free Space"),
+         windowsContinuedScript(Type::AllocateFreeSpace, partition, windowsAllocatePayload()),
+         QStringLiteral("volume-scan")},
+        {QStringLiteral("Change Cluster Size"),
+         windowsContinuedScript(Type::ChangeClusterSize, partition, windowsClusterPayload()),
+         QStringLiteral("volume-scan")},
+    };
+}
+
+// Runs @p operation through the executor's local path with the PowerShell launch replaced by a
+// result carrying @p output: no process starts. @p cancel_first cancels the batch from inside the
+// launch, as a Cancel during the step would; otherwise the launch reports a timeout.
+PartitionExecutionResult runWithScriptOutput(const PartitionOperation& operation,
+                                             const QString& output,
+                                             bool cancel_first) {
+    PartitionExecutor executor;
+    const ScopedProcessFaultInjector injector(
+        [&executor, output, cancel_first](const QString&, const QStringList&) {
+            if (cancel_first) {
+                executor.cancel();
+            }
+            ProcessResult killed;
+            killed.exit_code = -1;
+            killed.cancelled = cancel_first;
+            killed.timed_out = !cancel_first;
+            killed.std_out = output;
+            return std::optional<ProcessResult>(killed);
+        });
+    return executor.execute({operation}, false, false);
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::windowsContinued_markerRoundTripsAndTracksTheOpenPhase() {
+    const QString statement = windowsContinuedStatement(WindowsContinuedWork::FullFormat,
+                                                        QStringLiteral("$p.Size"),
+                                                        QStringLiteral("Do-It"));
+    QCOMPARE(statement,
+             QStringLiteral(
+                 "[Console]::Out.WriteLine(('SAK-WINDOWS-CONTINUES|BEGIN|full-format|{0}' -f "
+                 "[uint64]($p.Size))); [Console]::Out.Flush(); try { Do-It } finally { "
+                 "[Console]::Out.WriteLine('SAK-WINDOWS-CONTINUES|END|full-format'); "
+                 "[Console]::Out.Flush() }"));
+    QVERIFY2(!statement.contains(QLatin1Char('\n')),
+             "one line, so a disk guard put in front of it goes in front of its Begin marker");
+
+    const auto begin = parseWindowsContinuedMarker(
+        QStringLiteral(" SAK-WINDOWS-CONTINUES|BEGIN|defragment|1024\r"));
+    QVERIFY(begin.has_value());
+    QVERIFY(begin->begin);
+    QCOMPARE(begin->work, WindowsContinuedWork::Defragment);
+    QCOMPARE(begin->size_bytes, uint64_t{1024});
+    const auto end =
+        parseWindowsContinuedMarker(QStringLiteral("SAK-WINDOWS-CONTINUES|END|retrim"));
+    QVERIFY(end.has_value());
+    QVERIFY(!end->begin);
+    QCOMPARE(end->work, WindowsContinuedWork::Retrim);
+    const auto unknown_size =
+        parseWindowsContinuedMarker(QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|"));
+    QVERIFY(unknown_size.has_value());
+    QCOMPARE(unknown_size->size_bytes, uint64_t{0});
+    for (const QString& not_marker :
+         {QStringLiteral("SAK Partition Manager: Wipe Disk 4"),
+          QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|erase-all|1"),
+          QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|full-format"),
+          QStringLiteral("SAK-WINDOWS-CONTINUES|END|full-format|5"),
+          QStringLiteral("SAK-WINDOWS-CONTINUES|PAUSE|full-format"),
+          QStringLiteral("[stderr] SAK-WINDOWS-CONTINUES|END|retrim")}) {
+        QVERIFY2(!parseWindowsContinuedMarker(not_marker).has_value(), qPrintable(not_marker));
+    }
+
+    // Every kind writes a marker of its own that reads back as that kind.
+    QSet<QString> markers;
+    for (const WindowsContinuedWork work : {WindowsContinuedWork::FullFormat,
+                                            WindowsContinuedWork::Defragment,
+                                            WindowsContinuedWork::Retrim,
+                                            WindowsContinuedWork::PartitionShrink,
+                                            WindowsContinuedWork::VolumeScan}) {
+        const QString line =
+            windowsContinuedStatement(work, QStringLiteral("7"), QStringLiteral("X"))
+                .section(QLatin1Char('\''), 1, 1)
+                .replace(QStringLiteral("{0}"), QStringLiteral("7"));
+        const auto parsed = parseWindowsContinuedMarker(line);
+        QVERIFY2(parsed.has_value() && parsed->work == work && parsed->size_bytes == 7,
+                 qPrintable(line));
+        markers.insert(line);
+        QVERIFY(!windowsContinuedWorkText(work).isEmpty());
+    }
+    QCOMPARE(markers.size(), 5);
+
+    QVERIFY(!openWindowsContinuedPhase(QStringLiteral("a\nb\n")).has_value());
+    QVERIFY(!openWindowsContinuedPhase(
+                 QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|full-format|9\r\nformatted\r\n"
+                                "SAK-WINDOWS-CONTINUES|END|full-format\r\n"))
+                 .has_value());
+    const auto open = openWindowsContinuedPhase(
+        QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|retrim|1\nSAK-WINDOWS-CONTINUES|END|retrim\n"
+                       "SAK-WINDOWS-CONTINUES|BEGIN|full-format|2048\n"));
+    QVERIFY(open.has_value());
+    QCOMPARE(open->work, WindowsContinuedWork::FullFormat);
+    QCOMPARE(open->size_bytes, uint64_t{2048});
+}
+
+void PartitionManagerCoreTests::windowsContinued_textSaysItCannotBeStopped() {
+    const WindowsContinuedPhase phase{.step_summary = QStringLiteral("Wipe Disk - Disk 4"),
+                                      .marker = {.begin = true,
+                                                 .work = WindowsContinuedWork::FullFormat,
+                                                 .size_bytes = kOneGibibyte},
+                                      .started_at = QDateTime(QDate(2026, 11, 9), QTime(14, 2))};
+    const QString size = formatPartitionBytes(kOneGibibyte);
+    QCOMPARE(windowsContinuedWorkDescription(phase.marker),
+             QStringLiteral("a full format (%1)").arg(size));
+    QCOMPARE(windowsContinuedWorkDescription(
+                 {.begin = true, .work = WindowsContinuedWork::VolumeScan, .size_bytes = 0}),
+             QStringLiteral("a file system scan"));
+    QCOMPARE(windowsContinuedPhaseNotice(phase),
+             QStringLiteral("Wipe Disk - Disk 4: Windows is carrying out a full format (%1). This "
+                            "step cannot be stopped once it has started, and Windows continues it "
+                            "even if S.A.K. Utility is closed. Started at %2. No time estimate is "
+                            "available.")
+                 .arg(size, QLocale().toString(QTime(14, 2), QLocale::ShortFormat)));
+    QCOMPARE(windowsContinuedExitNote(phase),
+             QStringLiteral("Wipe Disk - Disk 4: Windows is carrying out a full format (%1). "
+                            "Closing S.A.K. Utility will not stop it; Windows continues it. If you "
+                            "exit now, the rest of this step and anything queued after it do not "
+                            "run.")
+                 .arg(size));
+    QCOMPARE(windowsContinuedStepMessage(phase.step_summary, phase.marker),
+             QStringLiteral("Wipe Disk - Disk 4 may still be running in Windows: its script was "
+                            "stopped while Windows was carrying out a full format (%1), which "
+                            "Windows finishes on its own. The rest of this step did not run.")
+                 .arg(size));
+}
+
+// The VM run killed each of these mid-way and Windows went on with it, so each marks its phase.
+void PartitionManagerCoreTests::windowsContinued_everyOutlivingStepMarksItsPhase() {
+    const QVector<ContinuedScriptCase> cases = windowsContinuedScriptCases();
+    for (const ContinuedScriptCase& item : cases) {
+        QVERIFY2(item.script.valid(),
+                 qPrintable(item.name + QStringLiteral(": ") +
+                            item.script.blockers.join(QStringLiteral("; "))));
+        QVERIFY2(item.script.script.contains(QLatin1String(kWindowsContinuedBegin) + item.work +
+                                             QLatin1Char('|')),
+                 qPrintable(item.name + QStringLiteral(" does not mark its ") + item.work +
+                            QStringLiteral(" phase")));
+        const QStringList unmarked = unmarkedWindowsContinuedLines(item.script.script);
+        QVERIFY2(unmarked.isEmpty(),
+                 qPrintable(item.name + QStringLiteral(": ") +
+                            unmarked.join(QStringLiteral(" | "))));
+        QCOMPARE(item.script.script.count(QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|")),
+                 item.script.script.count(QStringLiteral("SAK-WINDOWS-CONTINUES|END|")));
+    }
+    // A shrink names the partition's size; the disk wipe reads its new partition's.
+    QVERIFY(cases.at(8).script.script.contains(QStringLiteral(
+        "SAK-WINDOWS-CONTINUES|BEGIN|partition-shrink|{0}' -f [uint64](1073741824)")));
+    QVERIFY(cases.at(0).script.script.contains(
+        QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|full-format|{0}' -f [uint64]($p.Size)")));
+}
+
+// cipher.exe /w and convert.exe stopped the moment they were killed, and an extend, a quick format
+// and Clear-Disk end too quickly to matter: none of them takes Cancel away.
+void PartitionManagerCoreTests::windowsContinued_stepsThatStopWhenKilledCarryNoMarker() {
+    const PartitionTarget partition = windowsContinuedPartitionTarget();
+    const QJsonObject extend{{QStringLiteral("target_size_bytes"), QStringLiteral("2147483648")}};
+    using Type = PartitionOperationType;
+    const QVector<QPair<QString, PartitionScript>> stops{
+        {QStringLiteral("Wipe Free Space"), windowsContinuedScript(Type::WipeFreeSpace, partition)},
+        {QStringLiteral("Convert to NTFS"),
+         windowsContinuedScript(Type::ConvertFileSystem, partition)},
+        {QStringLiteral("Format, quick"),
+         windowsContinuedScript(Type::Format, partition, windowsFormatPayload(false))},
+        {QStringLiteral("Create, quick"),
+         windowsContinuedScript(Type::Create, windowsCreateTarget(), windowsCreatePayload(false))},
+        {QStringLiteral("Resize, extend"), windowsContinuedScript(Type::Resize, partition, extend)},
+        {QStringLiteral("Delete All Partitions"),
+         windowsContinuedScript(Type::DeleteAllPartitions, windowsDiskTarget(4))},
+    };
+    for (const auto& [name, script] : stops) {
+        QVERIFY2(script.valid(),
+                 qPrintable(name + QStringLiteral(": ") +
+                            script.blockers.join(QStringLiteral("; "))));
+        QVERIFY2(!script.script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES")),
+                 qPrintable(name + QStringLiteral(" stops when killed, so Cancel stays")));
+    }
+}
+
+// The marker reaches the executor as the helper streams it, before the step ends: that is what
+// takes Cancel away while Windows has the work, and gives it back after.
+void PartitionManagerCoreTests::partitionExecutor_streamedMarkerReportsTheWindowsPhase() {
+    PartitionExecutor executor;
+    QSignalSpy started(&executor, &PartitionExecutor::windowsPhaseStarted);
+    QSignalSpy ended(&executor, &PartitionExecutor::windowsPhaseEnded);
+    QSignalSpy logged(&executor, &PartitionExecutor::logMessage);
+    qsizetype ended_while_streaming = -1;
+    const auto resetObserver =
+        qScopeGuard([]() { PartitionExecutor::setBrokerRegisteredObserverForTesting({}); });
+    PartitionExecutor::setBrokerRegisteredObserverForTesting(
+        [&ended, &ended_while_streaming](const std::shared_ptr<ElevationBroker>& broker) {
+            Q_EMIT broker->progressUpdated(
+                50,
+                QStringLiteral("STDOUT|SAK-WINDOWS-CONTINUES|BEGIN|full-format|1073741824\r\n"));
+            Q_EMIT broker->progressUpdated(
+                50, QStringLiteral("STDOUT|SAK-WINDOWS-CONTINUES|END|full-format\r\n"));
+            ended_while_streaming = ended.count();
+            Q_EMIT broker->progressUpdated(
+                50, QStringLiteral("STDOUT|SAK-WINDOWS-CONTINUES|BEGIN|retrim|0\r\n"));
+            throw std::runtime_error("stop before the helper");
+        });
+    PartitionOperation operation;
+    operation.id = QStringLiteral("phase-route");
+    operation.summary = QStringLiteral("Wipe Disk - Disk 4");
+    PartitionScript script;
+    script.script = QStringLiteral("Write-Output 'not reached'");
+    try {
+        std::ignore = executor.executeElevatedScript(operation, script);
+    } catch (const std::runtime_error&) {}
+
+    QCOMPARE(started.count(), 2);
+    const auto first = started.first().first().value<WindowsContinuedPhase>();
+    QCOMPARE(first.step_summary, operation.summary);
+    QCOMPARE(first.marker.work, WindowsContinuedWork::FullFormat);
+    QCOMPARE(first.marker.size_bytes, kOneGibibyte);
+    QVERIFY(first.started_at.isValid());
+    QCOMPARE(ended_while_streaming, qsizetype{1});
+    // The step ended with the ReTrim's phase open, and the executor closes it for the app.
+    QCOMPARE(ended.count(), 2);
+    QVERIFY(logged.first().first().toString().contains(
+        QStringLiteral("cannot be stopped once it has started")));
+    for (const QList<QVariant>& line : logged) {
+        QVERIFY2(!line.first().toString().startsWith(QStringLiteral("SAK-WINDOWS-CONTINUES")),
+                 "the raw marker is not a log line");
+    }
+}
+
+// Wipe Disk's full format kept writing for half an hour after a Cancel the app had called
+// "cancelled". A stop while Windows has the work names the step instead.
+void PartitionManagerCoreTests::partitionExecutor_stopDuringWindowsPhaseIsNotCalledCancelled() {
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipePartition,
+                                                              windowsContinuedPartitionTarget());
+    // The planner names a queued step; the result must name it too.
+    operation.summary = QStringLiteral("Wipe Partition - Disk 3 Partition 2");
+    const QString begun = QStringLiteral(
+        "SAK Partition Manager: Full format\r\n"
+        "SAK-WINDOWS-CONTINUES|BEGIN|full-format|1073741824\r\n");
+    const WindowsContinuedMarker format{.begin = true,
+                                        .work = WindowsContinuedWork::FullFormat,
+                                        .size_bytes = kOneGibibyte};
+    const QString named = windowsContinuedStepMessage(operation.summary, format);
+
+    const auto stopped = runWithScriptOutput(operation, begun, true);
+    QVERIFY(stopped.cancelled);
+    QVERIFY(!stopped.success);
+    QCOMPARE(stopped.steps.size(), 1);
+    QVERIFY(stopped.steps.first().may_still_run_in_windows);
+    QCOMPARE(stopped.steps.first().error_message, named);
+    QCOMPARE(stopped.message, QStringLiteral("Partition operation batch stopped. %1").arg(named));
+    QVERIFY(!stopped.message.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive));
+    const QString report = PartitionReportGenerator::generateLogText(stopped);
+    QVERIFY2(report.contains(
+                 QStringLiteral("May still be running in Windows: %1").arg(operation.summary)),
+             qPrintable(report));
+
+    // A timeout kills the script the same way.
+    const auto timed_out = runWithScriptOutput(operation, begun, false);
+    QVERIFY(timed_out.steps.first().may_still_run_in_windows);
+    QCOMPARE(timed_out.message, named);
+
+    // A phase that ended before the stop leaves an ordinary cancel.
+    const auto after = runWithScriptOutput(
+        operation, begun + QStringLiteral("SAK-WINDOWS-CONTINUES|END|full-format\r\n"), true);
+    QVERIFY(!after.steps.first().may_still_run_in_windows);
+    QCOMPARE(after.steps.first().error_message, QStringLiteral("Command cancelled"));
+    QCOMPARE(after.message, QStringLiteral("Partition operation batch cancelled"));
+}
+
+// The executor emits from the thread running the step; the controller lives on the GUI thread.
+void PartitionManagerCoreTests::partitionExecutor_windowsPhaseReachesAnotherThread() {
+    PartitionExecutor executor;
+    QObject receiver;
+    std::optional<WindowsContinuedPhase> received;
+    int ended = 0;
+    connect(&executor,
+            &PartitionExecutor::windowsPhaseStarted,
+            &receiver,
+            [&received](const WindowsContinuedPhase& phase) { received = phase; });
+    connect(&executor, &PartitionExecutor::windowsPhaseEnded, &receiver, [&ended]() { ++ended; });
+    const WindowsContinuedPhase phase{
+        .step_summary = QStringLiteral("Run HDD defrag on T:"),
+        .marker = {.begin = true, .work = WindowsContinuedWork::Defragment, .size_bytes = 4096},
+        .started_at = QDateTime::currentDateTime()};
+    std::thread step([&executor, phase]() {
+        Q_EMIT executor.windowsPhaseStarted(phase);
+        Q_EMIT executor.windowsPhaseEnded();
+    });
+    step.join();
+    QTRY_VERIFY(received.has_value());
+    QCOMPARE(received->step_summary, phase.step_summary);
+    QCOMPARE(received->marker.work, WindowsContinuedWork::Defragment);
+    QCOMPARE(received->marker.size_bytes, uint64_t{4096});
+    QTRY_COMPARE(ended, 1);
+}
+
+namespace {
+
+constexpr auto kTestShadowId = "{0F2C55B1-7E3A-4C1D-9B8E-2A6D4F1C3E5B}";
+constexpr auto kTestShadowLink =
+    "C:\\Windows\\Temp\\O'Brien job\\sak-shadow-0123456789abcdef0123456789abcdef";
+
+QString cleanupMarker(const char* state, const char* kind, const QString& value) {
+    return QStringLiteral("SAK-CLEANUP|%1|%2|%3\r\n")
+        .arg(QLatin1String(state), QLatin1String(kind), value);
+}
+
+QString cleanupResultLine(const char* state,
+                          const char* kind,
+                          const QString& value,
+                          const char* why) {
+    return QStringLiteral("SAK-CLEANUP-RESULT|%1|%2|%3|%4\r\n")
+        .arg(QLatin1String(state), QLatin1String(kind), value, QLatin1String(why));
+}
+
+// What the executor ran: each launch's -Command text, and the output each launch gets back. The
+// first launch is the step's script, killed by a cancel; any later one is the cleanup.
+struct ScriptedLaunches {
+    QStringList commands;
+    QStringList outputs;
+};
+
+PartitionExecutionResult runStoppedStepThenCleanup(const PartitionOperation& operation,
+                                                   ScriptedLaunches* launches) {
+    PartitionExecutor executor;
+    const ScopedProcessFaultInjector injector(
+        [&executor, launches](const QString&, const QStringList& args) {
+            const qsizetype command = args.indexOf(QStringLiteral("-Command"));
+            launches->commands.append(command >= 0 ? args.value(command + 1) : QString());
+            const qsizetype launch = launches->commands.size() - 1;
+            ProcessResult result;
+            if (launch == 0) {
+                executor.cancel();
+                result.exit_code = -1;
+                result.cancelled = true;
+            } else {
+                result.exit_code = 0;
+            }
+            result.std_out = launches->outputs.value(launch);
+            return std::optional<ProcessResult>(result);
+        });
+    return executor.execute({operation}, false, false);
+}
+
+}  // namespace
+
+// A cancel or a close kills the script's process tree, and its finally never runs. Each thing the
+// script makes and removes again is written down the moment it exists and again once it is gone.
+void PartitionManagerCoreTests::stopCleanup_scriptsMarkWhatTheyMakeAndUnmake() {
+    const PartitionScript cluster =
+        windowsContinuedScript(PartitionOperationType::ChangeClusterSize,
+                               windowsContinuedPartitionTarget(),
+                               windowsClusterPayload());
+    QVERIFY2(cluster.valid(), qPrintable(cluster.blockers.join(QStringLiteral("; "))));
+    const QString& backup = cluster.script;
+    const auto at = [&backup](const QString& text) {
+        return backup.indexOf(text);
+    };
+    const QString createdShadow =
+        QStringLiteral("[Console]::Out.WriteLine('SAK-CLEANUP|CREATED|SHADOW|' + ($sakShadowId))");
+    const QString createdLink =
+        QStringLiteral("[Console]::Out.WriteLine('SAK-CLEANUP|CREATED|LINK|' + ($shadowLink))");
+    const QString releasedLink =
+        QStringLiteral("[Console]::Out.WriteLine('SAK-CLEANUP|RELEASED|LINK|' + ($shadowLink))");
+    const QString releasedShadow =
+        QStringLiteral("[Console]::Out.WriteLine('SAK-CLEANUP|RELEASED|SHADOW|' + ($sakShadowId))");
+    QVERIFY2(at(createdShadow) >= 0, "the shadow copy's ID is written as soon as it exists");
+    QVERIFY(at(QStringLiteral("$sakShadowId = [string]$result.ShadowID")) < at(createdShadow));
+    QVERIFY2(at(createdShadow) < at(QStringLiteral("$shadow = Get-CimInstance Win32_ShadowCopy")),
+             "before anything else that could be interrupted");
+    QVERIFY2(at(createdLink) >= 0 && at(createdLink) < at(QStringLiteral("mklink /D")),
+             "the link's path is written before the link is made");
+    QVERIFY2(at(releasedLink) > at(QStringLiteral("[System.IO.Directory]::Delete($shadowLink)")),
+             "the link is released only after it is deleted");
+    QVERIFY2(at(releasedShadow) > at(QStringLiteral("Remove-CimInstance -InputObject $shadow")),
+             "the shadow copy is released only after it is removed");
+
+    PartitionTarget volume = windowsContinuedPartitionTarget();
+    const PartitionScript wipe = windowsContinuedScript(PartitionOperationType::WipeFreeSpace,
+                                                        volume);
+    QVERIFY2(wipe.valid(), qPrintable(wipe.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(wipe.script.contains(
+                 QStringLiteral("if (-not (Test-Path -LiteralPath ('{0}:\\EFSTMPWP' -f 'T'))) { "
+                                "[Console]::Out.WriteLine('SAK-CLEANUP|CREATED|CIPHER|' + ('T')); "
+                                "[Console]::Out.Flush() }\n")),
+             "cipher's folder is claimed only when it was not there before cipher started");
+    QVERIFY(wipe.script.indexOf(QStringLiteral("SAK-CLEANUP|CREATED|CIPHER|")) <
+            wipe.script.indexOf(QStringLiteral("cipher.exe /w:T:\\")));
+    QVERIFY(wipe.script.indexOf(QStringLiteral("SAK-CLEANUP|RELEASED|CIPHER|")) >
+            wipe.script.indexOf(QStringLiteral("$sakCipherExit = $LASTEXITCODE")));
+    QVERIFY2(wipe.script.endsWith(QStringLiteral("exit $sakCipherExit\n")),
+             "cipher's own exit code is still the step's");
+}
+
+void PartitionManagerCoreTests::stopCleanup_trackerFollowsOnlyWhatTheAppMade() {
+    const QString shadow = QLatin1String(kTestShadowId);
+    const QString link = QLatin1String(kTestShadowLink);
+    StopLeftoverTracker tracker;
+    QVERIFY(!tracker.observe(QStringLiteral("SAK Partition Manager: Wipe free space on T:")));
+    QVERIFY(tracker.observe(cleanupMarker("CREATED", "SHADOW", shadow)));
+    QVERIFY(tracker.observe(cleanupMarker("CREATED", "LINK", link)));
+    QVERIFY(tracker.observe(cleanupMarker("CREATED", "CIPHER", QStringLiteral("T"))));
+    QCOMPARE(tracker.outstanding().size(), 3);
+    QVERIFY(tracker.observe(cleanupMarker("RELEASED", "LINK", link)));
+    QCOMPARE(tracker.outstanding(),
+             QVector<StopLeftover>(
+                 {{.kind = StopLeftoverKind::ShadowCopy, .value = shadow},
+                  {.kind = StopLeftoverKind::CipherFolder, .value = QStringLiteral("T")}}));
+
+    // Only values the application's own scripts write are followed: never a wildcard, another
+    // ID form, a path that is not one of its links, or more than one letter.
+    StopLeftoverTracker strict;
+    for (const QString& foreign :
+         {cleanupMarker("CREATED", "SHADOW", QStringLiteral("*")),
+          cleanupMarker("CREATED", "SHADOW", QStringLiteral("{0F2C55B1}")),
+          cleanupMarker(
+              "CREATED", "SHADOW", QStringLiteral("0F2C55B1-7E3A-4C1D-9B8E-2A6D4F1C3E5B")),
+          cleanupMarker("CREATED", "LINK", QStringLiteral("C:\\Windows\\System32")),
+          cleanupMarker("CREATED", "LINK", QStringLiteral("C:\\Temp\\sak-shadow-xyz")),
+          cleanupMarker("CREATED", "CIPHER", QStringLiteral("TT")),
+          cleanupMarker("CREATED", "CIPHER", QStringLiteral("1"))}) {
+        QVERIFY(strict.observe(foreign));
+        QVERIFY2(strict.outstanding().isEmpty(), qPrintable(foreign));
+    }
+    QVERIFY(!strict.observe(QStringLiteral("SAK-CLEANUP|CREATED|SHADOW|%1|extra").arg(shadow)));
+    QVERIFY(strict.outstanding().isEmpty());
+}
+
+void PartitionManagerCoreTests::stopCleanup_scriptRemovesExactlyWhatItIsGiven() {
+    const QString shadow = QLatin1String(kTestShadowId);
+    const QString link = QLatin1String(kTestShadowLink);
+    const QString script =
+        stopCleanupScript({{.kind = StopLeftoverKind::ShadowCopy, .value = shadow},
+                           {.kind = StopLeftoverKind::CipherFolder, .value = QStringLiteral("T")},
+                           {.kind = StopLeftoverKind::ShadowLink, .value = link}});
+    const QString removeLink =
+        QStringLiteral("Remove-SakShadowLink '%1'\n")
+            .arg(QString(link).replace(QLatin1Char('\''), QStringLiteral("''")));
+    const QString removeShadow = QStringLiteral("Remove-SakShadowCopy '%1'\n").arg(shadow);
+    QVERIFY2(script.contains(removeLink), qPrintable(script));
+    QVERIFY(script.contains(removeShadow));
+    QVERIFY(script.contains(QStringLiteral("Remove-SakCipherFolder 'T'\n")));
+    QVERIFY2(script.indexOf(removeLink) < script.indexOf(removeShadow),
+             "the link goes before the shadow copy it points into");
+    // A shadow copy is found by its ID and nothing else: no listing, no other filter.
+    QCOMPARE(script.count(QStringLiteral("Win32_ShadowCopy")), 1);
+    QVERIFY(script.contains(
+        QStringLiteral("Get-CimInstance Win32_ShadowCopy -Filter (\"ID='{0}'\" -f $id)")));
+    QVERIFY(!script.contains(QStringLiteral("vssadmin"), Qt::CaseInsensitive));
+    QVERIFY2(script.contains(QStringLiteral(
+                 "if (-not ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { "
+                 "Write-SakCleanupResult 'KEPT' 'LINK' $path 'it is not a link'; return }")),
+             "only a link is removed as the link");
+    QVERIFY2(script.contains(QStringLiteral(
+                 "if (@($inside | Where-Object { $_.PSIsContainer -or ($_.Attributes -band "
+                 "[System.IO.FileAttributes]::ReparsePoint) }).Count -gt 0) { "
+                 "Write-SakCleanupResult 'KEPT' 'CIPHER' $letter 'it holds a folder or a link, "
+                 "which cipher does not create'; return }")),
+             "cipher's folder is removed only while it holds nothing cipher does not write");
+    QVERIFY(script.contains(QStringLiteral("$folder = ('{0}:\\EFSTMPWP' -f $letter)")));
+
+    // A value that is not the application's own never reaches the script.
+    const QString refused = stopCleanupScript(
+        {{.kind = StopLeftoverKind::ShadowCopy, .value = QStringLiteral("*")},
+         {.kind = StopLeftoverKind::ShadowLink, .value = QStringLiteral("C:\\")}});
+    QVERIFY(!refused.contains(QStringLiteral("Remove-SakShadowCopy '")));
+    QVERIFY(!refused.contains(QStringLiteral("Remove-SakShadowLink '")));
+}
+
+void PartitionManagerCoreTests::stopCleanup_reportNamesRemovedAndKept() {
+    const QString shadow = QLatin1String(kTestShadowId);
+    const QString link = QLatin1String(kTestShadowLink);
+    const QVector<StopLeftover> leftovers{
+        {.kind = StopLeftoverKind::ShadowLink, .value = link},
+        {.kind = StopLeftoverKind::ShadowCopy, .value = shadow},
+        {.kind = StopLeftoverKind::CipherFolder, .value = QStringLiteral("T")},
+        {.kind = StopLeftoverKind::CipherFolder, .value = QStringLiteral("U")}};
+    const QString output = cleanupResultLine("REMOVED", "LINK", link, "") +
+                           cleanupResultLine("KEPT", "SHADOW", shadow, "Access is denied.") +
+                           cleanupResultLine("GONE", "CIPHER", QStringLiteral("T"), "");
+    const StopCleanupReport report = stopCleanupReport(leftovers, output);
+    QCOMPARE(report.removed, QStringList{QStringLiteral("the shadow copy's link %1").arg(link)});
+    QCOMPARE(report.not_removed,
+             QStringList({QStringLiteral("the shadow copy %1 (Access is denied.)").arg(shadow),
+                          QStringLiteral("cipher's temporary folder U:\\EFSTMPWP (the cleanup did "
+                                         "not report on it)")}));
+    QCOMPARE(stopCleanupSummary(report),
+             QStringLiteral("Removed after the stop: the shadow copy's link %1. Not removed after "
+                            "the stop: the shadow copy %2 (Access is denied.); cipher's temporary "
+                            "folder U:\\EFSTMPWP (the cleanup did not report on it).")
+                 .arg(link, shadow));
+    QCOMPARE(stopCleanupNotRun({leftovers.at(1)}, QStringLiteral("the helper stopped")).not_removed,
+             QStringList{QStringLiteral("the shadow copy %1 (the helper stopped)").arg(shadow)});
+    QVERIFY(stopCleanupSummary({}).isEmpty());
+}
+
+// End to end through the executor, with fakes for both launches: a stopped step's leftovers are
+// removed by ID, and the batch's result says what was removed and what could not be.
+void PartitionManagerCoreTests::partitionExecutor_cleansUpWhatAStoppedStepLeft() {
+    const QString shadow = QLatin1String(kTestShadowId);
+    const QString link = QLatin1String(kTestShadowLink);
+    auto wipe = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeFreeSpace,
+                                                         windowsContinuedPartitionTarget());
+    wipe.summary = QStringLiteral("Wipe Free Space - T:");
+    ScriptedLaunches cipher;
+    cipher.outputs = {cleanupMarker("CREATED", "CIPHER", QStringLiteral("T")),
+                      cleanupResultLine("REMOVED", "CIPHER", QStringLiteral("T"), "")};
+    const auto wiped = runStoppedStepThenCleanup(wipe, &cipher);
+    QCOMPARE(cipher.commands.size(), 2);
+    QVERIFY2(cipher.commands.at(1).contains(QStringLiteral("Remove-SakCipherFolder 'T'\n")),
+             qPrintable(cipher.commands.at(1)));
+    QCOMPARE(wiped.steps.first().stop_cleanup_removed,
+             QStringList{QStringLiteral("cipher's temporary folder T:\\EFSTMPWP")});
+    QCOMPARE(wiped.steps.first().error_message,
+             QStringLiteral("Command cancelled. Removed after the stop: cipher's temporary folder "
+                            "T:\\EFSTMPWP."));
+    QCOMPARE(wiped.message,
+             QStringLiteral("Partition operation batch cancelled. Removed after the stop: cipher's "
+                            "temporary folder T:\\EFSTMPWP."));
+
+    auto cluster =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::ChangeClusterSize,
+                                                 windowsContinuedPartitionTarget(),
+                                                 windowsClusterPayload());
+    cluster.summary = QStringLiteral("Change Cluster Size - T:");
+    ScriptedLaunches backup;
+    backup.outputs = {cleanupMarker("CREATED", "SHADOW", shadow) +
+                          cleanupMarker("CREATED", "LINK", link),
+                      cleanupResultLine("REMOVED", "LINK", link, "") +
+                          cleanupResultLine("KEPT", "SHADOW", shadow, "Access is denied.")};
+    const auto stopped = runStoppedStepThenCleanup(cluster, &backup);
+    QCOMPARE(backup.commands.size(), 2);
+    QVERIFY(
+        backup.commands.at(1).contains(QStringLiteral("Remove-SakShadowCopy '%1'\n").arg(shadow)));
+    QCOMPARE(stopped.steps.first().stop_cleanup_not_removed,
+             QStringList{QStringLiteral("the shadow copy %1 (Access is denied.)").arg(shadow)});
+    QCOMPARE(stopped.message,
+             QStringLiteral("Partition operation batch cancelled. Removed after the stop: the "
+                            "shadow copy's link %1. Not removed after the stop: the shadow copy "
+                            "%2 (Access is denied.).")
+                 .arg(link, shadow));
+
+    // Removed again by the script itself, or never claimed: nothing to clean, nothing launched.
+    ScriptedLaunches released;
+    released.outputs = {cleanupMarker("CREATED", "CIPHER", QStringLiteral("T")) +
+                        cleanupMarker("RELEASED", "CIPHER", QStringLiteral("T"))};
+    const auto clean = runStoppedStepThenCleanup(wipe, &released);
+    QCOMPARE(released.commands.size(), 1);
+    QCOMPARE(clean.message, QStringLiteral("Partition operation batch cancelled"));
+    ScriptedLaunches unclaimed;
+    unclaimed.outputs = {QStringLiteral("SAK Partition Manager: Wipe free space on T:\r\n")};
+    std::ignore = runStoppedStepThenCleanup(wipe, &unclaimed);
+    QCOMPARE(unclaimed.commands.size(), 1);
+}
+
+// A new drive has no partition table, and Clear-Disk refuses it: "The disk has not been
+// initialized." The live check's Wipe Disk failed there at once. The wipe now clears only a disk
+// that has a table, and starts a new one from Initialize-Disk.
+void PartitionManagerCoreTests::scriptBuilder_wipeDiskStartsOnANewDrive() {
+    const QString readDisk = QStringLiteral("$sakWipeDisk = Get-Disk -Number 4 -ErrorAction Stop");
+    const QString clearUnlessNew = QStringLiteral(
+        "if (\"$($sakWipeDisk.PartitionStyle)\" -ne 'RAW') { Clear-Disk -Number 4 -RemoveData "
+        "-RemoveOEM -Confirm:$false }");
+    for (const bool ssd : {false, true}) {
+        const PartitionScript wipe = windowsContinuedScript(
+            PartitionOperationType::WipeDisk,
+            windowsDiskTarget(4),
+            ssd ? QJsonObject{{QStringLiteral("ssd_secure_erase"), true}} : QJsonObject{});
+        QVERIFY2(wipe.valid(), qPrintable(wipe.blockers.join(QStringLiteral("; "))));
+        const QString& script = wipe.script;
+        QVERIFY2(script.contains(clearUnlessNew), qPrintable(script));
+        QVERIFY2(script.indexOf(QStringLiteral("Clear-Disk -Number 4")) ==
+                     script.indexOf(clearUnlessNew) +
+                         clearUnlessNew.indexOf(QStringLiteral("Clear-Disk")),
+                 "the first clear is the one a new drive skips");
+        QVERIFY(script.indexOf(readDisk) >= 0);
+        QVERIFY(script.indexOf(readDisk) < script.indexOf(clearUnlessNew));
+        QVERIFY2(script.contains(
+                     QStringLiteral("\nInitialize-Disk -Number 4 -PartitionStyle GPT\n")),
+                 "every disk, new or not, is initialized as GPT on its own line");
+        QVERIFY(script.indexOf(QStringLiteral("Initialize-Disk -Number 4")) >
+                script.indexOf(clearUnlessNew));
+        if (ssd) {
+            QVERIFY2(script.contains(QStringLiteral(
+                         "$trimPartitions = @(if (\"$($sakWipeDisk.PartitionStyle)\" -ne 'RAW') { "
+                         "Get-SakOptionalDiskPartitions -DiskNumber 4 })")),
+                     "a new drive has no partitions to ReTrim, and is not asked for them");
+            QVERIFY(script.indexOf(readDisk) < script.indexOf(QStringLiteral("$trimPartitions")));
+        }
+    }
+}
+
+// The markers are for the application. The live check found the phase markers in the Log
+// window's report, and the cleanup's result lines reached the Log window as they streamed.
+void PartitionManagerCoreTests::partitionExecutor_scriptMarkersNeverReachAPerson() {
+    const QString markers = QStringLiteral(
+        "SAK-WINDOWS-CONTINUES|BEGIN|full-format|51521781760\r\n"
+        "SAK-WINDOWS-CONTINUES|END|full-format\r\n"
+        "SAK-CLEANUP|CREATED|CIPHER|T\r\n"
+        "SAK-CLEANUP-RESULT|REMOVED|CIPHER|T|\r\n"
+        "  SAK-WINDOWS-CONTINUES|BOGUS\r\n");
+    const auto noMarker = [](const QString& text) {
+        return !text.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|")) &&
+               !text.contains(QStringLiteral("SAK-CLEANUP"));
+    };
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("one\r\n") + markers + QStringLiteral("two\r\n")),
+             QStringLiteral("one\r\ntwo\r\n"));
+
+    // As the output streams: only the person's lines reach the Log window.
+    PartitionExecutor executor;
+    QSignalSpy logged(&executor, &PartitionExecutor::logMessage);
+    const auto resetObserver =
+        qScopeGuard([]() { PartitionExecutor::setBrokerRegisteredObserverForTesting({}); });
+    PartitionExecutor::setBrokerRegisteredObserverForTesting(
+        [&markers](const std::shared_ptr<ElevationBroker>& broker) {
+            Q_EMIT broker->progressUpdated(50,
+                                           QStringLiteral("STDOUT|Formatting\r\n") + markers +
+                                               QStringLiteral("Formatted\r\n"));
+            Q_EMIT broker->progressUpdated(50, QStringLiteral("STDOUT|SAK-CLEANUP-RESULT|KEPT|"));
+            throw std::runtime_error("stop before the helper");
+        });
+    PartitionOperation operation;
+    operation.summary = QStringLiteral("Wipe Disk - Disk 4");
+    PartitionScript script;
+    script.script = QStringLiteral("Write-Output 'not reached'");
+    try {
+        std::ignore = executor.executeElevatedScript(operation, script);
+    } catch (const std::runtime_error&) {}
+    QStringList lines;
+    for (const QList<QVariant>& line : logged) {
+        lines.append(line.first().toString());
+    }
+    QVERIFY(lines.contains(QStringLiteral("Formatting")));
+    QVERIFY(lines.contains(QStringLiteral("Formatted")));
+    for (const QString& line : lines) {
+        QVERIFY2(noMarker(line), qPrintable(line));
+    }
+
+    // After the step: its output, its result and every report made of it.
+    auto wipe = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeFreeSpace,
+                                                         windowsContinuedPartitionTarget());
+    wipe.summary = QStringLiteral("Wipe Free Space - T:");
+    ScriptedLaunches launches;
+    launches.outputs = {QStringLiteral("cipher writing\r\n") + markers,
+                        cleanupResultLine("REMOVED", "CIPHER", QStringLiteral("T"), "")};
+    const auto result = runStoppedStepThenCleanup(wipe, &launches);
+    QCOMPARE(launches.commands.size(), 2);
+    QVERIFY(result.steps.first().stdout_text.contains(QStringLiteral("cipher writing")));
+    const PartitionInventory none;
+    for (const QString& text : {result.steps.first().stdout_text,
+                                result.steps.first().error_message,
+                                result.message,
+                                PartitionReportGenerator::generateLogText(result),
+                                PartitionReportGenerator::generateHtml(none, none, result),
+                                PartitionReportGenerator::generateJson(none, none, result)}) {
+        QVERIFY2(noMarker(text), qPrintable(text));
+    }
+}
+
+// The live re-check's Log window read "Failed: Wipe Free Space - Disk 1 Partition 2" over
+// "Command cancelled. ..." A step a cancel stopped did not fail; it reads as cancelled, on every
+// path that cancels: the local script, the helper's task, and a cancel before anything was sent.
+void PartitionManagerCoreTests::partitionExecutor_cancelledStepReadsCancelled() {
+    auto wipe = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeFreeSpace,
+                                                         windowsContinuedPartitionTarget());
+    wipe.summary = QStringLiteral("Wipe Free Space - Disk 3 Partition 2");
+    ScriptedLaunches launches;
+    launches.outputs = {cleanupMarker("CREATED", "CIPHER", QStringLiteral("T")),
+                        cleanupResultLine("REMOVED", "CIPHER", QStringLiteral("T"), "")};
+    const auto cancelled = runStoppedStepThenCleanup(wipe, &launches);
+    QVERIFY(cancelled.cancelled);
+    QVERIFY(cancelled.steps.first().cancelled);
+    const QString log = PartitionReportGenerator::generateLogText(cancelled);
+    QVERIFY2(
+        log.contains(QStringLiteral(
+            "Cancelled: Wipe Free Space - Disk 3 Partition 2\nCommand cancelled. Removed after "
+            "the stop: cipher's temporary folder T:\\EFSTMPWP.")),
+        qPrintable(log));
+    QVERIFY2(!log.contains(QStringLiteral("Failed:")), qPrintable(log));
+    const PartitionInventory none;
+    QVERIFY(PartitionReportGenerator::generateHtml(none, none, cancelled)
+                .contains(QStringLiteral("<td>Cancelled</td>")));
+    QVERIFY(PartitionReportGenerator::generateJson(none, none, cancelled)
+                .contains(QStringLiteral("\"cancelled\": true")));
+
+    // The helper's task: cancelled by the helper, or by this executor after the task ended.
+    const QJsonObject helperCancelled{{QStringLiteral("cancelled"), true},
+                                      {QStringLiteral("exit_code"), -1}};
+    const auto fromHelper = PartitionExecutor::stepFromElevatedTask(
+        wipe, false, helperCancelled, QStringLiteral("Command cancelled"), false);
+    QVERIFY(fromHelper.cancelled);
+    QCOMPARE(fromHelper.error_message, QStringLiteral("Command cancelled"));
+    const auto afterIt = PartitionExecutor::stepFromElevatedTask(
+        wipe, true, QJsonObject{{QStringLiteral("exit_code"), 0}}, QString(), true);
+    QVERIFY(afterIt.cancelled);
+    QVERIFY(!afterIt.success);
+    const auto failed = PartitionExecutor::stepFromElevatedTask(
+        wipe, false, QJsonObject{{QStringLiteral("exit_code"), 1}}, QString(), false);
+    QVERIFY(!failed.cancelled);
+
+    // A cancel that lands before the helper is asked to run anything.
+    PartitionExecutor executor;
+    executor.cancel();
+    PartitionScript script;
+    script.script = QStringLiteral("Write-Output 'not reached'");
+    const auto unsent = executor.executeElevatedScript(wipe, script);
+    QVERIFY(unsent.cancelled);
+    QCOMPARE(unsent.error_message, QStringLiteral("Command cancelled"));
+
+    // A timeout is a failure, and a stop while Windows has the work keeps its own words.
+    const auto timedOut = runWithScriptOutput(wipe, QStringLiteral("cipher writing\r\n"), false);
+    QVERIFY(!timedOut.steps.first().cancelled);
+    QVERIFY(PartitionReportGenerator::generateLogText(timedOut).contains(
+        QStringLiteral("Failed: Wipe Free Space - Disk 3 Partition 2")));
+    const auto inWindows = runWithScriptOutput(
+        wipe, QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|full-format|1024\r\n"), true);
+    const QString windowsLog = PartitionReportGenerator::generateLogText(inWindows);
+    QVERIFY2(windowsLog.contains(QStringLiteral(
+                 "May still be running in Windows: Wipe Free Space - Disk 3 Partition 2")),
+             qPrintable(windowsLog));
+    QVERIFY(!windowsLog.contains(QStringLiteral("Cancelled:")));
+}
+
+// The live re-check: three empty lines stood where markers were taken out, between "SAK Partition
+// Manager: Wipe Disk 1" and the table after it. The blank lines PowerShell's formatter put around
+// the markers collapse; blank lines the script wrote with no marker among them are kept.
+void PartitionManagerCoreTests::withoutScriptMarkers_collapsesOnlyWhatStrippingLeft() {
+    const QString begin = QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|full-format|51521781760\r\n");
+    const QString end = QStringLiteral("SAK-WINDOWS-CONTINUES|END|full-format\r\n");
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("SAK Partition Manager: Wipe Disk 1\r\n\r\n") +
+                                  begin + QStringLiteral("\r\n") + end +
+                                  QStringLiteral("\r\nDriveLetter FileSystemLabel\r\n")),
+             QStringLiteral("SAK Partition Manager: Wipe Disk 1\r\n\r\nDriveLetter "
+                            "FileSystemLabel\r\n"));
+    // A marker between two lines of text leaves no blank line.
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("a\r\n") + begin + QStringLiteral("b\r\n")),
+             QStringLiteral("a\r\nb\r\n"));
+    // The script's own blank lines stay: a run with no marker, and the longest stretch the
+    // script wrote next to one.
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("a\r\n\r\n\r\nb\r\n")),
+             QStringLiteral("a\r\n\r\n\r\nb\r\n"));
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("a\r\n\r\n\r\n") + end +
+                                  QStringLiteral("\r\nb\r\n")),
+             QStringLiteral("a\r\n\r\n\r\nb\r\n"));
+    QCOMPARE(withoutScriptMarkers(QStringLiteral("a\nb")), QStringLiteral("a\nb"));
+    QCOMPARE(withoutScriptMarkers(QString()), QString());
+    QCOMPARE(withoutScriptMarkers(begin), QString());
 }
 
 QTEST_MAIN(PartitionManagerCoreTests)

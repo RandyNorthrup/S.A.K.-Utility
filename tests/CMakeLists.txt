@@ -338,6 +338,8 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/partition_os_migration_script.cpp
     ${SAK_PARTITION_SCRIPTS_CPP}
     ../src/core/partition_executor.cpp
+    ../src/core/windows_continued_work.cpp
+    ../src/core/partition_stop_cleanup.cpp
     ../src/core/partition_operation_planner.cpp
     ../src/core/partition_operation_queue.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
@@ -360,6 +362,8 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../include/sak/partition_script_builder.h
     ../include/sak/partition_operation_planner.h
     ../include/sak/partition_operation_queue.h
+    ../include/sak/windows_continued_work.h
+    ../include/sak/partition_stop_cleanup.h
 )
 
 # test_partition_manager_core - inventory parsing, safety, scripts, queue

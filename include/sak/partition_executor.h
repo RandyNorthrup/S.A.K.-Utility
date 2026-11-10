@@ -8,13 +8,18 @@
 
 #include "sak/partition_manager_types.h"
 #include "sak/partition_script_builder.h"
+#include "sak/partition_stop_cleanup.h"
+#include "sak/windows_continued_work.h"
 
+#include <QJsonObject>
 #include <QObject>
 
 #include <atomic>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 class PartitionManagerCoreTests;
 
@@ -60,9 +65,26 @@ public:
 Q_SIGNALS:
     void progressUpdated(int percent, const QString& status);
     void logMessage(const QString& message);
+    /// A step's script said Windows has taken its work over: from here Windows finishes it even
+    /// if the script is killed, so a cancel cannot stop it. Emitted from the thread running the
+    /// step, as the helper's output arrives.
+    void windowsPhaseStarted(const sak::WindowsContinuedPhase& phase);
+    /// That phase is over: its cmdlet returned, or the step ended.
+    void windowsPhaseEnded();
 
 private:
     friend class ::PartitionManagerCoreTests;
+
+    /// One elevated step's streamed output, as it arrives from the helper.
+    struct StepOutputState {
+        QString step_summary;
+        QString pending;                ///< A partial last line, until its newline arrives.
+        std::optional<WindowsContinuedMarker> open_phase;
+        StopLeftoverTracker leftovers;  ///< What the script made and has not removed yet.
+    };
+
+    /// Runs a cleanup script and returns its output, or why it could not run.
+    using StopCleanupRunner = std::function<std::expected<QString, QString>(const QString&)>;
 
     PartitionScriptBuilder m_script_builder;
     std::atomic_bool m_cancelled{false};
@@ -70,9 +92,31 @@ private:
     std::shared_ptr<ElevationBroker> m_active_broker;
 
     /// Pass the helper's progress on, and the script output it carries to logMessage.
-    void flushHelperOutput(const QString& pending_output);
+    void flushHelperOutput(StepOutputState* state);
     [[nodiscard]] QMetaObject::Connection relayHelperProgress(
-        ElevationBroker* broker, const std::shared_ptr<QString>& pending_output);
+        ElevationBroker* broker, const std::shared_ptr<StepOutputState>& state);
+    /// One line of a step's output: a Windows-continued marker moves the step's phase, any other
+    /// line goes to the log.
+    void relayOutputLine(StepOutputState* state, const QString& line);
+    /// A step whose script ended without success while its Windows-continued phase was open
+    /// (@p streamed_phase, or a Begin marker with no End in its output) may still be running in
+    /// Windows, and says so instead of "cancelled".
+    static void noteWorkLeftToWindows(PartitionExecutionStep* step,
+                                      const std::optional<WindowsContinuedMarker>& streamed_phase);
+    /// A step whose script was stopped can leave what its finally would have removed: its
+    /// shadow copy and that copy's link, or cipher's folder. @p run removes exactly those
+    /// @p leftovers named, and the step's result says what was removed and what could not be.
+    /// The step a finished elevated task describes, before any Windows-continued phase or
+    /// cleanup is considered: a task the helper or this executor cancelled is a cancelled step.
+    [[nodiscard]] static PartitionExecutionStep stepFromElevatedTask(
+        const PartitionOperation& operation,
+        bool task_success,
+        const QJsonObject& data,
+        const QString& task_error,
+        bool cancel_requested);
+    static void cleanUpAfterStop(PartitionExecutionStep* step,
+                                 const StopLeftoverTracker& leftovers,
+                                 const StopCleanupRunner& run);
     [[nodiscard]] PartitionExecutionStep executeOperation(const PartitionOperation& operation,
                                                           bool dry_run,
                                                           bool use_elevation);

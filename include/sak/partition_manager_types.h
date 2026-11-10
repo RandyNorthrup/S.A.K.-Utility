@@ -351,6 +351,16 @@ struct PartitionExecutionStep {
     QString summary;
     bool success{false};
     bool skipped{false};
+    /// The step's script ended while Windows was carrying out work Windows finishes on its own
+    /// (a full format, a defrag): the step may still be running in Windows, and its result says
+    /// so instead of "cancelled".
+    bool may_still_run_in_windows{false};
+    /// A cancel stopped the step's script: it did not fail, and its result says so.
+    bool cancelled{false};
+    /// What the application removed after the step's script was stopped (a shadow copy, its link,
+    /// cipher's folder), and what it could not remove, each with why.
+    QStringList stop_cleanup_removed;
+    QStringList stop_cleanup_not_removed;
     QString stdout_text;
     QString stderr_text;
     QString error_message;

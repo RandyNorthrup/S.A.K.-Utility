@@ -7666,9 +7666,9 @@ QVector<PropertyRow> optimizeRows(const PartitionDiskInfo* disk, const Partition
                 (volume == nullptr) || optimizeMountPoint(volume).isEmpty()
                     ? QObject::tr("Select a mounted volume before queueing optimization")
                 : diskLooksHdd(disk) || diskMediaUnknownUntilApply(disk)
-                    ? QObject::tr("Queue HDD defrag through cancellable elevated Apply")
+                    ? QObject::tr("Queue HDD defrag through elevated Apply")
                 : diskLooksSsd(disk)
-                    ? QObject::tr("Queue SSD ReTrim through cancellable elevated Apply")
+                    ? QObject::tr("Queue SSD ReTrim through elevated Apply")
                     : QObject::tr("Direct queue disabled until Windows reports SSD or HDD media"));
     addProperty(&rows, QObject::tr("Safe commands"), optimizeCommandLines(disk, volume).join('\n'));
     return rows;
@@ -9140,7 +9140,9 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
     connectController();
     updateRefreshButtonState();
     updateActionState();
-    // Closing the app mid-apply asks first and cancels through the controller.
+    // Closing the app mid-apply asks first and cancels through the controller. A step Windows is
+    // carrying out on its own goes on after the app closes, and the close prompt says so rather
+    // than promising to stop it.
     RunningOperations::add(
         this,
         tr("Partition changes"),
@@ -9151,7 +9153,11 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
                    state == PartitionManagerState::Applying ||
                    state == PartitionManagerState::Verifying;
         },
-        [this]() { m_controller->cancel(); });
+        [this]() { m_controller->cancelForExit(); },
+        [this]() {
+            const auto& phase = m_controller->windowsPhase();
+            return phase ? windowsContinuedExitNote(*phase) : QString();
+        });
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
@@ -9372,6 +9378,11 @@ void PartitionManagerPanel::setTestApplyExecutorForReview(
     m_controller->setApplyExecutorForTesting(std::move(executor));
 }
 
+void PartitionManagerPanel::reportTestWindowsPhaseForReview(
+    const std::optional<WindowsContinuedPhase>& phase) {
+    m_controller->reportWindowsPhaseForTesting(phase);
+}
+
 void PartitionManagerPanel::setTestInventoryScannerWithProgressForReview(
     PartitionManagerController::InventoryScannerWithProgress scanner) {
     m_controller->setInventoryScannerWithProgressForTesting(std::move(scanner));
@@ -9524,6 +9535,14 @@ void PartitionManagerPanel::addActionSpecSection(QVBoxLayout* layout,
 }
 
 void PartitionManagerPanel::addPendingOperationsSection(QVBoxLayout* layout, QWidget* pane) {
+    m_windows_phase_label = new QLabel(pane);
+    m_windows_phase_label->setWordWrap(true);
+    m_windows_phase_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // No accessible name: a screen reader reads a label by its text, and this one is empty while
+    // hidden.
+    m_windows_phase_label->setObjectName(QStringLiteral("partitionWindowsPhaseNotice"));
+    m_windows_phase_label->setVisible(false);
+    layout->addWidget(m_windows_phase_label);
     m_pending_label = new QLabel(tr("0 Operations Pending"), pane);
     m_pending_label->setAccessibleDescription(tr("Pending operation count"));
     layout->addWidget(m_pending_label);
@@ -10097,6 +10116,12 @@ void PartitionManagerPanel::connectControllerSignals() {
             &PartitionManagerController::executionFinished,
             this,
             &PartitionManagerPanel::onExecutionFinished);
+    connect(m_controller.get(), &PartitionManagerController::windowsPhaseChanged, this, [this]() {
+        updateWindowsPhaseNotice();
+        updateActionState();
+        // An open close prompt rewrites its note: the step may have just become stoppable.
+        RunningOperations::notifyChanged();
+    });
     connect(m_controller.get(),
             &PartitionManagerController::queueRefused,
             this,
@@ -10598,6 +10623,15 @@ void PartitionManagerPanel::updateActionState() {
     m_undo_button->setEnabled(has_queue && !operation_running);
     m_redo_button->setEnabled(m_controller->queue().canRedo() && !operation_running);
     m_refresh_button->setEnabled(!operation_running);
+}
+
+void PartitionManagerPanel::updateWindowsPhaseNotice() {
+    if (m_windows_phase_label == nullptr) {
+        return;
+    }
+    const auto& phase = m_controller->windowsPhase();
+    m_windows_phase_label->setText(phase ? windowsContinuedPhaseNotice(*phase) : QString());
+    m_windows_phase_label->setVisible(phase.has_value());
 }
 
 void PartitionManagerPanel::updateRefreshButtonState() {
@@ -13498,11 +13532,21 @@ void PartitionManagerPanel::onWipeSelected() {
 }
 
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
+    // The run is over, though the controller reports it running until this result is read: an
+    // open close prompt that asked about it goes first, so this result never opens over a prompt
+    // that still says the work is running.
+    RunningOperations::notifyChanged(this);
     Q_EMIT logOutput(result.report_text);
     // Surface a failed or timed-out apply as a warning rather than an information popup so the
     // technician can tell at a glance the operation did not complete; a user-initiated cancel is
-    // an expected outcome and stays informational.
-    if (result.success || result.cancelled) {
+    // an expected outcome and stays informational -- unless it left a step that Windows is still
+    // carrying out on the disk, or something the cleanup after it could not remove, which the
+    // technician must not read as nothing happening.
+    const bool needs_attention =
+        std::ranges::any_of(result.steps, [](const PartitionExecutionStep& step) {
+            return step.may_still_run_in_windows || !step.stop_cleanup_not_removed.isEmpty();
+        });
+    if (result.success || (result.cancelled && !needs_attention)) {
         showInformationLogged(this, tr("Partition Manager"), result.message);
         return;
     }

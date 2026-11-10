@@ -10,6 +10,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
+#include "sak/windows_continued_work.h"
 
 #include <QDeadlineTimer>
 #include <QStorageInfo>
@@ -187,6 +188,7 @@ void CheckDiskErrorsAction::execute() {
     setStatus(ActionStatus::Running);
     m_unchecked_drives.clear();
     m_unsupported_drives.clear();
+    m_scan_left_to_windows.clear();
     const QDateTime start_time = QDateTime::currentDateTime();
     QVector<QChar> drives;
     QString report;
@@ -199,11 +201,29 @@ void CheckDiskErrorsAction::execute() {
     executeRunVolumeScan(
         drives, report, totals.drives_scanned, totals.errors_found, totals.repairs_recommended);
     if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Disk error check cancelled"), start_time);
+        emitCancelledResult(cancelledMessage(m_scan_left_to_windows), start_time);
         return;
     }
 
     executeBuildReport(start_time, report, totals);
+}
+
+void CheckDiskErrorsAction::noteScanLeftToWindows(QChar drive, const QString& output) {
+    // Stopping the script does not stop a scan Windows has already started.
+    if (openWindowsContinuedPhase(output)) {
+        m_scan_left_to_windows = QString(drive) + QLatin1Char(':');
+    }
+}
+
+QString CheckDiskErrorsAction::cancelledMessage(const QString& scan_left_to_windows) {
+    if (scan_left_to_windows.isEmpty()) {
+        return QStringLiteral("Disk error check cancelled");
+    }
+    // Not "cancelled": the scan Windows had started goes on without this script.
+    return QStringLiteral(
+               "Disk error check stopped. Windows may still finish the read-only scan of %1 it "
+               "had started; that scan changes nothing on the drive.")
+        .arg(scan_left_to_windows);
 }
 
 bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
@@ -251,21 +271,27 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
     // This action is a "Check Disk Errors" scan and must NOT mutate the disk, so
     // it never calls -OfflineScanAndFix (which schedules a boot-time repair). The verdict is the
     // result the scan itself returns; a repair is only ever recommended, never run.
-    return QString(
-               "$drive = \"%1:\"\n"
-               "Write-Output '===SCAN_START==='\n"
-               "Write-Output \"Drive: $drive\"\n"
-               "\n"
-               "try {\n"
-               "    Write-Output 'Running online scan...'\n"
-               "    $scanResult = Repair-Volume -DriveLetter %1 -Scan -ErrorAction Stop\n"
-               "    Write-Output \"ScanResult: $scanResult\"\n"
-               "} catch {\n"
-               "    Write-Output \"Error: $($_.Exception.Message)\"\n"
-               "    Write-Output 'Status: Scan failed'\n"
-               "}\n"
-               "\n"
-               "Write-Output '===SCAN_END==='\n")
+    // The scan is a Windows storage job ("Repair Volume") that finishes even when this script is
+    // killed, so it runs between the markers that say so.
+    return (QStringLiteral("$drive = \"%1:\"\n"
+                           "Write-Output '===SCAN_START==='\n"
+                           "Write-Output \"Drive: $drive\"\n"
+                           "\n"
+                           "try {\n"
+                           "    Write-Output 'Running online scan...'\n"
+                           "    ") +
+            windowsContinuedStatement(WindowsContinuedWork::VolumeScan,
+                                      QStringLiteral("0"),
+                                      QStringLiteral("$scanResult = Repair-Volume -DriveLetter %1 "
+                                                     "-Scan -ErrorAction Stop")) +
+            QStringLiteral("\n"
+                           "    Write-Output \"ScanResult: $scanResult\"\n"
+                           "} catch {\n"
+                           "    Write-Output \"Error: $($_.Exception.Message)\"\n"
+                           "    Write-Output 'Status: Scan failed'\n"
+                           "}\n"
+                           "\n"
+                           "Write-Output '===SCAN_END==='\n"))
         .arg(drive);
 }
 
@@ -407,6 +433,7 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
         const ProcessResult proc =
             runScanProcess(ps_cmd, granted_ms, [this]() { return isCancelled(); });
         if (proc.cancelled) {
+            noteScanLeftToWindows(drive, proc.std_out);
             return;
         }
         if (proc.timed_out) {

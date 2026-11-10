@@ -43,6 +43,13 @@ constexpr int kDiskGroup = 1;
 constexpr int kDisksGroup = 2;
 const QString kHelperStderrPrefix = QStringLiteral("STDERR|");
 
+// "waiting: physical disks, 12 s" is still the step "physical disks".
+QString stepOfProgressLine(const QString& text) {
+    static const QRegularExpression waiting(QStringLiteral("^waiting: (.+), \\d+ s$"));
+    const auto match = waiting.match(text);
+    return match.hasMatch() ? match.captured(1) : text;
+}
+
 bool cancellationRequested(const CancelCheck& should_cancel) {
     return should_cancel && should_cancel();
 }
@@ -724,7 +731,7 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
             if (!line.startsWith(kScanProgressPrefix)) {
                 continue;
             }
-            m_last_step = line.mid(kScanProgressPrefix.size()).trimmed();
+            m_last_step = stepOfProgressLine(line.mid(kScanProgressPrefix.size()).trimmed());
             m_armed = true;
             m_since_progress.start();
             const auto match = disk_of.match(m_last_step);
@@ -999,7 +1006,7 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
         inventory.captured_at = QDateTime::currentDateTime();
         if (result.cancelled || cancellationRequested(should_cancel)) {
             inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
-        } else if (result.timed_out) {
+        } else if (result.timed_out || result.exit_code == kInventoryScanDidNotFinishExitCode) {
             // Whatever it wrote before it stopped is not a list of this PC's disks.
             inventory.scan_did_not_finish = true;
             inventory.warnings.append(result.std_err.trimmed());
@@ -1085,23 +1092,35 @@ function Write-SakScanProgress {
   [Console]::Error.WriteLine("SAK-SCAN-PROGRESS $Step")
 }
 Write-SakScanProgress 'started'
-# Loading the BitLocker module costs time, and only a scan with administrator rights reads it.
+# Loading the BitLocker module costs time, and only a scan with administrator rights reads it. It
+# loads in the runspace the BitLocker reads run in.
 if ($sakReadAdministratorState) {
-  try {
-    $bitLockerCommandAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction Stop)
-  } catch {
-    $bitLockerCommandError = "Get-BitLockerVolume is unavailable: $($_.Exception.Message)"
+  Write-SakScanProgress 'BitLocker module'
+  $answer = Invoke-SakBoundedCall -Step 'BitLocker module' -Script { [bool](Get-Command Get-BitLockerVolume -ErrorAction Stop) }
+  if (-not $answer.Finished) {
+    $bitLockerCommandError = "Get-BitLockerVolume did not finish (BitLocker module) within $sakQuerySeconds s"
+  } elseif ($answer.ErrorId -or $answer.Error) {
+    $bitLockerCommandError = "Get-BitLockerVolume is unavailable: $($answer.Error)"
+  } else {
+    $bitLockerCommandAvailable = $true
   }
 }
 $physicalDiskQueryFailed = $false
 $physicalDiskQueryError = ''
 $physicalDisks = @()
 Write-SakScanProgress 'physical disks'
-try {
-  $physicalDisks = @(Get-PhysicalDisk -ErrorAction Stop)
-} catch {
+# Right after a disk went offline and online, Windows took 36 s to answer this while its storage
+# provider loaded again (2026-11-09). The scan waits for it, saying so, up to its limit. It has no
+# -AsJob, so it runs as a bounded call.
+$answer = Invoke-SakBoundedCall -Step 'physical disks' -Script { Get-PhysicalDisk -ErrorAction Stop }
+if (-not $answer.Finished) {
   $physicalDiskQueryFailed = $true
-  $physicalDiskQueryError = "$($_.Exception.Message)"
+  $physicalDiskQueryError = "Get-PhysicalDisk did not finish (physical disks) within $sakQuerySeconds s"
+} elseif ($answer.ErrorId -or $answer.Error) {
+  $physicalDiskQueryFailed = $true
+  $physicalDiskQueryError = $answer.Error
+} else {
+  $physicalDisks = @($answer.Items)
 }
 )PS");
 }
@@ -1139,7 +1158,8 @@ function Get-SakVolumeForPartition {
     }
   }
   foreach ($lookup in $lookups) {
-    $answer = Invoke-SakBoundedQuery -Start $lookup.Start -ArgumentList @($lookup.Argument)
+    $answer = Invoke-SakBoundedQuery -Start $lookup.Start -ArgumentList @($lookup.Argument) `
+      -Step "volume of partition $($Partition.PartitionNumber)"
     if (-not $answer.Finished) {
       $errors += "The volume did not answer within $sakQuerySeconds s"
       break
@@ -1163,7 +1183,14 @@ function Get-SakVolumeForPartition {
 static QString inventoryPowerShellDiskPrefixScript() {
     return QStringLiteral(R"PS(
 Write-SakScanProgress 'listing disks'
-$sakDiskList = @(@(Get-Disk) + @(Get-SakDynamicDisks))
+$listed = Invoke-SakBoundedQuery -Step 'listing disks' -Start { Get-Disk -AsJob }
+if (-not $listed.Finished) { Stop-SakScan -Step 'listing disks' -Detail "Get-Disk did not answer within $sakQuerySeconds s" }
+if ($listed.ErrorId) { throw "Get-Disk failed: $($listed.Error)" }
+Write-SakScanProgress 'dynamic disks'
+$dynamic = Invoke-SakBoundedCall -Step 'dynamic disks' -Script { Get-SakDynamicDisks }
+if (-not $dynamic.Finished) { Stop-SakScan -Step 'dynamic disks' -Detail "the dynamic disk probe did not answer within $sakQuerySeconds s" }
+if ($dynamic.ErrorId -or $dynamic.Error) { throw "The dynamic disk probe failed: $($dynamic.Error)" }
+$sakDiskList = @(@($listed.Items) + @($dynamic.Items))
 $sakDiskCount = $sakDiskList.Count
 $sakDiskIndex = 0
 $disks = $sakDiskList | ForEach-Object {
@@ -1180,13 +1207,19 @@ $disks = $sakDiskList | ForEach-Object {
   } elseif (-not $physical) {
     $reliabilityError = 'No matching physical disk was reported'
   } else {
-    try {
-      $reliability = $physical | Get-StorageReliabilityCounter -ErrorAction Stop
+    $reliabilityStep = "reliability of disk $sakDiskIndex"
+    Write-SakScanProgress $reliabilityStep
+    $answer = Invoke-SakBoundedCall -Step $reliabilityStep -ArgumentList @($physical) `
+      -Script { param($drive) $drive | Get-StorageReliabilityCounter -ErrorAction Stop }
+    if (-not $answer.Finished) {
+      $reliabilityError = "Get-StorageReliabilityCounter did not finish ($reliabilityStep) within $sakQuerySeconds s"
+    } elseif ($answer.ErrorId -or $answer.Error) {
+      $reliabilityError = $answer.Error
+    } else {
+      $reliability = @($answer.Items) | Select-Object -First 1
       if (-not $reliability) {
         $reliabilityError = 'No storage reliability counters were reported'
       }
-    } catch {
-      $reliabilityError = "$($_.Exception.Message)"
     }
   }
 )PS");
@@ -1199,8 +1232,10 @@ static QString inventoryPowerShellDiskQueriesScript() {
   # only case that asks the drive, and asking it takes administrator rights.
   $rotationRateRpm = 0
   if ($sakReadAdministratorState -and $physical -and "$($physical.MediaType)" -ceq 'Unspecified') {
-    Write-SakScanProgress "rotation rate of disk $sakDiskIndex"
-    $rotationRateRpm = Get-SakRotationRateRpm -DiskNumber $disk.Number
+    $rotationStep = "rotation rate of disk $sakDiskIndex"
+    Write-SakScanProgress $rotationStep
+    $rotationRateRpm = Get-SakRotationRateRpm -DiskNumber $disk.Number `
+      -OnWait { param($seconds) Write-SakScanWaiting -Step $rotationStep -Seconds $seconds }
   }
   Write-SakScanProgress "partitions of disk $sakDiskIndex"
   $partitionQuery = if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions') {
@@ -1257,21 +1292,26 @@ static QString inventoryPowerShellPartitionProbeScript() {
         if (-not $bitLockerCommandAvailable) {
           $bitLockerError = $bitLockerCommandError
         } else {
-          Write-SakScanProgress "BitLocker of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
-          try {
-            $bitlocker = Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction Stop
-            $bitLockerKnown = $null -ne $bitlocker
-            if (-not $bitLockerKnown) {
-              $bitLockerError = 'Get-BitLockerVolume returned no result'
-            }
-          } catch {
+          $bitLockerStep = "BitLocker of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
+          Write-SakScanProgress $bitLockerStep
+          $answer = Invoke-SakBoundedCall -Step $bitLockerStep -ArgumentList @("$($volume.DriveLetter):") `
+            -Script { param($mountPoint) Get-BitLockerVolume -MountPoint $mountPoint -ErrorAction Stop }
+          if (-not $answer.Finished) {
+            $bitLockerError = "Get-BitLockerVolume did not finish ($bitLockerStep) within $sakQuerySeconds s"
+          } elseif ($answer.ErrorId -or $answer.Error) {
             # BitLocker does not manage a dynamic volume, and says "element not found". That is
             # an answer about this volume: it is not encrypted. On any other volume it is a failure.
             if ($disk.PSObject.Properties.Name -contains 'DynamicPartitions' -and
-                "$($_.Exception.Message)" -match $sakElementNotFound) {
+                "$($answer.Error)" -match $sakElementNotFound) {
               $bitLockerKnown = $true
             } else {
-              $bitLockerError = "$($_.Exception.Message)"
+              $bitLockerError = "$($answer.Error)"
+            }
+          } else {
+            $bitlocker = @($answer.Items) | Select-Object -First 1
+            $bitLockerKnown = $null -ne $bitlocker
+            if (-not $bitLockerKnown) {
+              $bitLockerError = 'Get-BitLockerVolume returned no result'
             }
           }
         }
@@ -1285,9 +1325,11 @@ static QString inventoryPowerShellPartitionResultScript() {
       $dirtyKnown = $false
       $dirtyError = ''
       if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
-        Write-SakScanProgress "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
+        $dirtyStep = "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
+        Write-SakScanProgress $dirtyStep
         $dirtyRun = Invoke-SakBoundedProgram -Path "$env:SystemRoot\System32\fsutil.exe" `
-          -Arguments "dirty query $($volume.DriveLetter):" -Seconds $sakQuerySeconds
+          -Arguments "dirty query $($volume.DriveLetter):" -Seconds $sakQuerySeconds `
+          -OnWait { param($seconds) Write-SakScanWaiting -Step $dirtyStep -Seconds $seconds }
         $dirtyExit = $dirtyRun.ExitCode
         $dirtyText = ("$($dirtyRun.StdOut) $($dirtyRun.StdErr)" -replace '\s+', ' ').Trim()
         if (-not $dirtyRun.Started) {
@@ -1353,6 +1395,7 @@ static QString inventoryPowerShellFooterScript() {
   }
 }
 $disks | ConvertTo-Json -Depth 8 -Compress
+if ($script:sakCallsLeftWaiting -gt 0) { Stop-SakScanProcess -ExitCode 0 }
 )PS");
 }
 
@@ -1369,7 +1412,7 @@ function Get-SakPartitionsForDisk {
   $message = ''
   $items = @()
   $answer = Invoke-SakBoundedQuery -Start { param($number) Get-Partition -DiskNumber $number -AsJob } `
-    -ArgumentList @($DiskNumber)
+    -ArgumentList @($DiskNumber) -Step "partitions of disk $DiskNumber"
   if (-not $answer.Finished) {
     $failed = $true
     $message = "The partition list did not answer within $sakQuerySeconds s"
@@ -1385,21 +1428,134 @@ function Get-SakPartitionsForDisk {
 )PS");
 }
 
+namespace {
+
+// How a scan that cannot go on ends: by its step, and at once when a call is left waiting.
+QString boundedScanStopScript() {
+    return QStringLiteral(R"PS(
+# Ends this process at once with an exit code. A call left waiting holds a runspace, and an ordinary
+# exit waits for it to stop: 7 s for a stand-in sleep, and for a storage call that never answers,
+# never. Only a scan that left a call waiting gets here.
+function Stop-SakScanProcess {
+  param([int]$ExitCode)
+  [Console]::Out.Flush()
+  [Console]::Error.Flush()
+  if (-not ('Sak.ScanProcess' -as [type])) {
+    Add-Type -Namespace Sak -Name ScanProcess -MemberDefinition (
+      '[DllImport("kernel32.dll")] public static extern System.IntPtr GetCurrentProcess();' +
+      '[DllImport("kernel32.dll")] public static extern bool TerminateProcess(System.IntPtr process, uint exitCode);')
+  }
+  [void][Sak.ScanProcess]::TerminateProcess([Sak.ScanProcess]::GetCurrentProcess(), [uint32]$ExitCode)
+}
+# A step the scan cannot go on without, that did not answer within its limit: the scan says it did
+# not finish and where, never that the PC has no disks.
+function Stop-SakScan {
+  param([string]$Step, [string]$Detail)
+  [Console]::Error.WriteLine("The disk scan did not finish ($Step): $Detail")
+  if ($script:sakCallsLeftWaiting -gt 0) { Stop-SakScanProcess -ExitCode $sakScanDidNotFinishExitCode }
+  exit $sakScanDidNotFinishExitCode
+}
+)PS");
+}
+
+// Any call that cannot run as a storage job, in a runspace of its own, with the same limit and
+// word.
+QString boundedCallFunctionScript() {
+    return QStringLiteral(R"PS(
+# A call that cannot run as a storage job runs in a runspace of this process, with the scan's own
+# functions, the same limit and the same word while it waits. One that does not answer is left
+# there, and the next call gets a new runspace.
+function Invoke-SakBoundedCall {
+  param([Parameter(Mandatory = $true)][string]$Step, [Parameter(Mandatory = $true)][scriptblock]$Script, [object[]]$ArgumentList = @(), [int]$Seconds = $sakQuerySeconds)
+  $preamble = ''
+  if ($null -eq $script:sakCallRunspace) {
+    $script:sakCallRunspace = [runspacefactory]::CreateRunspace()
+    $script:sakCallRunspace.Open()
+    $script:sakCallFunctions = @{}
+    $preamble = "`$ErrorActionPreference = 'Stop'`n`$ProgressPreference = 'SilentlyContinue'`n" +
+      "`$sakQuerySeconds = $sakQuerySeconds`n`$sakHeartbeatSeconds = $sakHeartbeatSeconds`n"
+  }
+  # The scan's functions defined since the runspace last had them, the dynamic disk probe's among them.
+  $missing = @(Get-ChildItem -Path function: | Where-Object { $_.Name -like '*-Sak*' -and -not $script:sakCallFunctions.ContainsKey($_.Name) })
+  if ($preamble -or $missing.Count -gt 0) {
+    $setup = [powershell]::Create()
+    $setup.Runspace = $script:sakCallRunspace
+    [void]$setup.AddScript($preamble + (@($missing | ForEach-Object { "function $($_.Name) {`n$($_.Definition)`n}" }) -join "`n"))
+    [void]$setup.Invoke()
+    $setup.Dispose()
+    foreach ($function in $missing) { $script:sakCallFunctions[$function.Name] = $true }
+  }
+  $call = [powershell]::Create()
+  $call.Runspace = $script:sakCallRunspace
+  [void]$call.AddScript($Script.ToString())
+  foreach ($argument in $ArgumentList) { [void]$call.AddArgument($argument) }
+  $handle = $call.BeginInvoke()
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not $handle.AsyncWaitHandle.WaitOne($sakHeartbeatSeconds * 1000)) {
+    if ($clock.Elapsed.TotalSeconds -ge $Seconds) {
+      [void]$call.BeginStop($null, $null)
+      $script:sakCallRunspace = $null
+      $script:sakCallsLeftWaiting++
+      return [pscustomobject]@{ Finished = $false; Items = @(); ErrorId = ''; Error = '' }
+    }
+    Write-SakScanWaiting -Step $Step -Seconds ([int]$clock.Elapsed.TotalSeconds)
+  }
+  try {
+    $items = @($call.EndInvoke($handle))
+    $first = @($call.Streams.Error) | Select-Object -First 1
+    if ($first) {
+      return [pscustomobject]@{ Finished = $true; Items = $items; ErrorId = "$($first.FullyQualifiedErrorId)"; Error = "$($first.Exception.Message)" }
+    }
+    return [pscustomobject]@{ Finished = $true; Items = $items; ErrorId = ''; Error = '' }
+  } catch {
+    # The call's own error, not the wrapper's: the innermost exception that carries an error record.
+    $record = $null
+    $exception = $_.Exception
+    while ($null -ne $exception) {
+      if ($exception -is [System.Management.Automation.IContainsErrorRecord]) { $record = $exception.ErrorRecord }
+      $exception = $exception.InnerException
+    }
+    if ($null -eq $record) { $record = $_ }
+    return [pscustomobject]@{ Finished = $true; Items = @(); ErrorId = "$($record.FullyQualifiedErrorId)"; Error = "$($record.Exception.Message)" }
+  } finally {
+    $call.Dispose()
+  }
+}
+)PS");
+}
+
+}  // namespace
+
 QString StorageInventoryWorker::boundedQueryFunctionScript() {
     // A storage query run as a job can be given a time. One that does not answer is left to stop on
     // its own: waiting for it to stop would be the wait this exists to avoid.
     return QStringLiteral(R"PS(
 $sakQuerySeconds = %1
+$sakHeartbeatSeconds = %2
+$sakScanDidNotFinishExitCode = %3
+$script:sakCallRunspace = $null
+$script:sakCallFunctions = @{}
+$script:sakCallsLeftWaiting = 0
+# A call that is still waiting says so every few seconds: a slow call is not a scan that has stopped.
+function Write-SakScanWaiting {
+  param([string]$Step, [int]$Seconds)
+  [Console]::Error.WriteLine("SAK-SCAN-PROGRESS waiting: $Step, $Seconds s")
+}
 function Invoke-SakBoundedQuery {
-  param([Parameter(Mandatory = $true)][scriptblock]$Start, [object[]]$ArgumentList = @(), [int]$Seconds = $sakQuerySeconds)
+  param([Parameter(Mandatory = $true)][scriptblock]$Start, [object[]]$ArgumentList = @(), [int]$Seconds = $sakQuerySeconds, [string]$Step = '')
   try {
     $job = & $Start @ArgumentList
   } catch {
     return [pscustomobject]@{ Finished = $true; Items = @(); ErrorId = "$($_.FullyQualifiedErrorId)"; Error = "$($_.Exception.Message)" }
   }
-  if (-not (Wait-Job -Job $job -Timeout $Seconds)) {
-    if ($job -is [System.Management.Automation.Job2]) { $job.StopJobAsync() }
-    return [pscustomobject]@{ Finished = $false; Items = @(); ErrorId = ''; Error = '' }
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not (Wait-Job -Job $job -Timeout $sakHeartbeatSeconds)) {
+    if ($clock.Elapsed.TotalSeconds -ge $Seconds) {
+      if ($job -is [System.Management.Automation.Job2]) { $job.StopJobAsync() }
+      $script:sakCallsLeftWaiting++
+      return [pscustomobject]@{ Finished = $false; Items = @(); ErrorId = ''; Error = '' }
+    }
+    if ($Step) { Write-SakScanWaiting -Step $Step -Seconds ([int]$clock.Elapsed.TotalSeconds) }
   }
   try {
     $items = @(Receive-Job -Job $job -ErrorAction Stop)
@@ -1411,7 +1567,10 @@ function Invoke-SakBoundedQuery {
   }
 }
 )PS")
-        .arg(kDriveQuerySeconds);
+               .arg(kInventoryQueryCapSeconds)
+               .arg(kInventoryHeartbeatSeconds)
+               .arg(kInventoryScanDidNotFinishExitCode) +
+           boundedScanStopScript() + boundedCallFunctionScript();
 }
 
 QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrator_state) {

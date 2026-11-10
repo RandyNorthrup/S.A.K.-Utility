@@ -92,6 +92,11 @@ public:
     /// corruption is found it reports RepairRecommended, nothing more.
     static QString buildScanVolumeScript(QChar drive);
 
+    /// @brief The message for a cancelled run. @p scan_left_to_windows names the drive whose scan
+    ///        Windows had started when the script was stopped ("C:"), or is empty: Windows
+    ///        finishes a scan it has started, so that run is "stopped", not "cancelled". Pure.
+    [[nodiscard]] static QString cancelledMessage(const QString& scan_left_to_windows);
+
     /// @brief What Repair-Volume -Scan's own result means for this check.
     enum class ScanVerdict {
         NoErrors,      ///< The volume is clean.
@@ -148,6 +153,12 @@ private:
     /// drives that could not be checked, so the summary's count matches the drives it names, but
     /// they do not fail the run: they are named with the read-only chkdsk that checks them.
     QStringList m_unsupported_drives;
+    /// The drive ("C:") whose scan Windows had started when a cancel stopped its script.
+    QString m_scan_left_to_windows;
+
+    /// Records @p drive as left to Windows when @p output, its stopped scan's, shows the scan
+    /// had started.
+    void noteScanLeftToWindows(QChar drive, const QString& output);
 
     // execute() helpers -- split to stay under the 70-line function gate
     bool executeEnumerateVolumes(const QDateTime& start_time,

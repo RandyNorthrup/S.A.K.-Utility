@@ -9,6 +9,8 @@
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/partition_stop_cleanup.h"
+#include "sak/windows_continued_work.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -125,6 +127,20 @@ QString commonHeader(const QString& title) {
                "Write-Output %1\n")
         .arg(PartitionScriptBuilder::quotePowerShell(QStringLiteral("SAK Partition Manager: ") +
                                                      title));
+}
+
+// @p statement between the markers that tell the application Windows has taken the work over
+// and finishes it even if this script is killed (see windows_continued_work.h), as one line.
+QString windowsContinuedLine(WindowsContinuedWork work,
+                             const QString& size_expression,
+                             const QString& statement) {
+    return windowsContinuedStatement(work, size_expression, statement) + QLatin1Char('\n');
+}
+
+// Repair-Volume -Scan starts the storage job "Repair Volume", which finishes on its own. The size
+// of the volume is not known where these scans run, so the marker carries none.
+QString volumeScanLine(const QString& statement) {
+    return windowsContinuedLine(WindowsContinuedWork::VolumeScan, QStringLiteral("0"), statement);
 }
 
 QString requirePartitionIdentity(const PartitionTarget& target) {
@@ -1944,6 +1960,67 @@ QString sakVolumeGuidFunctionScript() {
         "}\n");
 }
 
+// Makes the shadow copy. Its ID is written as a marker the moment Create returns it, before
+// anything else that could be interrupted (see sakShadowBackupFunctionScript).
+QString sakShadowCreateScript() {
+    return QStringLiteral(
+               "  $shadow = $null\n"
+               "  $shadowFailure = ''\n"
+               "  try {\n"
+               "    $result = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create "
+               "-Arguments @{ Volume = $volume; Context = 'ClientAccessible' } -ErrorAction Stop\n"
+               "    if ($result.ReturnValue -ne 0) {\n"
+               "      $shadowFailure = ('Win32_ShadowCopy.Create returned {0}' -f "
+               "$result.ReturnValue)\n"
+               "    } else {\n"
+               "      $sakShadowId = [string]$result.ShadowID\n"
+               "      ") +
+           stopLeftoverCreatedStatement(StopLeftoverKind::ShadowCopy,
+                                        QStringLiteral("$sakShadowId")) +
+           QStringLiteral(
+               "\n"
+               "      $shadow = Get-CimInstance Win32_ShadowCopy -Filter "
+               "(\"ID='{0}'\" -f $sakShadowId) -ErrorAction Stop\n"
+               "      if (-not $shadow) { $shadowFailure = 'created shadow could not be resolved' "
+               "}\n"
+               "    }\n"
+               "  } catch { $shadowFailure = $_.Exception.Message; $shadow = $null }\n");
+}
+
+// Copies through a link to the shadow copy, then removes the link and the copy. The link's path
+// is written before the link exists, and each is released only once it is gone.
+QString sakShadowLinkedCopyScript() {
+    return QStringLiteral(
+               "  if ($shadow -and $shadow.DeviceObject) {\n"
+               "    $shadowLink = Join-Path ([System.IO.Path]::GetTempPath()) ('sak-shadow-' + "
+               "[guid]::NewGuid().ToString('N'))\n"
+               "    ") +
+           stopLeftoverCreatedStatement(StopLeftoverKind::ShadowLink,
+                                        QStringLiteral("$shadowLink")) +
+           QStringLiteral(
+               "\n"
+               "    try {\n"
+               "      $null = & cmd.exe /c mklink /D $shadowLink ($shadow.DeviceObject + '\\')\n"
+               "      if ($LASTEXITCODE -ne 0) { throw ('Could not link to the shadow copy of {0}' "
+               "-f $volume) }\n"
+               "      Invoke-SakRobocopy ($shadowLink + '\\') $backupPath\n"
+               "    } finally {\n"
+               "      if ([System.IO.Directory]::Exists($shadowLink)) { "
+               "[System.IO.Directory]::Delete($shadowLink) }\n"
+               "      ") +
+           stopLeftoverReleasedStatement(StopLeftoverKind::ShadowLink,
+                                         QStringLiteral("$shadowLink")) +
+           QStringLiteral(
+               "\n"
+               "      Remove-CimInstance -InputObject $shadow -ErrorAction Stop\n"
+               "      ") +
+           stopLeftoverReleasedStatement(StopLeftoverKind::ShadowCopy,
+                                         QStringLiteral("$sakShadowId")) +
+           QStringLiteral(
+               "\n"
+               "    }\n");
+}
+
 QString sakShadowBackupFunctionScript() {
     // P03-11: copy the SOURCE via a VSS shadow so the backup is point-in-time
     // consistent even while apps hold files open. Partition ops run elevated, so
@@ -1955,58 +2032,40 @@ QString sakShadowBackupFunctionScript() {
     // robocopy cannot open a \\?\GLOBALROOT device path: it stops with error 67, "the network name
     // cannot be found". So it reads the snapshot through a directory link, kept on the system
     // volume because the backup volume may not hold links. The link goes before the snapshot does.
+    //
+    // A cancel or a close kills this script's process tree, and the finally that removes the link
+    // and the snapshot never runs. So the shadow copy's ID and the link's path are written as
+    // markers the moment each exists, and again once each is removed: the application removes, by
+    // ID, exactly what is left (partition_stop_cleanup.h).
     return QStringLiteral(
-        "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
-        "  $volume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n"
-        "  $shadow = $null\n"
-        "  $shadowFailure = ''\n"
-        "  try {\n"
-        "    $result = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments "
-        "@{ Volume = $volume; Context = 'ClientAccessible' } -ErrorAction Stop\n"
-        "    if ($result.ReturnValue -ne 0) {\n"
-        "      $shadowFailure = ('Win32_ShadowCopy.Create returned {0}' -f $result.ReturnValue)\n"
-        "    } else {\n"
-        "      $shadow = Get-CimInstance Win32_ShadowCopy -Filter "
-        "(\"ID='{0}'\" -f $result.ShadowID) -ErrorAction Stop\n"
-        "      if (-not $shadow) { $shadowFailure = 'created shadow could not be resolved' }\n"
-        "    }\n"
-        "  } catch { $shadowFailure = $_.Exception.Message; $shadow = $null }\n"
-        "  if ($shadow -and $shadow.DeviceObject) {\n"
-        "    $shadowLink = Join-Path ([System.IO.Path]::GetTempPath()) ('sak-shadow-' + "
-        "[guid]::NewGuid().ToString('N'))\n"
-        "    try {\n"
-        "      $null = & cmd.exe /c mklink /D $shadowLink ($shadow.DeviceObject + '\\')\n"
-        "      if ($LASTEXITCODE -ne 0) { throw ('Could not link to the shadow copy of {0}' -f "
-        "$volume) }\n"
-        "      Invoke-SakRobocopy ($shadowLink + '\\') $backupPath\n"
-        "    } finally {\n"
-        "      if ([System.IO.Directory]::Exists($shadowLink)) { "
-        "[System.IO.Directory]::Delete($shadowLink) }\n"
-        "      Remove-CimInstance -InputObject $shadow -ErrorAction Stop\n"
-        "    }\n"
-        "  } else {\n"
-        "    $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat\n"
-        "    if ($fsFormat -notmatch '^(FAT|FAT32|exFAT)$') { throw ('VSS shadow copy unavailable "
-        "for {0} (filesystem {1}); refusing to reformat without a point-in-time-consistent backup. "
-        "Enable the Volume Shadow Copy service and run elevated, then retry. VSS failure: {2}' -f "
-        "$volume, $fsFormat, $shadowFailure) }\n"
-        "    Write-Output ('WARNING: VSS shadow copy unavailable for {0} ({1}); backing up the "
-        "live volume (not point-in-time consistent). VSS failure: {2}' -f $volume, $fsFormat, "
-        "$shadowFailure)\n"
-        "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
-        // The live (non-point-in-time) copy has no snapshot, so verify the backup actually
-        // matches the source before the caller destroys the source. If a file changed or
-        // could not be read during the copy the manifests differ and we fail closed rather
-        // than accept a torn backup as the baseline.
-        "    $srcManifest = @(Get-SakFileManifest $sourceRoot)\n"
-        "    $bakManifest = @(Get-SakFileManifest $backupPath)\n"
-        "    $diff = @(Compare-Object -ReferenceObject $srcManifest -DifferenceObject "
-        "$bakManifest -Property RelativePath,Length,Hash)\n"
-        "    if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
-        "'Live backup is incomplete or the source changed during copy; refusing to reformat "
-        "without a consistent backup' }\n"
-        "  }\n"
-        "}\n");
+               "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
+               "  $volume = "
+               "[System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n") +
+           sakShadowCreateScript() + sakShadowLinkedCopyScript() +
+           QStringLiteral(
+               "  } else {\n"
+               "    $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat\n"
+               "    if ($fsFormat -notmatch '^(FAT|FAT32|exFAT)$') { throw ('VSS shadow copy "
+               "unavailable for {0} (filesystem {1}); refusing to reformat without a "
+               "point-in-time-consistent backup. Enable the Volume Shadow Copy service and run "
+               "elevated, then retry. VSS failure: {2}' -f $volume, $fsFormat, $shadowFailure) }\n"
+               "    Write-Output ('WARNING: VSS shadow copy unavailable for {0} ({1}); backing up "
+               "the live volume (not point-in-time consistent). VSS failure: {2}' -f $volume, "
+               "$fsFormat, $shadowFailure)\n"
+               "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
+               // The live (non-point-in-time) copy has no snapshot, so verify the backup actually
+               // matches the source before the caller destroys the source. If a file changed or
+               // could not be read during the copy the manifests differ and we fail closed rather
+               // than accept a torn backup as the baseline.
+               "    $srcManifest = @(Get-SakFileManifest $sourceRoot)\n"
+               "    $bakManifest = @(Get-SakFileManifest $backupPath)\n"
+               "    $diff = @(Compare-Object -ReferenceObject $srcManifest -DifferenceObject "
+               "$bakManifest -Property RelativePath,Length,Hash)\n"
+               "    if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; "
+               "throw 'Live backup is incomplete or the source changed during copy; refusing to "
+               "reformat without a consistent backup' }\n"
+               "  }\n"
+               "}\n");
 }
 
 QString fileManifestFunctionScript() {
@@ -3511,7 +3570,7 @@ QString boundedProgramFunctionScript() {
     // for the drive or volume it asked about. Nothing here waits without a limit.
     return QStringLiteral(R"PS(
 function Invoke-SakBoundedProgram {
-  param([string]$Path, [string]$Arguments, [int]$Seconds)
+  param([string]$Path, [string]$Arguments, [int]$Seconds, [scriptblock]$OnWait = $null, [int]$WaitSeconds = 5)
   $result = [pscustomobject]@{ Started = $false; Finished = $false; ExitCode = -1; StdOut = ''; StdErr = '' }
   if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $result }
   $start = New-Object System.Diagnostics.ProcessStartInfo
@@ -3527,9 +3586,14 @@ function Invoke-SakBoundedProgram {
     $result.Started = $true
     $out = $process.StandardOutput.ReadToEndAsync()
     $err = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($Seconds * 1000)) {
-      $process.Kill()
-      return $result
+    # A caller that watches for silence is told every few seconds that this is still waiting.
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $process.WaitForExit($WaitSeconds * 1000)) {
+      if ($clock.Elapsed.TotalSeconds -ge $Seconds) {
+        $process.Kill()
+        return $result
+      }
+      if ($null -ne $OnWait) { & $OnWait ([int]$clock.Elapsed.TotalSeconds) }
     }
     $process.WaitForExit()
     $result.Finished = $true
@@ -3553,8 +3617,8 @@ QString driveRotationRateFunctionScript(const QString& tool_path) {
            QStringLiteral(R"PS(
 $sakDriveToolPath = %1
 function Get-SakRotationRateRpm {
-  param([int]$DiskNumber)
-  $run = Invoke-SakBoundedProgram -Path $sakDriveToolPath -Arguments "-i --json=c /dev/pd$DiskNumber" -Seconds %2
+  param([int]$DiskNumber, [scriptblock]$OnWait = $null)
+  $run = Invoke-SakBoundedProgram -Path $sakDriveToolPath -Arguments "-i --json=c /dev/pd$DiskNumber" -Seconds %2 -OnWait $OnWait
   if (-not $run.Finished) { return 0 }
   try {
     $reported = ($run.StdOut | ConvertFrom-Json).rotation_rate
@@ -3593,15 +3657,26 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value())
                       .arg(formatPartitionBytes(targetSize));
+    const QString resize =
+        QStringLiteral("Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3")
+            .arg(operation.target.disk_number.value())
+            .arg(operation.target.partition_number.value())
+            .arg(uintArg(targetSize));
+    // A shrink hands the data move to defragsvc, which finishes it even if this script is killed.
+    // An extend ends at once.
+    const bool shrinks = targetSize < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
-                     "{ throw 'Target size outside supported range' }\n"
-                     "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n")
+                     "{ throw 'Target size outside supported range' }\n")
                      .arg(operation.target.disk_number.value())
                      .arg(operation.target.partition_number.value())
-                     .arg(uintArg(targetSize));
+                     .arg(uintArg(targetSize)) +
+                 (shrinks ? windowsContinuedLine(WindowsContinuedWork::PartitionShrink,
+                                                 uintArg(operation.target.size_bytes),
+                                                 resize)
+                          : resize + QLatin1Char('\n'));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -3650,12 +3725,17 @@ static QString extShrinkPreToolScript(uint64_t targetSize) {
 }
 
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
-    return QStringLiteral(
-               "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes\n"
-               "Update-HostStorageCache -ErrorAction Stop\n"
-               "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
-               "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition shrink did not "
-               "reach target size' }\n")
+    // Always a shrink: defragsvc moves the data and finishes even if this script is killed.
+    return (windowsContinuedLine(
+                WindowsContinuedWork::PartitionShrink,
+                uintArg(operation.target.size_bytes),
+                QStringLiteral(
+                    "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes")) +
+            QStringLiteral(
+                "Update-HostStorageCache -ErrorAction Stop\n"
+                "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
+                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition shrink did not "
+                "reach target size' }\n"))
         .arg(operation.target.disk_number.value())
         .arg(operation.target.partition_number.value());
 }
@@ -3846,28 +3926,32 @@ static QString allocateSetupScript(const PartitionOperation& operation,
 
 static QString allocateExecutionScript(const PartitionOperation& operation,
                                        const AllocateFreeSpacePayload& payload) {
-    return QStringLiteral(
-               "Write-Output ('Backing up donor {0} to {1}' -f $sourceRoot, $backupPath)\n"
-               "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
-               "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-               "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
-               "Resize-Partition -DiskNumber %1 -PartitionNumber %3 -Size $targetSizeBytes\n"
-               "$newDonor = New-Partition -DiskNumber %1 -Size $donorRemainingBytes -DriveLetter "
-               "$sourceDrive\n"
-               "Format-Volume -Partition $newDonor -FileSystem $sourceFileSystem "
-               "-NewFileSystemLabel "
-               "$sourceLabel -Confirm:$false -Force\n"
-               "Invoke-SakRobocopy $backupPath $sourceRoot\n"
-               "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
-               "$diff = @(Compare-Object -ReferenceObject $backupManifest -DifferenceObject "
-               "$restoredManifest -Property RelativePath,Length,Hash)\n"
-               "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
-               "'Restored donor manifest differs from backup' }\n"
-               "if ($targetVolume -and $targetVolume.DriveLetter) { Repair-Volume -DriveLetter "
-               "$targetVolume.DriveLetter -Scan }\n"
-               "Repair-Volume -DriveLetter $sourceDrive -Scan\n"
-               "Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
-               "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n")
+    return (QStringLiteral(
+                "Write-Output ('Backing up donor {0} to {1}' -f $sourceRoot, $backupPath)\n"
+                "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
+                "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+                "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
+                "Resize-Partition -DiskNumber %1 -PartitionNumber %3 -Size $targetSizeBytes\n"
+                "$newDonor = New-Partition -DiskNumber %1 -Size $donorRemainingBytes -DriveLetter "
+                "$sourceDrive\n"
+                "Format-Volume -Partition $newDonor -FileSystem $sourceFileSystem "
+                "-NewFileSystemLabel "
+                "$sourceLabel -Confirm:$false -Force\n"
+                "Invoke-SakRobocopy $backupPath $sourceRoot\n"
+                "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
+                "$diff = @(Compare-Object -ReferenceObject $backupManifest -DifferenceObject "
+                "$restoredManifest -Property RelativePath,Length,Hash)\n"
+                "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
+                "'Restored donor manifest differs from backup' }\n"
+                "if ($targetVolume -and $targetVolume.DriveLetter) { ") +
+            windowsContinuedStatement(
+                WindowsContinuedWork::VolumeScan,
+                QStringLiteral("0"),
+                QStringLiteral("Repair-Volume -DriveLetter $targetVolume.DriveLetter -Scan")) +
+            QStringLiteral(" }\n") +
+            volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive -Scan")) +
+            QStringLiteral("Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
+                           "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
         .arg(operation.target.disk_number.value())
         .arg(payload.source_partition)
         .arg(operation.target.partition_number.value());
@@ -3953,20 +4037,22 @@ static QString clusterSetupScript(const ClusterSizePayload& payload) {
 
 static QString clusterExecutionScript() {
     return QStringLiteral(
-        "Write-Output ('Backing up {0} to {1}' -f $targetRoot, $backupPath)\n"
-        "Invoke-SakBackupViaShadow $targetRoot $backupPath\n"
-        "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-        "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
-        "-AllocationUnitSize $allocationUnitBytes -Confirm:$false -Force\n"
-        "Invoke-SakRobocopy $backupPath $targetRoot\n"
-        "$restoredManifest = @(Get-SakFileManifest $targetRoot)\n"
-        "$diff = @(Compare-Object -ReferenceObject $backupManifest -DifferenceObject "
-        "$restoredManifest -Property RelativePath,Length,Hash)\n"
-        "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
-        "'Restored file manifest differs from backup' }\n"
-        "Repair-Volume -DriveLetter $drive -Scan\n"
-        "fsutil.exe fsinfo volumeinfo $targetDrive\n"
-        "if ($fileSystem -eq 'NTFS') { fsutil.exe fsinfo ntfsinfo $targetDrive }\n");
+               "Write-Output ('Backing up {0} to {1}' -f $targetRoot, $backupPath)\n"
+               "Invoke-SakBackupViaShadow $targetRoot $backupPath\n"
+               "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+               "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel "
+               "$label "
+               "-AllocationUnitSize $allocationUnitBytes -Confirm:$false -Force\n"
+               "Invoke-SakRobocopy $backupPath $targetRoot\n"
+               "$restoredManifest = @(Get-SakFileManifest $targetRoot)\n"
+               "$diff = @(Compare-Object -ReferenceObject $backupManifest -DifferenceObject "
+               "$restoredManifest -Property RelativePath,Length,Hash)\n"
+               "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
+               "'Restored file manifest differs from backup' }\n") +
+           volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+           QStringLiteral(
+               "fsutil.exe fsinfo volumeinfo $targetDrive\n"
+               "if ($fileSystem -eq 'NTFS') { fsutil.exe fsinfo ntfsinfo $targetDrive }\n");
 }
 
 static bool isNativeRawDevicePath(const QString& path) {
@@ -4939,20 +5025,26 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
                       .arg(formatPartitionBytes(spec.size),
                            spec.file_system,
                            QString::number(operation.target.disk_number.value()));
+    const QString format =
+        QStringLiteral(
+            "Format-Volume -Partition $p -FileSystem %1 -NewFileSystemLabel %2%3%4 -Confirm:$false")
+            .arg(spec.file_system.toUpper(),
+                 quotePowerShell(spec.label),
+                 spec.full_format_arg,
+                 allocationUnitArg(operation));
+    // A full format is a storage job Windows finishes even if this script is killed; a quick one
+    // ends at once.
     out.script = commonHeader(out.preview) +
                  (spec.full_format_arg.isEmpty()
                       ? QString()
                       : fullFormatAllowedScript(operation.target.disk_number.value(),
                                                 QStringLiteral("This new partition"))) +
                  newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
-                 QStringLiteral(
-                     "Format-Volume -Partition $p -FileSystem %1 -NewFileSystemLabel %2%3%4 "
-                     "-Confirm:$false\n"
-                     "$p | ConvertTo-Json -Compress\n")
-                     .arg(spec.file_system.toUpper(),
-                          quotePowerShell(spec.label),
-                          spec.full_format_arg,
-                          allocationUnitArg(operation));
+                 (spec.full_format_arg.isEmpty()
+                      ? format + QLatin1Char('\n')
+                      : windowsContinuedLine(
+                            WindowsContinuedWork::FullFormat, QStringLiteral("$p.Size"), format)) +
+                 QStringLiteral("$p | ConvertTo-Json -Compress\n");
     return out;
 }
 
@@ -4997,17 +5089,23 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value())
                       .arg(fs.toUpper());
+    const QString format =
+        QStringLiteral(
+            "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 -Confirm:$false")
+            .arg(fs.toUpper(),
+                 PartitionScriptBuilder::quotePowerShell(label),
+                 fullArg,
+                 allocationUnitArg(operation));
+    // A full format is a storage job Windows finishes even if this script is killed; a quick one
+    // ends at once.
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  (fullArg.isEmpty() ? QString()
                                     : fullFormatAllowedScript(operation.target.disk_number.value(),
                                                               QStringLiteral("This format"))) +
-                 QStringLiteral(
-                     "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 "
-                     "-Confirm:$false\n")
-                     .arg(fs.toUpper(),
-                          PartitionScriptBuilder::quotePowerShell(label),
-                          fullArg,
-                          allocationUnitArg(operation));
+                 (fullArg.isEmpty() ? format + QLatin1Char('\n')
+                                    : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                           uintArg(operation.target.size_bytes),
+                                                           format));
     out.timeout_seconds = fullArg.isEmpty() ? kPartitionFormatTaskTimeoutSeconds
                                             : kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -5130,7 +5228,10 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
     out.preview = QStringLiteral("Check file system on %1:").arg(letter.toUpper());
     out.script =
         commonHeader(out.preview) +
-        QStringLiteral("Repair-Volume -DriveLetter %1 -Scan -Verbose\n").arg(letter.toUpper());
+        windowsContinuedLine(
+            WindowsContinuedWork::VolumeScan,
+            uintArg(operation.target.size_bytes),
+            QStringLiteral("Repair-Volume -DriveLetter %1 -Scan -Verbose").arg(letter.toUpper()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5392,9 +5493,13 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
             "$reliability | Format-List | Out-String | Write-Output\n"
             "Get-Partition -DiskNumber %1 | Where-Object DriveLetter | ForEach-Object {\n"
             "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
-            "  Repair-Volume -DriveLetter $_.DriveLetter -Scan -Verbose\n"
-            "}\n")
-            .arg(operation.target.disk_number.value());
+            "  ")
+            .arg(operation.target.disk_number.value()) +
+        windowsContinuedLine(WindowsContinuedWork::VolumeScan,
+                             QStringLiteral("$_.Size"),
+                             QStringLiteral("Repair-Volume -DriveLetter $_.DriveLetter -Scan "
+                                            "-Verbose")) +
+        QStringLiteral("}\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5938,24 +6043,29 @@ PartitionScript PartitionScriptBuilder::buildSplitScript(
     out.preview = QStringLiteral("Split Disk %1 Partition %2")
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
-    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 QStringLiteral(
-                     "$sakSplitEnd = [uint64]$p.Offset + [uint64]$p.Size\n"
-                     "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n"
-                     "$sakFirst = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
-                     "-ErrorAction Stop\n"
-                     "$sakAlign = [uint64]1048576\n"
-                     "$sakNewOffset = [uint64]$sakFirst.Offset + [uint64]$sakFirst.Size + "
-                     "$sakAlign - 1\n"
-                     "$sakNewOffset = $sakNewOffset - ($sakNewOffset % $sakAlign)\n"
-                     "if ($sakNewOffset -ge $sakSplitEnd) { throw 'Split leaves no room for a "
-                     "second partition' }\n"
-                     "$new = New-Partition -DiskNumber %1 -Offset $sakNewOffset -Size "
-                     "($sakSplitEnd - $sakNewOffset) -AssignDriveLetter\n"
-                     "Format-Volume -Partition $new -FileSystem %4 -Confirm:$false\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(operation.target.partition_number.value())
-                     .arg(uintArg(first_size), fs.toUpper());
+    // The first half is a shrink: defragsvc moves the data and finishes even if this script is
+    // killed.
+    out.script =
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+        (QStringLiteral("$sakSplitEnd = [uint64]$p.Offset + [uint64]$p.Size\n") +
+         windowsContinuedLine(WindowsContinuedWork::PartitionShrink,
+                              uintArg(operation.target.size_bytes),
+                              QStringLiteral(
+                                  "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3")) +
+         QStringLiteral("$sakFirst = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
+                        "-ErrorAction Stop\n"
+                        "$sakAlign = [uint64]1048576\n"
+                        "$sakNewOffset = [uint64]$sakFirst.Offset + [uint64]$sakFirst.Size + "
+                        "$sakAlign - 1\n"
+                        "$sakNewOffset = $sakNewOffset - ($sakNewOffset % $sakAlign)\n"
+                        "if ($sakNewOffset -ge $sakSplitEnd) { throw 'Split leaves no room for a "
+                        "second partition' }\n"
+                        "$new = New-Partition -DiskNumber %1 -Offset $sakNewOffset -Size "
+                        "($sakSplitEnd - $sakNewOffset) -AssignDriveLetter\n"
+                        "Format-Volume -Partition $new -FileSystem %4 -Confirm:$false\n"))
+            .arg(operation.target.disk_number.value())
+            .arg(operation.target.partition_number.value())
+            .arg(uintArg(first_size), fs.toUpper());
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6199,11 +6309,14 @@ PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Run SSD ReTrim on %1:").arg(letter.toUpper());
-    out.script = commonHeader(out.preview) +
-                 QStringLiteral(
-                     "fsutil behavior query DisableDeleteNotify\n"
-                     "Optimize-Volume -DriveLetter %1 -ReTrim -Verbose\n")
-                     .arg(letter.toUpper());
+    // ReTrim is an "Optimize Volume" storage job, which Windows finishes even if this script is
+    // killed.
+    out.script =
+        commonHeader(out.preview) + QStringLiteral("fsutil behavior query DisableDeleteNotify\n") +
+        windowsContinuedLine(WindowsContinuedWork::Retrim,
+                             uintArg(operation.target.size_bytes),
+                             QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose")
+                                 .arg(letter.toUpper()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6217,34 +6330,42 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Run HDD defrag on %1:").arg(letter.toUpper());
-    out.script = commonHeader(out.preview) + bundledDriveRotationRateFunctionScript() +
-                 QStringLiteral(
-                     "$driveLetter = %1\n"
-                     "$partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop\n"
-                     "$disk = Get-Disk -Number $partition.DiskNumber -ErrorAction Stop\n"
-                     "$mediaText = \"$($disk.FriendlyName) $($disk.BusType) $($disk.MediaType)\"\n"
-                     "$physical = Get-PhysicalDisk -ErrorAction Stop |\n"
-                     "    Where-Object { $_.DeviceId -eq \"$($disk.Number)\" } |\n"
-                     "    Select-Object -First 1\n"
-                     "if ($physical) { $mediaText = \"$mediaText $($physical.MediaType)\" }\n"
-                     "if ($mediaText -match '(?i)SSD|NVMe') {\n"
-                     "    throw \"Refusing HDD defrag on SSD/NVMe media: $mediaText\"\n"
-                     "}\n"
-                     "$hddText = \"$($disk.FriendlyName) $($disk.Model) $($disk.MediaType)\"\n"
-                     "if ($physical) { $hddText = \"$hddText $($physical.MediaType)\" }\n"
-                     "if ($hddText -notmatch '(?i)HDD|HARD') {\n"
-                     // Windows could not say, so the drive may. Windows saying SSD stopped above.
-                     "    $reportedNoMedia = $physical -and "
-                     "\"$($physical.MediaType)\" -ceq 'Unspecified'\n"
-                     "    if (-not $reportedNoMedia -or "
-                     "(Get-SakRotationRateRpm -DiskNumber $disk.Number) -le 0) {\n"
-                     "        throw \"Could not confirm HDD media classification: $mediaText\"\n"
-                     "    }\n"
-                     "}\n"
-                     "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n"
-                     "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose\n"
-                     "Repair-Volume -DriveLetter $driveLetter -Scan\n")
-                     .arg(quotePowerShell(letter.toUpper()));
+    out.script =
+        commonHeader(out.preview) + bundledDriveRotationRateFunctionScript() +
+        QStringLiteral(
+            "$driveLetter = %1\n"
+            "$partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop\n"
+            "$disk = Get-Disk -Number $partition.DiskNumber -ErrorAction Stop\n"
+            "$mediaText = \"$($disk.FriendlyName) $($disk.BusType) $($disk.MediaType)\"\n"
+            "$physical = Get-PhysicalDisk -ErrorAction Stop |\n"
+            "    Where-Object { $_.DeviceId -eq \"$($disk.Number)\" } |\n"
+            "    Select-Object -First 1\n"
+            "if ($physical) { $mediaText = \"$mediaText $($physical.MediaType)\" }\n"
+            "if ($mediaText -match '(?i)SSD|NVMe') {\n"
+            "    throw \"Refusing HDD defrag on SSD/NVMe media: $mediaText\"\n"
+            "}\n"
+            "$hddText = \"$($disk.FriendlyName) $($disk.Model) $($disk.MediaType)\"\n"
+            "if ($physical) { $hddText = \"$hddText $($physical.MediaType)\" }\n"
+            "if ($hddText -notmatch '(?i)HDD|HARD') {\n"
+            // Windows could not say, so the drive may. Windows saying SSD stopped above.
+            "    $reportedNoMedia = $physical -and "
+            "\"$($physical.MediaType)\" -ceq 'Unspecified'\n"
+            "    if (-not $reportedNoMedia -or "
+            "(Get-SakRotationRateRpm -DiskNumber $disk.Number) -le 0) {\n"
+            "        throw \"Could not confirm HDD media classification: $mediaText\"\n"
+            "    }\n"
+            "}\n"
+            "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n")
+            .arg(quotePowerShell(letter.toUpper())) +
+        // The defrag and the scan are storage jobs Windows finishes even if this script
+        // is killed; the analysis ends too quickly to matter.
+        windowsContinuedLine(WindowsContinuedWork::Defragment,
+                             uintArg(operation.target.size_bytes),
+                             QStringLiteral(
+                                 "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose")) +
+        windowsContinuedLine(WindowsContinuedWork::VolumeScan,
+                             uintArg(operation.target.size_bytes),
+                             QStringLiteral("Repair-Volume -DriveLetter $driveLetter -Scan"));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6302,6 +6423,66 @@ PartitionScript PartitionScriptBuilder::buildBitLockerScript(
     return out;
 }
 
+// cipher /w fills the free space through files in an EFSTMPWP folder at the volume's root and
+// removes them as it finishes; a killed cipher leaves them. The marker claims the folder for the
+// application's cleanup only when it was not there before cipher started.
+static QString wipeFreeSpaceCommandScript(const QString& letter) {
+    const QString drive = PartitionScriptBuilder::quotePowerShell(letter);
+    return QStringLiteral("if (-not (Test-Path -LiteralPath ('{0}:\\EFSTMPWP' -f %1))) { ")
+               .arg(drive) +
+           stopLeftoverCreatedStatement(StopLeftoverKind::CipherFolder, drive) +
+           QStringLiteral(" }\ncipher.exe /w:%1:\\\n$sakCipherExit = $LASTEXITCODE\n").arg(letter) +
+           stopLeftoverReleasedStatement(StopLeftoverKind::CipherFolder, drive) +
+           QStringLiteral("\nexit $sakCipherExit\n");
+}
+
+// The SSD ReTrim that goes before a Wipe Disk's clear, for every lettered volume on the disk. A
+// disk with no partition table has no volumes, and is not asked for its partitions.
+static QString wipeDiskSsdPreludeScript(uint32_t disk_number) {
+    return optionalDiskPartitionsFunctionScript() + optionalPartitionVolumeFunctionScript() +
+           QStringLiteral(
+               "$trimPartitions = @(if (\"$($sakWipeDisk.PartitionStyle)\" -ne 'RAW') { "
+               "Get-SakOptionalDiskPartitions -DiskNumber %1 })\n"
+               "$trimVolumes = @($trimPartitions | ForEach-Object { "
+               "Get-SakOptionalPartitionVolume $_ } | Where-Object { $_.DriveLetter })\n"
+               "foreach ($volume in $trimVolumes) { ")
+               .arg(disk_number) +
+           // Each ReTrim is a storage job Windows finishes even if this script is killed.
+           windowsContinuedStatement(WindowsContinuedWork::Retrim,
+                                     QStringLiteral("$volume.Size"),
+                                     QStringLiteral("Optimize-Volume -DriveLetter "
+                                                    "$volume.DriveLetter -ReTrim -Verbose "
+                                                    "-ErrorAction Stop")) +
+           QStringLiteral(" }\n");
+}
+
+// Clear, initialize as GPT, full format one partition across the disk, then clear again. A new
+// drive has no partition table: Clear-Disk refuses it ("The disk has not been initialized"), and
+// there is nothing on it to clear, so the first clear is skipped for it and the wipe goes on
+// from Initialize-Disk.
+static QString wipeDiskCommandScript(const PartitionOperation& operation) {
+    const uint32_t disk_number = operation.target.disk_number.value();
+    return QStringLiteral("$sakWipeDisk = Get-Disk -Number %1 -ErrorAction Stop\n")
+               .arg(disk_number) +
+           (payloadBool(operation, QStringLiteral("ssd_secure_erase"))
+                ? wipeDiskSsdPreludeScript(disk_number)
+                : QString()) +
+           (QStringLiteral("if (\"$($sakWipeDisk.PartitionStyle)\" -ne 'RAW') { Clear-Disk "
+                           "-Number %1 -RemoveData -RemoveOEM -Confirm:$false }\n"
+                           "Initialize-Disk -Number %1 -PartitionStyle GPT\n"
+                           "$p = New-Partition -DiskNumber %1 -UseMaximumSize\n") +
+            // The full format is the storage job that kept writing for half an hour after the
+            // application and its helper were killed.
+            windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                 QStringLiteral("$p.Size"),
+                                 QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full "
+                                                "-NewFileSystemLabel 'SAK_WIPE' -Confirm:$false")) +
+            QStringLiteral("Remove-Partition -DiskNumber %1 -PartitionNumber $p.PartitionNumber "
+                           "-Confirm:$false\n"
+                           "Clear-Disk -Number %1 -RemoveData -RemoveOEM -Confirm:$false\n"))
+               .arg(disk_number);
+}
+
 PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation& operation) const {
     PartitionScript out;
     if (operation.type == PartitionOperationType::WipeFreeSpace) {
@@ -6310,39 +6491,16 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
             return invalidScript(QStringLiteral("Free-space wipe requires a drive letter"));
         }
         out.preview = QStringLiteral("Wipe free space on %1:").arg(letter.toUpper());
-        out.script =
-            commonHeader(out.preview) +
-            QStringLiteral("cipher.exe /w:%1:\\\nexit $LASTEXITCODE\n").arg(letter.toUpper());
+        out.script = commonHeader(out.preview) + wipeFreeSpaceCommandScript(letter.toUpper());
         out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
         return out;
     }
     if (operation.type == PartitionOperationType::WipeDisk) {
         out.preview = QStringLiteral("Wipe Disk %1").arg(operation.target.disk_number.value());
-        const QString ssdPrelude =
-            payloadBool(operation, QStringLiteral("ssd_secure_erase"))
-                ? optionalDiskPartitionsFunctionScript() + optionalPartitionVolumeFunctionScript() +
-                      QStringLiteral(
-                          "$trimPartitions = @(Get-SakOptionalDiskPartitions -DiskNumber %1)\n"
-                          "$trimVolumes = @($trimPartitions | ForEach-Object { "
-                          "Get-SakOptionalPartitionVolume $_ } | Where-Object { $_.DriveLetter })\n"
-                          "foreach ($volume in $trimVolumes) { Optimize-Volume -DriveLetter "
-                          "$volume.DriveLetter -ReTrim -Verbose -ErrorAction Stop }\n")
-                          .arg(operation.target.disk_number.value())
-                : QString();
         out.script = commonHeader(out.preview) +
                      fullFormatAllowedScript(operation.target.disk_number.value(),
                                              QStringLiteral("Wipe Disk")) +
-                     ssdPrelude +
-                     QStringLiteral(
-                         "Clear-Disk -Number %1 -RemoveData -RemoveOEM -Confirm:$false\n"
-                         "Initialize-Disk -Number %1 -PartitionStyle GPT\n"
-                         "$p = New-Partition -DiskNumber %1 -UseMaximumSize\n"
-                         "$p | Format-Volume -FileSystem NTFS -Full "
-                         "-NewFileSystemLabel 'SAK_WIPE' -Confirm:$false\n"
-                         "Remove-Partition -DiskNumber %1 -PartitionNumber "
-                         "$p.PartitionNumber -Confirm:$false\n"
-                         "Clear-Disk -Number %1 -RemoveData -RemoveOEM -Confirm:$false\n")
-                         .arg(operation.target.disk_number.value());
+                     wipeDiskCommandScript(operation);
         out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
         return out;
     }
@@ -6352,7 +6510,10 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  fullFormatAllowedScript(operation.target.disk_number.value(),
                                          QStringLiteral("Wiping a partition")) +
-                 QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full -Confirm:$false\n");
+                 windowsContinuedLine(
+                     WindowsContinuedWork::FullFormat,
+                     uintArg(operation.target.size_bytes),
+                     QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full -Confirm:$false"));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6369,41 +6530,43 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
     out.preview = QStringLiteral("Move Disk %1 Partition %2")
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
-    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 backupRestoreHelpersScript() +
-                 QStringLiteral(
-                     "$drive = %1\n"
-                     "$sourceRoot = ('{0}:\\' -f $drive)\n"
-                     "$backupRoot = %2\n"
-                     "$fileSystem = %3\n"
-                     "$label = %4\n"
-                     "$targetOffset = [uint64]%5\n"
-                     "$targetSize = [uint64]%6\n"
-                     "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
-                     "$backupPath = Join-Path $backupRootFull ('sak-move-backup-{0}' -f "
-                     "[guid]::NewGuid().ToString('N'))\n"
-                     "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-                     "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
-                     "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-                     "Remove-Partition -DiskNumber %7 -PartitionNumber %8 -Confirm:$false\n"
-                     "$newPartition = New-Partition -DiskNumber %7 -Size $targetSize -Offset "
-                     "$targetOffset -DriveLetter $drive\n"
-                     "Format-Volume -Partition $newPartition -FileSystem $fileSystem "
-                     "-NewFileSystemLabel $label -Confirm:$false -Force\n"
-                     "Invoke-SakRobocopy $backupPath $sourceRoot\n"
-                     "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
-                     "Assert-SakManifestMatch $backupManifest $restoredManifest\n"
-                     "Repair-Volume -DriveLetter $drive -Scan\n"
-                     "Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
-                     "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n")
-                     .arg(quotePowerShell(payload.drive),
-                          quotePowerShell(QDir::toNativeSeparators(payload.backup_directory)),
-                          quotePowerShell(payload.file_system),
-                          quotePowerShell(payload.label),
-                          uintArg(payload.target_offset),
-                          uintArg(payload.target_size),
-                          QString::number(operation.target.disk_number.value()),
-                          QString::number(operation.target.partition_number.value()));
+    out.script =
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+        backupRestoreHelpersScript() +
+        (QStringLiteral("$drive = %1\n"
+                        "$sourceRoot = ('{0}:\\' -f $drive)\n"
+                        "$backupRoot = %2\n"
+                        "$fileSystem = %3\n"
+                        "$label = %4\n"
+                        "$targetOffset = [uint64]%5\n"
+                        "$targetSize = [uint64]%6\n"
+                        "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
+                        "$backupPath = Join-Path $backupRootFull ('sak-move-backup-{0}' -f "
+                        "[guid]::NewGuid().ToString('N'))\n"
+                        "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+                        "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
+                        "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+                        "Remove-Partition -DiskNumber %7 -PartitionNumber %8 -Confirm:$false\n"
+                        "$newPartition = New-Partition -DiskNumber %7 -Size $targetSize -Offset "
+                        "$targetOffset -DriveLetter $drive\n"
+                        "Format-Volume -Partition $newPartition -FileSystem $fileSystem "
+                        "-NewFileSystemLabel $label -Confirm:$false -Force\n"
+                        "Invoke-SakRobocopy $backupPath $sourceRoot\n"
+                        "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
+                        "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
+         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
+                              QStringLiteral("$targetSize"),
+                              QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
+                        "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
+            .arg(quotePowerShell(payload.drive),
+                 quotePowerShell(QDir::toNativeSeparators(payload.backup_directory)),
+                 quotePowerShell(payload.file_system),
+                 quotePowerShell(payload.label),
+                 uintArg(payload.target_offset),
+                 uintArg(payload.target_size),
+                 QString::number(operation.target.disk_number.value()),
+                 QString::number(operation.target.partition_number.value()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6427,38 +6590,39 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
     out.script =
         commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         backupRestoreHelpersScript() + diskPartRunnerScript() +
-        QStringLiteral(
-            "$drive = %1\n"
-            "$sourceRoot = ('{0}:\\' -f $drive)\n"
-            "$backupRoot = %2\n"
-            "$sourceSizeMb = %3\n"
-            "$extendedSizeMb = [int]($sourceSizeMb + 128)\n"
-            "$fileSystem = %4\n"
-            "$label = %5\n"
-            "$makeLogical = %6\n"
-            "$parts = @(Get-Partition -DiskNumber %7 -ErrorAction Stop)\n"
-            "if ($parts.Count -ne 1) { throw 'Primary/logical conversion requires a single data "
-            "partition on the disk' }\n"
-            "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
-            "$backupPath = Join-Path $backupRootFull ('sak-primary-logical-backup-{0}' -f "
-            "[guid]::NewGuid().ToString('N'))\n"
-            "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
-            "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-            "$lines = @('select disk %7','clean','convert mbr')\n"
-            "if ($makeLogical) { $lines += ('create partition extended size={0}' -f "
-            "$extendedSizeMb); $lines += ('create partition logical size={0}' -f $sourceSizeMb) }\n"
-            "else { $lines += ('create partition primary size={0}' -f $sourceSizeMb) }\n"
-            "$lines += ('format fs={0} quick label=\"{1}\"' -f $fileSystem, $label)\n"
-            "$lines += ('assign letter={0}' -f $drive)\n"
-            "Invoke-SakDiskPart $lines\n"
-            "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
-            "Invoke-SakRobocopy $backupPath $sourceRoot\n"
-            "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
-            "Assert-SakManifestMatch $backupManifest $restoredManifest\n"
-            "Repair-Volume -DriveLetter $drive -Scan\n"
-            "Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
-            "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n")
+        (QStringLiteral(
+             "$drive = %1\n"
+             "$sourceRoot = ('{0}:\\' -f $drive)\n"
+             "$backupRoot = %2\n"
+             "$sourceSizeMb = %3\n"
+             "$extendedSizeMb = [int]($sourceSizeMb + 128)\n"
+             "$fileSystem = %4\n"
+             "$label = %5\n"
+             "$makeLogical = %6\n"
+             "$parts = @(Get-Partition -DiskNumber %7 -ErrorAction Stop)\n"
+             "if ($parts.Count -ne 1) { throw 'Primary/logical conversion requires a single data "
+             "partition on the disk' }\n"
+             "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
+             "$backupPath = Join-Path $backupRootFull ('sak-primary-logical-backup-{0}' -f "
+             "[guid]::NewGuid().ToString('N'))\n"
+             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
+             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+             "$lines = @('select disk %7','clean','convert mbr')\n"
+             "if ($makeLogical) { $lines += ('create partition extended size={0}' -f "
+             "$extendedSizeMb); $lines += ('create partition logical size={0}' -f $sourceSizeMb) "
+             "}\n"
+             "else { $lines += ('create partition primary size={0}' -f $sourceSizeMb) }\n"
+             "$lines += ('format fs={0} quick label=\"{1}\"' -f $fileSystem, $label)\n"
+             "$lines += ('assign letter={0}' -f $drive)\n"
+             "Invoke-SakDiskPart $lines\n"
+             "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
+             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
+             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
+             "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
+         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
+                        "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),
                  quotePowerShell(QDir::toNativeSeparators(payload.backup_directory)),
                  sizeMbArg(payload.source_size),
@@ -6499,34 +6663,35 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
     out.preview = QStringLiteral("Regenerate serial number on %1:").arg(drive);
     out.script =
         commonHeader(out.preview) + backupRestoreHelpersScript() +
-        QStringLiteral(
-            "$drive = %1\n"
-            "$sourceRoot = ('{0}:\\' -f $drive)\n"
-            "$backupRoot = %2\n"
-            "$fileSystem = %3\n"
-            "$label = %4\n"
-            "function Get-SakVolumeSerial([string]$d) { $output = cmd.exe /c \"vol ${d}:\"; $match "
-            "= [regex]::Match(($output -join \"`n\"), '[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}'); if (-not "
-            "$match.Success) { throw \"Could not read volume serial for ${d}:\" }; return "
-            "$match.Value.ToUpperInvariant() }\n"
-            "$beforeSerial = Get-SakVolumeSerial $drive\n"
-            "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
-            "$backupPath = Join-Path $backupRootFull ('sak-serial-backup-{0}' -f "
-            "[guid]::NewGuid().ToString('N'))\n"
-            "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
-            "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-            "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
-            "-Confirm:$false -Force\n"
-            "$afterSerial = Get-SakVolumeSerial $drive\n"
-            "if ($afterSerial -eq $beforeSerial) { throw 'Volume serial number did not change "
-            "after reformat' }\n"
-            "Invoke-SakRobocopy $backupPath $sourceRoot\n"
-            "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
-            "Assert-SakManifestMatch $backupManifest $restoredManifest\n"
-            "Repair-Volume -DriveLetter $drive -Scan\n"
-            "Write-Output ('Volume serial changed from {0} to {1}' -f $beforeSerial, "
-            "$afterSerial)\n")
+        (QStringLiteral(
+             "$drive = %1\n"
+             "$sourceRoot = ('{0}:\\' -f $drive)\n"
+             "$backupRoot = %2\n"
+             "$fileSystem = %3\n"
+             "$label = %4\n"
+             "function Get-SakVolumeSerial([string]$d) { $output = cmd.exe /c \"vol ${d}:\"; "
+             "$match "
+             "= [regex]::Match(($output -join \"`n\"), '[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}'); if (-not "
+             "$match.Success) { throw \"Could not read volume serial for ${d}:\" }; return "
+             "$match.Value.ToUpperInvariant() }\n"
+             "$beforeSerial = Get-SakVolumeSerial $drive\n"
+             "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
+             "$backupPath = Join-Path $backupRootFull ('sak-serial-backup-{0}' -f "
+             "[guid]::NewGuid().ToString('N'))\n"
+             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
+             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+             "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
+             "-Confirm:$false -Force\n"
+             "$afterSerial = Get-SakVolumeSerial $drive\n"
+             "if ($afterSerial -eq $beforeSerial) { throw 'Volume serial number did not change "
+             "after reformat' }\n"
+             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
+             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
+             "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
+         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         QStringLiteral("Write-Output ('Volume serial changed from {0} to {1}' -f $beforeSerial, "
+                        "$afterSerial)\n"))
             .arg(quotePowerShell(drive),
                  quotePowerShell(QDir::toNativeSeparators(backupDirectory)),
                  quotePowerShell(fs),
@@ -6593,30 +6758,32 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
     out.script =
         commonHeader(out.preview) + dynamicDiskAdmissionScript(operation.target) +
         backupRestoreHelpersScript() + diskPartRunnerScript() +
-        QStringLiteral(
-            "$drive = %1\n"
-            "$sourceRoot = ('{0}:\\' -f $drive)\n"
-            "$backupRoot = %2\n"
-            "$sourceSizeMb = %3\n"
-            "$fileSystem = %4\n"
-            "$label = %5\n"
-            "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
-            "$backupPath = Join-Path $backupRootFull ('sak-dynamic-basic-backup-{0}' -f "
-            "[guid]::NewGuid().ToString('N'))\n"
-            "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
-            "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
-            "$lines = @(('select volume ' + $drive),'delete volume override','select disk "
-            "%6','convert basic',('create partition primary size={0}' -f $sourceSizeMb),('format "
-            "fs={0} quick label=\"{1}\"' -f $fileSystem, $label),('assign letter={0}' -f $drive))\n"
-            "Invoke-SakDiskPart $lines\n"
-            "Update-HostStorageCache -ErrorAction Stop\n"
-            "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
-            "Invoke-SakRobocopy $backupPath $sourceRoot\n"
-            "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
-            "Assert-SakManifestMatch $backupManifest $restoredManifest\n"
-            "Repair-Volume -DriveLetter $drive -Scan\n"
-            "Get-Disk -Number %6 | Format-List Number,PartitionStyle,IsBoot,IsSystem,IsReadOnly\n")
+        (QStringLiteral(
+             "$drive = %1\n"
+             "$sourceRoot = ('{0}:\\' -f $drive)\n"
+             "$backupRoot = %2\n"
+             "$sourceSizeMb = %3\n"
+             "$fileSystem = %4\n"
+             "$label = %5\n"
+             "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
+             "$backupPath = Join-Path $backupRootFull ('sak-dynamic-basic-backup-{0}' -f "
+             "[guid]::NewGuid().ToString('N'))\n"
+             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
+             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
+             "$lines = @(('select volume ' + $drive),'delete volume override','select disk "
+             "%6','convert basic',('create partition primary size={0}' -f $sourceSizeMb),('format "
+             "fs={0} quick label=\"{1}\"' -f $fileSystem, $label),('assign letter={0}' -f "
+             "$drive))\n"
+             "Invoke-SakDiskPart $lines\n"
+             "Update-HostStorageCache -ErrorAction Stop\n"
+             "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
+             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
+             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
+             "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
+         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         QStringLiteral("Get-Disk -Number %6 | Format-List "
+                        "Number,PartitionStyle,IsBoot,IsSystem,IsReadOnly\n"))
             .arg(quotePowerShell(drive),
                  quotePowerShell(QDir::toNativeSeparators(backupDirectory)),
                  sizeMbArg(sourceSize),

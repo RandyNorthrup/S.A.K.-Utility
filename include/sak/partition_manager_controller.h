@@ -33,7 +33,11 @@ public:
     [[nodiscard]] const PartitionOperationQueue& queue() const noexcept;
     [[nodiscard]] PartitionManagerState state() const noexcept;
     [[nodiscard]] bool interactionBlocked() const noexcept;
+    /// Whether a cancel can stop the running work now: false while a step is in a phase Windows
+    /// finishes on its own (see windowsPhase()), which no cancel can stop.
     [[nodiscard]] bool canCancel() const noexcept;
+    /// The step Windows is carrying out on its own right now, if any.
+    [[nodiscard]] const std::optional<WindowsContinuedPhase>& windowsPhase() const noexcept;
     [[nodiscard]] PartitionQueueReviewToken queueReviewToken() const;
 
     // --- Pure reporting seams (no instance state; unit-tested without a live scan) ---
@@ -70,7 +74,13 @@ public Q_SLOTS:
     bool applyQueue(const PartitionQueueReviewToken& reviewed,
                     bool dry_run = false,
                     bool use_elevation = true);
+    /// Cancel the running work. Refused, with a status message, while a step is in a phase
+    /// Windows finishes on its own: cancelling then would stop nothing that is under way.
     void cancel();
+    /// Stop everything that can be stopped because the application is closing: the running
+    /// step's script and everything after it. A phase Windows finishes on its own goes on, and the
+    /// batch's result names that step as possibly still running in Windows.
+    void cancelForExit();
     void runReadOnlyFileSystemCheck(const QString& file_system, const QString& target_path);
     /// @brief Run one read-only operation now instead of queueing it for Apply.
     /// A scan changes nothing on the disk, so making the user queue it and then press Apply is
@@ -93,6 +103,9 @@ public Q_SLOTS:
     void setApplyInventoryScannerForTesting(InventoryScanner scanner);
     void setApplyExecutorForTesting(ApplyExecutor executor);
     void setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner);
+    /// Reports a Windows-continued phase as the executor's signals do, for an apply run by a
+    /// test executor; nothing means the phase ended.
+    void reportWindowsPhaseForTesting(const std::optional<WindowsContinuedPhase>& phase);
 #endif
 
 Q_SIGNALS:
@@ -109,6 +122,8 @@ Q_SIGNALS:
     void inventoryScanProgress(int disk, int disks);
     void logOutput(const QString& message);
     void executionFinished(const sak::PartitionExecutionResult& result);
+    /// A step began or left a phase Windows finishes on its own; read windowsPhase().
+    void windowsPhaseChanged();
     void fileSystemCheckFinished(const sak::PartitionFileSystemToolRunResult& result);
 
 private:
@@ -144,6 +159,7 @@ private:
     std::optional<PendingApplyRequest> m_pending_apply_request;
     std::optional<PendingApplyRequest> m_active_apply_request;
     std::optional<PartitionExecutionResult> m_pending_execution_result;
+    std::optional<WindowsContinuedPhase> m_windows_phase;
     std::function<StorageInventoryScanResult(const CancelCheck&,
                                              const InventoryScanProgressCallback&)>
         m_inventory_scanner;
@@ -158,6 +174,10 @@ private:
         m_file_system_check_runner;
 
     [[nodiscard]] bool rejectQueueMutationIfBusy();
+    /// Running work a cancel request reaches, whatever phase it is in.
+    [[nodiscard]] bool hasCancellableWork() const noexcept;
+    void requestCancellation();
+    void setWindowsPhase(const std::optional<WindowsContinuedPhase>& phase);
     [[nodiscard]] PartitionManagerState stableState() const;
     [[nodiscard]] static bool inventoryIsAuthoritative(const PartitionInventory& inventory);
     [[nodiscard]] static QString inventoryFailureMessage(const PartitionInventory& inventory);

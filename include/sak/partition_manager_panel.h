@@ -73,6 +73,8 @@ public:
         PartitionManagerController::InventoryScanner scanner);
     void setTestInventoryScannerWithProgressForReview(
         PartitionManagerController::InventoryScannerWithProgress scanner);
+    // Reports a Windows-continued phase for the running apply, as its executor would.
+    void reportTestWindowsPhaseForReview(const std::optional<WindowsContinuedPhase>& phase);
 #endif
 
 Q_SIGNALS:
@@ -265,6 +267,9 @@ private:
     void attachDiskMapContextMenu(QWidget* widget, const PartitionTarget& target);
     void rebuildQueue(const QVector<PartitionOperation>& operations);
     void updateActionState();
+    /// Shows, while a step is in a phase Windows finishes on its own, what that step is and that
+    /// it cannot be stopped; hides the notice otherwise.
+    void updateWindowsPhaseNotice();
     void updateRefreshButtonState();
     void updateDetails();
     // Runs a read-only scan of the selected target now, outside the Apply queue.
@@ -324,6 +329,8 @@ private:
     QListWidget* m_queue_list{nullptr};
     QTextEdit* m_details{nullptr};
     QLabel* m_pending_label{nullptr};
+    /// Says which step Windows is carrying out on its own, while one is; hidden otherwise.
+    QLabel* m_windows_phase_label{nullptr};
     QAbstractButton* m_refresh_button{nullptr};
     QAbstractButton* m_apply_button{nullptr};
     QAbstractButton* m_cancel_button{nullptr};

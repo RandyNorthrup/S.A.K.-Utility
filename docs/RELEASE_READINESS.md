@@ -2390,6 +2390,101 @@ test_windows_runtime_dependencies' stale-build guard, after the local drills had
 app; a full relink and rerun were clean). Two loaded -j 6 runs of the 20 changed test executables, each repeated
 twice: green. T2: run 42503233394 (d8a44a0f) and run 42511319680 (823baafb) green.
 
+### Partition Manager: steps Windows finishes after Cancel (2026-11-09)
+
+A Wipe Disk's full format kept writing in Windows' storage service for half an hour after the app and its helper
+were killed, while the app had said "Command cancelled" and "Partition operation batch cancelled". A VM run killed
+each kind of step mid-way with Stop-Process -Force: `Format-Volume -Full`, `Optimize-Volume -Defrag` and `-ReTrim`, a
+shrinking `Resize-Partition` and `Repair-Volume -Scan` went on in Windows; cipher.exe /w and convert.exe stopped at
+once; an extend, Clear-Disk, a quick format and `Optimize-Volume -Analyze` end too quickly to matter.
+
+- FIXED: each step that hands such work to Windows writes a marker just before and just after the cmdlet
+  (`src/core/windows_continued_work.cpp`): `SAK-WINDOWS-CONTINUES|BEGIN|<work>|<bytes>` and `...|END|<work>`,
+  through `[Console]::Out` (as pipeline output the End marker waited behind the cmdlet's returned object until the
+  script ended; checked with a harmless script under powershell.exe 5.1 in both the command-line and stdin forms),
+  the End marker from a `finally`, all on one line so a disk guard goes in front of both. Sites: Wipe Disk (the full
+  format and the SSD ReTrim prelude), Wipe Partition, Format and Create with a full format, HDD defrag and its scan,
+  SSD ReTrim, Resize when it shrinks, Split, the ext shrink, Check File System, Scan File Systems, the post-checks of
+  Allocate Free Space, Change Cluster Size, Move, Primary/Logical, Volume Serial and Dynamic-to-Basic, and Check Disk
+  Errors' scan. The helper already streams a step's stdout, so the executor reads the marker as it arrives (its relay
+  is now a direct connection on the step's thread), and the controller holds the phase.
+- FIXED: while a step is in that phase, Cancel is off (`PartitionManagerController::canCancel`), a cancel request is
+  refused with the reason, and the panel says the step cannot be stopped once it has started and that Windows
+  continues it even if S.A.K. Utility is closed, with when it started. The close prompt says closing will not stop it,
+  asks "Exit anyway?" instead of offering "Exit after cancelling" (`RunningOperations` takes an optional note per
+  operation), and exiting still stops the step's script and everything queued after it.
+- FIXED: a step whose script ended (cancel, close, timeout, lost helper) with its phase open is reported as possibly
+  still running in Windows, and the batch as "stopped", not "cancelled" (log, report, popup as a warning, assistant
+  result). Check Disk Errors stopped during a drive's scan says Windows may still finish that read-only scan. The
+  Optimize Drives dialog no longer calls the defrag and ReTrim "cancellable".
+- Tests: `test_partition_manager_core` (`windowsContinued_*`, `partitionExecutor_streamedMarkerReportsTheWindowsPhase`,
+  `..._stopDuringWindowsPhaseIsNotCalledCancelled`, `..._windowsPhaseReachesAnotherThread`),
+  `test_partition_manager_controller` (`windowsPhaseTakesCancelAwayUntilItEnds`), `test_partition_manager_panel`
+  (`windowsPhaseDisablesCancelAndSaysSo`), `test_running_work_exit_guard` (`workWindowsFinishesIsNotPromisedAStop`,
+  `cannotStopTextForEveryIntent`), `test_check_disk_errors_action` (`aStopDuringTheScanSaysWindowsMayFinishIt`). 16
+  drills, each guard broken on its own, its test red for that reason, restored byte for byte: the marker helper
+  (every outliving kind unmarked), a marker on cipher.exe, `canCancel` ignoring the phase, the cancel refusal, the
+  panel's phase connection, the notice's visibility, the close note, the prompt's question, `cannotStopNotes`, the
+  batch's "stopped" message, the output-based phase check, the streamed Begin signal, the report's step status, Check
+  Disk Errors' stopped message and its scan marker, and the controller clearing the phase at the batch's end.
+- FIXED: a killed script also skips its own cleanup. The VSS backup helper (`Invoke-SakBackupViaShadow`) left its
+  shadow copy and its `sak-shadow-<hex>` link in the temp folder; cipher /w left EFSTMPWP and its fill files on the
+  volume. The scripts now write `SAK-CLEANUP|CREATED|<SHADOW|LINK|CIPHER>|<value>` the moment each exists (the
+  shadow's ID as Create returns it, the link's path before mklink, cipher's folder only when it did not exist before
+  cipher started) and `...|RELEASED|...` once their own finally has removed it. After a step ends without success,
+  the executor runs a cleanup in the same helper (`src/core/partition_stop_cleanup.cpp`) for what is still claimed:
+  the link only while it is a link, the shadow copy only by `Get-CimInstance Win32_ShadowCopy -Filter "ID='{id}'"`,
+  cipher's folder only while it is a plain folder of plain files. A value that is not exactly what the scripts write
+  (a GUID, a `sak-shadow-` + 32 hex path, one letter) is never followed. The step's result, the batch's message, the
+  report and the assistant's result say what was removed and what was not, with why; a helper that is gone is not
+  relaunched for it, and its leftovers are reported as not removed.
+- INCOMPLETE (found on the way, older than this change): when Create succeeds but the new shadow copy cannot be
+  read back, the backup helper falls through to a live copy and never removes that copy, even when the step
+  succeeds. A stopped step now removes it; a successful one still leaves it.
+- Live check on the VM (48 GiB VDI, real app and helper; pictures in
+  `E:\SAK-Utility-Test-Scratch\certification-final\live-check\key\`): the phase notice, the disabled Cancel, the close
+  prompt and the cipher cleanup passed. It found four more, fixed here:
+  - FIXED (older than this change): Wipe Disk on a disk with no partition table failed at once with "Clear-Disk : The
+    disk has not been initialized." The wipe reads the disk first, clears only one with a table, and starts a new one
+    from Initialize-Disk; its SSD ReTrim does not ask a new disk for partitions. Wipe Disk was the only operation that
+    clears first: Convert Partition Style already skipped Clear-Disk on a RAW disk, Initialize Disk never clears, and
+    diskpart's `clean` runs only in Primary/Logical, on a disk that holds the partition being converted.
+  - FIXED: the markers reached the Log window -- the phase markers through the report's step output, the cleanup's
+    result lines as they streamed. The executor reads them and then drops them (`withoutScriptMarkers`,
+    `isScriptMarkerLine`): from the streamed log, from each step's output, and so from the result, the report text,
+    HTML and JSON and the assistant's result. A dry run still shows its script as it would run, the statements that
+    write the markers included.
+  - FIXED: the batch's "complete" result opened over a close prompt still saying a full format was running.
+    `RunningOperations::notifyChanged` tells an open prompt when a phase begins or ends (it rewrites its question, note
+    and button) and when a run is over, before that run's result opens (it closes; nothing is cancelled, and a second
+    close exits). The panel's probe still says running while its result is read, by design (the controller blocks
+    interaction until then), so the notice names the finished owner and the prompt leaves it out.
+  - FIXED (older wording): "Partition changes is running. Exit anyway?" The prompt reads "Still running: <names>."
+    and then a question with no pronoun, for every name registered with `RunningOperations::add` (twelve today) and any
+    number of them.
+  - NOT CHANGED, by design: a cancelled step stays queued ("1 Operation Pending") so it can be applied again or
+    removed. Its queue line is the operation's summary alone, with nothing that reads as done.
+- The live re-check passed F1-F4 (a RAW disk wiped twice, no marker in the Log window, the prompt rewritten at the
+  phase's end, the new wording) and found two more, fixed:
+  - FIXED: a cancelled step read "Failed: Wipe Free Space - Disk 1 Partition 2" over "Command cancelled. ...". A step
+    now carries `cancelled`, set wherever a cancel stops it (the local script, the helper's task cancelled by the
+    helper or by the executor, a cancel before anything was sent), and reads "Cancelled:" in the report text, HTML
+    and JSON and in the assistant's step. A timeout stays "Failed:", and a stop during a phase Windows carries on
+    stays "May still be running in Windows:". The assistant's apply result for a cancelled batch is its cancel result,
+    not "FAILED".
+  - FIXED: stripping the markers left the blank lines PowerShell's formatter had put around them (three empty lines
+    above a table). A run of blank lines that held a marker collapses to the longest stretch the script wrote between
+    markers; a run with no marker in it is the script's own and is kept.
+- DESIGN DECISION: no time estimate; the panel says so. Get-StorageJob's PercentComplete for "Format Volume" climbs
+  steadily, but reading it while the format runs needs `Format-Volume -AsJob` (its errors then arrive through
+  Receive-Job on a destructive path) or a second runspace polling beside it, and neither can be proved without a rig.
+  A defrag's percentage resets each pass, a shrink has no storage job, and a scan ends in seconds. The marker carries
+  the size Windows works on for a later estimate.
+- INCOMPLETE: a live run through the real helper on the VM -- a full format with Cancel going off at its marker and
+  back on at the End marker, and a close during it -- was not done in this round (no VM in this lane). Tests drive the
+  marker through the executor's real relay and the panel through the controller; the stdout behaviour of
+  powershell.exe was checked locally with a script that touches no disk.
+
 ### Fix round S: what the VM smoke found (2026-11-09)
 
 From the VM smoke at f7619773 (`E:\SAK-Utility-Test-Scratch\vm-smoke\results.md`). Each fix has a test that went red
@@ -2451,6 +2546,86 @@ the rest in lane2; logs in `E:\SAK-Utility-Test-Scratch\fixround-s\drills\`).
 - DESIGN DECISION: the disabled-adapter case. Windows reports no settings for a turned-off adapter, so Reset Network
   names it in its question and asks the technician to note any settings by hand; it does not read them from the
   registry and cannot put them back.
+
+### Partition Manager: the final run's launch, a verify scan that waited 36 s, and steps Windows finishes (2026-11-09)
+
+**The launch at 74220bf9.** The final run stopped at its first real step, before any group ran: it kept the chains
+script's path in `$Chains`, then wrote its plan to `$chains`, one variable in PowerShell, and pwsh was handed a
+dictionary as its script. 767db1c9 fixed it, made `scripts/check_powershell_syntax.ps1` fail on any variable written
+under two casings in one scope, and runs the real launch against stand-ins (AGENTS.md, "A path only `-PlanOnly` ever
+ran").
+
+**The run at 767db1c9: vhd.partition-clone-region.** Ten vhd rows passed. The eleventh's clone succeeded ("Clone
+Partition from \\.\T: to \\.\PhysicalDrive2 / Running full clone verification"), and the app then said "Post-apply
+verification failed: The disk scan did not finish: no progress for 30 s (last step: physical disks)". The guest's
+logs (`E:\SAK-Utility-Test-Scratch\certification-final\run-767db1c9\guest_clone_evidence.log`), guest times:
+- 15:24:51.6 and 15:24:57.6: SetDisk took the target disk offline and online around the raw write; U: and V:
+  dismounted and mounted again.
+- From 15:24:57.6 the Storage Management log shows no storage query at all until 15:25:34.0, "StorageWMI provider
+  started" (WMI-Activity 5857, wmiprvse pid 4680): 36 s after the verify scan began at about 15:24:58. The step
+  client's own log: its last task started at 23:25:01 UTC, and the cancel came at 23:25:29.
+- So Get-PhysicalDisk, unbounded and silent, waited on the Storage WMI provider loading again after the device
+  change; the same call took 31 ms twice earlier in the row, and 41-198 ms on the idle VM afterwards. TrustedInstaller
+  servicing started in the same window (its start type went to auto at 15:24:56), loading the VM.
+
+**The fix: no call in the scan waits silently or without limit.** Each slow call in the inventory and verify scan
+runs bounded, says every 5 s that it is still waiting (`SAK-SCAN-PROGRESS waiting: <step>, <n> s`), and stops at
+90 s (`kInventoryQueryCapSeconds`, about 2.5 times the 36 s seen), reporting "did not finish (<step>)". The 30 s idle
+limit stays for a scan that truly goes silent, and the 300 s ceiling is unchanged.
+- Get-Disk, Get-Partition and Get-Volume run as CIM jobs. Get-PhysicalDisk has no -AsJob (found on the VM), so it,
+  the reliability counters, Get-BitLockerVolume and its module load, and the dynamic disk probe run in a side
+  runspace in the same process. smartctl and fsutil say they are waiting through `-OnWait`.
+- Without the disk list or the dynamic disk probe there is no scan: at their limit it ends "The disk scan did not
+  finish (<step>): ...", marked did-not-finish, never "no disks". The other reads become that disk's or volume's
+  error, as before.
+- A call left waiting holds its runspace, and an ordinary exit then waited on it (7 s for a stand-in sleep; for a
+  call that never answers, never). A scan that left one waiting ends its own powershell.exe with TerminateProcess;
+  the app and the helper each start the scan as a child powershell.exe, so nothing else is touched.
+- On the VM, read-only, the bounded scan and the 767db1c9 scan gave the same inventory twice each (one disk, four
+  partitions, three volumes, media type, reliability, BitLocker and dirty bit all known), in 5 s against 4 s.
+- Tests: `inventoryScan_aSlowCallThatSaysItIsWaitingFinishes` (a job, a runspace call and a program, each slower
+  than the idle limit), `inventoryScan_aCallPastItsOwnLimitSaysWhichStep` (a stuck runspace call in a .NET wait no
+  pipeline stop can break, and a stuck job: did-not-finish by step, ended in under 9 s),
+  `inventoryScan_aWaitingLineKeepsItsStep`, `inventoryScan_everySlowCallIsBoundedAndNamed`. Ten drills, each red:
+  the three heartbeats, the two limits, the hard stop, the did-not-finish exit code, the waiting line's step, and the
+  physical-disk and BitLocker bounds.
+
+**testpc1: the SSD wipe outlived its app.** The run's physical-pc chain was stopped at 15:35 on the coordinator's
+word, 29 minutes into `external.ssd-secure-erase`. Its full format kept writing at about 19 MB/s as a Windows
+"Format Volume" storage job inside smphost after the step client, the helper and the scheduled task were stopped;
+Stop-Service sat in Stop Pending, and ending smphost's own host process (pid 15448, `svchost.exe -k smphost`, hosting
+smphost alone) stopped it at 14%. The NVMe was left GPT with its MSR and a 256,043,384,832-byte basic partition with
+no file system; the next run's first device row clears the disk.
+
+**Steps Windows finishes after a kill.** Measured on the VM, each step kind in its own powershell.exe killed
+mid-way: Format-Volume -Full, Optimize-Volume -Defrag (and -ReTrim, the same job kind), a Resize-Partition shrink
+(no storage job at all) and Repair-Volume -Scan all ran on to completion; cipher.exe /w and convert.exe stopped at
+once. The app's Cancel had stayed enabled through all of them and reported "cancelled".
+
+**Owner ruling, tonight only (2026-11-09).** Two build lanes: lane2 and lane3 each at `/m:4` and `ctest -j 3` while
+both are active; the final gate at `/m:8` and `-j 6` with lane3 idle; lane3's worktree and build directory removed
+after the fold. (Recorded here: `AGENTS.local.md` lives in the main worktree, which this run does not write to.)
+
+**Live checks on the VM, through the app and its elevated helper**
+(`E:\SAK-Utility-Test-Scratch\certification-final\live-check\`). On a 48 GiB throwaway disk, during Wipe Disk's 79 s full format the ribbon Cancel was disabled with the
+notice "Wipe Disk - Disk 1: Windows is carrying out a full format (47.98 GB). This step cannot be stopped once it has
+started, and Windows continues it even if S.A.K. Utility is closed. Started at 8:59 PM. No time estimate is
+available."; the close prompt said closing would not stop it; the wipe completed. A cancelled Wipe Free Space reported
+"Removed after the stop: cipher's temporary folder W:\EFSTMPWP." and the folder was gone. That pass found four faults,
+fixed and checked again on the VM (`recheck\`): Wipe Disk failed on a RAW disk ("Clear-Disk : The disk has not been
+initialized"), and now starts from Initialize-Disk; the Log window showed the internal markers, and now shows none; a
+"complete" result could open over a close prompt still saying "running", and the prompt now rewrites itself at the
+phase's end and closes with the run; and the prompt read "Partition changes is running", now "Still running: Partition
+changes." for every caller. A cancelled step now reads "Cancelled:", not "Failed:". By design, unchanged: a cancelled
+operation stays in the queue as pending, to be applied again or removed, and does not read as done.
+
+**For after 0.9.3.**
+- Show the full format's percent and an estimate by polling Get-StorageJob for its job from a side runspace. Tonight
+  the panel says "No time estimate is available": the honest alternative, Format-Volume -AsJob, would change how a
+  destructive step reports its errors.
+- The assistant's apply-result path (`cancelledApplyResult` in `app_mutating_actions.cpp`) has no unit test.
+- The marker strip on the elevated path has no direct test; the VM re-check's Log window is its only proof.
+- A shadow copy that is created but cannot be read back is left behind by a step that succeeds (logged as INCOMPLETE in this file).
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 

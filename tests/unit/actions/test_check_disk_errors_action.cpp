@@ -35,6 +35,7 @@ private Q_SLOTS:
     void aDriveWithNoResultIsNamed();
     void executeSaysItSkippedANetworkDrive();
     void executeStopsItsScanWhenCancelled();
+    void aStopDuringTheScanSaysWindowsMayFinishIt();
     void aScanProcessThatWasCancelledEndsTheRun();
     void reportSaysNetworkDrivesAreNotChecked();
 };
@@ -61,6 +62,8 @@ public:
     bool cancel_during_scan{false};
     bool report_process_cancelled{false};
     bool saw_cancel_through_callback{false};
+    /// What the scan had written when the cancel stopped it.
+    QString output_when_cancelled;
 
 protected:
     QVector<MountedVolume> mountedVolumes() const override { return volumes; }
@@ -81,6 +84,7 @@ protected:
             cancel();
             saw_cancel_through_callback = should_cancel();
             proc.cancelled = saw_cancel_through_callback;
+            proc.std_out = output_when_cancelled;
             return proc;
         }
         proc.std_out = QStringLiteral(
@@ -219,6 +223,28 @@ void CheckDiskErrorsActionTests::executeStopsItsScanWhenCancelled() {
     QCOMPARE(action.scripts_run.size(), 1);  // F: never starts
     QCOMPARE(action.status(), sak::QuickAction::ActionStatus::Cancelled);
     QVERIFY(!action.lastExecutionResult().success);
+    QCOMPARE(action.lastExecutionResult().message, QStringLiteral("Disk error check cancelled"));
+}
+
+// Repair-Volume -Scan is a storage job Windows finishes after its script is killed, so a stop once
+// the scan has started is not reported as cancelled.
+void CheckDiskErrorsActionTests::aStopDuringTheScanSaysWindowsMayFinishIt() {
+    ScriptedCheckDisk action;
+    action.volumes = {volume("C:/", kFixed), volume("F:/", kFixed)};
+    action.cancel_during_scan = true;
+    action.output_when_cancelled = QStringLiteral(
+        "===SCAN_START===\r\nDrive: C:\r\nRunning online scan...\r\n"
+        "SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|0\r\n");
+
+    action.execute();
+
+    QCOMPARE(action.scripts_run.size(), 1);
+    QCOMPARE(action.status(), sak::QuickAction::ActionStatus::Cancelled);
+    QCOMPARE(action.lastExecutionResult().message,
+             QStringLiteral("Disk error check stopped. Windows may still finish the read-only scan "
+                            "of C: it had started; that scan changes nothing on the drive."));
+    QCOMPARE(Action::cancelledMessage(QStringLiteral("C:")), action.lastExecutionResult().message);
+    QCOMPARE(Action::cancelledMessage({}), QStringLiteral("Disk error check cancelled"));
 }
 
 // Every name is from the Volume.RepairStatus enumeration in Windows' own Storage module.
@@ -351,8 +377,13 @@ void CheckDiskErrorsActionTests::buildScanVolumeScript_isReadOnly() {
     // cannot stand alone, and nothing else bounded how many Repair-Volume calls are emitted.
     QCOMPARE(script.count(QStringLiteral("Repair-Volume")), 1);
     QVERIFY2(script.contains(QStringLiteral(
-                 "$scanResult = Repair-Volume -DriveLetter C -Scan -ErrorAction Stop\n")),
+                 "try { $scanResult = Repair-Volume -DriveLetter C -Scan -ErrorAction Stop } "
+                 "finally {")),
              "the one Repair-Volume call must be exactly the read-only -Scan form");
+    // Windows finishes a scan it has started even when this script is killed, so the scan runs
+    // between the markers that say so.
+    QVERIFY(script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|")));
+    QVERIFY(script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan")));
 
     // The tokens parseDriveScanResult and processScanKeyValue match on by exact equality; rename
     // any of them and the whole scan pipeline silently degrades with no test noticing.

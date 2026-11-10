@@ -181,6 +181,7 @@ private Q_SLOTS:
     void inventoryRefreshCanBeCancelled();
     void finishedInventoryFutureCannotBeRetroactivelyCancelled();
     void filesystemCheckCanBeCancelled();
+    void windowsPhaseTakesCancelAwayUntilItEnds();
     void destructorCancelsAndJoinsInventoryScan();
     void storageInventoryPassesCancellationToProcessRunner();
 
@@ -1002,6 +1003,67 @@ void PartitionManagerControllerTests::storageInventoryPassesCancellationToProces
     QCOMPARE(launches.load(), 1);
     QVERIFY(inventory.isEmpty());
     QCOMPARE(inventory.warnings, QStringList{QStringLiteral("Inventory scan cancelled")});
+}
+
+// A full format Windows has taken over goes on when its script is killed. While it runs, Cancel
+// is not offered and a cancel request stops nothing and says why; before and after it, Cancel
+// works. Closing still stops the script and everything queued after it.
+void PartitionManagerControllerTests::windowsPhaseTakesCancelAwayUntilItEnds() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    controller.setInventoryScannerForTesting(
+        [](const sak::CancelCheck&) { return inventoryResult(healthyInventory()); });
+    std::atomic_bool entered{false};
+    std::atomic_bool cancel_seen{false};
+    controller.setApplyExecutorForTesting(
+        [&entered, &cancel_seen](const QVector<sak::PartitionOperation>&,
+                                 bool dry_run,
+                                 bool,
+                                 const sak::CancelCheck& should_cancel) {
+            entered.store(true);
+            while (!should_cancel()) {
+                QThread::msleep(1);
+            }
+            cancel_seen.store(true);
+            auto result = successfulResult(dry_run);
+            result.success = false;
+            result.cancelled = true;
+            return result;
+        });
+    QSignalSpy status(&controller, &sak::PartitionManagerController::statusMessage);
+    QSignalSpy phase_changes(&controller, &sak::PartitionManagerController::windowsPhaseChanged);
+    queueInitialize(&controller);
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, false));
+    QVERIFY(waitUntil([&entered]() { return entered.load(); }));
+    QVERIFY2(controller.canCancel(), "before Windows has the work, Cancel stops the step");
+    QVERIFY(!controller.windowsPhase().has_value());
+
+    const sak::WindowsContinuedPhase phase{.step_summary = QStringLiteral("Wipe Disk - Disk 7"),
+                                           .marker = {.begin = true,
+                                                      .work = sak::WindowsContinuedWork::FullFormat,
+                                                      .size_bytes = 1024ULL * 1024ULL * 1024ULL},
+                                           .started_at = QDateTime::currentDateTime()};
+    controller.reportWindowsPhaseForTesting(phase);
+    QCOMPARE(phase_changes.count(), 1);
+    QVERIFY2(!controller.canCancel(), "no cancel can stop what Windows is carrying out");
+    QVERIFY(controller.windowsPhase().has_value());
+    QCOMPARE(controller.windowsPhase()->step_summary, phase.step_summary);
+    controller.cancel();
+    QTest::qWait(kAsyncTimeoutMs / 50);
+    QVERIFY2(!cancel_seen.load(), "a refused cancel must not stop the script");
+    QCOMPARE(status.last().first().toString(),
+             QStringLiteral("Not cancelled: %1").arg(sak::windowsContinuedPhaseNotice(phase)));
+
+    controller.reportWindowsPhaseForTesting(std::nullopt);
+    QCOMPARE(phase_changes.count(), 2);
+    QVERIFY2(controller.canCancel(), "once Windows hands back, Cancel works again");
+
+    // Closing stops what can be stopped even while Windows has the work.
+    controller.reportWindowsPhaseForTesting(phase);
+    controller.cancelForExit();
+    QVERIFY(waitUntil([&cancel_seen]() { return cancel_seen.load(); }));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY2(!controller.windowsPhase().has_value(), "a finished batch has no phase left open");
 }
 
 QTEST_GUILESS_MAIN(PartitionManagerControllerTests)

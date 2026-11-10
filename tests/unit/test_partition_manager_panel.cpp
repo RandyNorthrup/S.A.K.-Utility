@@ -7,6 +7,7 @@
 #include "sak/partition_manager_panel.h"
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_os_migration.h"
+#include "sak/running_operations.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
@@ -56,6 +57,7 @@
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
 #include <QTextEdit>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest/QtTest>
@@ -195,6 +197,8 @@ private Q_SLOTS:
     void ssdSecureEraseShowsQueueDialog();
     void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
+    void windowsPhaseDisablesCancelAndSaysSo();
+    void openClosePromptFollowsTheRun();
     void scanFileSystemsIsDiskLevelOnly();
     void spaceAnalyzerExposesCommercialViews();
     // UI review F3-F6: sizes sorted as text, labels left beside hidden fields, a confirmation cut
@@ -5802,7 +5806,7 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
                  QStringLiteral("Optimize-Volume -DriveLetter T -Analyze -Verbose\n"
                                 "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("In-app optimization")),
-                 QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
+                 QStringLiteral("Queue HDD defrag through elevated Apply"));
         const QString cut = propertyTableCut(status);
         QVERIFY2(cut.isEmpty(), qPrintable(cut));
         auto* defragButton = findAccessibleWidget<QPushButton>(dialog,
@@ -5855,7 +5859,7 @@ void PartitionManagerPanelTests::diskDefragWaitsForApplyOnADriveWindowsCannotNam
         QCOMPARE(propertyTableValue(status, QStringLiteral("Optimization mode")),
                  QStringLiteral("Unknown until Apply"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("In-app optimization")),
-                 QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
+                 QStringLiteral("Queue HDD defrag through elevated Apply"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("Safe commands")),
                  QStringLiteral("Optimize-Volume -DriveLetter T -Analyze -Verbose\n"
                                 "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
@@ -6034,6 +6038,159 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
     QCOMPARE(executed->types,
              QVector<sak::PartitionOperationType>({sak::PartitionOperationType::CheckFileSystem,
                                                    sak::PartitionOperationType::SurfaceTest}));
+}
+
+namespace {
+
+// An apply that runs until it is cancelled, saying when it started and when it saw the cancel.
+sak::PartitionManagerController::ApplyExecutor applyRunningUntilCancelled(
+    std::atomic_bool* entered, std::atomic_bool* cancel_seen) {
+    return [entered, cancel_seen](const QVector<sak::PartitionOperation>&,
+                                  bool dry_run,
+                                  bool,
+                                  const sak::CancelCheck& should_cancel) {
+        entered->store(true);
+        while (!should_cancel()) {
+            QThread::msleep(1);
+        }
+        cancel_seen->store(true);
+        sak::PartitionExecutionResult result;
+        result.cancelled = true;
+        result.dry_run = dry_run;
+        result.message = QStringLiteral("scan cancelled");
+        return result;
+    };
+}
+
+// The panel's notice of a step Windows is carrying out on its own.
+QLabel* windowsPhaseNotice(QWidget* panel) {
+    return panel->findChild<QLabel*>(QStringLiteral("partitionWindowsPhaseNotice"));
+}
+
+}  // namespace
+
+// A file system scan is a Windows storage job: once it starts, killing its script does not stop
+// it. While Windows has it, Cancel is off, the panel says why, and the close prompt's note says
+// closing will not stop it; before and after, Cancel works as before.
+void PartitionManagerPanelTests::windowsPhaseDisablesCancelAndSaysSo() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    std::atomic_bool entered{false};
+    std::atomic_bool cancel_seen{false};
+    panel.setTestApplyExecutorForReview(applyRunningUntilCancelled(&entered, &cancel_seen));
+    QTimer closer;
+    closer.setInterval(1);
+    QObject::connect(&closer, &QTimer::timeout, []() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->accept();
+        }
+    });
+    closer.start();
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+    QVERIFY(check != nullptr);
+    QTRY_VERIFY(check->isEnabled());
+    pressAction(check);
+    QTRY_VERIFY(entered.load());
+
+    auto* cancel = findToolButtonByName(&panel, QStringLiteral("Cancel"));
+    QVERIFY(cancel != nullptr);
+    QLabel* const notice = windowsPhaseNotice(&panel);
+    QVERIFY2(notice != nullptr, "the panel has a place to say what Windows is carrying out");
+    QTRY_VERIFY2(cancel->isEnabled(), "before the phase, Cancel stops the scan");
+    QVERIFY(notice->isHidden());
+    QVERIFY(sak::RunningOperations::cannotStopNotes().isEmpty());
+
+    const sak::WindowsContinuedPhase phase{.step_summary = QStringLiteral(
+                                               "Check File System - Disk 0 Partition 1"),
+                                           .marker = {.begin = true,
+                                                      .work = sak::WindowsContinuedWork::VolumeScan,
+                                                      .size_bytes = 512ULL * 1024ULL * 1024ULL},
+                                           .started_at = QDateTime::currentDateTime()};
+    panel.reportTestWindowsPhaseForReview(phase);
+    QVERIFY2(!cancel->isEnabled(), "Cancel cannot stop what Windows is carrying out");
+    QVERIFY(!notice->isHidden());
+    QCOMPARE(notice->text(), sak::windowsContinuedPhaseNotice(phase));
+    QVERIFY(notice->text().contains(QStringLiteral("cannot be stopped once it has started")));
+    QVERIFY(notice->text().contains(
+        QStringLiteral("Windows continues it even if S.A.K. Utility is closed")));
+    QCOMPARE(sak::RunningOperations::cannotStopNotes(),
+             QStringList{sak::windowsContinuedExitNote(phase)});
+
+    panel.reportTestWindowsPhaseForReview(std::nullopt);
+    QVERIFY2(cancel->isEnabled(), "after the phase, Cancel works again");
+    QVERIFY(notice->isHidden());
+    QVERIFY(sak::RunningOperations::cannotStopNotes().isEmpty());
+
+    cancel->click();
+    QTRY_VERIFY(cancel_seen.load());
+    QTRY_VERIFY(!cancel->isEnabled());
+}
+
+// The close prompt follows the run it asks about: told when the phase Windows carries out begins
+// and ends, and told the run is over before that run's result opens -- the live check had a
+// "complete" result open over a prompt still saying the work was running.
+void PartitionManagerPanelTests::openClosePromptFollowsTheRun() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    std::atomic_bool entered{false};
+    std::atomic_bool cancel_seen{false};
+    panel.setTestApplyExecutorForReview(applyRunningUntilCancelled(&entered, &cancel_seen));
+    struct Notice {
+        const QObject* finished;
+        bool result_open;
+    };
+    QVector<Notice> notices;
+    sak::RunningOperations::setChangeListener([&notices](const QObject* finished) {
+        notices.append({.finished = finished,
+                        .result_open = qobject_cast<QMessageBox*>(
+                                           QApplication::activeModalWidget()) != nullptr});
+    });
+    const auto stopListening = qScopeGuard([]() { sak::RunningOperations::setChangeListener({}); });
+    int results_shown = 0;
+    QTimer closer;
+    closer.setInterval(1);
+    QObject::connect(&closer, &QTimer::timeout, [&results_shown]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            ++results_shown;
+            box->accept();
+        }
+    });
+    closer.start();
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(1);
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+    QVERIFY(check != nullptr);
+    QTRY_VERIFY(check->isEnabled());
+    pressAction(check);
+    QTRY_VERIFY(entered.load());
+
+    const sak::WindowsContinuedPhase phase{
+        .step_summary = QStringLiteral("Check File System - Disk 0 Partition 1"),
+        .marker = {.begin = true, .work = sak::WindowsContinuedWork::VolumeScan, .size_bytes = 0},
+        .started_at = QDateTime::currentDateTime()};
+    panel.reportTestWindowsPhaseForReview(phase);
+    panel.reportTestWindowsPhaseForReview(std::nullopt);
+    QCOMPARE(notices.size(), 2);
+    QVERIFY(notices.at(0).finished == nullptr && notices.at(1).finished == nullptr);
+
+    auto* cancel = findToolButtonByName(&panel, QStringLiteral("Cancel"));
+    QVERIFY(cancel != nullptr);
+    cancel->click();
+    QTRY_COMPARE(results_shown, 1);
+    QCOMPARE(notices.size(), 3);
+    QCOMPARE(notices.at(2).finished, static_cast<const QObject*>(&panel));
+    QVERIFY2(!notices.at(2).result_open,
+             "the prompt hears the run is over before its result opens");
 }
 
 // Owner decision 2026-10-25: Scan File Systems is a disk-level action and Check File System is

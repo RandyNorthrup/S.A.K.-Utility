@@ -1861,6 +1861,20 @@ QJsonObject serializeApplyStep(const PartitionExecutionStep& step) {
     if (!step.error_message.isEmpty()) {
         obj.insert(QStringLiteral("error"), step.error_message);
     }
+    if (step.may_still_run_in_windows) {
+        obj.insert(QStringLiteral("may_still_run_in_windows"), true);
+    }
+    if (step.cancelled) {
+        obj.insert(QStringLiteral("cancelled"), true);
+    }
+    if (!step.stop_cleanup_removed.isEmpty()) {
+        obj.insert(QStringLiteral("stop_cleanup_removed"),
+                   QJsonArray::fromStringList(step.stop_cleanup_removed));
+    }
+    if (!step.stop_cleanup_not_removed.isEmpty()) {
+        obj.insert(QStringLiteral("stop_cleanup_not_removed"),
+                   QJsonArray::fromStringList(step.stop_cleanup_not_removed));
+    }
     // A dry run performs no I/O; it puts the script it WOULD run into stdout_text.
     // Surface that (capped) so the model can inspect the plan.
     if (step.skipped && !step.stdout_text.isEmpty()) {
@@ -1949,10 +1963,29 @@ std::optional<AppActionResult> partitionApplyGateArgsError(const QJsonObject& ar
     return std::nullopt;
 }
 
+// A Stop that landed while Windows was carrying out a step on its own did not stop that step:
+// the result says the step may still be running in Windows, not that the apply was cancelled.
+AppActionResult cancelledApplyResult(const PartitionExecutionResult& result) {
+    // The same holds for a cleanup after the stop: what it removed, and what it could not.
+    const bool worth_reporting =
+        std::ranges::any_of(result.steps, [](const PartitionExecutionStep& step) {
+            return step.may_still_run_in_windows || !step.stop_cleanup_removed.isEmpty() ||
+                   !step.stop_cleanup_not_removed.isEmpty();
+        });
+    if (!worth_reporting) {
+        return {false, QStringLiteral("Partition apply was cancelled"), {}};
+    }
+    return {false, result.message, serializeApplyResult(result)};
+}
+
 AppActionResult applyResultFromExecution(const PartitionExecutionResult& result,
                                          PartitionOperationType type,
                                          const QString& description,
                                          bool dry_run) {
+    // A batch a cancel stopped did not fail, and says what it is, as the worker's cancel does.
+    if (result.cancelled) {
+        return cancelledApplyResult(result);
+    }
     const QString verb = dry_run ? QStringLiteral("Dry-run") : QStringLiteral("Apply");
     const QString message = QStringLiteral("%1 of %2 on %3: %4")
                                 .arg(verb)
@@ -2017,8 +2050,8 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
                      &WorkerBase::failed,
                      inv.context(),
                      [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
-    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
-        inv.finish({false, QStringLiteral("Partition apply was cancelled"), {}});
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv, &worker]() {
+        inv.finish(cancelledApplyResult(worker.result()));
     });
 
     // worker.start() (QThread::start) returns void; an OS thread-creation failure only logs

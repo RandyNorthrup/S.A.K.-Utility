@@ -97,6 +97,9 @@ constexpr auto kCreatorDeadline = std::chrono::seconds(10);
 constexpr int kFakeProcessLifetimeMs = 10'000;
 constexpr UINT kFakeProcessDeadlineExit = 93;
 constexpr int kShortCleanupDeadlineMs = 30;
+// Cleanup counts its deadline down in whole milliseconds and the test reads it in nanoseconds, so a
+// cleanup that waited the deadline out can return up to this much before the nanosecond expiry.
+constexpr qint64 kCleanupDeadlineGranularityNs = 1'000'000;
 constexpr int kFinishedCallbackHoldMs = 500;
 constexpr int kLateQueryCloseDeadlineMs = 250;
 constexpr int kLateQueryResultWaitMs = 375;
@@ -1613,11 +1616,14 @@ void AiMcpStdioSessionTests::cleanupDeadlineRetainsOwner() {
     const QString dispatch_error = QStringLiteral("MCP worker cleanup dispatch exceeded deadline");
     QVERIFY2(closed.error() == descendant_error || closed.error() == dispatch_error,
              qPrintable(closed.error()));
-    QVERIFY2(deadline.hasExpired(),
+    // Cleanup waited the deadline out: one reading of what is left, within the millisecond the
+    // two clocks may disagree by.
+    const qint64 remaining_ns = deadline.remainingTimeNSecs();
+    QVERIFY2(remaining_ns <= kCleanupDeadlineGranularityNs,
              qPrintable(
                  QStringLiteral("Cleanup returned before deadline: elapsed_ns=%1 remaining_ns=%2")
                      .arg(elapsed.nsecsElapsed())
-                     .arg(deadline.remainingTimeNSecs())));
+                     .arg(remaining_ns)));
     QVERIFY(active_observations.load() > 0);
     QVERIFY(elapsed.elapsed() < kFakeRequestTimeoutMs);
     QVERIFY(!session.isClosed());

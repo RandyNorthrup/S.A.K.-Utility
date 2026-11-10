@@ -184,10 +184,27 @@ bool PartitionManagerController::interactionBlocked() const noexcept {
     return watcher_active || phase_active;
 }
 
-bool PartitionManagerController::canCancel() const noexcept {
+bool PartitionManagerController::hasCancellableWork() const noexcept {
     return (m_inventory_watcher != nullptr && !m_inventory_watcher->isFinished()) ||
            (m_apply_watcher != nullptr && !m_apply_watcher->isFinished()) ||
            (m_file_system_check_watcher != nullptr && !m_file_system_check_watcher->isFinished());
+}
+
+bool PartitionManagerController::canCancel() const noexcept {
+    // A full format, a defrag or a shrink that Windows has taken over goes on when the script is
+    // killed; offering Cancel then would claim to stop what nothing can stop.
+    return hasCancellableWork() && !m_windows_phase.has_value();
+}
+
+const std::optional<WindowsContinuedPhase>& PartitionManagerController::windowsPhase()
+    const noexcept {
+    return m_windows_phase;
+}
+
+void PartitionManagerController::setWindowsPhase(
+    const std::optional<WindowsContinuedPhase>& phase) {
+    m_windows_phase = phase;
+    Q_EMIT windowsPhaseChanged();
 }
 
 PartitionQueueReviewToken PartitionManagerController::queueReviewToken() const {
@@ -803,6 +820,13 @@ void PartitionManagerController::startApplyExecution(const QVector<PartitionOper
                 &PartitionExecutor::logMessage,
                 this,
                 &PartitionManagerController::logOutput);
+        connect(executor.get(),
+                &PartitionExecutor::windowsPhaseStarted,
+                this,
+                [this](const WindowsContinuedPhase& phase) { setWindowsPhase(phase); });
+        connect(executor.get(), &PartitionExecutor::windowsPhaseEnded, this, [this]() {
+            setWindowsPhase(std::nullopt);
+        });
     }
 
     auto* watcher = new QFutureWatcher<PartitionExecutionResult>(this);
@@ -840,6 +864,10 @@ void PartitionManagerController::finishApplyExecution(
     auto result = watcher->result();
     const auto request = *m_active_apply_request;
     result.dry_run = request.dry_run;
+    // The executor ends every phase with its step, and the batch is over.
+    if (m_windows_phase) {
+        setWindowsPhase(std::nullopt);
+    }
 
     if (request.dry_run || request.read_only_immediate) {
         const auto terminal_state = publishExecutionResult(std::move(result),
@@ -927,11 +955,28 @@ void PartitionManagerController::publishInventoryDiagnostics(const PartitionInve
 }
 
 void PartitionManagerController::cancel() {
+    if (m_windows_phase && hasCancellableWork()) {
+        Q_EMIT statusMessage(
+            QStringLiteral("Not cancelled: %1").arg(windowsContinuedPhaseNotice(*m_windows_phase)),
+            sak::kTimerStatusLongMs);
+        return;
+    }
     if (!canCancel()) {
         Q_EMIT statusMessage(QStringLiteral("No cancellable partition operation is running"),
                              sak::kTimerStatusDefaultMs);
         return;
     }
+    requestCancellation();
+}
+
+void PartitionManagerController::cancelForExit() {
+    if (!hasCancellableWork()) {
+        return;
+    }
+    requestCancellation();
+}
+
+void PartitionManagerController::requestCancellation() {
     requestWatcherCancellation(m_inventory_watcher, m_inventory_cancel);
     const bool apply_cancelled = requestWatcherCancellation(m_apply_watcher, m_apply_cancel);
     requestWatcherCancellation(m_file_system_check_watcher, m_file_system_check_cancel);
@@ -1065,6 +1110,11 @@ void PartitionManagerController::setFileSystemCheckRunnerForTesting(FileSystemCh
     if (!interactionBlocked() && runner) {
         m_file_system_check_runner = std::move(runner);
     }
+}
+
+void PartitionManagerController::reportWindowsPhaseForTesting(
+    const std::optional<WindowsContinuedPhase>& phase) {
+    setWindowsPhase(phase);
 }
 #endif
 
