@@ -30,6 +30,27 @@ Backup, partitions, diagnostics, USB imaging, app deployment, network and email 
 
 New to it? The **[wiki](https://sakutility.com/wiki)** has a plain-language guide for every tool, with a screenshot of each step.
 
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><a href="docs/images/readme/partition-manager.png"><img src="docs/images/readme/partition-manager.png" alt="Partition Manager listing three disks with their partitions, the wizards and partition operations on the left, and a disk map below"></a><br><sub>Partition Manager</sub></td>
+<td width="50%"><a href="docs/images/readme/backup-wizard.png"><img src="docs/images/readme/backup-wizard.png" alt="User Profile Backup Wizard with three user accounts found and selected, their profile paths and estimated sizes"></a><br><sub>Backup Wizard: choosing the profiles to back up</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/readme/benchmarks.png"><img src="docs/images/readme/benchmarks.png" alt="Benchmarks tab showing disk and memory benchmark results with their scores, and the stress test settings below"></a><br><sub>Benchmarks</sub></td>
+<td width="50%"><a href="docs/images/readme/app-installation.png"><img src="docs/images/readme/app-installation.png" alt="App Installation tab with Chocolatey search results for vlc on the left and an empty install queue on the right"></a><br><sub>App Installation</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/readme/image-flasher.png"><img src="docs/images/readme/image-flasher.png" alt="Image Flasher's first step, offering a Windows download from Microsoft, a Windows ISO built from UUP, a Linux ISO, or an image file"></a><br><sub>Image Flasher</sub></td>
+<td width="50%"><a href="docs/images/readme/file-explorer.png"><img src="docs/images/readme/file-explorer.png" alt="File Explorer in dual-pane view with sample files in each pane, drives on the left and a details pane on the right"></a><br><sub>File Explorer</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/readme/network-diagnostics.png"><img src="docs/images/readme/network-diagnostics.png" alt="Network Diagnostics Ping tab showing ten replies from 127.0.0.1 and the summary line"></a><br><sub>Network Diagnostics</sub></td>
+<td width="50%"><a href="docs/images/readme/email-inspector.png"><img src="docs/images/readme/email-inspector.png" alt="Email Inspector with a sample PST open, its folders, the Inbox messages, and the selected message's text"></a><br><sub>Email Inspector</sub></td>
+</tr>
+</table>
+
 ## What's inside
 
 Select a tool to see what it does.
@@ -55,7 +76,9 @@ Guides: [back up a profile](https://sakutility.com/wiki/back-up-user-profile), [
 - Format, inspect, and browse APFS, HFS+, and ext file systems without a driver
 - TRIM, wipe, disk benchmark, space analyzer, defrag, BitLocker status, and bootable media. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize
 
-> **Testing:** APFS and HFS+ writing was validated with Apple's own `fsck` tools and macOS, including destructive and crash tests on physical USB drives. The other disk operations have not yet been tested through the app on real hardware, so back up before changing a disk. The full record is in [docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md).
+> **Testing:** On the v0.9.3 code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Some operations were also tested on one SAMSUNG MZVL2512HCJQ-00BH1 512 GB NVMe SSD and one Seagate Expansion Desk 8 TB USB disk. Internal SATA drives were not tested, and results on other devices may differ. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize. Writes to Apple file systems were validated with Apple's own tools. Back up before changing a disk.
+>
+> The full record is in [docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md).
 
 Guide: [Partition Manager basics](https://sakutility.com/wiki/partition-manager-basics)
 </details>
@@ -90,7 +113,7 @@ Guides: [install apps in bulk](https://sakutility.com/wiki/bulk-install-apps), [
 - Downloads Linux and recovery images: Ubuntu, Fedora, Debian, Arch, Linux Mint, Kali, SystemRescue, Clonezilla, GParted Live, ShredOS, and Ventoy LiveCD
 - System-drive protection, full or quick verification, and several drives at once
 
-Windows install USBs use NTFS, so a PC whose firmware cannot read NTFS will not boot them in UEFI mode.
+A Windows install USB is one FAT32 partition, which UEFI firmware reads. An install.wim of 4 GB or more is split by Windows' own DISM into parts that Windows Setup reads.
 
 Guides: [flash an ISO to USB](https://sakutility.com/wiki/flash-iso-to-usb), [build a Windows ISO](https://sakutility.com/wiki/build-windows-iso)
 </details>

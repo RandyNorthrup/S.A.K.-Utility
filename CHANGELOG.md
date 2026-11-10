@@ -6,7 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## Unreleased
+## v0.9.3 (2026-11-10)
+
+The first release with three-part version numbers; it follows v0.9.2.0. Among the changes below: Partition
+Manager's certification now drives the app itself, and
+[docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md) says what its final run covered;
+a Windows install USB is FAT32 and starts UEFI PCs; Email Inspector reads whole Outlook files, NST files included;
+Reset Network keeps settings typed in by hand; Cancel no longer calls work Windows carries on with "cancelled"; the
+theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; and a
+smaller download.
 
 - **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
   It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,
@@ -523,7 +531,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Partition Manager's certification now tests the app** - Its rows used to run Windows and VirtualBox commands, so
   they tested those. Each row now goes through the app's own request building, controller and elevated helper, from
   a client running as a standard user, and a separate tool reads the disk back. The result says what each row ran on,
-  and the old rows and their evidence no longer count. The final run on these rows has not happened yet.
+  and the old rows and their evidence no longer count. The final run on these rows passed on 2026-11-10;
+  `docs/PARTITION_MANAGER_CERTIFICATION.md` says what it ran on and what that covers.
 - **Migrate OS works from a snapshot and fits the new drive** - It used to copy a running Windows disk byte
   for byte, so files could change under the copy, and it refused any drive smaller than the old disk. Each
   volume is now read from a Volume Shadow Copy snapshot taken at the start, and the EFI, reserved and
@@ -976,6 +985,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   Administrator: the converter mounts a virtual disk to service the Windows images with DISM,
   and the message now says so. The About box lists wimlib as LGPL v2.1+, the license of the
   wimlib 1.14.5 it ships.
+
+- **Security updates to what ships** - Qt 6.10.3 is now Qt 6.12.0 LTS (6.10's support ended 2026-10-07). zlib
+  1.3.1 is now 1.3.2 and liblzma 5.8.2 is 5.8.4, at the versions `vcpkg.json` pins, so local and CI builds link the
+  same ones. The bundled Chocolatey 2.7.2 is now 2.7.5 (log4net 3.3.1 and 7-Zip 26.05), and iPerf3 3.21 is 3.22,
+  which fixes a server use-after-free (CVE-2026-101283), authentication heap overflows (CVE-2026-101276) and a
+  denial-of-service loop (CVE-2026-102253); the app runs iperf3 as a server. hfsprogs no longer carries an OpenSSL
+  3.6 runtime, whose support ended 2026-11-01: `newfs_hfs` used it only for SHA-1, and `msys-crypto-3.dll` (5.4 MB)
+  left the package.
 
 - **aria2c built from source with current libraries** - The bundled downloader is still aria2
   1.37.0, now built here from its source with zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite
